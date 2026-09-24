@@ -5,18 +5,32 @@ PresenterSync is a lightweight, standalone Windows utility designed for live str
 ## 🚀 Features
 
 *   **OBS WebSocket v5 Integration:** Real-time two-way synchronization with OBS. If you mute in OBS, the on-screen indicator updates instantly.
-*   **Smart PowerPoint Controls:** Safely route your arrow keys and presentation shortcuts directly to PowerPoint while keeping OBS in the background.
+*   **Smart PowerPoint Controls:** Safely route your arrow keys and presentation shortcuts directly to PowerPoint while keeping OBS or other apps in the background.
 *   **Dynamic Visual Mute Indicator:** A customizable, floating UI overlay that sits on your screen so you always know your live audio status.
-*   **Appearance Customization:** Toggle text labels, switch to monochromatic icons, adjust transparency (Ghost/Frosted/Solid), and enable an aggressive pulsing animation when muted.
+*   **Extensive Appearance Customization:** Toggle text labels, switch to monochromatic icons, adjust transparency (Ghost/Frosted/Solid), enable aggressive pulsing animations, and choose between standard, sleek, or circular/pill-shaped indicator styles.
 *   **Self-Healing Setup:** Automatically detects network failures or changed OBS passwords and prompts you with a clean, user-friendly UI to fix it.
+*   **One-Click Reset:** Instantly restore the factory default appearance from the system tray without losing your custom screen position.
+
+## ⚙️ Prerequisites: OBS WebSocket Setup
+
+Before connecting PresenterSync, you must enable the WebSocket server inside OBS Studio (Requires OBS Studio v28.0 or newer):
+
+1. Open OBS Studio.
+2. Navigate to the top menu bar and click **Tools** > **WebSocket Server Settings**.
+3. Check the box for **Enable WebSocket server**.
+4. Ensure the **Server Port** is set to `4455` (the default).
+5. Check the box for **Enable Authentication**.
+6. Click **Generate Password** (or type a custom password). Click **Apply** and **OK**. 
+*Keep this password handy—PresenterSync will ask for it the first time you enable Sync.*
 
 ## 🛠️ Installation & Usage
 
 You can run PresenterSync in two ways:
 
-### Option A: The Ready-to-Run Executable (Recommended for Non-Technical Users)
-If you don't want to install AutoHotkey or deal with code compilation, you can download the standalone, signed `.exe` version of PresenterSync.
-👉 **[Get the Compiled `.exe` on Gumroad]** *(Link will be added later)*
+### Option A: The Ready-to-Run Executable (Recommended)
+If you don't want to install AutoHotkey or deal with code compilation, download the standalone `.exe` version of PresenterSync.
+👉 **[Get the Compiled `.exe` on Gumroad]** *(Link will be added later)* 
+*(Alternatively, download the latest release directly from the [GitHub Releases](https://github.com/SaabithJiffry/PresenterSync/releases) page.)*
 
 ### Option B: Run from Source
 If you prefer to run the raw script or compile it yourself:
@@ -25,11 +39,14 @@ If you prefer to run the raw script or compile it yourself:
 3. Ensure `WebSocket.ahk` is located inside the `lib` folder.
 4. Run `PresenterSync.ahk`.
 
-## ⚙️ How It Works
+## 🎮 How It Works
 
-On your first launch, the app will ask for a fallback OBS Mute shortcut. Once running, right-click the PresenterSync icon in your system tray to access the **Module Controls**. Enable **OBS WebSocket Sync** and enter your OBS WebSocket password to establish a direct network link.
+1. **Initial Setup:** On your first launch, the app will prompt you for a fallback OBS Mute keyboard shortcut (e.g., the hotkey you normally press to mute your mic in OBS).
+2. **Connect to OBS:** Right-click the PresenterSync icon in your Windows system tray to access the **Module Controls**. Click **Enable OBS WebSocket Sync**.
+3. **Enter Password:** Paste the OBS WebSocket password you generated earlier. The app will securely hash and store this for future sessions.
+4. **Customize:** Use the system tray menu to drag the indicator to your preferred spot on the screen, tweak the visual settings, or manage your hotkeys.
 
-**Default Shortcuts:**
+**Default System Shortcuts:**
 *   `Ctrl + F12` : Toggle PowerPoint Controls ON/OFF
 *   `Alt + F12` : Toggle OBS WebSocket Sync ON/OFF
 *   `Ctrl + Shift + F12` : Hide/Unhide the Visual Indicator
