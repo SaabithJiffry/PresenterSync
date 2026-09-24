@@ -164,7 +164,6 @@ ShowHelpWindow(*) {
 ShowAboutWindow(*) {
     aboutGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "About PresenterSync")
     
-    ; If compiled, pull the embedded icon from the .exe. Otherwise, use the local .ico file.
     iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSync.ico"
     
     if FileExist(iconSource) {
@@ -178,10 +177,12 @@ ShowAboutWindow(*) {
     aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.0")
     aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
     
-    aboutGui.Add("Link", "x10 w330 Center y+10", '<a href="https://github.com/SaabithJiffry/PresenterSync/">github.com/SaabithJiffry/PresenterSync</a>')
+    ; Two 110px buttons with 10px spacing = 230px total. Centered in 350px width (60px padding)
+    gitBtn := aboutGui.Add("Button", "w110 x60 y+25", "GitHub Repo")
+    gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
     
-    btn := aboutGui.Add("Button", "w100 x125 y+20 Default", "Close")
-    btn.OnEvent("Click", (*) => aboutGui.Destroy())
+    closeBtn := aboutGui.Add("Button", "w110 x+10 Default", "Close")
+    closeBtn.OnEvent("Click", (*) => aboutGui.Destroy())
     
     aboutGui.Show("AutoSize")
 }
