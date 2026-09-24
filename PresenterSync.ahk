@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 1.0.6
+; Version: 1.0.7
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
@@ -17,6 +17,7 @@ SetKeyDelay 50, 50
 global ConfigFile := A_ScriptDir "\MicOverlay_Config.ini"
 global ObsMuteHotkey := IniRead(ConfigFile, "Settings", "ObsHotkey", "None")
 global obsPassword := IniRead(ConfigFile, "Settings", "ObsPassword", "")
+global targetMicName := IniRead(ConfigFile, "Settings", "TargetMicName", "Mic/Aux")
 
 global EnablePPT := IniRead(ConfigFile, "Settings", "EnablePPT", 0)
 global EnableWS := IniRead(ConfigFile, "Settings", "EnableWS", 0)
@@ -176,7 +177,7 @@ ShowAboutWindow(*) {
     aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
     
     aboutGui.SetFont("s10 w400")
-    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.6")
+    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.7")
     aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
     
     ; Two 110px buttons with 10px spacing = 230px total. Centered in 350px width (60px padding)
@@ -279,6 +280,31 @@ ChangeHwMuteHotkeyUI(*) {
     }
     
     hkGui.Show()
+}
+
+ChangeMicNameUI(*) {
+    Suspend(True) 
+    
+    micGuiPrompt := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit OBS Audio Source")
+    micGuiPrompt.OnEvent("Close", (*) => Suspend(False)) 
+    
+    micGuiPrompt.Add("Text", "w280", "Enter exact OBS Audio Source Name (e.g., Mic/Aux):")
+    micCtrl := micGuiPrompt.Add("Edit", "w280", targetMicName)
+    btn := micGuiPrompt.Add("Button", "w280 Default y+15", "Save && Restart")
+    
+    btn.OnEvent("Click", SaveMicName)
+    
+    SaveMicName(*) {
+        if (micCtrl.Value = "") {
+            micGuiPrompt.Opt("+OwnDialogs")
+            MsgBox("Audio source name cannot be empty.", "Error", "Icon!")
+            return
+        }
+        IniWrite(micCtrl.Value, ConfigFile, "Settings", "TargetMicName")
+        Reload() 
+    }
+    
+    micGuiPrompt.Show()
 }
 
 ; --- CRYPTOGRAPHY ENGINE ---
@@ -463,6 +489,7 @@ SettingsMenu := Menu()
 SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI)
 SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI)
 SettingsMenu.Add("Change System Mute Shortcut", ChangeMuteHotkeyUI) 
+SettingsMenu.Add("Change OBS Audio Source Name", ChangeMicNameUI)
 SettingsMenu.Add("Reset Indicator Position", ResetTrayPosition)
 
 A_TrayMenu.Add("Settings", SettingsMenu)
@@ -697,7 +724,7 @@ SendToPPT(Key) {
     }
 }
 
-; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.0.6) ---
+; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.0.7) ---
 CheckPPTEnable(ThisHotkey) {
     global EnablePPT
     return EnablePPT
