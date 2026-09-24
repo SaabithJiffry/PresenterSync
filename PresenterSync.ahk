@@ -419,6 +419,10 @@ else if (OpacityLevel == 127)
     OpacityMenu.Check("Ghost (50%)")
     
 AppearanceMenu.Add("Transparency Level", OpacityMenu)
+
+AppearanceMenu.Add() 
+AppearanceMenu.Add("Restore Default Appearance", ResetAppearance)
+
 A_TrayMenu.Add("Indicator Appearance", AppearanceMenu)
 
 A_TrayMenu.Add() 
@@ -533,6 +537,16 @@ SetFrosted(*) {
 SetGhost(*) {
     IniWrite(127, ConfigFile, "Settings", "OpacityLevel")
     Reload()
+}
+ResetAppearance(*) {
+    ; Resets all cosmetic settings to their factory defaults
+    IniWrite(0, ConfigFile, "Settings", "ShowText")
+    IniWrite(0, ConfigFile, "Settings", "MonoIcon")
+    IniWrite(0, ConfigFile, "Settings", "SleekCorners")
+    IniWrite(0, ConfigFile, "Settings", "CircularShape")
+    IniWrite(0, ConfigFile, "Settings", "AggressivePulse")
+    IniWrite(220, ConfigFile, "Settings", "OpacityLevel")
+    Reload() ; Instantly applies changes
 }
 ResetSettings(*) {
     FileDelete(ConfigFile)
