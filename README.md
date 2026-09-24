@@ -37,3 +37,6 @@ On your first launch, the app will ask for a fallback OBS Mute shortcut. Once ru
 
 ## 📄 License
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🤝 Acknowledgments
+* WebSocket communication is powered by the [AutoHotkey-WebSocket]([link-to-original-repo](https://github.com/thqby/ahk2_lib)) library by [thqby].
