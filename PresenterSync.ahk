@@ -1,3 +1,11 @@
+; ==============================================================================
+; Script: PresenterSync
+; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
+; Version: 1.0.0
+; Author: Saabith Jiffry
+; License: MIT 
+; ==============================================================================
+
 ; PresenterSync.ahk - Updated with dynamic shortcuts
 #Requires AutoHotkey v2.0
 #SingleInstance Force
