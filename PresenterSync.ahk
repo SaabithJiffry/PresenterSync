@@ -643,13 +643,28 @@ RemoveToolTip() {
 
 ; --- POWERPOINT CONTROLS ---
 #HotIf EnablePPT
-$Down::ControlSend "{Down}",, "ahk_exe POWERPNT.EXE"
-$Up::ControlSend "{Up}",, "ahk_exe POWERPNT.EXE"
-$Tab::ControlSend "{Tab}",, "ahk_exe POWERPNT.EXE"
-$Esc::ControlSend "{Esc}",, "ahk_exe POWERPNT.EXE"
-$+F5::ControlSend "{Blind}{F5}",, "ahk_exe POWERPNT.EXE"
-$b::TriggerMute()   ; Moved inside the block!
+$Down::SendToPPT("{Down}")
+$Up::SendToPPT("{Up}")
+$Tab::SendToPPT("{Tab}")
+$Esc::SendToPPT("{Esc}")
+$+F5::SendToPPT("{Blind}{F5}")
+$b::TriggerMute()   ; Mute remains independent
 #HotIf
+
+SendToPPT(Key) {
+    ; 1. Try to target a running Presentation/Slide Show first
+    if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
+        ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
+    } 
+    ; 2. Fallback to the main PowerPoint editing window
+    else if WinExist("ahk_class PPTFrameClass ahk_exe POWERPNT.EXE") {
+        ControlSend Key,, "ahk_class PPTFrameClass ahk_exe POWERPNT.EXE"
+    }
+    ; 3. Absolute fallback to any active PPT process
+    else {
+        ControlSend Key,, "ahk_exe POWERPNT.EXE"
+    }
+}
 
 ; --- MUTE CONTROL ---
 Hotkey("~" ObsMuteHotkey, LaptopKeyboardMute)
