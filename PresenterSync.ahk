@@ -1,3 +1,4 @@
+; PresenterSync.ahk - Updated with dynamic shortcuts
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 ProcessSetPriority "High"
@@ -20,6 +21,12 @@ global SleekCorners := IniRead(ConfigFile, "Settings", "SleekCorners", 0)
 global AggressivePulse := IniRead(ConfigFile, "Settings", "AggressivePulse", 0)
 global OpacityLevel := IniRead(ConfigFile, "Settings", "OpacityLevel", 220)
 global FirstRun := IniRead(ConfigFile, "Settings", "FirstRun", 1)
+
+; --- NEW DYNAMIC HOTKEYS ---
+global PptHotkey := IniRead(ConfigFile, "Settings", "PptHotkey", "^F12")
+global WsHotkey := IniRead(ConfigFile, "Settings", "WsHotkey", "!F12")
+global IndHotkey := IniRead(ConfigFile, "Settings", "IndHotkey", "^+F12")
+global ExitHotkey := IniRead(ConfigFile, "Settings", "ExitHotkey", "!+F12")
 
 ; 1. First-run: Only ask for the Hotkey
 if (ObsMuteHotkey = "None") {
@@ -64,22 +71,26 @@ global iconMuted := "540808"
 
 ; --- SETUP GUIS ---
 PromptForHotkey() {
+    Suspend(True) 
+    
     hkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Setup")
     hkGui.OnEvent("Close", (*) => ExitApp()) 
     
     hkGui.Add("Text", "w250", "Press your OBS Mute shortcut:")
     hkCtrl := hkGui.Add("Hotkey", "w250")
-    btn := hkGui.Add("Button", "w250 Default y+15", "Save & Start")
+    btn := hkGui.Add("Button", "w250 Default y+15", "Save && Start")
     
     savedHk := ""
     btn.OnEvent("Click", SaveHk)
     
     SaveHk(*) {
         if (hkCtrl.Value = "") {
+            hkGui.Opt("+OwnDialogs") ; Forces the MsgBox to appear on top
             MsgBox("Please enter a shortcut.", "Setup", "Icon!")
             return
         }
         savedHk := hkCtrl.Value
+        Suspend(False) 
         hkGui.Destroy()
     }
     
@@ -113,6 +124,14 @@ PromptForPassword() {
     return savedPw
 }
 
+FormatHK(hk) {
+    str := StrReplace(hk, "+", "Shift + ")
+    str := StrReplace(str, "^", "Ctrl + ")
+    str := StrReplace(str, "!", "Alt + ")
+    str := StrReplace(str, "#", "Win + ")
+    return str
+}
+
 ShowHelpWindow(*) {
     helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Help")
     
@@ -120,10 +139,10 @@ ShowHelpWindow(*) {
     helpGui.Add("Text", "w300 Center", "PresenterSync Shortcuts")
     
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "w300 y+15", "Ctrl + F12 :  Toggle PowerPoint Controls")
-    helpGui.Add("Text", "w300 y+10", "Alt + F12 :  Toggle OBS WebSocket Sync")
-    helpGui.Add("Text", "w300 y+10", "Ctrl + Shift + F12 :  Hide/Unhide Indicator")
-    helpGui.Add("Text", "w300 y+10", "Alt + Shift + F12 :  Exit PresenterSync")
+    helpGui.Add("Text", "w300 y+15", FormatHK(PptHotkey) " :  Toggle PowerPoint Controls")
+    helpGui.Add("Text", "w300 y+10", FormatHK(WsHotkey) " :  Toggle OBS WebSocket Sync")
+    helpGui.Add("Text", "w300 y+10", FormatHK(IndHotkey) " :  Hide/Unhide Indicator")
+    helpGui.Add("Text", "w300 y+10", FormatHK(ExitHotkey) " :  Exit PresenterSync")
     
     helpGui.SetFont("s9 italic cGray")
     helpGui.Add("Text", "w300 y+20 Center", "You can view these at any time by right-clicking the system tray icon.")
@@ -132,6 +151,69 @@ ShowHelpWindow(*) {
     btn.OnEvent("Click", (*) => helpGui.Destroy())
     
     helpGui.Show("AutoSize")
+}
+
+ChangeAppHotkeysUI(*) {
+    Suspend(True) 
+
+    hkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit App Shortcuts")
+    hkGui.OnEvent("Close", (*) => Suspend(False)) 
+    
+    hkGui.Add("Text", "w150", "Toggle PowerPoint:")
+    pptCtrl := hkGui.Add("Hotkey", "x+10 w120", PptHotkey)
+    
+    hkGui.Add("Text", "xm w150", "Toggle OBS WebSocket:")
+    wsCtrl := hkGui.Add("Hotkey", "x+10 w120", WsHotkey)
+    
+    hkGui.Add("Text", "xm w150", "Toggle Indicator:")
+    indCtrl := hkGui.Add("Hotkey", "x+10 w120", IndHotkey)
+    
+    hkGui.Add("Text", "xm w150", "Exit PresenterSync:")
+    exitCtrl := hkGui.Add("Hotkey", "x+10 w120", ExitHotkey)
+    
+    btn := hkGui.Add("Button", "xm w280 Default y+15", "Save && Restart")
+    btn.OnEvent("Click", SaveAppHk)
+    
+    SaveAppHk(*) {
+        ; Check if any of the 4 inputs were cleared
+        if (pptCtrl.Value = "" || wsCtrl.Value = "" || indCtrl.Value = "" || exitCtrl.Value = "") {
+            hkGui.Opt("+OwnDialogs") ; Forces the MsgBox to appear on top
+            MsgBox("Shortcuts cannot be left blank.", "Error", "Icon!")
+            return
+        }
+        IniWrite(pptCtrl.Value, ConfigFile, "Settings", "PptHotkey")
+        IniWrite(wsCtrl.Value, ConfigFile, "Settings", "WsHotkey")
+        IniWrite(indCtrl.Value, ConfigFile, "Settings", "IndHotkey")
+        IniWrite(exitCtrl.Value, ConfigFile, "Settings", "ExitHotkey")
+        Reload() 
+    }
+    
+    hkGui.Show()
+}
+
+ChangeMuteHotkeyUI(*) {
+    Suspend(True) 
+    
+    hkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit Mute Shortcut")
+    hkGui.OnEvent("Close", (*) => Suspend(False)) 
+    
+    hkGui.Add("Text", "w250", "Press your new OBS Mute shortcut:")
+    hkCtrl := hkGui.Add("Hotkey", "w250", ObsMuteHotkey)
+    btn := hkGui.Add("Button", "w250 Default y+15", "Save && Restart")
+    
+    btn.OnEvent("Click", SaveMuteHk)
+    
+    SaveMuteHk(*) {
+        if (hkCtrl.Value = "") {
+            hkGui.Opt("+OwnDialogs") ; Forces the MsgBox to appear on top
+            MsgBox("Please enter a shortcut.", "Error", "Icon!")
+            return
+        }
+        IniWrite(hkCtrl.Value, ConfigFile, "Settings", "ObsHotkey")
+        Reload() 
+    }
+    
+    hkGui.Show()
 }
 
 ; --- CRYPTOGRAPHY ENGINE ---
@@ -267,6 +349,7 @@ if (EnableWS)
     A_TrayMenu.Check("Enable OBS WebSocket Sync")
 
 A_TrayMenu.Add() 
+
 ; MAIN UI TOGGLE
 A_TrayMenu.Add("Show Mute Indicator", ToggleIndicator)
 if (ShowIndicator)
@@ -302,15 +385,19 @@ else if (OpacityLevel == 127)
     OpacityMenu.Check("Ghost (50%)")
     
 AppearanceMenu.Add("Transparency Level", OpacityMenu)
-
 A_TrayMenu.Add("Indicator Appearance", AppearanceMenu)
 
 A_TrayMenu.Add() 
-; APP UTILITIES
-A_TrayMenu.Add("Help & Shortcuts", ShowHelpWindow)
-A_TrayMenu.Add()
-A_TrayMenu.Add("Change Mute Hotkey", ResetSettings)
-A_TrayMenu.Add("Reset Indicator Position", ResetTrayPosition)
+
+; SETTINGS SUBMENU
+SettingsMenu := Menu()
+SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI)
+SettingsMenu.Add("Change Mute Hotkey", ChangeMuteHotkeyUI) ; Now uses the dedicated, safe UI
+SettingsMenu.Add("Reset Indicator Position", ResetTrayPosition)
+
+A_TrayMenu.Add("Settings", SettingsMenu)
+A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow) ; Fixed the missing ampersand
+
 A_TrayMenu.Add() 
 A_TrayMenu.Add("Exit PresenterSync", ExitTrayApp)
 
@@ -478,10 +565,10 @@ if (ShowIndicator) {
 WinSetTransparent(currentAlpha, MicGui.Hwnd) 
 
 ; --- SYSTEM HOTKEYS ---
-^F12::TogglePPT()        ; Ctrl + F12 toggles PowerPoint Controls
-!F12::ToggleWS()         ; Alt + F12 toggles OBS WebSocket Sync
-^+F12::ToggleIndicator() ; Ctrl + Shift + F12 toggles the Mute Indicator
-!+F12::ExitApp()         ; Alt + Shift + F12 closes the app
+try Hotkey(PptHotkey, (*) => TogglePPT())
+try Hotkey(WsHotkey, (*) => ToggleWS())
+try Hotkey(IndHotkey, (*) => ToggleIndicator())
+try Hotkey(ExitHotkey, (*) => ExitTrayApp())
 
 RemoveToolTip() {
     ToolTip
