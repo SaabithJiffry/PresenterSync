@@ -1,0 +1,9 @@
+# Compiled AutoHotkey Executables
+*.exe
+*.bin
+
+# PresenterSync Configuration & Memory Files
+MicOverlay_Config.ini
+
+# AutoHotkey Backup/Temporary Files
+*.bak
