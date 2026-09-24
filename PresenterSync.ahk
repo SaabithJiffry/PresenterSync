@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 1.0.1
+; Version: 1.0.3
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
@@ -176,7 +176,7 @@ ShowAboutWindow(*) {
     aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
     
     aboutGui.SetFont("s10 w400")
-    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.1")
+    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.3")
     aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
     
     ; Two 110px buttons with 10px spacing = 230px total. Centered in 350px width (60px padding)
@@ -652,15 +652,15 @@ $b::TriggerMute()   ; Mute remains independent
 #HotIf
 
 SendToPPT(Key) {
-    ; 1. Try to target a running Presentation/Slide Show first
-    if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
-        ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
-    } 
-    ; 2. Fallback to the main PowerPoint editing window
-    else if WinExist("ahk_class PPTFrameClass ahk_exe POWERPNT.EXE") {
-        ControlSend Key,, "ahk_class PPTFrameClass ahk_exe POWERPNT.EXE"
+    ; 1. If Presenter View is open, it MUST receive the inputs to drive the show
+    if WinExist("PowerPoint Presenter View ahk_exe POWERPNT.EXE") {
+        ControlSend Key,, "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
     }
-    ; 3. Absolute fallback to any active PPT process
+    ; 2. Target the normal fullscreen Slide Show if Presenter View is closed
+    else if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
+        ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
+    }
+    ; 3. Absolute fallback to the generic background process
     else {
         ControlSend Key,, "ahk_exe POWERPNT.EXE"
     }
