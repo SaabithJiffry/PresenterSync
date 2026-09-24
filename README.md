@@ -28,9 +28,8 @@ Before connecting PresenterSync, you must enable the WebSocket server inside OBS
 You can run PresenterSync in two ways:
 
 ### Option A: The Ready-to-Run Executable (Recommended)
-If you don't want to install AutoHotkey or deal with code compilation, download the standalone `.exe` version of PresenterSync.
-👉 **[Get the Compiled `.exe` on Gumroad]** *(Link will be added later)* 
-*(Alternatively, download the latest release directly from the [GitHub Releases](https://github.com/SaabithJiffry/PresenterSync/releases) page.)*
+The ready-to-run `.exe` version (no AutoHotkey installation required) is currently being finalized. 
+👉 **[It will be available on Gumroad here shortly!](https://saabithjiffry.gumroad.com/l/presentersync)**
 
 ### Option B: Run from Source
 If you prefer to run the raw script or compile it yourself:
