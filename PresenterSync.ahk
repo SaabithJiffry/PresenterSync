@@ -35,6 +35,7 @@ global PptHotkey := IniRead(ConfigFile, "Settings", "PptHotkey", "^F12")
 global WsHotkey := IniRead(ConfigFile, "Settings", "WsHotkey", "!F12")
 global IndHotkey := IniRead(ConfigFile, "Settings", "IndHotkey", "^+F12")
 global ExitHotkey := IniRead(ConfigFile, "Settings", "ExitHotkey", "!+F12")
+global SuspendHotkey := IniRead(ConfigFile, "Settings", "SuspendHotkey", "^!+F12")
 
 ; 1. First-run: Only ask for the Hotkey
 if (ObsMuteHotkey = "None") {
@@ -150,6 +151,7 @@ ShowHelpWindow(*) {
     helpGui.Add("Text", "w300 y+15", FormatHK(PptHotkey) " :  Toggle PowerPoint Controls")
     helpGui.Add("Text", "w300 y+10", FormatHK(WsHotkey) " :  Toggle OBS WebSocket Sync")
     helpGui.Add("Text", "w300 y+10", FormatHK(IndHotkey) " :  Hide/Unhide Indicator")
+    helpGui.Add("Text", "w300 y+10", FormatHK(SuspendHotkey) " :  Suspend All Hotkeys")
     helpGui.Add("Text", "w300 y+10", FormatHK(ExitHotkey) " :  Exit PresenterSync")
     
     helpGui.SetFont("s9 italic cGray")
@@ -201,6 +203,9 @@ ChangeAppHotkeysUI(*) {
     
     hkGui.Add("Text", "xm w150", "Toggle Indicator:")
     indCtrl := hkGui.Add("Hotkey", "x+10 w120", IndHotkey)
+
+    hkGui.Add("Text", "xm w150", "Suspend Hotkeys:")
+    suspCtrl := hkGui.Add("Hotkey", "x+10 w120", SuspendHotkey)
     
     hkGui.Add("Text", "xm w150", "Exit PresenterSync:")
     exitCtrl := hkGui.Add("Hotkey", "x+10 w120", ExitHotkey)
@@ -218,6 +223,7 @@ ChangeAppHotkeysUI(*) {
         IniWrite(pptCtrl.Value, ConfigFile, "Settings", "PptHotkey")
         IniWrite(wsCtrl.Value, ConfigFile, "Settings", "WsHotkey")
         IniWrite(indCtrl.Value, ConfigFile, "Settings", "IndHotkey")
+        IniWrite(suspCtrl.Value, ConfigFile, "Settings", "SuspendHotkey")
         IniWrite(exitCtrl.Value, ConfigFile, "Settings", "ExitHotkey")
         Reload() 
     }
@@ -437,8 +443,20 @@ A_TrayMenu.Add("Settings", SettingsMenu)
 A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow) ; Fixed the missing ampersand
 A_TrayMenu.Add("About PresenterSync", ShowAboutWindow)
 
+A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
 A_TrayMenu.Add() 
 A_TrayMenu.Add("Exit PresenterSync", ExitTrayApp)
+
+ToggleSuspend(*) {
+    Suspend(-1) ; Toggles suspension state
+    if A_IsSuspended {
+        A_TrayMenu.Check("Suspend All Hotkeys")
+        TrayTip("PresenterSync", "All hotkeys suspended.", 1)
+    } else {
+        A_TrayMenu.Uncheck("Suspend All Hotkeys")
+        TrayTip("PresenterSync", "Hotkeys active.", 1)
+    }
+}
 
 TogglePPT(*) {
     global EnablePPT := !EnablePPT
@@ -543,7 +561,6 @@ ResetAppearance(*) {
     IniWrite(0, ConfigFile, "Settings", "ShowText")
     IniWrite(0, ConfigFile, "Settings", "MonoIcon")
     IniWrite(0, ConfigFile, "Settings", "SleekCorners")
-    IniWrite(0, ConfigFile, "Settings", "CircularShape")
     IniWrite(0, ConfigFile, "Settings", "AggressivePulse")
     IniWrite(220, ConfigFile, "Settings", "OpacityLevel")
     Reload() ; Instantly applies changes
@@ -617,6 +634,7 @@ WinSetTransparent(currentAlpha, MicGui.Hwnd)
 try Hotkey(PptHotkey, (*) => TogglePPT())
 try Hotkey(WsHotkey, (*) => ToggleWS())
 try Hotkey(IndHotkey, (*) => ToggleIndicator())
+try Hotkey(SuspendHotkey, (*) => ToggleSuspend())
 try Hotkey(ExitHotkey, (*) => ExitTrayApp())
 
 RemoveToolTip() {
@@ -630,11 +648,10 @@ $Up::ControlSend "{Up}",, "ahk_exe POWERPNT.EXE"
 $Tab::ControlSend "{Tab}",, "ahk_exe POWERPNT.EXE"
 $Esc::ControlSend "{Esc}",, "ahk_exe POWERPNT.EXE"
 $+F5::ControlSend "{Blind}{F5}",, "ahk_exe POWERPNT.EXE"
+$b::TriggerMute()   ; Moved inside the block!
 #HotIf
 
 ; --- MUTE CONTROL ---
-$b::TriggerMute()
-
 Hotkey("~" ObsMuteHotkey, LaptopKeyboardMute)
 LaptopKeyboardMute(ThisHotkey) {
     TriggerMute()
