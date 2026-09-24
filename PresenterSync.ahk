@@ -161,6 +161,31 @@ ShowHelpWindow(*) {
     helpGui.Show("AutoSize")
 }
 
+ShowAboutWindow(*) {
+    aboutGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "About PresenterSync")
+    
+    ; If compiled, pull the embedded icon from the .exe. Otherwise, use the local .ico file.
+    iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSync.ico"
+    
+    if FileExist(iconSource) {
+        aboutGui.Add("Picture", "x143 y15 w64 h64", iconSource)
+    }
+    
+    aboutGui.SetFont("s16 w700", "Segoe UI")
+    aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
+    
+    aboutGui.SetFont("s10 w400")
+    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.0")
+    aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
+    
+    aboutGui.Add("Link", "x10 w330 Center y+10", '<a href="https://github.com/SaabithJiffry/PresenterSync/">github.com/SaabithJiffry/PresenterSync</a>')
+    
+    btn := aboutGui.Add("Button", "w100 x125 y+20 Default", "Close")
+    btn.OnEvent("Click", (*) => aboutGui.Destroy())
+    
+    aboutGui.Show("AutoSize")
+}
+
 ChangeAppHotkeysUI(*) {
     Suspend(True) 
 
@@ -405,6 +430,7 @@ SettingsMenu.Add("Reset Indicator Position", ResetTrayPosition)
 
 A_TrayMenu.Add("Settings", SettingsMenu)
 A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow) ; Fixed the missing ampersand
+A_TrayMenu.Add("About PresenterSync", ShowAboutWindow)
 
 A_TrayMenu.Add() 
 A_TrayMenu.Add("Exit PresenterSync", ExitTrayApp)
