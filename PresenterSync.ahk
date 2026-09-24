@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 1.0.8
+; Version: 1.1.0
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
@@ -65,7 +65,6 @@ if (FirstRun) {
 ; --- RESTORED VARIABLES ---
 global obsWs := ""
 global obsConnected := false
-global targetMicName := "Mic/Aux" 
 
 global isMuted := IniRead(ConfigFile, "Settings", "IsMuted", 0)
 global baseAlpha := OpacityLevel     
@@ -177,7 +176,7 @@ ShowAboutWindow(*) {
     aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
     
     aboutGui.SetFont("s10 w400")
-    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.8")
+    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.1.0")
     aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
     
     ; Two 110px buttons with 10px spacing = 230px total. Centered in 350px width (60px padding)
@@ -728,7 +727,7 @@ SendToPPT(Key) {
     }
 }
 
-; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.0.8) ---
+; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.1.0) ---
 CheckPPTEnable(ThisHotkey) {
     global EnablePPT
     return EnablePPT
