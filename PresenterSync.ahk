@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 1.0.5
+; Version: 1.0.6
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
@@ -176,7 +176,7 @@ ShowAboutWindow(*) {
     aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
     
     aboutGui.SetFont("s10 w400")
-    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.5")
+    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.6")
     aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
     
     ; Two 110px buttons with 10px spacing = 230px total. Centered in 350px width (60px padding)
@@ -697,7 +697,7 @@ SendToPPT(Key) {
     }
 }
 
-; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.0.5) ---
+; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.0.6) ---
 CheckPPTEnable(ThisHotkey) {
     global EnablePPT
     return EnablePPT
@@ -711,14 +711,25 @@ HotIf
 
 ; --- MUTE CONTROL ---
 Hotkey("~" ObsMuteHotkey, LaptopKeyboardMute)
+
 LaptopKeyboardMute(ThisHotkey) {
-    TriggerMute()
+    global obsConnected, isMuted
+    
+    ; OBS natively receives this physical keystroke. Do NOT send it a second time.
+    ; Only update the UI manually if the WebSocket is turned off.
+    if (!obsConnected) {
+        SyncUIState(!isMuted)
+    }
 }
 
 TriggerMute() {
     global obsConnected, isMuted, ObsMuteHotkey
     
+    ; This is triggered by the presentation clicker, so we MUST send the command to OBS.
+    ; Temporarily drop the key delay to 0 so the synthetic modifiers fire instantly without lagging.
+    SetKeyDelay -1, -1
     ControlSend ObsMuteHotkey,, "ahk_exe obs64.exe"
+    SetKeyDelay 50, 50 ; Restore the 50ms delay for PowerPoint stability
     
     if (!obsConnected) {
         SyncUIState(!isMuted)
