@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 1.0.7
+; Version: 1.0.8
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
@@ -177,7 +177,7 @@ ShowAboutWindow(*) {
     aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
     
     aboutGui.SetFont("s10 w400")
-    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.7")
+    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.8")
     aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
     
     ; Two 110px buttons with 10px spacing = 230px total. Centered in 350px width (60px padding)
@@ -651,18 +651,22 @@ MicGui.BackColor := isMuted ? colorMuted : colorLive
 MicGui.MarginX := 0
 MicGui.MarginY := 0
 
+; Determine correct icon font based on Windows build number (Windows 11 = 22000+)
+osBuild := Integer(StrSplit(A_OSVersion, ".")[3])
+global IconFont := (osBuild >= 22000) ? "Segoe Fluent Icons" : "Segoe MDL2 Assets"
+
 activeIconColor := MonoIcon ? (isMuted ? iconMuted : iconLive) : "White"
 initialIcon := isMuted ? Chr(0xF781) : Chr(0xE720)
 initialText := isMuted ? "MUTED" : "LIVE"
 
 if (ShowText) {
     global IconText := MicGui.Add("Text", "x15 y0 w30 h40 Center +0x200 BackgroundTrans c" activeIconColor, initialIcon)
-    IconText.SetFont("s18", "Segoe Fluent Icons") 
+    IconText.SetFont("s18", IconFont) 
     global LabelText := MicGui.Add("Text", "x50 y0 w80 h40 Left +0x200 BackgroundTrans c" activeIconColor, initialText)
     LabelText.SetFont("s13 w700", "Segoe UI")
 } else {
     global IconText := MicGui.Add("Text", "x0 y0 w80 h40 Center +0x200 BackgroundTrans c" activeIconColor, initialIcon)
-    IconText.SetFont("s18", "Segoe Fluent Icons") 
+    IconText.SetFont("s18", IconFont) 
 }
 
 cornerStyle := SleekCorners ? 3 : 2
@@ -724,7 +728,7 @@ SendToPPT(Key) {
     }
 }
 
-; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.0.7) ---
+; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.0.8) ---
 CheckPPTEnable(ThisHotkey) {
     global EnablePPT
     return EnablePPT
