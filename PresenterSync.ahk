@@ -1,12 +1,11 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 1.0.4
+; Version: 1.0.5
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
 
-; PresenterSync.ahk - Updated with dynamic shortcuts
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 ProcessSetPriority "High"
@@ -36,6 +35,7 @@ global WsHotkey := IniRead(ConfigFile, "Settings", "WsHotkey", "!F12")
 global IndHotkey := IniRead(ConfigFile, "Settings", "IndHotkey", "^+F12")
 global ExitHotkey := IniRead(ConfigFile, "Settings", "ExitHotkey", "!+F12")
 global SuspendHotkey := IniRead(ConfigFile, "Settings", "SuspendHotkey", "^!+F12")
+global HwMuteHotkey := IniRead(ConfigFile, "Settings", "HwMuteHotkey", "b") ; Pointer Mute Button
 
 ; 1. First-run: Only ask for the Hotkey
 if (ObsMuteHotkey = "None") {
@@ -176,7 +176,7 @@ ShowAboutWindow(*) {
     aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
     
     aboutGui.SetFont("s10 w400")
-    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.4")
+    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.5")
     aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
     
     ; Two 110px buttons with 10px spacing = 230px total. Centered in 350px width (60px padding)
@@ -234,7 +234,7 @@ ChangeAppHotkeysUI(*) {
 ChangeMuteHotkeyUI(*) {
     Suspend(True) 
     
-    hkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit Mute Shortcut")
+    hkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit System Mute Shortcut")
     hkGui.OnEvent("Close", (*) => Suspend(False)) 
     
     hkGui.Add("Text", "w250", "Press your new OBS Mute shortcut:")
@@ -250,6 +250,31 @@ ChangeMuteHotkeyUI(*) {
             return
         }
         IniWrite(hkCtrl.Value, ConfigFile, "Settings", "ObsHotkey")
+        Reload() 
+    }
+    
+    hkGui.Show()
+}
+
+ChangeHwMuteHotkeyUI(*) {
+    Suspend(True) 
+    
+    hkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit Pointer Mute Button")
+    hkGui.OnEvent("Close", (*) => Suspend(False)) 
+    
+    hkGui.Add("Text", "w250", "Focus the box below and press the button on your presentation clicker:")
+    hkCtrl := hkGui.Add("Hotkey", "w250", HwMuteHotkey)
+    btn := hkGui.Add("Button", "w250 Default y+15", "Save && Restart")
+    
+    btn.OnEvent("Click", SaveHwMuteHk)
+    
+    SaveHwMuteHk(*) {
+        if (hkCtrl.Value = "") {
+            hkGui.Opt("+OwnDialogs")
+            MsgBox("Please press a button to register it.", "Error", "Icon!")
+            return
+        }
+        IniWrite(hkCtrl.Value, ConfigFile, "Settings", "HwMuteHotkey")
         Reload() 
     }
     
@@ -436,11 +461,12 @@ A_TrayMenu.Add()
 ; SETTINGS SUBMENU
 SettingsMenu := Menu()
 SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI)
-SettingsMenu.Add("Change Mute Hotkey", ChangeMuteHotkeyUI) ; Now uses the dedicated, safe UI
+SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI)
+SettingsMenu.Add("Change System Mute Shortcut", ChangeMuteHotkeyUI) 
 SettingsMenu.Add("Reset Indicator Position", ResetTrayPosition)
 
 A_TrayMenu.Add("Settings", SettingsMenu)
-A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow) ; Fixed the missing ampersand
+A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow) 
 A_TrayMenu.Add("About PresenterSync", ShowAboutWindow)
 
 A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
@@ -641,16 +667,19 @@ RemoveToolTip() {
     ToolTip
 }
 
-; --- POWERPOINT CONTROLS ---
+; --- POWERPOINT CONTROLS (OMNI-CATCH) ---
 #HotIf EnablePPT
 $Down::SendToPPT("{Down}")
 $Up::SendToPPT("{Up}")
 $PgDn::SendToPPT("{PgDn}")
 $PgUp::SendToPPT("{PgUp}")
+$Left::SendToPPT("{Left}")
+$Right::SendToPPT("{Right}")
+$Space::SendToPPT("{Space}")
+$Enter::SendToPPT("{Enter}")
 $Tab::SendToPPT("{Tab}")
 $Esc::SendToPPT("{Esc}")
 $+F5::SendToPPT("{Blind}{F5}")
-$b::TriggerMute()
 #HotIf
 
 SendToPPT(Key) {
@@ -667,6 +696,18 @@ SendToPPT(Key) {
         ControlSend Key,, "ahk_exe POWERPNT.EXE"
     }
 }
+
+; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.0.5) ---
+CheckPPTEnable(ThisHotkey) {
+    global EnablePPT
+    return EnablePPT
+}
+
+HotIf CheckPPTEnable
+if (HwMuteHotkey != "") {
+    try Hotkey(HwMuteHotkey, (*) => TriggerMute(), "On")
+}
+HotIf
 
 ; --- MUTE CONTROL ---
 Hotkey("~" ObsMuteHotkey, LaptopKeyboardMute)
