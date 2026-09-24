@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 1.0.3
+; Version: 1.0.4
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
@@ -176,7 +176,7 @@ ShowAboutWindow(*) {
     aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
     
     aboutGui.SetFont("s10 w400")
-    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.3")
+    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.0.4")
     aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
     
     ; Two 110px buttons with 10px spacing = 230px total. Centered in 350px width (60px padding)
@@ -645,10 +645,12 @@ RemoveToolTip() {
 #HotIf EnablePPT
 $Down::SendToPPT("{Down}")
 $Up::SendToPPT("{Up}")
+$PgDn::SendToPPT("{PgDn}")
+$PgUp::SendToPPT("{PgUp}")
 $Tab::SendToPPT("{Tab}")
 $Esc::SendToPPT("{Esc}")
 $+F5::SendToPPT("{Blind}{F5}")
-$b::TriggerMute()   ; Mute remains independent
+$b::TriggerMute()
 #HotIf
 
 SendToPPT(Key) {
