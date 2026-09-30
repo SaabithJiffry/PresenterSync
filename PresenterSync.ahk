@@ -755,10 +755,11 @@ LaptopKeyboardMute(ThisHotkey) {
 TriggerMute() {
     global obsConnected, isMuted, ObsMuteHotkey
     
-    ; This is triggered by the presentation clicker, so we MUST send the command to OBS.
-    ; Temporarily drop the key delay to 0 so the synthetic modifiers fire instantly without lagging.
-    SetKeyDelay -1, -1
-    ControlSend ObsMuteHotkey,, "ahk_exe obs64.exe"
+    formattedKey := RegExReplace(ObsMuteHotkey, "([a-zA-Z0-9]+)$", "{$1}")
+    
+    ; -1 = No delay between keys. 30 = Hold the key down for 30ms.
+    SetKeyDelay -1, 30
+    ControlSend formattedKey,, "ahk_exe obs64.exe"
     SetKeyDelay 50, 50 ; Restore the 50ms delay for PowerPoint stability
     
     if (!obsConnected) {
