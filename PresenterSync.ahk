@@ -31,6 +31,14 @@ global AggressivePulse := IniRead(ConfigFile, "Settings", "AggressivePulse", 0)
 global OpacityLevel := IniRead(ConfigFile, "Settings", "OpacityLevel", 220)
 global FirstRun := IniRead(ConfigFile, "Settings", "FirstRun", 1)
 
+; --- POINTER INTERCEPT SETTINGS ---
+global CatchArrows := IniRead(ConfigFile, "Pointer", "CatchArrows", 1)
+global CatchPg := IniRead(ConfigFile, "Pointer", "CatchPg", 1)
+global CatchSpace := IniRead(ConfigFile, "Pointer", "CatchSpace", 1)
+global CatchEnter := IniRead(ConfigFile, "Pointer", "CatchEnter", 1)
+global CatchTab := IniRead(ConfigFile, "Pointer", "CatchTab", 1)
+global CatchEsc := IniRead(ConfigFile, "Pointer", "CatchEsc", 1)
+
 ; --- NEW DYNAMIC HOTKEYS ---
 global PptHotkey := IniRead(ConfigFile, "Settings", "PptHotkey", "^F12")
 global WsHotkey := IniRead(ConfigFile, "Settings", "WsHotkey", "!F12")
@@ -282,6 +290,37 @@ ChangeHwMuteHotkeyUI(*) {
     hkGui.Show()
 }
 
+ConfigurePointerKeysUI(*) {
+    Suspend(True) 
+    
+    pkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Configure Pointer Intercepts")
+    pkGui.OnEvent("Close", (*) => Suspend(False)) 
+    
+    pkGui.Add("Text", "w250", "Select which keys to intercept in Full PPT Mode:")
+    
+    chkArrows := pkGui.Add("Checkbox", "w250 Checked" CatchArrows, "Arrow Keys (Up, Down, Left, Right)")
+    chkPg := pkGui.Add("Checkbox", "w250 Checked" CatchPg, "Page Keys (PgUp, PgDn)")
+    chkSpace := pkGui.Add("Checkbox", "w250 Checked" CatchSpace, "Spacebar")
+    chkEnter := pkGui.Add("Checkbox", "w250 Checked" CatchEnter, "Enter Key")
+    chkTab := pkGui.Add("Checkbox", "w250 Checked" CatchTab, "Tab Key")
+    chkEsc := pkGui.Add("Checkbox", "w250 Checked" CatchEsc, "Escape Key")
+    
+    btn := pkGui.Add("Button", "w250 Default y+15", "Save && Restart")
+    btn.OnEvent("Click", SavePointerKeys)
+    
+    SavePointerKeys(*) {
+        IniWrite(chkArrows.Value, ConfigFile, "Pointer", "CatchArrows")
+        IniWrite(chkPg.Value, ConfigFile, "Pointer", "CatchPg")
+        IniWrite(chkSpace.Value, ConfigFile, "Pointer", "CatchSpace")
+        IniWrite(chkEnter.Value, ConfigFile, "Pointer", "CatchEnter")
+        IniWrite(chkTab.Value, ConfigFile, "Pointer", "CatchTab")
+        IniWrite(chkEsc.Value, ConfigFile, "Pointer", "CatchEsc")
+        Reload() 
+    }
+    
+    pkGui.Show()
+}
+
 ChangeMicNameUI(*) {
     Suspend(True) 
     
@@ -491,6 +530,7 @@ A_TrayMenu.Add()
 ; SETTINGS SUBMENU
 SettingsMenu := Menu()
 SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI)
+SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI)
 SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI)
 SettingsMenu.Add("Change System Mute Shortcut", ChangeMuteHotkeyUI) 
 SettingsMenu.Add("Change OBS Audio Source Name", ChangeMicNameUI)
@@ -755,19 +795,33 @@ RemoveToolTip() {
 }
 
 ; --- POWERPOINT CONTROLS (OMNI-CATCH) ---
-#HotIf EnablePPT
+
+#HotIf EnablePPT && CatchArrows
 $Down::SendToPPT("{Down}")
 $Up::SendToPPT("{Up}")
-$PgDn::SendToPPT("{PgDn}")
-$PgUp::SendToPPT("{PgUp}")
 $Left::SendToPPT("{Left}")
 $Right::SendToPPT("{Right}")
+
+#HotIf EnablePPT && CatchPg
+$PgDn::SendToPPT("{PgDn}")
+$PgUp::SendToPPT("{PgUp}")
+
+#HotIf EnablePPT && CatchSpace
 $Space::SendToPPT("{Space}")
+
+#HotIf EnablePPT && CatchEnter
 $Enter::SendToPPT("{Enter}")
+
+#HotIf EnablePPT && CatchTab
 $Tab::SendToPPT("{Tab}")
+
+#HotIf EnablePPT && CatchEsc
 $Esc::SendToPPT("{Esc}")
-$+F5::SendToPPT("{Blind}{F5}")
-#HotIf
+
+#HotIf EnablePPT
+$+F5::SendToPPT("{Blind}{F5}") ; Always intercepted if PPT mode is active
+
+#HotIf ; Reset directive
 
 SendToPPT(Key) {
     ; 1. If Presenter View is open, it MUST receive the inputs to drive the show
