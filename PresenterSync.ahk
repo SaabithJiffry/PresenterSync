@@ -20,6 +20,7 @@ global obsPassword := IniRead(ConfigFile, "Settings", "ObsPassword", "")
 global targetMicName := IniRead(ConfigFile, "Settings", "TargetMicName", "Mic/Aux")
 
 global EnablePPT := IniRead(ConfigFile, "Settings", "EnablePPT", 0)
+global EnableMicOnly := IniRead(ConfigFile, "Settings", "EnableMicOnly", 0)
 global EnableWS := IniRead(ConfigFile, "Settings", "EnableWS", 0)
 
 global ShowIndicator := IniRead(ConfigFile, "Settings", "ShowIndicator", 1)
@@ -148,7 +149,7 @@ ShowHelpWindow(*) {
     helpGui.Add("Text", "w300 Center", "PresenterSync Shortcuts")
     
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "w300 y+15", FormatHK(PptHotkey) " :  Toggle PowerPoint Controls")
+    helpGui.Add("Text", "w300 y+15", FormatHK(PptHotkey) " :  Cycle Pointer Modes")
     helpGui.Add("Text", "w300 y+10", FormatHK(WsHotkey) " :  Toggle OBS WebSocket Sync")
     helpGui.Add("Text", "w300 y+10", FormatHK(IndHotkey) " :  Hide/Unhide Indicator")
     helpGui.Add("Text", "w300 y+10", FormatHK(SuspendHotkey) " :  Suspend All Hotkeys")
@@ -195,7 +196,7 @@ ChangeAppHotkeysUI(*) {
     hkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit App Shortcuts")
     hkGui.OnEvent("Close", (*) => Suspend(False)) 
     
-    hkGui.Add("Text", "w150", "Toggle PowerPoint:")
+    hkGui.Add("Text", "w150", "Cycle Pointer Mode:")
     pptCtrl := hkGui.Add("Hotkey", "x+10 w120", PptHotkey)
     
     hkGui.Add("Text", "xm w150", "Toggle OBS WebSocket:")
@@ -430,15 +431,19 @@ SyncUIState(obsIsMuted) {
 A_TrayMenu.Delete() 
 
 ; MODULE CONTROLS
-A_TrayMenu.Add("Enable PowerPoint Controls", TogglePPT)
+A_TrayMenu.Add("Enable Full Pointer Controls (PPT + Mute)", TogglePPT)
 if (EnablePPT)
-    A_TrayMenu.Check("Enable PowerPoint Controls")
+    A_TrayMenu.Check("Enable Full Pointer Controls (PPT + Mute)")
+
+A_TrayMenu.Add("Enable Pointer Mute Only", ToggleMicOnly)
+if (EnableMicOnly)
+    A_TrayMenu.Check("Enable Pointer Mute Only")
+
+A_TrayMenu.Add()
 
 A_TrayMenu.Add("Enable OBS WebSocket Sync", ToggleWS)
 if (EnableWS)
     A_TrayMenu.Check("Enable OBS WebSocket Sync")
-
-A_TrayMenu.Add() 
 
 ; MAIN UI TOGGLE
 A_TrayMenu.Add("Show Mute Indicator", ToggleIndicator)
@@ -511,17 +516,69 @@ ToggleSuspend(*) {
 }
 
 TogglePPT(*) {
-    global EnablePPT := !EnablePPT
-    IniWrite(EnablePPT ? 1 : 0, ConfigFile, "Settings", "EnablePPT")
+    global EnablePPT, EnableMicOnly, ConfigFile
+    EnablePPT := !EnablePPT
     
     if (EnablePPT) {
-        A_TrayMenu.Check("Enable PowerPoint Controls")
-        ToolTip "PowerPoint Controls: ON"
+        EnableMicOnly := 0
+        IniWrite(0, ConfigFile, "Settings", "EnableMicOnly")
+        A_TrayMenu.Uncheck("Enable Pointer Mute Only")
+        A_TrayMenu.Check("Enable Full Pointer Controls (PPT + Mute)")
+        ToolTip "Pointer Mode: Full PPT + Mute"
     } else {
-        A_TrayMenu.Uncheck("Enable PowerPoint Controls")
-        ToolTip "PowerPoint Controls: OFF"
+        A_TrayMenu.Uncheck("Enable Full Pointer Controls (PPT + Mute)")
+        ToolTip "Pointer Mode: OFF"
     }
+    IniWrite(EnablePPT ? 1 : 0, ConfigFile, "Settings", "EnablePPT")
     SetTimer RemoveToolTip, -2000 
+}
+
+ToggleMicOnly(*) {
+    global EnablePPT, EnableMicOnly, ConfigFile
+    EnableMicOnly := !EnableMicOnly
+    
+    if (EnableMicOnly) {
+        EnablePPT := 0
+        IniWrite(0, ConfigFile, "Settings", "EnablePPT")
+        A_TrayMenu.Uncheck("Enable Full Pointer Controls (PPT + Mute)")
+        A_TrayMenu.Check("Enable Pointer Mute Only")
+        ToolTip "Pointer Mode: Mute Only"
+    } else {
+        A_TrayMenu.Uncheck("Enable Pointer Mute Only")
+        ToolTip "Pointer Mode: OFF"
+    }
+    IniWrite(EnableMicOnly ? 1 : 0, ConfigFile, "Settings", "EnableMicOnly")
+    SetTimer RemoveToolTip, -2000 
+}
+
+CyclePointerMode(*) {
+    global EnablePPT, EnableMicOnly, ConfigFile
+    
+    if (EnablePPT) {
+        ; State 1 -> 2: Full PPT is ON, switch to Mic Only
+        EnablePPT := 0
+        EnableMicOnly := 1
+        IniWrite(0, ConfigFile, "Settings", "EnablePPT")
+        IniWrite(1, ConfigFile, "Settings", "EnableMicOnly")
+        A_TrayMenu.Uncheck("Enable Full Pointer Controls (PPT + Mute)")
+        A_TrayMenu.Check("Enable Pointer Mute Only")
+        ToolTip "Pointer Mode: Mute Only"
+    } 
+    else if (EnableMicOnly) {
+        ; State 2 -> 3: Mic Only is ON, switch to OFF
+        EnableMicOnly := 0
+        IniWrite(0, ConfigFile, "Settings", "EnableMicOnly")
+        A_TrayMenu.Uncheck("Enable Pointer Mute Only")
+        ToolTip "Pointer Mode: OFF"
+    } 
+    else {
+        ; State 3 -> 1: Both are OFF, switch to Full PPT
+        EnablePPT := 1
+        IniWrite(1, ConfigFile, "Settings", "EnablePPT")
+        A_TrayMenu.Check("Enable Full Pointer Controls (PPT + Mute)")
+        ToolTip "Pointer Mode: Full PPT + Mute"
+    }
+    SetTimer RemoveToolTip, -2000
 }
 
 ToggleWS(*) {
@@ -687,7 +744,7 @@ if (ShowIndicator) {
 WinSetTransparent(currentAlpha, MicGui.Hwnd) 
 
 ; --- SYSTEM HOTKEYS ---
-try Hotkey(PptHotkey, (*) => TogglePPT())
+try Hotkey(PptHotkey, (*) => CyclePointerMode())
 try Hotkey(WsHotkey, (*) => ToggleWS())
 try Hotkey(IndHotkey, (*) => ToggleIndicator())
 try Hotkey(SuspendHotkey, (*) => ToggleSuspend())
@@ -727,13 +784,13 @@ SendToPPT(Key) {
     }
 }
 
-; --- DYNAMIC HARDWARE MUTE TRIGGER (V1.1.0) ---
-CheckPPTEnable(ThisHotkey) {
-    global EnablePPT
-    return EnablePPT
+; --- DYNAMIC HARDWARE MUTE TRIGGER ---
+CheckPointerEnable(ThisHotkey) {
+    global EnablePPT, EnableMicOnly
+    return (EnablePPT || EnableMicOnly)
 }
 
-HotIf CheckPPTEnable
+HotIf CheckPointerEnable
 if (HwMuteHotkey != "") {
     try Hotkey(HwMuteHotkey, (*) => TriggerMute(), "On")
 }
