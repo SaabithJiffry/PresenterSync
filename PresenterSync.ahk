@@ -151,22 +151,51 @@ FormatHK(hk) {
 }
 
 ShowHelpWindow(*) {
-    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Help")
+    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Help & Guide")
+    helpGui.SetFont("s10 w400", "Segoe UI")
     
-    helpGui.SetFont("s12 w700", "Segoe UI")
-    helpGui.Add("Text", "w300 Center", "PresenterSync Shortcuts")
+    ; Create a tabbed interface (400px wide, 240px tall)
+    tabs := helpGui.Add("Tab3", "w420 h260", ["Shortcuts", "Pointer Modes", "OBS Sync", "Pro Tips"])
     
+    ; --- TAB 1: SHORTCUTS ---
+    tabs.UseTab(1)
+    helpGui.SetFont("s12 w700")
+    helpGui.Add("Text", "x25 y45", "Global Keyboard Shortcuts")
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "w300 y+15", FormatHK(PptHotkey) " :  Cycle Pointer Modes")
-    helpGui.Add("Text", "w300 y+10", FormatHK(WsHotkey) " :  Toggle OBS WebSocket Sync")
-    helpGui.Add("Text", "w300 y+10", FormatHK(IndHotkey) " :  Hide/Unhide Indicator")
-    helpGui.Add("Text", "w300 y+10", FormatHK(SuspendHotkey) " :  Suspend All Hotkeys")
-    helpGui.Add("Text", "w300 y+10", FormatHK(ExitHotkey) " :  Exit PresenterSync")
+    helpGui.Add("Text", "x25 y+15", FormatHK(PptHotkey) " :  Cycle Pointer Modes")
+    helpGui.Add("Text", "x25 y+10", FormatHK(WsHotkey) " :  Toggle OBS WebSocket Sync")
+    helpGui.Add("Text", "x25 y+10", FormatHK(IndHotkey) " :  Hide/Unhide Indicator")
+    helpGui.Add("Text", "x25 y+10", FormatHK(SuspendHotkey) " :  Suspend All Hotkeys")
+    helpGui.Add("Text", "x25 y+10", FormatHK(ExitHotkey) " :  Exit PresenterSync")
     
     helpGui.SetFont("s9 italic cGray")
-    helpGui.Add("Text", "w300 y+20 Center", "You can view these at any time by right-clicking the system tray icon.")
+    helpGui.Add("Text", "x25 y+15 w370", "Note: You can rebind these shortcuts in the Settings menu.")
     
-    btn := helpGui.Add("Button", "w100 x100 y+15 Default", "Got it!")
+    ; --- TAB 2: POINTER MODES ---
+    tabs.UseTab(2)
+    helpGui.SetFont("s12 w700")
+    helpGui.Add("Text", "x25 y45", "Hardware Pointer Controls")
+    helpGui.SetFont("s10 w400")
+    helpGui.Add("Text", "x25 y+10 w370", "1. Full PPT + Mute:`nRoutes your clicker to PowerPoint while still allowing the hardware mute button to trigger OBS.`n`n2. Pointer Mute Only:`nBypasses PowerPoint completely. Your clicker only controls the mute overlay.`n`n* If you need to type normally while presenting, go to Settings > 'Configure Pointer Intercepts' to disable specific keys (like Space or Enter).")
+
+    ; --- TAB 3: OBS SYNC ---
+    tabs.UseTab(3)
+    helpGui.SetFont("s12 w700")
+    helpGui.Add("Text", "x25 y45", "OBS WebSocket Sync")
+    helpGui.SetFont("s10 w400")
+    helpGui.Add("Text", "x25 y+10 w370", "PresenterSync uses OBS WebSocket v5 to talk directly to OBS Studio behind the scenes.`n`n• True 2-Way Sync: If you mute the mic inside OBS with your mouse, the PresenterSync overlay updates instantly to match.`n• Reliability: Clicker commands are sent instantly over the local network to prevent input drops.`n`nMake sure WebSocket is enabled in OBS (Tools > WebSocket Server Settings).")
+
+    ; --- TAB 4: PRO TIPS ---
+    tabs.UseTab(4)
+    helpGui.SetFont("s12 w700")
+    helpGui.Add("Text", "x25 y45", "Customizing the Overlay")
+    helpGui.SetFont("s10 w400")
+    helpGui.Add("Text", "x25 y+10 w370", "• Repositioning HUD: Hold down your Left Mouse Button on the indicator to drag it anywhere on your screen. Its exact coordinates are saved automatically for your next session.`n`n• Appearance: Right-click the system tray icon and explore 'Indicator Appearance' to add text labels, change opacity levels, or enable the aggressive pulse animation for high visibility.")
+
+    tabs.UseTab() ; End tab definitions
+    
+    ; Add the close button centered (x160) and explicitly placed below the Tab control (y280)
+    btn := helpGui.Add("Button", "w100 x160 y280 Default", "Got it!")
     btn.OnEvent("Click", (*) => helpGui.Destroy())
     
     helpGui.Show("AutoSize")
