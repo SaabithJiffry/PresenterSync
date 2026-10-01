@@ -740,7 +740,7 @@ ToggleWS(*) {
 }
 
 ToggleIndicator(*) {
-    global ShowIndicator, isMuted, AggressivePulse, baseWidth, posX, posY, MicGui
+    global ShowIndicator, isMuted, AggressivePulse, baseWidth, baseHeight, posX, posY, MicGui
     ShowIndicator := !ShowIndicator
     IniWrite(ShowIndicator ? 1 : 0, ConfigFile, "Settings", "ShowIndicator")
 
