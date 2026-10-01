@@ -641,6 +641,8 @@ ToggleSuspend(*) {
 
 TogglePPT(*) {
     global EnablePPT, EnableMicOnly, ConfigFile
+    ToolTip()
+
     EnablePPT := !EnablePPT
 
     if (EnablePPT) {
@@ -660,6 +662,8 @@ TogglePPT(*) {
 
 ToggleMicOnly(*) {
     global EnablePPT, EnableMicOnly, ConfigFile
+    ToolTip()
+
     EnableMicOnly := !EnableMicOnly
 
     if (EnableMicOnly) {
@@ -679,6 +683,7 @@ ToggleMicOnly(*) {
 
 CyclePointerMode(*) {
     global EnablePPT, EnableMicOnly, ConfigFile
+    ToolTip()
 
     if (EnablePPT) {
         ; State 1 -> 2: Full PPT is ON, switch to Mic Only
@@ -708,6 +713,8 @@ CyclePointerMode(*) {
 
 ToggleWS(*) {
     global EnableWS, obsWs, obsConnected, obsPassword, ConfigFile
+    ToolTip()
+
     EnableWS := !EnableWS
 
     if (EnableWS) {
