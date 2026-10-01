@@ -583,6 +583,7 @@ A_TrayMenu.Add()
 
 ; SETTINGS SUBMENU
 SettingsMenu := Menu()
+SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
 SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI)
 SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI)
 SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI)
@@ -1103,4 +1104,41 @@ WM_DPICHANGED(wParam, lParam, msg, hwnd) {
     newRight := NumGet(lParam, 8, "Int")
     newBottom := NumGet(lParam, 12, "Int")
     MicGui.Move(newLeft, newTop, newRight - newLeft, newBottom - newTop)
+}
+
+; --- POINTER TESTER ---
+ShowPointerTester(*) {
+    testerGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Pointer Tester")
+    
+    testerGui.SetFont("s10", "Segoe UI")
+    testerGui.Add("Text", "w250 Center", "Press any button on your clicker.")
+    
+    keyDisplay := testerGui.Add("Text", "w250 Center y+15", "Listening...")
+    keyDisplay.SetFont("s14 w700 c0055CC") ; Blue bold text
+    
+    btn := testerGui.Add("Button", "w100 x75 y+20 Default", "Close")
+    
+    ; Create an InputHook to capture raw keystrokes
+    ih := InputHook("L0 V") 
+    ih.KeyOpt("{All}", "N") ; Notify on all keys
+    
+    ih.OnKeyDown := (ih, VK, SC) => UpdateKeyDisplay(VK, SC)
+    
+    UpdateKeyDisplay(VK, SC) {
+        ; Convert the virtual key and scan code into a readable name
+        keyName := GetKeyName(Format("vk{:X}sc{:X}", VK, SC))
+        if WinExist(testerGui.Hwnd)
+            keyDisplay.Value := keyName
+    }
+    
+    Cleanup(*) {
+        ih.Stop()
+        testerGui.Destroy()
+    }
+    
+    testerGui.OnEvent("Close", Cleanup)
+    btn.OnEvent("Click", Cleanup)
+    
+    testerGui.Show("AutoSize")
+    ih.Start()
 }
