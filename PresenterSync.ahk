@@ -932,15 +932,15 @@ SendToPPT(Key) {
         return
     }
     
-    ; 1. If Presenter View is open
-    if WinExist("PowerPoint Presenter View ahk_exe POWERPNT.EXE") {
-        try ControlSend Key,, "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
-    }
-    ; 2. Target the normal fullscreen Slide Show
-    else if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
+    ; 1. Target the normal fullscreen Slide Show FIRST (Handles animations properly in background)
+    if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
         try ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
     }
-    ; 3. Target the generic background process
+    ; 2. Fallback to Presenter View if fullscreen isn't found
+    else if WinExist("PowerPoint Presenter View ahk_exe POWERPNT.EXE") {
+        try ControlSend Key,, "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
+    }
+    ; 3. Target the generic background process (Edit view)
     else if WinExist("ahk_exe POWERPNT.EXE") {
         try ControlSend Key,, "ahk_exe POWERPNT.EXE"
     }
