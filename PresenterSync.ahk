@@ -855,15 +855,15 @@ $+F5::SendToPPT("{Blind}{F5}") ; Always intercepted if PPT mode is active
 SendToPPT(Key) {
     ; 1. If Presenter View is open, it MUST receive the inputs to drive the show
     if WinExist("PowerPoint Presenter View ahk_exe POWERPNT.EXE") {
-        ControlSend Key,, "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
+        try ControlSend Key,, "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
     }
     ; 2. Target the normal fullscreen Slide Show if Presenter View is closed
     else if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
-        ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
+        try ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
     }
     ; 3. Absolute fallback to the generic background process
     else {
-        ControlSend Key,, "ahk_exe POWERPNT.EXE"
+        try ControlSend Key,, "ahk_exe POWERPNT.EXE"
     }
 }
 
@@ -895,11 +895,15 @@ LaptopKeyboardMute(ThisHotkey) {
 TriggerMute() {
     global obsConnected, isMuted, ObsMuteHotkey
     
+    ; If OBS isn't running, abort immediately so the indicator doesn't fake a state change
+    if !WinExist("ahk_exe obs64.exe") {
+        return
+    }
+    
     formattedKey := RegExReplace(ObsMuteHotkey, "([a-zA-Z0-9]+)$", "{$1}")
     
-    ; -1 = No delay between keys. 30 = Hold the key down for 30ms.
     SetKeyDelay -1, 30
-    ControlSend formattedKey,, "ahk_exe obs64.exe"
+    try ControlSend formattedKey,, "ahk_exe obs64.exe"
     SetKeyDelay 50, 50 ; Restore the 50ms delay for PowerPoint stability
     
     if (!obsConnected) {
