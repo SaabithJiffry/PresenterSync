@@ -15,29 +15,54 @@ SetKeyDelay 50, 50
 
 ; === CONFIGURATION & MEMORY ===
 global ConfigFile := A_ScriptDir "\MicOverlay_Config.ini"
+
+ReadIniBool(section, key, defaultValue := 0) {
+    value := IniRead(ConfigFile, section, key, defaultValue)
+
+    switch (StrLower(value)) {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off", "":
+            return false
+        default:
+            return !!Integer(value)
+    }
+}
+
+WriteIniBool(section, key, value) {
+    IniWrite(value ? 1 : 0, ConfigFile, section, key)
+}
+
+SetTrayCheck(itemText, enabled) {
+    if (enabled)
+        A_TrayMenu.Check(itemText)
+    else
+        A_TrayMenu.Uncheck(itemText)
+}
+
 global ObsMuteHotkey := IniRead(ConfigFile, "Settings", "ObsHotkey", "None")
 global obsPassword := IniRead(ConfigFile, "Settings", "ObsPassword", "")
 global targetMicName := IniRead(ConfigFile, "Settings", "TargetMicName", "Mic/Aux")
 
-global EnablePPT := IniRead(ConfigFile, "Settings", "EnablePPT", 0)
-global EnableMicOnly := IniRead(ConfigFile, "Settings", "EnableMicOnly", 0)
-global EnableWS := IniRead(ConfigFile, "Settings", "EnableWS", 0)
+global EnablePPT := ReadIniBool("Settings", "EnablePPT")
+global EnableMicOnly := ReadIniBool("Settings", "EnableMicOnly")
+global EnableWS := ReadIniBool("Settings", "EnableWS")
 
-global ShowIndicator := IniRead(ConfigFile, "Settings", "ShowIndicator", 1)
-global ShowText := IniRead(ConfigFile, "Settings", "ShowText", 0)
-global MonoIcon := IniRead(ConfigFile, "Settings", "MonoIcon", 0)
-global SleekCorners := IniRead(ConfigFile, "Settings", "SleekCorners", 0)
-global AggressivePulse := IniRead(ConfigFile, "Settings", "AggressivePulse", 0)
+global ShowIndicator := ReadIniBool("Settings", "ShowIndicator", true)
+global ShowText := ReadIniBool("Settings", "ShowText")
+global MonoIcon := ReadIniBool("Settings", "MonoIcon")
+global SleekCorners := ReadIniBool("Settings", "SleekCorners")
+global AggressivePulse := ReadIniBool("Settings", "AggressivePulse")
 global OpacityLevel := IniRead(ConfigFile, "Settings", "OpacityLevel", 220)
-global FirstRun := IniRead(ConfigFile, "Settings", "FirstRun", 1)
+global FirstRun := ReadIniBool("Settings", "FirstRun", true)
 
 ; --- POINTER INTERCEPT SETTINGS ---
-global CatchArrows := IniRead(ConfigFile, "Pointer", "CatchArrows", 1)
-global CatchPg := IniRead(ConfigFile, "Pointer", "CatchPg", 1)
-global CatchSpace := IniRead(ConfigFile, "Pointer", "CatchSpace", 1)
-global CatchEnter := IniRead(ConfigFile, "Pointer", "CatchEnter", 1)
-global CatchTab := IniRead(ConfigFile, "Pointer", "CatchTab", 1)
-global CatchEsc := IniRead(ConfigFile, "Pointer", "CatchEsc", 1)
+global CatchArrows := ReadIniBool("Pointer", "CatchArrows", true)
+global CatchPg := ReadIniBool("Pointer", "CatchPg", true)
+global CatchSpace := ReadIniBool("Pointer", "CatchSpace", true)
+global CatchEnter := ReadIniBool("Pointer", "CatchEnter", true)
+global CatchTab := ReadIniBool("Pointer", "CatchTab", true)
+global CatchEsc := ReadIniBool("Pointer", "CatchEsc", true)
 
 ; --- NEW DYNAMIC HOTKEYS ---
 global PptHotkey := IniRead(ConfigFile, "Settings", "PptHotkey", "^F12")
@@ -587,112 +612,115 @@ ToggleSuspend(*) {
 TogglePPT(*) {
     global EnablePPT, EnableMicOnly, ConfigFile
     EnablePPT := !EnablePPT
-    
+
     if (EnablePPT) {
-        EnableMicOnly := 0
-        IniWrite(0, ConfigFile, "Settings", "EnableMicOnly")
-        A_TrayMenu.Uncheck("Enable Pointer Mute Only")
-        A_TrayMenu.Check("Enable Full Pointer Controls (PPT + Mute)")
+        EnableMicOnly := false
+        WriteIniBool("Settings", "EnableMicOnly", false)
+        SetTrayCheck("Enable Pointer Mute Only", false)
+        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", true)
         ToolTip "Pointer Mode: Full PPT + Mute"
     } else {
-        A_TrayMenu.Uncheck("Enable Full Pointer Controls (PPT + Mute)")
+        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", false)
         ToolTip "Pointer Mode: OFF"
     }
-    IniWrite(EnablePPT ? 1 : 0, ConfigFile, "Settings", "EnablePPT")
-    SetTimer RemoveToolTip, -2000 
+
+    WriteIniBool("Settings", "EnablePPT", EnablePPT)
+    SetTimer RemoveToolTip, -2000
 }
 
 ToggleMicOnly(*) {
     global EnablePPT, EnableMicOnly, ConfigFile
     EnableMicOnly := !EnableMicOnly
-    
+
     if (EnableMicOnly) {
-        EnablePPT := 0
-        IniWrite(0, ConfigFile, "Settings", "EnablePPT")
-        A_TrayMenu.Uncheck("Enable Full Pointer Controls (PPT + Mute)")
-        A_TrayMenu.Check("Enable Pointer Mute Only")
+        EnablePPT := false
+        WriteIniBool("Settings", "EnablePPT", false)
+        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", false)
+        SetTrayCheck("Enable Pointer Mute Only", true)
         ToolTip "Pointer Mode: Mute Only"
     } else {
-        A_TrayMenu.Uncheck("Enable Pointer Mute Only")
+        SetTrayCheck("Enable Pointer Mute Only", false)
         ToolTip "Pointer Mode: OFF"
     }
-    IniWrite(EnableMicOnly ? 1 : 0, ConfigFile, "Settings", "EnableMicOnly")
-    SetTimer RemoveToolTip, -2000 
+
+    WriteIniBool("Settings", "EnableMicOnly", EnableMicOnly)
+    SetTimer RemoveToolTip, -2000
 }
 
 CyclePointerMode(*) {
     global EnablePPT, EnableMicOnly, ConfigFile
-    
+
     if (EnablePPT) {
         ; State 1 -> 2: Full PPT is ON, switch to Mic Only
-        EnablePPT := 0
-        EnableMicOnly := 1
-        IniWrite(0, ConfigFile, "Settings", "EnablePPT")
-        IniWrite(1, ConfigFile, "Settings", "EnableMicOnly")
-        A_TrayMenu.Uncheck("Enable Full Pointer Controls (PPT + Mute)")
-        A_TrayMenu.Check("Enable Pointer Mute Only")
+        EnablePPT := false
+        EnableMicOnly := true
+        WriteIniBool("Settings", "EnablePPT", false)
+        WriteIniBool("Settings", "EnableMicOnly", true)
+        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", false)
+        SetTrayCheck("Enable Pointer Mute Only", true)
         ToolTip "Pointer Mode: Mute Only"
-    } 
-    else if (EnableMicOnly) {
+    } else if (EnableMicOnly) {
         ; State 2 -> 3: Mic Only is ON, switch to OFF
-        EnableMicOnly := 0
-        IniWrite(0, ConfigFile, "Settings", "EnableMicOnly")
-        A_TrayMenu.Uncheck("Enable Pointer Mute Only")
+        EnableMicOnly := false
+        WriteIniBool("Settings", "EnableMicOnly", false)
+        SetTrayCheck("Enable Pointer Mute Only", false)
         ToolTip "Pointer Mode: OFF"
-    } 
-    else {
+    } else {
         ; State 3 -> 1: Both are OFF, switch to Full PPT
-        EnablePPT := 1
-        IniWrite(1, ConfigFile, "Settings", "EnablePPT")
-        A_TrayMenu.Check("Enable Full Pointer Controls (PPT + Mute)")
+        EnablePPT := true
+        WriteIniBool("Settings", "EnablePPT", true)
+        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", true)
         ToolTip "Pointer Mode: Full PPT + Mute"
     }
+
     SetTimer RemoveToolTip, -2000
 }
 
 ToggleWS(*) {
     global EnableWS, obsWs, obsConnected, obsPassword, ConfigFile
     EnableWS := !EnableWS
-    
+
     if (EnableWS) {
         if (obsPassword = "") {
             obsPassword := PromptForPassword()
             if (obsPassword = "") {
-                EnableWS := 0 
+                EnableWS := false
                 return
             }
             IniWrite(obsPassword, ConfigFile, "Settings", "ObsPassword")
         }
-        
-        IniWrite(1, ConfigFile, "Settings", "EnableWS")
-        A_TrayMenu.Check("Enable OBS WebSocket Sync")
+
+        WriteIniBool("Settings", "EnableWS", true)
+        SetTrayCheck("Enable OBS WebSocket Sync", true)
         ToolTip "WebSocket Sync: ON"
         SetTimer ConnectToOBS, -100
     } else {
-        IniWrite(0, ConfigFile, "Settings", "EnableWS")
-        A_TrayMenu.Uncheck("Enable OBS WebSocket Sync")
+        WriteIniBool("Settings", "EnableWS", false)
+        SetTrayCheck("Enable OBS WebSocket Sync", false)
         ToolTip "WebSocket Sync: OFF"
-        SetTimer ConnectToOBS, 0 
+        SetTimer ConnectToOBS, 0
         obsConnected := false
         if (obsWs) {
             obsWs.shutdown()
             obsWs := ""
         }
     }
+
     SetTimer RemoveToolTip, -2000
 }
 
 ToggleIndicator(*) {
-    global ShowIndicator := !ShowIndicator
-    global isMuted, AggressivePulse, baseWidth, posX, posY, MicGui
+    global ShowIndicator, isMuted, AggressivePulse, baseWidth, posX, posY, MicGui
+    ShowIndicator := !ShowIndicator
     IniWrite(ShowIndicator ? 1 : 0, ConfigFile, "Settings", "ShowIndicator")
+
     if (ShowIndicator) {
-        A_TrayMenu.Check("Show Mute Indicator")
+        SetTrayCheck("Show Mute Indicator", true)
         MicGui.Show("NoActivate w" baseWidth " h40 " posX " " posY)
         if (isMuted)
             SetTimer BreathingAnimation, (AggressivePulse ? 15 : 40)
     } else {
-        A_TrayMenu.Uncheck("Show Mute Indicator")
+        SetTrayCheck("Show Mute Indicator", false)
         MicGui.Hide()
         SetTimer BreathingAnimation, 0
     }
@@ -710,13 +738,11 @@ ToggleCorners(*) {
     Reload()
 }
 TogglePulse(*) {
-    global AggressivePulse := !AggressivePulse
+    global AggressivePulse, isMuted, breathDir
+    AggressivePulse := !AggressivePulse
     IniWrite(AggressivePulse ? 1 : 0, ConfigFile, "Settings", "AggressivePulse")
-    if (AggressivePulse)
-        A_TrayMenu.Check("Aggressive Mute Pulse")
-    else
-        A_TrayMenu.Uncheck("Aggressive Mute Pulse")
-    global isMuted, breathDir
+    SetTrayCheck("Aggressive Mute Pulse", AggressivePulse)
+
     if (isMuted) {
         breathDir := AggressivePulse ? -20 : -5
         SetTimer BreathingAnimation, (AggressivePulse ? 15 : 40)
