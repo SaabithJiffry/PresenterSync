@@ -926,13 +926,20 @@ $+F5::SendToPPT("{Blind}{F5}") ; Always intercepted if PPT mode is active
 
 SendToPPT(Key) {
     global EnablePPT
+    static LastSignal := 0 
     
     ; Failsafe: Abort if PPT mode is disabled
     if (!EnablePPT) {
         return
     }
     
-    ; 1. Target the normal fullscreen Slide Show FIRST (Handles animations properly in background)
+    ; Shield against dirty hardware clicker signals (150ms cooldown)
+    if (A_TickCount - LastSignal < 150) { 
+        return 
+    }
+    LastSignal := A_TickCount
+    
+    ; 1. Target the normal fullscreen Slide Show FIRST
     if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
         try ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
     }
