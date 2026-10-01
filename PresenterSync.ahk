@@ -54,6 +54,7 @@ global MonoIcon := ReadIniBool("Settings", "MonoIcon")
 global SleekCorners := ReadIniBool("Settings", "SleekCorners")
 global AggressivePulse := ReadIniBool("Settings", "AggressivePulse")
 global OpacityLevel := IniRead(ConfigFile, "Settings", "OpacityLevel", 220)
+global IndicatorScale := Float(IniRead(ConfigFile, "Settings", "IndicatorScale", 1.0))
 global FirstRun := ReadIniBool("Settings", "FirstRun", true)
 
 ; --- POINTER INTERCEPT SETTINGS ---
@@ -574,6 +575,34 @@ else if (OpacityLevel == 127)
     
 AppearanceMenu.Add("Transparency Level", OpacityMenu)
 
+ScaleMenu := Menu()
+ScaleMenu.Add("Tiny (x0.25)", (*) => SetScale(0.25))
+ScaleMenu.Add("Small (x0.5)", (*) => SetScale(0.5))
+ScaleMenu.Add("Normal (x1.0)", (*) => SetScale(1.0))
+ScaleMenu.Add("Large (x1.5)", (*) => SetScale(1.5))
+ScaleMenu.Add("Huge (x2.0)", (*) => SetScale(2.0))
+ScaleMenu.Add("Massive (x2.5)", (*) => SetScale(2.5))
+
+if (IndicatorScale == 0.25)
+    ScaleMenu.Check("Tiny (x0.25)")
+else if (IndicatorScale == 0.5)
+    ScaleMenu.Check("Small (x0.5)")
+else if (IndicatorScale == 1.0)
+    ScaleMenu.Check("Normal (x1.0)")
+else if (IndicatorScale == 1.5)
+    ScaleMenu.Check("Large (x1.5)")
+else if (IndicatorScale == 2.0)
+    ScaleMenu.Check("Huge (x2.0)")
+else if (IndicatorScale == 2.5)
+    ScaleMenu.Check("Massive (x2.5)")
+    
+AppearanceMenu.Add("Indicator Scale", ScaleMenu)
+
+SetScale(val) {
+    IniWrite(val, ConfigFile, "Settings", "IndicatorScale")
+    Reload()
+}
+
 AppearanceMenu.Add() 
 AppearanceMenu.Add("Restore Default Appearance", ResetAppearance)
 
@@ -717,7 +746,7 @@ ToggleIndicator(*) {
 
     if (ShowIndicator) {
         SetTrayCheck("Show Mute Indicator", true)
-        MicGui.Show("NoActivate w" baseWidth " h40 " posX " " posY)
+        MicGui.Show("NoActivate w" baseWidth " h" baseHeight " " posX " " posY)
         if (isMuted)
             SetTimer BreathingAnimation, (AggressivePulse ? 15 : 40)
     } else {
@@ -783,15 +812,19 @@ ExitTrayApp(*) {
     ExitApp()
 }
 
-; --- LOCATION MEMORY ---
+; --- LOCATION MEMORY & SCALE GEOMETRY ---
 savedX := IniRead(ConfigFile, "Position", "X", "Default")
 savedY := IniRead(ConfigFile, "Position", "Y", "Default")
-global baseWidth := ShowText ? 140 : 80
+
+global baseWidth := Round((ShowText ? 140 : 80) * IndicatorScale)
+global baseHeight := Round(40 * IndicatorScale)
+global iconSize := Max(1, Round(18 * IndicatorScale))
+global textSize := Max(1, Round(13 * IndicatorScale))
 
 if (savedX = "Default" || savedY = "Default") {
     MonitorGetWorkArea(1, &Left, &Top, &Right, &Bottom)
     savedX := Right - baseWidth - 20 
-    savedY := Bottom - 40 - 20 
+    savedY := Bottom - baseHeight - 20 
 }
 
 posX := "x" savedX
@@ -803,7 +836,6 @@ MicGui.BackColor := isMuted ? colorMuted : colorLive
 MicGui.MarginX := 0
 MicGui.MarginY := 0
 
-; Determine correct icon font based on Windows build number (Windows 11 = 22000+)
 osBuild := Integer(StrSplit(A_OSVersion, ".")[3])
 global IconFont := (osBuild >= 22000) ? "Segoe Fluent Icons" : "Segoe MDL2 Assets"
 
@@ -812,13 +844,18 @@ initialIcon := isMuted ? Chr(0xF781) : Chr(0xE720)
 initialText := isMuted ? "MUTED" : "LIVE"
 
 if (ShowText) {
-    global IconText := MicGui.Add("Text", "x15 y0 w30 h40 Center +0x200 BackgroundTrans c" activeIconColor, initialIcon)
-    IconText.SetFont("s18", IconFont) 
-    global LabelText := MicGui.Add("Text", "x50 y0 w80 h40 Left +0x200 BackgroundTrans c" activeIconColor, initialText)
-    LabelText.SetFont("s13 w700", "Segoe UI")
+    iconW := Round(30 * IndicatorScale)
+    iconX := Round(15 * IndicatorScale)
+    textW := Round(80 * IndicatorScale)
+    textX := Round(50 * IndicatorScale)
+
+    global IconText := MicGui.Add("Text", "x" iconX " y0 w" iconW " h" baseHeight " Center +0x200 BackgroundTrans c" activeIconColor, initialIcon)
+    IconText.SetFont("s" iconSize, IconFont) 
+    global LabelText := MicGui.Add("Text", "x" textX " y0 w" textW " h" baseHeight " Left +0x200 BackgroundTrans c" activeIconColor, initialText)
+    LabelText.SetFont("s" textSize " w700", "Segoe UI")
 } else {
-    global IconText := MicGui.Add("Text", "x0 y0 w80 h40 Center +0x200 BackgroundTrans c" activeIconColor, initialIcon)
-    IconText.SetFont("s18", IconFont) 
+    global IconText := MicGui.Add("Text", "x0 y0 w" baseWidth " h" baseHeight " Center +0x200 BackgroundTrans c" activeIconColor, initialIcon)
+    IconText.SetFont("s" iconSize, IconFont) 
 }
 
 cornerStyle := SleekCorners ? 3 : 2
@@ -831,13 +868,13 @@ NumPut("Int", 1, margins, 8), NumPut("Int", 1, margins, 12)
 DllCall("dwmapi\DwmExtendFrameIntoClientArea", "Ptr", MicGui.Hwnd, "Ptr", margins)
 
 if (ShowIndicator) {
-    MicGui.Show("NoActivate w" baseWidth " h40 " posX " " posY) 
+    MicGui.Show("NoActivate w" baseWidth " h" baseHeight " " posX " " posY) 
     if (isMuted)
         SetTimer BreathingAnimation, (AggressivePulse ? 15 : 40)
 } else {
     MicGui.Hide()
 }
-WinSetTransparent(currentAlpha, MicGui.Hwnd) 
+WinSetTransparent(currentAlpha, MicGui.Hwnd)
 
 ; --- SYSTEM HOTKEYS ---
 try Hotkey(PptHotkey, (*) => CyclePointerMode())
@@ -957,8 +994,8 @@ TriggerMute() {
 
 PlayMuteAnimation() {
     global isMuted, colorLive, colorMuted, borderLive, borderMuted
-    global iconLive, iconMuted, ShowText, MonoIcon, baseWidth, ShowIndicator
-    global currentAlpha, baseAlpha, IconText, MicGui, AggressivePulse, breathDir
+    global iconLive, iconMuted, ShowText, MonoIcon, baseWidth, baseHeight, ShowIndicator
+    global currentAlpha, baseAlpha, IconText, MicGui, AggressivePulse, breathDir, IndicatorScale
     
     if (ShowText) {
         global LabelText
@@ -984,25 +1021,30 @@ PlayMuteAnimation() {
     WinGetPos(&baseX, &baseY,,, MicGui.Hwnd)
     
     fadeStep := Round(baseAlpha / 10)
+    iconW := Round(30 * IndicatorScale)
+    iconX := Round(15 * IndicatorScale)
+    textW := Round(80 * IndicatorScale)
+    textX := Round(50 * IndicatorScale)
     
     Loop 10 {
         currentAlpha -= fadeStep
         if (currentAlpha < 0)
             currentAlpha := 0
         
-        widthIncrement := ShowText ? 1.5 : 1
+        widthIncrement := (ShowText ? 1.5 : 1) * IndicatorScale
+        heightIncrement := 0.5 * IndicatorScale
         popWidth := Round(baseWidth + (A_Index * widthIncrement))
-        popHeight := Round(40 + (A_Index * 0.5))
+        popHeight := Round(baseHeight + (A_Index * heightIncrement))
         offsetX := Round((popWidth - baseWidth) / 2) 
-        offsetY := Round((popHeight - 40) / 2)
+        offsetY := Round((popHeight - baseHeight) / 2)
         
         MicGui.Move(baseX - offsetX, baseY - offsetY, popWidth, popHeight)
         
         if (ShowText) {
-            IconText.Move(offsetX + 15, offsetY, 30, 40) 
-            LabelText.Move(offsetX + 50, offsetY, 80, 40)
+            IconText.Move(offsetX + iconX, offsetY, iconW, baseHeight) 
+            LabelText.Move(offsetX + textX, offsetY, textW, baseHeight)
         } else {
-            IconText.Move(offsetX, offsetY, 80, 40) 
+            IconText.Move(offsetX, offsetY, baseWidth, baseHeight) 
         }
         
         WinSetTransparent(currentAlpha, MicGui.Hwnd)
@@ -1028,19 +1070,20 @@ PlayMuteAnimation() {
         if (currentAlpha > baseAlpha)
             currentAlpha := baseAlpha
         
-        widthIncrement := ShowText ? 1.5 : 1
+        widthIncrement := (ShowText ? 1.5 : 1) * IndicatorScale
+        heightIncrement := 0.5 * IndicatorScale
         popWidth := Round((baseWidth + (10 * widthIncrement)) - (A_Index * widthIncrement))
-        popHeight := Round(45 - (A_Index * 0.5))
+        popHeight := Round((baseHeight + (10 * heightIncrement)) - (A_Index * heightIncrement))
         offsetX := Round((popWidth - baseWidth) / 2)
-        offsetY := Round((popHeight - 40) / 2)
+        offsetY := Round((popHeight - baseHeight) / 2)
         
         MicGui.Move(baseX - offsetX, baseY - offsetY, popWidth, popHeight)
         
         if (ShowText) {
-            IconText.Move(offsetX + 15, offsetY, 30, 40)
-            LabelText.Move(offsetX + 50, offsetY, 80, 40)
+            IconText.Move(offsetX + iconX, offsetY, iconW, baseHeight)
+            LabelText.Move(offsetX + textX, offsetY, textW, baseHeight)
         } else {
-            IconText.Move(offsetX, offsetY, 80, 40)
+            IconText.Move(offsetX, offsetY, baseWidth, baseHeight)
         }
         
         WinSetTransparent(currentAlpha, MicGui.Hwnd)
@@ -1048,13 +1091,13 @@ PlayMuteAnimation() {
     }
     
     currentAlpha := baseAlpha
-    MicGui.Move(baseX, baseY, baseWidth, 40)
+    MicGui.Move(baseX, baseY, baseWidth, baseHeight)
     
     if (ShowText) {
-        IconText.Move(15, 0, 30, 40) 
-        LabelText.Move(50, 0, 80, 40)
+        IconText.Move(iconX, 0, iconW, baseHeight) 
+        LabelText.Move(textX, 0, textW, baseHeight)
     } else {
-        IconText.Move(0, 0, 80, 40)
+        IconText.Move(0, 0, baseWidth, baseHeight)
     }
     
     WinSetTransparent(currentAlpha, MicGui.Hwnd)
