@@ -853,17 +853,28 @@ $+F5::SendToPPT("{Blind}{F5}") ; Always intercepted if PPT mode is active
 #HotIf ; Reset directive
 
 SendToPPT(Key) {
-    ; 1. If Presenter View is open, it MUST receive the inputs to drive the show
+    global EnablePPT
+    
+    ; Failsafe: Abort if PPT mode is disabled
+    if (!EnablePPT) {
+        return
+    }
+    
+    ; 1. If Presenter View is open
     if WinExist("PowerPoint Presenter View ahk_exe POWERPNT.EXE") {
         try ControlSend Key,, "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
     }
-    ; 2. Target the normal fullscreen Slide Show if Presenter View is closed
+    ; 2. Target the normal fullscreen Slide Show
     else if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
         try ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
     }
-    ; 3. Absolute fallback to the generic background process
-    else {
+    ; 3. Target the generic background process
+    else if WinExist("ahk_exe POWERPNT.EXE") {
         try ControlSend Key,, "ahk_exe POWERPNT.EXE"
+    }
+    ; 4. If PowerPoint is completely closed, play distinct error tone
+    else {
+        SoundPlay "*16"
     }
 }
 
@@ -893,10 +904,16 @@ LaptopKeyboardMute(ThisHotkey) {
 }
 
 TriggerMute() {
-    global obsConnected, isMuted, ObsMuteHotkey
+    global obsConnected, isMuted, ObsMuteHotkey, EnablePPT, EnableMicOnly
     
-    ; If OBS isn't running, abort immediately so the indicator doesn't fake a state change
+    ; Failsafe: Abort if hardware triggers are turned off
+    if !(EnablePPT || EnableMicOnly) {
+        return
+    }
+    
+    ; If OBS isn't running, play a distinct error tone and abort
     if !WinExist("ahk_exe obs64.exe") {
+        SoundPlay "*16"
         return
     }
     
@@ -904,7 +921,7 @@ TriggerMute() {
     
     SetKeyDelay -1, 30
     try ControlSend formattedKey,, "ahk_exe obs64.exe"
-    SetKeyDelay 50, 50 ; Restore the 50ms delay for PowerPoint stability
+    SetKeyDelay 50, 50 
     
     if (!obsConnected) {
         SyncUIState(!isMuted)
