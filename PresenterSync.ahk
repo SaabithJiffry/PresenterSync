@@ -797,6 +797,7 @@ ResetAppearance(*) {
     IniWrite(0, ConfigFile, "Settings", "SleekCorners")
     IniWrite(0, ConfigFile, "Settings", "AggressivePulse")
     IniWrite(220, ConfigFile, "Settings", "OpacityLevel")
+    IniWrite(1.0, ConfigFile, "Settings", "IndicatorScale")
     Reload() ; Instantly applies changes
 }
 ResetSettings(*) {
