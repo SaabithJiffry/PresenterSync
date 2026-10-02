@@ -56,3 +56,16 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🤝 Acknowledgments
 * WebSocket communication is powered by the [AutoHotkey-WebSocket](https://github.com/thqby/ahk2_lib) library by [thqby](https://github.com/thqby).
+
+
+## ⚠️️ Known Limitations
+
+**Background PowerPoint Animations (Windows GPU Throttling)**
+When PowerPoint is running in the background (e.g., when OBS or Zoom is your active, in-focus window), Windows aggressively throttles its DirectX rendering engine to conserve system resources. 
+
+Because of this hardcoded OS behavior, duration-based slide animations (like Fades, Wipes, or Morphs) may freeze or instantly snap to their final frame when triggered by PresenterSync. 
+
+* **The Good News:** Instantaneous animations (like standard "Appear" effects for bullet points or equations) are completely unaffected and display seamlessly.
+* **Stability:** Your slide progression and inputs remain 100% functionally stable; this is purely a visual rendering limitation imposed by Windows OS, not a dropped input.
+
+We are actively tracking this behavior and documenting advanced environmental workarounds. For further details, research, or to contribute to the discussion, please refer to [Issue #16](https://github.com/SaabithJiffry/PresenterSync/issues/16).
