@@ -259,31 +259,6 @@ SetTimer AppState.reconnectTimerFn, -100
 
 ; --- REMOTE NETWORKING ENGINE ---
 
-ParseCandidateEndpoints(rawStr, defaultPort := "4455") {
-    endpoints := []
-    seen := Map()
-    for item in StrSplit(rawStr, [",", ";"]) {
-        clean := Trim(item)
-        if (clean = "")
-            continue
-        clean := RegExReplace(clean, "^wss?://", "")
-        host := clean
-        port := defaultPort
-        if RegExMatch(clean, "^(.*?):(\d+)$", &m) {
-            host := m[1]
-            port := m[2]
-        }
-        key := host ":" port
-        if (!seen.Has(key)) {
-            seen[key] := true
-            endpoints.Push({host: host, port: port, raw: key})
-        }
-    }
-    if (endpoints.Length == 0)
-        endpoints.Push({host: "127.0.0.1", port: defaultPort, raw: "127.0.0.1:" defaultPort})
-    return endpoints
-}
-
 ConnectToRemoteOBS(cfg, state) {
     SetTimer state.reconnectTimerFn, 0
 
@@ -641,6 +616,7 @@ BuildRemoteTrayMenu(cfg, state) {
     A_TrayMenu.Add()
 
     ; 5. SAFETY & EXIT
+    A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI())
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
     if A_IsSuspended
         A_TrayMenu.Check("Suspend All Hotkeys")
@@ -741,24 +717,112 @@ ToggleRemoteSuspend(*) {
 ; --- SETTINGS DIALOGS ---
 
 ChangeRemotePointerKeyUI(cfg, state, *) {
-    SaveKey(values, ctrls, dlg) {
-        UnregisterRemotePointerHotkey(cfg)
-        cfg.HwMuteHotkey := values["hwMute"]
-        cfg.Write("Pointer", "HwMuteHotkey", cfg.HwMuteHotkey)
-        RegisterRemotePointerHotkey(cfg, state)
+    existing := Theme.FocusExistingWindow("Edit Pointer Mute Button")
+    if IsObject(existing)
+        return existing
+
+    Theme.AcquireSuspend()
+
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit Pointer Mute Button")
+    dlg._closed := false
+    Theme.ApplyToWindow(dlg)
+    Theme.NamedWindows["Edit Pointer Mute Button"] := dlg
+
+    dlg.SetFont("s10 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w280", "Presentation Clicker Mute Button"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w280 y+4", "Press the desired button on your clicker/pointer, or type a custom key name:"), "Text", "muted")
+
+    editKey := dlg.Add("Edit", "w280 y+12 Center", cfg.HwMuteHotkey)
+    editKey.SetFont("s12 w700", Theme.UiFont)
+    Theme.RegisterControl(dlg, editKey, "Edit", "accent")
+
+    statusTxt := dlg.Add("Text", "w280 y+6 Center", "Listening for clicker input...")
+    Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
+
+    btnSave := dlg.Add("Button", "w280 h32 y+12 Default", "Save & Apply")
+    Theme.RegisterControl(dlg, btnSave, "Button", "accent")
+
+    ih := InputHook("L0 V")
+    ih.KeyOpt("{All}", "N")
+    ih.OnKeyDown := (ihHook, VK, SC) => (
+        keyName := GetKeyName(Format("vk{:X}sc{:X}", VK, SC)),
+        editKey.Value := keyName,
+        statusTxt.Value := "Captured: " keyName
+    )
+    ih.Start()
+
+    Cleanup(*) {
+        if (dlg._closed)
+            return
+        dlg._closed := true
+        ih.Stop()
+        Theme.UnregisterWindow(dlg, "Edit Pointer Mute Button")
+        Theme.ReleaseSuspend()
         dlg.Destroy()
-        BuildRemoteTrayMenu(cfg, state)
     }
 
-    elements := [
-        {type: "Text", opts: "w260", text: "Focus the box below and press the button on your presentation clicker:"},
-        {type: "Hotkey", id: "hwMute", opts: "w260", value: cfg.HwMuteHotkey, required: true, errorMsg: "Please press a button to register it."}
-    ]
+    btnSave.OnEvent("Click", (*) => (
+        val := Trim(editKey.Value),
+        (val != "" ? (
+            UnregisterRemotePointerHotkey(cfg),
+            cfg.HwMuteHotkey := val,
+            cfg.Write("Pointer", "HwMuteHotkey", val),
+            RegisterRemotePointerHotkey(cfg, state),
+            Cleanup(),
+            BuildRemoteTrayMenu(cfg, state),
+            TrayTip("Pointer Mute", "Mute button registered: " val, 1)
+        ) : MsgBox("Please press a button to register it.", "Error", "Icon!"))
+    ))
 
-    BuildSettingsWindow("Edit Pointer Mute Button", elements, SaveKey, {
-        saveBtnText: "Save & Apply",
-        saveBtnOpts: "w260 h32 Default y+15"
-    })
+    dlg.OnEvent("Close", Cleanup)
+    dlg.OnEvent("Escape", Cleanup)
+
+    dlg.Show("AutoSize Center")
+    return dlg
+}
+
+ShowRemoteAboutUI(*) {
+    existing := Theme.FocusExistingWindow("AboutRemoteWindow")
+    if IsObject(existing)
+        return existing
+
+    aboutGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "About PresenterSync Remote")
+    Theme.ApplyToWindow(aboutGui)
+    Theme.NamedWindows["AboutRemoteWindow"] := aboutGui
+
+    iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSync.ico"
+    if FileExist(iconSource)
+        aboutGui.Add("Picture", "x158 y15 w64 h64", iconSource)
+
+    aboutGui.SetFont("s16 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "PresenterSync Remote"), "Text")
+
+    aboutGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+4", "Version " UIConstants.APP_VERSION), "Text", "accent")
+
+    aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 w340 Center y+8", "Smart Board & Secondary Presenter Mute Companion for OBS Studio"), "Text", "muted")
+
+    aboutGui.SetFont("s10 w400 norm", Theme.UiFont)
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "Created by Saabith Jiffry"), "Text")
+
+    gitBtn := aboutGui.Add("Button", "w120 x50 y+20 h32", "GitHub Repo")
+    Theme.RegisterControl(aboutGui, gitBtn, "Button")
+    gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
+
+    closeBtn := aboutGui.Add("Button", "w120 x+20 h32 Default", "Close")
+    Theme.RegisterControl(aboutGui, closeBtn, "Button")
+    CloseAbout(*) {
+        Theme.UnregisterWindow(aboutGui, "AboutRemoteWindow")
+        aboutGui.Destroy()
+    }
+    closeBtn.OnEvent("Click", CloseAbout)
+    aboutGui.OnEvent("Close", CloseAbout)
+    aboutGui.OnEvent("Escape", CloseAbout)
+
+    aboutGui.Show("AutoSize Center")
+    return aboutGui
 }
 
 ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
@@ -844,45 +908,61 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
 }
 
 TestConnectionAction(hostStr, portStr, pwStr, statusLabel) {
-    statusLabel.Value := "Testing connection..."
     endpoints := ParseCandidateEndpoints(hostStr, portStr)
     if (endpoints.Length == 0) {
         statusLabel.Value := "Error: No valid host address provided."
         return
     }
 
+    currentIndex := 1
     testWs := ""
     testSuccess := false
-    target := endpoints[1]
 
-    OnTestMsg(ws, raw) {
-        msg := (Type(raw) == "Buffer") ? StrGet(raw, "UTF-8") : String(raw)
-        if RegExMatch(msg, '"op"\s*:\s*0') {
-            authStr := ""
-            if (RegExMatch(msg, '"salt"\s*:\s*"([^"]+)"', &mSalt) && RegExMatch(msg, '"challenge"\s*:\s*"([^"]+)"', &mChal)) {
-                secret := HashSHA256_Base64(pwStr . mSalt[1])
-                authResponse := HashSHA256_Base64(secret . mChal[1])
-                authStr := ',"authentication":"' authResponse '"'
+    TryNextCandidate() {
+        if (testSuccess)
+            return
+        if (currentIndex > endpoints.Length) {
+            statusLabel.Value := "✕ All " endpoints.Length " candidate(s) unreachable (Check IP, Port & Firewall)"
+            return
+        }
+
+        target := endpoints[currentIndex]
+        statusLabel.Value := "Testing " target.raw " (" currentIndex "/" endpoints.Length ")..."
+
+        OnTestMsg(ws, raw) {
+            msg := (Type(raw) == "Buffer") ? StrGet(raw, "UTF-8") : String(raw)
+            if RegExMatch(msg, '"op"\s*:\s*0') {
+                authStr := ""
+                if (RegExMatch(msg, '"salt"\s*:\s*"([^"]+)"', &mSalt) && RegExMatch(msg, '"challenge"\s*:\s*"([^"]+)"', &mChal)) {
+                    secret := HashSHA256_Base64(pwStr . mSalt[1])
+                    authResponse := HashSHA256_Base64(secret . mChal[1])
+                    authStr := ',"authentication":"' authResponse '"'
+                }
+                ws.sendText('{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":0' authStr '}}')
+            } else if RegExMatch(msg, '"op"\s*:\s*2') {
+                testSuccess := true
+                statusLabel.Value := "✓ Connected to " target.raw " (" currentIndex "/" endpoints.Length ")!"
+                try ws.shutdown()
             }
-            ws.sendText('{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":0' authStr '}}')
-        } else if RegExMatch(msg, '"op"\s*:\s*2') {
-            testSuccess := true
-            statusLabel.Value := "✓ Successfully connected to " target.raw "!"
-            try ws.shutdown()
+        }
+
+        OnTestClose(ws, st, re) {
+            if (!testSuccess) {
+                currentIndex += 1
+                TryNextCandidate()
+            }
+        }
+
+        try {
+            testWs := WebSocket("ws://" target.host ":" target.port, {
+                message: OnTestMsg,
+                close: OnTestClose
+            }, true, "", 2000)
+        } catch {
+            currentIndex += 1
+            TryNextCandidate()
         }
     }
 
-    OnTestClose(ws, st, re) {
-        if (!testSuccess)
-            statusLabel.Value := "✕ Connection failed to " target.raw " (Check IP, Port & Firewall)"
-    }
-
-    try {
-        testWs := WebSocket("ws://" target.host ":" target.port, {
-            message: OnTestMsg,
-            close: OnTestClose
-        }, true, "", 2500)
-    } catch {
-        statusLabel.Value := "✕ Host unreachable (Ensure primary device is online & port 4455 is open)"
-    }
+    TryNextCandidate()
 }

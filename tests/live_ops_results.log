@@ -1,0 +1,48 @@
+=== LIVE OPS TEST RESULTS ===
+Total: 13 | Passed: 13 | Failed: 0
+
+[PASS] Op 0 Hello received and Identify sent
+[PASS] Identify payload contains auth signature
+[PASS] Identify payload requests eventSubscriptions:2047
+[PASS] Op 2 Identified triggers InitRemoteMute request
+[PASS] Request targets configured microphone
+[PASS] Op 7 updates state to LIVE (inputMuted: false)
+[PASS] Op 5 updates state to MUTED (inputMuted: true)
+[PASS] Clicker press 1 succeeds
+[PASS] Clicker bounce 2 blocked (< 150ms)
+[PASS] Clicker bounce 3 blocked (< 150ms)
+[PASS] Clicker press 4 succeeds (>= 150ms)
+[PASS] Exactly 2 ToggleInputMute requests dispatched
+[PASS] Dispatched request is ToggleInputMute
+=== LIVE OPS TEST RESULTS ===
+Total: 13 | Passed: 13 | Failed: 0
+
+[PASS] Op 0 Hello received and Identify sent
+[PASS] Identify payload contains auth signature
+[PASS] Identify payload requests eventSubscriptions:2047
+[PASS] Op 2 Identified triggers InitRemoteMute request
+[PASS] Request targets configured microphone
+[PASS] Op 7 updates state to LIVE (inputMuted: false)
+[PASS] Op 5 updates state to MUTED (inputMuted: true)
+[PASS] Clicker press 1 succeeds
+[PASS] Clicker bounce 2 blocked (< 150ms)
+[PASS] Clicker bounce 3 blocked (< 150ms)
+[PASS] Clicker press 4 succeeds (>= 150ms)
+[PASS] Exactly 2 ToggleInputMute requests dispatched
+[PASS] Dispatched request is ToggleInputMute
+=== LIVE OPS TEST RESULTS ===
+Total: 13 | Passed: 13 | Failed: 0
+
+[PASS] Op 0 Hello received and Identify sent
+[PASS] Identify payload contains auth signature
+[PASS] Identify payload requests eventSubscriptions:2047
+[PASS] Op 2 Identified triggers InitRemoteMute request
+[PASS] Request targets configured microphone
+[PASS] Op 7 updates state to LIVE (inputMuted: false)
+[PASS] Op 5 updates state to MUTED (inputMuted: true)
+[PASS] Clicker press 1 succeeds
+[PASS] Clicker bounce 2 blocked (< 150ms)
+[PASS] Clicker bounce 3 blocked (< 150ms)
+[PASS] Clicker press 4 succeeds (>= 150ms)
+[PASS] Exactly 2 ToggleInputMute requests dispatched
+[PASS] Dispatched request is ToggleInputMute

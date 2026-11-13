@@ -15,6 +15,10 @@ FormatSendKey(hk) {
     return hk
 }
 
+FormatPassthroughHook(hk) {
+    return "~$" RegExReplace(hk, "^[~*$]+")
+}
+
 ConnectToOBS(cfg, state) {
     SetTimer state.obsTimerFn, 0
     if (!cfg.EnableWS || state.obsConnected)
