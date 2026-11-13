@@ -306,11 +306,10 @@ class Theme {
             role := ctrl._themeRole
 
         if (ctrlType = "Button") {
-            style := DllCall("GetWindowLong", "Ptr", ctrl.Hwnd, "Int", -16, "Int")
-            DllCall("SetWindowLong", "Ptr", ctrl.Hwnd, "Int", -16, "Int", style | 0x04000000) ; WS_CLIPSIBLINGS
-            DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", "", "Str", "")
+            DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.btnSubclassPtr, "Ptr", 4, "Ptr", 0)
-            DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
+            if DllCall("IsWindowVisible", "Ptr", ctrl.Hwnd)
+                DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Checkbox") {
             ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_BG " c" UIConstants.LIGHT_TEXT))
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
@@ -585,15 +584,12 @@ ButtonFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         return 0
     }
 
+    res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
     if (uMsg == 0x0007 || uMsg == 0x0008 || uMsg == 0x000A || uMsg == 0x00F3 || uMsg == 0x00F4) {
-        SendMessage(0x000B, 0, 0, hwnd) ; WM_SETREDRAW = FALSE
-        res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
-        SendMessage(0x000B, 1, 0, hwnd) ; WM_SETREDRAW = TRUE
-        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
-        return res
+        if DllCall("IsWindowVisible", "Ptr", hwnd)
+            DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
     }
-
-    return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+    return res
 }
 
 HotkeyFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
@@ -686,12 +682,18 @@ TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
             NumPut("UInt", 0x00000002, tme, 4) ; TME_LEAVE
             NumPut("Ptr", hwnd, tme, 8)
             DllCall("TrackMouseEvent", "Ptr", tme)
-            DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
+            hdrRc := Buffer(16, 0)
+            DllCall("GetClientRect", "Ptr", hwnd, "Ptr", hdrRc)
+            NumPut("Int", Round(46 * (A_ScreenDPI / 96.0)), hdrRc, 12)
+            DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", hdrRc, "Int", 0)
         }
     } else if (uMsg == 0x02A3) { ; WM_MOUSELEAVE
         if (Theme.TabHoverMap.Get(hwnd, -1) != -1) {
             Theme.TabHoverMap[hwnd] := -1
-            DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
+            hdrRc := Buffer(16, 0)
+            DllCall("GetClientRect", "Ptr", hwnd, "Ptr", hdrRc)
+            NumPut("Int", Round(46 * (A_ScreenDPI / 96.0)), hdrRc, 12)
+            DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", hdrRc, "Int", 0)
         }
     }
 
@@ -1695,23 +1697,23 @@ ChangeAppHotkeysUI(cfg, *) {
     }
 
     elements := [
-        {type: "Text", opts: "w150", text: "Cycle Pointer Mode:"},
-        {type: "Hotkey", id: "ppt", opts: "x+10 w120", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
-        {type: "Text", opts: "xm w150", text: "Toggle OBS WebSocket:"},
-        {type: "Hotkey", id: "ws", opts: "x+10 w120", value: cfg.WsHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
-        {type: "Text", opts: "xm w150", text: "Toggle Zoom Monitor:"},
-        {type: "Hotkey", id: "zoom", opts: "x+10 w120", value: cfg.ZoomHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
-        {type: "Text", opts: "xm w150", text: "Toggle Indicator:"},
-        {type: "Hotkey", id: "ind", opts: "x+10 w120", value: cfg.IndHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
-        {type: "Text", opts: "xm w150", text: "Suspend Hotkeys:"},
-        {type: "Hotkey", id: "susp", opts: "x+10 w120", value: cfg.SuspendHotkey},
-        {type: "Text", opts: "xm w150", text: "Exit PresenterSync:"},
-        {type: "Hotkey", id: "exit", opts: "x+10 w120", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."}
+        {type: "Text", opts: "xm w160 h25 +0x200", text: "Cycle Pointer Mode:"},
+        {type: "Hotkey", id: "ppt", opts: "x+10 yp w130 h25", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle OBS WebSocket:"},
+        {type: "Hotkey", id: "ws", opts: "x+10 yp w130 h25", value: cfg.WsHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle Zoom Monitor:"},
+        {type: "Hotkey", id: "zoom", opts: "x+10 yp w130 h25", value: cfg.ZoomHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle Indicator:"},
+        {type: "Hotkey", id: "ind", opts: "x+10 yp w130 h25", value: cfg.IndHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Suspend Hotkeys:"},
+        {type: "Hotkey", id: "susp", opts: "x+10 yp w130 h25", value: cfg.SuspendHotkey},
+        {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Exit PresenterSync:"},
+        {type: "Hotkey", id: "exit", opts: "x+10 yp w130 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."}
     ]
 
-    BuildSettingsWindow("Edit App Shortcuts", elements, SaveAppHk, {
+    return BuildSettingsWindow("Edit App Shortcuts", elements, SaveAppHk, {
         saveBtnText: "Save && Restart",
-        saveBtnOpts: "xm w280 h32 Default y+15"
+        saveBtnOpts: "xm w300 h32 Default y+16"
     })
 }
 
@@ -1724,17 +1726,17 @@ ChangeZoomShortcutsUI(cfg, *) {
     }
 
     elements := [
-        {type: "Text", opts: "w280", text: "Zoom Mute Shortcut (Default Alt+A):"},
-        {type: "Hotkey", id: "mute", opts: "w280", value: cfg.ZoomMuteHotkey, required: true, errorMsg: "Zoom Mute shortcut cannot be empty."},
-        {type: "Text", opts: "w280 y+10", text: "Start/Stop Recording Shortcut (Default Alt+R):"},
-        {type: "Hotkey", id: "rec", opts: "w280", value: cfg.ZoomRecHotkey},
-        {type: "Text", opts: "w280 y+10", text: "Pause/Resume Recording Shortcut (Default Alt+P):"},
-        {type: "Hotkey", id: "pause", opts: "w280", value: cfg.ZoomPauseHotkey}
+        {type: "Text", opts: "w300", text: "Zoom Mute Shortcut (Default Alt+A):"},
+        {type: "Hotkey", id: "mute", opts: "w300", value: cfg.ZoomMuteHotkey, required: true, errorMsg: "Zoom Mute shortcut cannot be empty."},
+        {type: "Text", opts: "w300 y+10", text: "Start/Stop Recording Shortcut (Default Alt+R):"},
+        {type: "Hotkey", id: "rec", opts: "w300", value: cfg.ZoomRecHotkey},
+        {type: "Text", opts: "w300 y+10", text: "Pause/Resume Recording Shortcut (Default Alt+P):"},
+        {type: "Hotkey", id: "pause", opts: "w300", value: cfg.ZoomPauseHotkey}
     ]
 
-    BuildSettingsWindow("Edit Zoom Shortcuts", elements, SaveZoomHk, {
+    return BuildSettingsWindow("Edit Zoom Shortcuts", elements, SaveZoomHk, {
         saveBtnText: "Save && Restart",
-        saveBtnOpts: "w280 h32 Default y+15"
+        saveBtnOpts: "w300 h32 Default y+15"
     })
 }
 
@@ -1769,7 +1771,7 @@ ChangeObsSettingsUI(cfg, *) {
         {type: "Edit", id: "pw", opts: "w280 Password", value: cfg.obsPassword}
     ]
 
-    BuildSettingsWindow("OBS Settings", elements, SaveObsSettings, {
+    return BuildSettingsWindow("OBS Settings", elements, SaveObsSettings, {
         saveBtnText: "Save && Restart",
         saveBtnOpts: "w280 h32 Default y+15"
     })
@@ -1782,13 +1784,13 @@ ChangeHwMuteHotkeyUI(cfg, *) {
     }
 
     elements := [
-        {type: "Text", opts: "w250", text: "Focus the box below and press the button on your presentation clicker:"},
-        {type: "Hotkey", id: "hwMute", opts: "w250", value: cfg.HwMuteHotkey, required: true, errorMsg: "Please press a button to register it."}
+        {type: "Text", opts: "w260", text: "Focus the box below and press the button on your presentation clicker:"},
+        {type: "Hotkey", id: "hwMute", opts: "w260", value: cfg.HwMuteHotkey, required: true, errorMsg: "Please press a button to register it."}
     ]
 
-    BuildSettingsWindow("Edit Pointer Mute Button", elements, SaveHwMuteHk, {
+    return BuildSettingsWindow("Edit Pointer Mute Button", elements, SaveHwMuteHk, {
         saveBtnText: "Save && Restart",
-        saveBtnOpts: "w250 h32 Default y+15"
+        saveBtnOpts: "w260 h32 Default y+15"
     })
 }
 
@@ -1804,18 +1806,18 @@ ConfigurePointerKeysUI(cfg, *) {
     }
 
     elements := [
-        {type: "Text", opts: "w250", text: "Select which keys to intercept in Full PPT Mode:"},
-        {type: "Checkbox", id: "arrows", opts: "w250", value: cfg.CatchArrows, text: "Arrow Keys (Up, Down, Left, Right)"},
-        {type: "Checkbox", id: "pg", opts: "w250", value: cfg.CatchPg, text: "Page Keys (PgUp, PgDn)"},
-        {type: "Checkbox", id: "space", opts: "w250", value: cfg.CatchSpace, text: "Spacebar"},
-        {type: "Checkbox", id: "enter", opts: "w250", value: cfg.CatchEnter, text: "Enter Key"},
-        {type: "Checkbox", id: "tab", opts: "w250", value: cfg.CatchTab, text: "Tab Key"},
-        {type: "Checkbox", id: "esc", opts: "w250", value: cfg.CatchEsc, text: "Escape Key"}
+        {type: "Text", opts: "w260", text: "Select which keys to intercept in Full PPT Mode:"},
+        {type: "Checkbox", id: "arrows", opts: "w260", value: cfg.CatchArrows, text: "Arrow Keys (Up, Down, Left, Right)"},
+        {type: "Checkbox", id: "pg", opts: "w260", value: cfg.CatchPg, text: "Page Keys (PgUp, PgDn)"},
+        {type: "Checkbox", id: "space", opts: "w260", value: cfg.CatchSpace, text: "Spacebar"},
+        {type: "Checkbox", id: "enter", opts: "w260", value: cfg.CatchEnter, text: "Enter Key"},
+        {type: "Checkbox", id: "tab", opts: "w260", value: cfg.CatchTab, text: "Tab Key"},
+        {type: "Checkbox", id: "esc", opts: "w260", value: cfg.CatchEsc, text: "Escape Key"}
     ]
 
-    BuildSettingsWindow("Configure Pointer Intercepts", elements, SavePointerKeys, {
+    return BuildSettingsWindow("Configure Pointer Intercepts", elements, SavePointerKeys, {
         saveBtnText: "Save && Restart",
-        saveBtnOpts: "w250 h32 Default y+15"
+        saveBtnOpts: "w260 h32 Default y+15"
     })
 }
 
