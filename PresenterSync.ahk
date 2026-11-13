@@ -180,8 +180,8 @@ ShowHelpWindow(*) {
     helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Help & Guide")
     helpGui.SetFont("s10 w400", "Segoe UI")
     
-    ; Create a tabbed interface (400px wide, 240px tall)
-    tabs := helpGui.Add("Tab3", "w420 h260", ["Shortcuts", "Pointer Modes", "OBS Sync", "Pro Tips"])
+    ; Create a tabbed interface (420px wide, 290px tall)
+    tabs := helpGui.Add("Tab3", "w420 h290", ["Shortcuts", "Pointer Modes", "OBS Sync", "Pro Tips"])
     
     ; --- TAB 1: SHORTCUTS ---
     tabs.UseTab(1)
@@ -214,14 +214,14 @@ ShowHelpWindow(*) {
     ; --- TAB 4: PRO TIPS ---
     tabs.UseTab(4)
     helpGui.SetFont("s12 w700")
-    helpGui.Add("Text", "x25 y45", "Customizing the Overlay")
+    helpGui.Add("Text", "x25 y45", "Customizing & Smooth Animations")
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "x25 y+10 w370", "• Repositioning HUD: Hold down your Left Mouse Button on the indicator to drag it anywhere on your screen. Its exact coordinates are saved automatically for your next session.`n`n• Appearance: Right-click the system tray icon and explore 'Indicator Appearance' to add text labels, change opacity levels, or enable the aggressive pulse animation for high visibility.")
+    helpGui.Add("Text", "x25 y+10 w370", "• Repositioning HUD: Hold Left Click on the indicator to drag it anywhere. Coordinates save automatically.`n`n• Appearance: Right-click the tray icon > 'Indicator Appearance' to customize labels, opacity, scale, or pulse.`n`n• Smooth PPT Animations: To prevent Windows from throttling background animations, capture the Slideshow in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings.")
 
     tabs.UseTab() ; End tab definitions
     
-    ; Add the close button centered (x160) and explicitly placed below the Tab control (y280)
-    btn := helpGui.Add("Button", "w100 x160 y280 Default", "Got it!")
+    ; Add the close button centered (x160) and explicitly placed below the Tab control (y310)
+    btn := helpGui.Add("Button", "w100 x160 y310 Default", "Got it!")
     btn.OnEvent("Click", (*) => helpGui.Destroy())
     
     helpGui.Show("AutoSize")
@@ -941,17 +941,36 @@ SendToPPT(Key) {
     
     ; 1. Target the normal fullscreen Slide Show FIRST
     if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
-        try ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
+        ; Attempt native COM navigation first to avoid synthetic ControlSend key-hold fast-forwarding
+        comHandled := false
+        if (Key = "{Down}" || Key = "{Right}" || Key = "{PgDn}" || Key = "{Space}" || Key = "{Enter}") {
+            try {
+                ComObjActive("PowerPoint.Application").SlideShowWindows(1).View.Next()
+                comHandled := true
+            }
+        } else if (Key = "{Up}" || Key = "{Left}" || Key = "{PgUp}") {
+            try {
+                ComObjActive("PowerPoint.Application").SlideShowWindows(1).View.Previous()
+                comHandled := true
+            }
+        }
+        if (!comHandled) {
+            try ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
+        }
     }
     ; 2. Fallback to Presenter View if fullscreen isn't found
     else if WinExist("PowerPoint Presenter View ahk_exe POWERPNT.EXE") {
         try ControlSend Key,, "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
     }
-    ; 3. Target the generic background process (Edit view)
+    ; 3. Target the main PowerPoint Edit window explicitly (avoids hidden NUIDialog helper windows)
+    else if WinExist("ahk_class PPTFrameClass ahk_exe POWERPNT.EXE") {
+        try ControlSend Key,, "ahk_class PPTFrameClass ahk_exe POWERPNT.EXE"
+    }
+    ; 4. Target the generic background process as final fallback
     else if WinExist("ahk_exe POWERPNT.EXE") {
         try ControlSend Key,, "ahk_exe POWERPNT.EXE"
     }
-    ; 4. If PowerPoint is completely closed, play distinct error tone
+    ; 5. If PowerPoint is completely closed, play distinct error tone
     else {
         SoundPlay "*16"
     }
