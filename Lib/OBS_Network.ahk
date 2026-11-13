@@ -1,10 +1,19 @@
 ; ==============================================================================
 ; Module: OBS_Network.ahk
-; Description: OBS WebSocket v5 client connection, message handling & Zoom sync
+; Description: OBS WebSocket v5 client connection, message handling & Zoom UIA sync
 ; ==============================================================================
 
+#Include "%A_LineFile%\..\WebSocket.ahk"
+#Include "%A_LineFile%\..\UIA.ahk"
+#Include "%A_LineFile%\..\Crypto.ahk"
+
+FormatSendKey(hk) {
+    return RegExReplace(hk, "([a-zA-Z0-9_]+)$", "{$1}")
+}
+
 ConnectToOBS(cfg, state) {
-    if (!cfg.EnableWS)
+    SetTimer state.obsTimerFn, 0
+    if (!cfg.EnableWS || state.obsConnected)
         return
 
     try {
@@ -14,7 +23,7 @@ ConnectToOBS(cfg, state) {
         })
     } catch {
         if (cfg.EnableWS)
-            SetTimer state.obsTimerFn, 5000
+            SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
     }
 }
 
@@ -23,6 +32,7 @@ HandleObsClose(cfg, state, ws, status, reason) {
         return
 
     if (!state.obsConnected) {
+        cfg.obsPassword := ""
         cfg.Write("Settings", "ObsPassword", "")
         MsgBox("PresenterSync detected an incorrect OBS password.`n`nPlease re-enter your OBS WebSocket details.", "Authentication Failed", "Icon!")
         Reload()
@@ -33,7 +43,7 @@ HandleObsClose(cfg, state, ws, status, reason) {
     SyncRecState(cfg, state, 0)
     SyncStudioState(cfg, state, false)
     SyncSceneState(cfg, state, "Scene")
-    SetTimer state.obsTimerFn, 5000
+    SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
 }
 
 HandleObsMessage(cfg, state, ws, rawMsg) {
@@ -58,6 +68,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         ws.sendText(identifyJson)
     }
     else if (opCode == 2) {
+        SetTimer state.obsTimerFn, 0
         state.obsConnected := true
         stateJson := '{"op":6,"d":{"requestType":"GetInputMute","requestId":"InitState","requestData":{"inputName":"' cfg.targetMicName '"}}}'
         ws.sendText(stateJson)
@@ -148,5 +159,104 @@ PushObsMuteToZoom(cfg, state, obsIsMuted) {
     SetKeyDelay -1, 30
     try ControlSend FormatSendKey(cfg.ZoomMuteHotkey),, "ahk_exe Zoom.exe"
     SetKeyDelay 50, 50
-    SetTimer state.releaseSyncTimerFn, -1000
+    SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
+}
+
+DetectZoomStates(targetSpec := "ahk_exe Zoom.exe") {
+    result := {foundWindow: false, hasMic: false, muted: false, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
+    hwndList := WinGetList(targetSpec)
+    if (hwndList.Length == 0)
+        return result
+
+    result.foundWindow := true
+    for hwnd in hwndList {
+        if !DllCall("IsWindowVisible", "Ptr", hwnd)
+            continue
+        names := UIA.GetWindowElementNames(hwnd, false)
+        for n in names {
+            if (!result.hasMic) {
+                if RegExMatch(n, "i)\bunmute\b.*\baudio\b|^unmute(\b|,|$)") {
+                    result.hasMic := true
+                    result.muted := true
+                } else if (RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute(\b|,|$)") && !RegExMatch(n, "i)\b(when joining|on entry|all|participants)\b")) {
+                    result.hasMic := true
+                    result.muted := false
+                }
+            }
+            if (result.recState == 0) {
+                if RegExMatch(n, "i)\bresume\b.*\brecording\b") {
+                    result.hasRec := true
+                    result.recState := 2
+                } else if RegExMatch(n, "i)\b(pause|stop)\b.*\brecording\b") {
+                    result.hasRec := true
+                    result.recState := 1
+                } else if (!result.hasRec && RegExMatch(n, "i)^record(\b|,|$)|^record (on this computer|to the cloud)")) {
+                    result.hasRec := true
+                    result.recState := 0
+                }
+            }
+            if RegExMatch(n, "i)\bchat\b.*?(\d+)\s*unread|(\d+)\s*unread.*\bchat\b", &mChat) {
+                result.hasChat := true
+                cnt := Integer(mChat[1] != "" ? mChat[1] : mChat[2])
+                if (cnt > result.unreadChat)
+                    result.unreadChat := cnt
+            } else if (!result.hasChat && RegExMatch(n, "i)^chat(\b|,|$)|open chat|show chat|chat panel")) {
+                result.hasChat := true
+            }
+        }
+        if (result.hasMic && result.hasRec && result.recState > 0 && result.hasChat && result.unreadChat > 0)
+            break
+    }
+    return result
+}
+
+ZoomStateMonitor(cfg, state) {
+    if (!cfg.EnableZoom && !cfg.EnableWS)
+        return
+
+    zoomInfo := DetectZoomStates()
+    if (zoomInfo.hasChat)
+        SyncChatState(cfg, state, zoomInfo.unreadChat)
+    else
+        SyncChatState(cfg, state, 0)
+
+    if (!zoomInfo.hasMic) {
+        state.zoomConnected := false
+        state.zoomLastMuted := -1
+        state.zoomSawRecControl := false
+        if (cfg.EnableZoom && !cfg.EnableWS)
+            SyncRecState(cfg, state, 0)
+        return
+    }
+
+    state.zoomConnected := (cfg.EnableZoom && !cfg.EnableWS)
+    if (cfg.EnableZoom && !cfg.EnableWS) {
+        SyncUIState(cfg, state, zoomInfo.muted)
+        if (zoomInfo.hasRec) {
+            state.zoomSawRecControl := true
+            if (A_TickCount >= state.zoomRecGraceUntil)
+                SyncRecState(cfg, state, zoomInfo.recState)
+        } else if (state.zoomSawRecControl && A_TickCount >= state.zoomRecGraceUntil) {
+            state.zoomSawRecControl := false
+            SyncRecState(cfg, state, 0)
+        }
+    } else if (cfg.EnableWS && cfg.AudioRoutingMode == 3 && state.obsConnected && !state.IsSyncing) {
+        if (state.zoomLastMuted != -1 && zoomInfo.muted != state.zoomLastMuted && zoomInfo.muted != state.isMuted) {
+            if (cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "" && WinExist("ahk_exe obs64.exe")) {
+                state.IsSyncing := true
+                SetKeyDelay -1, 30
+                try ControlSend FormatSendKey(cfg.ObsMuteHotkey),, "ahk_exe obs64.exe"
+                SetKeyDelay 50, 50
+                SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
+            }
+        }
+    }
+    state.zoomLastMuted := zoomInfo.muted
+}
+
+UpdateZoomMonitorTimer(cfg, state) {
+    if (cfg.EnableZoom || cfg.EnableWS)
+        SetTimer state.zoomTimerFn, UIConstants.ZOOM_POLL_INTERVAL_MS
+    else
+        SetTimer state.zoomTimerFn, 0
 }
