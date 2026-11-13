@@ -158,6 +158,8 @@ class Theme {
     static OpenWindows := Map()
     static HoverMap := Map()
     static PressMap := Map()
+    static TabHoverMap := Map()
+    static BoldFontCache := Map()
     static hUxtheme := 0
     static fnSetPreferredAppMode := 0
     static fnFlushMenuThemes := 0
@@ -192,8 +194,7 @@ class Theme {
         if (this.initialized)
             return
         Gdip.Startup()
-        osBuild := Integer(StrSplit(A_OSVersion, ".")[3])
-        this.UiFont := (osBuild >= 22000) ? "Segoe UI Variable Text" : "Segoe UI"
+        this.UiFont := "Segoe UI"
         this.hUxtheme := DllCall("GetModuleHandle", "Str", "uxtheme", "Ptr")
         if (!this.hUxtheme)
             this.hUxtheme := DllCall("LoadLibrary", "Str", "uxtheme", "Ptr")
@@ -207,6 +208,26 @@ class Theme {
         this.btnSubclassPtr := CallbackCreate(ButtonFluentSubclassProc)
         OnMessage(0x001A, WM_SETTINGCHANGE_Theme)
         this.initialized := true
+    }
+
+    static GetFont(hwnd, bold := false) {
+        hFont := SendMessage(0x0031, 0, 0, hwnd) ; WM_GETFONT
+        if (!hFont)
+            hFont := DllCall("GetStockObject", "Int", 17, "Ptr") ; DEFAULT_GUI_FONT
+        if (!bold || !hFont)
+            return hFont
+        if this.BoldFontCache.Has(hFont)
+            return this.BoldFontCache[hFont]
+        lf := Buffer(92, 0)
+        if (DllCall("GetObjectW", "Ptr", hFont, "Int", 92, "Ptr", lf) == 0)
+            return hFont
+        NumPut("Int", 600, lf, 16) ; FW_SEMIBOLD (600)
+        hBold := DllCall("CreateFontIndirectW", "Ptr", lf, "Ptr")
+        if (hBold) {
+            this.BoldFontCache[hFont] := hBold
+            return hBold
+        }
+        return hFont
     }
 
     static IsDarkMode() {
@@ -285,7 +306,9 @@ class Theme {
             role := ctrl._themeRole
 
         if (ctrlType = "Button") {
-            DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
+            style := DllCall("GetWindowLong", "Ptr", ctrl.Hwnd, "Int", -16, "Int")
+            DllCall("SetWindowLong", "Ptr", ctrl.Hwnd, "Int", -16, "Int", style | 0x04000000) ; WS_CLIPSIBLINGS
+            DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", "", "Str", "")
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.btnSubclassPtr, "Ptr", 4, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Checkbox") {
@@ -301,6 +324,16 @@ class Theme {
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.hkSubclassPtr, "Ptr", 1, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Tab") {
+            rc := Buffer(16, 0)
+            DllCall("GetClientRect", "Ptr", ctrl.Hwnd, "Ptr", rc)
+            tw := NumGet(rc, 8, "Int")
+            tabCount := SendMessage(0x1304, 0, 0, ctrl.Hwnd) ; TCM_GETITEMCOUNT
+            if (tabCount > 0 && tw > 0) {
+                dpiScale := A_ScreenDPI / 96.0
+                itemH := Round(36 * dpiScale)
+                itemW := Floor((tw - 4) / tabCount)
+                SendMessage(0x1329, 0, (itemH << 16) | (itemW & 0xFFFF), ctrl.Hwnd) ; TCM_SETITEMSIZE
+            }
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.tabSubclassPtr, "Ptr", 2, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Text") {
@@ -395,7 +428,7 @@ FormatHkDisplayText(hkVal) {
 }
 
 DrawFluentRoundedBox(pGraphics, x, y, w, h, radius, fillArgb, strokeArgb := 0, bottomAccentArgb := 0) {
-    pPath := Gdip.CreateRoundedRectPath(x + 0.5, y + 0.5, w - 1.0, h - 1.0, radius)
+    pPath := Gdip.CreateRoundedRectPath(x, y, w - 1.0, h - 1.0, radius)
     if (!pPath)
         return
     pFill := 0
@@ -415,7 +448,7 @@ DrawFluentRoundedBox(pGraphics, x, y, w, h, radius, fillArgb, strokeArgb := 0, b
     DllCall("gdiplus\GdipDeletePath", "Ptr", pPath)
 
     if (bottomAccentArgb != 0) {
-        pAccPath := Gdip.CreateRoundedRectPath(x + 2.0, y + h - 3.0, w - 4.0, 2.5, 1.25)
+        pAccPath := Gdip.CreateRoundedRectPath(x + 2.0, y + h - 3.0, w - 5.0, 2.0, 1.0)
         if (pAccPath) {
             pAccFill := 0
             DllCall("gdiplus\GdipCreateSolidFill", "UInt", bottomAccentArgb, "Ptr*", &pAccFill)
@@ -426,6 +459,22 @@ DrawFluentRoundedBox(pGraphics, x, y, w, h, radius, fillArgb, strokeArgb := 0, b
             DllCall("gdiplus\GdipDeletePath", "Ptr", pAccPath)
         }
     }
+}
+
+DrawFluentControlText(hdc, textStr, x, y, w, h, hFont, textColorBgr, alignFlags := 0x0025) {
+    if (textStr = "" || w <= 0 || h <= 0)
+        return
+    tRc := Buffer(16, 0)
+    NumPut("Int", Integer(x), tRc, 0)
+    NumPut("Int", Integer(y), tRc, 4)
+    NumPut("Int", Integer(x + w), tRc, 8)
+    NumPut("Int", Integer(y + h), tRc, 12)
+    oldFont := hFont ? DllCall("SelectObject", "Ptr", hdc, "Ptr", hFont, "Ptr") : 0
+    DllCall("SetBkMode", "Ptr", hdc, "Int", 1) ; TRANSPARENT
+    DllCall("SetTextColor", "Ptr", hdc, "UInt", textColorBgr)
+    DllCall("DrawTextW", "Ptr", hdc, "WStr", textStr, "Int", -1, "Ptr", tRc, "UInt", alignFlags)
+    if (oldFont)
+        DllCall("SelectObject", "Ptr", hdc, "Ptr", oldFont, "Ptr")
 }
 
 ButtonFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
@@ -439,6 +488,8 @@ ButtonFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     }
     if (uMsg == 0x0014) ; WM_ERASEBKGND
         return 1
+    if (uMsg == 0x0113) ; WM_TIMER (suppress uxtheme BufferedPaint fade timers)
+        return 0
 
     if (uMsg == 0x0200) { ; WM_MOUSEMOVE
         if (!Theme.HoverMap.Get(hwnd, false)) {
@@ -490,27 +541,27 @@ ButtonFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
 
         if (parentDark) {
             if (!isEnabled) {
-                fillArgb := 0xFF252525, strokeArgb := 0xFF333333, txtArgb := 0xFF707070
+                fillArgb := 0xFF252525, strokeArgb := 0xFF333333, txtBgr := UIConstants.DARK_TEXT_DISABLED_BGR
             } else if (isDefaultBtn) {
                 fillArgb := isPress ? 0xFF4CC2FF : (isHover ? 0xFF72D4FF : 0xFF60CDFF)
                 strokeArgb := 0xFF72D4FF
-                txtArgb := 0xFF0A0E14
+                txtBgr := 0x140E0A
             } else {
-                fillArgb := isPress ? 0xFF272727 : (isHover ? 0xFF3A3A3A : 0xFF323232)
-                strokeArgb := isHover ? 0xFF505050 : 0xFF424242
-                txtArgb := 0xFFFFFFFF
+                fillArgb := isPress ? 0xFF272727 : (isHover ? 0xFF3C3C3C : 0xFF333333)
+                strokeArgb := isHover ? 0xFF565656 : 0xFF454545
+                txtBgr := UIConstants.DARK_TEXT_BGR
             }
         } else {
             if (!isEnabled) {
-                fillArgb := 0xFFF0F0F0, strokeArgb := 0xFFE0E0E0, txtArgb := 0xFF9E9E9E
+                fillArgb := 0xFFF0F0F0, strokeArgb := 0xFFE0E0E0, txtBgr := UIConstants.LIGHT_TEXT_DISABLED_BGR
             } else if (isDefaultBtn) {
                 fillArgb := isPress ? 0xFF005A9E : (isHover ? 0xFF1874C4 : 0xFF0067C0)
                 strokeArgb := 0xFF005A9E
-                txtArgb := 0xFFFFFFFF
+                txtBgr := 0xFFFFFF
             } else {
                 fillArgb := isPress ? 0xFFEFEFEF : (isHover ? 0xFFF6F6F6 : 0xFFFBFBFB)
-                strokeArgb := isHover ? 0xFFD0D0D0 : 0xFFE0E0E0
-                txtArgb := 0xFF1A1A1A
+                strokeArgb := isHover ? 0xFFC8C8C8 : 0xFFDCDCDC
+                txtBgr := UIConstants.LIGHT_TEXT_BGR
             }
         }
 
@@ -518,12 +569,13 @@ ButtonFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcMem, "Ptr*", &pGraphics)
         if (pGraphics) {
             DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 4)
-            DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGraphics, "Int", 4)
             DrawFluentRoundedBox(pGraphics, 0, 0, w, h, UIConstants.FLUENT_CORNER_RADIUS, fillArgb, strokeArgb)
-            btnTxt := IsObject(ctrl) ? StrReplace(ctrl.Text, "&&", "&") : ""
-            Gdip.DrawText(pGraphics, btnTxt, Theme.UiFont, 9.5, isDefaultBtn ? 1 : 0, txtArgb, 4, 0, w - 8, h, 1, 1)
             DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
         }
+
+        btnTxt := IsObject(ctrl) ? StrReplace(ctrl.Text, "&&", "&") : ""
+        hFont := Theme.GetFont(hwnd, isDefaultBtn)
+        DrawFluentControlText(hdcMem, btnTxt, 4, 0, w - 8, h, hFont, txtBgr, 0x0025)
 
         DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", w, "Int", h, "Ptr", hdcMem, "Int", 0, "Int", 0, "UInt", 0x00CC0020)
         DllCall("SelectObject", "Ptr", hdcMem, "Ptr", obm)
@@ -533,10 +585,15 @@ ButtonFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         return 0
     }
 
-    res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
-    if (uMsg == 0x0007 || uMsg == 0x0008 || uMsg == 0x000A || uMsg == 0x00F4) ; focus / enable / BM_SETSTYLE
+    if (uMsg == 0x0007 || uMsg == 0x0008 || uMsg == 0x000A || uMsg == 0x00F3 || uMsg == 0x00F4) {
+        SendMessage(0x000B, 0, 0, hwnd) ; WM_SETREDRAW = FALSE
+        res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+        SendMessage(0x000B, 1, 0, hwnd) ; WM_SETREDRAW = TRUE
         DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
-    return res
+        return res
+    }
+
+    return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
 }
 
 HotkeyFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
@@ -572,24 +629,25 @@ HotkeyFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
             fillArgb := isEnabled ? 0xFF2D2D2D : 0xFF242424
             strokeArgb := hasFocus ? 0xFF505050 : (isEnabled ? 0xFF3D3D3D : 0xFF303030)
             accArgb := hasFocus ? 0xFF60CDFF : (isEnabled ? 0xFF686868 : 0)
-            txtArgb := isEnabled ? 0xFFFFFFFF : 0xFF787878
+            txtBgr := isEnabled ? UIConstants.DARK_TEXT_BGR : UIConstants.DARK_TEXT_DISABLED_BGR
         } else {
             fillArgb := isEnabled ? 0xFFFBFBFB : 0xFFF0F0F0
             strokeArgb := hasFocus ? 0xFFD0D0D0 : (isEnabled ? 0xFFE0E0E0 : 0xFFE8E8E8)
             accArgb := hasFocus ? 0xFF0067C0 : (isEnabled ? 0xFF8A8A8A : 0)
-            txtArgb := isEnabled ? 0xFF1A1A1A : 0xFF9E9E9E
+            txtBgr := isEnabled ? UIConstants.LIGHT_TEXT_BGR : UIConstants.LIGHT_TEXT_DISABLED_BGR
         }
 
-        dispTxt := IsObject(ctrl) ? FormatHkDisplayText(ctrl.Value) : "None"
         pGraphics := 0
         DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcMem, "Ptr*", &pGraphics)
         if (pGraphics) {
             DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 4)
-            DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGraphics, "Int", 4)
             DrawFluentRoundedBox(pGraphics, 0, 0, w, h, UIConstants.FLUENT_CORNER_RADIUS, fillArgb, strokeArgb, accArgb)
-            Gdip.DrawText(pGraphics, dispTxt, Theme.UiFont, 9.5, 0, txtArgb, 8, 0, w - 16, h - 2, 0, 1)
             DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
         }
+
+        dispTxt := IsObject(ctrl) ? FormatHkDisplayText(ctrl.Value) : "None"
+        hFont := Theme.GetFont(hwnd, false)
+        DrawFluentControlText(hdcMem, dispTxt, 8, 0, w - 16, h - 2, hFont, txtBgr, 0x0024)
 
         DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", w, "Int", h, "Ptr", hdcMem, "Int", 0, "Int", 0, "UInt", 0x00CC0020)
         DllCall("SelectObject", "Ptr", hdcMem, "Ptr", obm)
@@ -607,11 +665,35 @@ HotkeyFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
 
 TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     if (uMsg == 0x0082) { ; WM_NCDESTROY
+        if Theme.TabHoverMap.Has(hwnd)
+            Theme.TabHoverMap.Delete(hwnd)
         DllCall("comctl32\RemoveWindowSubclass", "Ptr", hwnd, "Ptr", uIdSubclass, "Ptr", dwRefData)
         return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
     }
     if (uMsg == 0x0014) ; WM_ERASEBKGND
         return 1
+
+    if (uMsg == 0x0200) { ; WM_MOUSEMOVE
+        hti := Buffer(12, 0)
+        NumPut("Int", lParam & 0xFFFF, hti, 0)
+        NumPut("Int", (lParam >> 16) & 0xFFFF, hti, 4)
+        hitIdx := SendMessage(0x130D, 0, hti.Ptr, hwnd) ; TCM_HITTEST
+        prevHover := Theme.TabHoverMap.Get(hwnd, -1)
+        if (hitIdx != prevHover) {
+            Theme.TabHoverMap[hwnd] := hitIdx
+            tme := Buffer(A_PtrSize == 8 ? 24 : 16, 0)
+            NumPut("UInt", tme.Size, tme, 0)
+            NumPut("UInt", 0x00000002, tme, 4) ; TME_LEAVE
+            NumPut("Ptr", hwnd, tme, 8)
+            DllCall("TrackMouseEvent", "Ptr", tme)
+            DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
+        }
+    } else if (uMsg == 0x02A3) { ; WM_MOUSELEAVE
+        if (Theme.TabHoverMap.Get(hwnd, -1) != -1) {
+            Theme.TabHoverMap[hwnd] := -1
+            DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
+        }
+    }
 
     if (uMsg == 0x000F) { ; WM_PAINT
         ps := Buffer(72, 0)
@@ -634,44 +716,45 @@ TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
 
         tabCount := SendMessage(0x1304, 0, 0, hwnd)
         curSel := SendMessage(0x130B, 0, 0, hwnd)
+        hoverIdx := Theme.TabHoverMap.Get(hwnd, -1)
 
         itemRc := Buffer(16, 0)
-        panelTop := 30
+        panelTop := 38
         if (tabCount > 0) {
             SendMessage(0x130A, 0, itemRc.Ptr, hwnd)
-            panelTop := NumGet(itemRc, 12, "Int") + 2
+            panelTop := NumGet(itemRc, 12, "Int") + 4
         }
 
         cardFill := parentDark ? 0xFF2C2C2C : 0xFFFFFFFF
         cardStroke := parentDark ? 0xFF3D3D3D : 0xFFE5E5E5
         tabActiveFill := parentDark ? 0xFF2C2C2C : 0xFFFFFFFF
-        tabActiveStroke := parentDark ? 0xFF3D3D3D : 0xFFE0E0E0
+        tabActiveStroke := parentDark ? 0xFF454545 : 0xFFDCDCDC
+        tabHoverFill := parentDark ? 0xFF282828 : 0xFFEAEAEA
+        tabHoverStroke := parentDark ? 0xFF383838 : 0xFFE0E0E0
         accPillArgb := parentDark ? 0xFF60CDFF : 0xFF0067C0
-        txtActiveArgb := parentDark ? 0xFFFFFFFF : 0xFF1A1A1A
-        txtMutedArgb := parentDark ? 0xFFC5C5C5 : 0xFF5C5C5C
+        txtActiveBgr := parentDark ? UIConstants.DARK_TEXT_BGR : UIConstants.LIGHT_TEXT_BGR
+        txtMutedBgr := parentDark ? UIConstants.DARK_TEXT_MUTED_BGR : UIConstants.LIGHT_TEXT_MUTED_BGR
 
         pGraphics := 0
         DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcMem, "Ptr*", &pGraphics)
         if (pGraphics) {
             DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 4)
-            DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGraphics, "Int", 4)
 
             ; Draw Windows 11 Explorer rounded card body
             DrawFluentRoundedBox(pGraphics, 0, panelTop, w, h - panelTop, UIConstants.FLUENT_CARD_RADIUS, cardFill, cardStroke)
 
-            tabNames := (IsObject(ctrl) && ctrl.HasOwnProp("_tabNames")) ? ctrl._tabNames : []
             Loop tabCount {
                 idx := A_Index - 1
                 SendMessage(0x130A, idx, itemRc.Ptr, hwnd)
-                tx := NumGet(itemRc, 0, "Int") + 1
+                tx := NumGet(itemRc, 0, "Int") + 2
                 ty := NumGet(itemRc, 4, "Int") + 1
-                tw := (NumGet(itemRc, 8, "Int") - NumGet(itemRc, 0, "Int")) - 2
+                tw := (NumGet(itemRc, 8, "Int") - NumGet(itemRc, 0, "Int")) - 4
                 th := (NumGet(itemRc, 12, "Int") - NumGet(itemRc, 4, "Int")) - 2
                 isSel := (idx == curSel)
 
                 if (isSel) {
                     DrawFluentRoundedBox(pGraphics, tx, ty, tw, th, UIConstants.FLUENT_CORNER_RADIUS, tabActiveFill, tabActiveStroke)
-                    pillW := Max(16, Round(tw * 0.42))
+                    pillW := Max(20, Round(tw * 0.42))
                     pillX := tx + Round((tw - pillW) / 2)
                     pPill := Gdip.CreateRoundedRectPath(pillX, ty + th - 3.0, pillW, 3.0, 1.5)
                     if (pPill) {
@@ -683,13 +766,27 @@ TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
                         }
                         DllCall("gdiplus\GdipDeletePath", "Ptr", pPill)
                     }
+                } else if (idx == hoverIdx) {
+                    DrawFluentRoundedBox(pGraphics, tx, ty, tw, th, UIConstants.FLUENT_CORNER_RADIUS, tabHoverFill, tabHoverStroke)
                 }
-
-                lbl := (idx + 1 <= tabNames.Length) ? tabNames[idx + 1] : ("Tab " (idx + 1))
-                Gdip.DrawText(pGraphics, lbl, Theme.UiFont, 9.0, isSel ? 1 : 0, isSel ? txtActiveArgb : txtMutedArgb, tx + 2, ty, tw - 4, th, 1, 1)
             }
 
             DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
+        }
+
+        tabNames := (IsObject(ctrl) && ctrl.HasOwnProp("_tabNames")) ? ctrl._tabNames : []
+        hFontReg := Theme.GetFont(hwnd, false)
+        hFontBold := Theme.GetFont(hwnd, true)
+        Loop tabCount {
+            idx := A_Index - 1
+            SendMessage(0x130A, idx, itemRc.Ptr, hwnd)
+            tx := NumGet(itemRc, 0, "Int") + 2
+            ty := NumGet(itemRc, 4, "Int") + 1
+            tw := (NumGet(itemRc, 8, "Int") - NumGet(itemRc, 0, "Int")) - 4
+            th := (NumGet(itemRc, 12, "Int") - NumGet(itemRc, 4, "Int")) - 2
+            isSel := (idx == curSel)
+            lbl := (idx + 1 <= tabNames.Length) ? tabNames[idx + 1] : ("Tab " (idx + 1))
+            DrawFluentControlText(hdcMem, lbl, tx + 2, ty, tw - 4, th - 1, isSel ? hFontBold : hFontReg, isSel ? txtActiveBgr : txtMutedBgr, 0x0025)
         }
 
         DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", w, "Int", h, "Ptr", hdcMem, "Int", 0, "Int", 0, "UInt", 0x00CC0020)
@@ -701,8 +798,10 @@ TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     }
 
     res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
-    if (uMsg == 0x0201 || uMsg == 0x130C)
-        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 1)
+    if (uMsg == 0x0201 || uMsg == 0x130C) {
+        parentHwnd := DllCall("GetParent", "Ptr", hwnd, "Ptr")
+        DllCall("RedrawWindow", "Ptr", parentHwnd ? parentHwnd : hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0185)
+    }
     return res
 }
 
@@ -1181,7 +1280,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
     }
 
     if (opts.HasOwnProp("saveBtnText") && opts.saveBtnText != "") {
-        saveBtnOpts := opts.HasOwnProp("saveBtnOpts") ? opts.saveBtnOpts : "w280 Default y+15"
+        saveBtnOpts := opts.HasOwnProp("saveBtnOpts") ? opts.saveBtnOpts : "w280 h32 Default y+15"
         saveBtn := dlg.Add("Button", saveBtnOpts, opts.saveBtnText)
         Theme.RegisterControl(dlg, saveBtn, "Button")
         saveBtn.OnEvent("Click", HandleSave)
@@ -1267,7 +1366,7 @@ PromptForSetup(cfg) {
         onClose: (*) => ExitApp(),
         onInit: UpdateFieldStates,
         saveBtnText: "Save && Start",
-        saveBtnOpts: "w280 Default y+15"
+        saveBtnOpts: "w280 h32 Default y+15"
     })
 }
 
@@ -1289,7 +1388,7 @@ PromptForPassword() {
         waitClose: true,
         onClose: (dlg) => dlg.Destroy(),
         saveBtnText: "Save & Connect",
-        saveBtnOpts: "w250 Default y+15"
+        saveBtnOpts: "w250 h32 Default y+15"
     })
     return savedPw
 }
@@ -1346,14 +1445,14 @@ ShowHelpWindow(cfg, state := "", *) {
     Theme.ApplyToWindow(helpGui)
 
     tabNames := ["Shortcuts", "Pointer & PPT", "Audio & Sync", "HUD & Theme", "Live Status"]
-    tabs := helpGui.Add("Tab2", "w500 h360", tabNames)
+    tabs := helpGui.Add("Tab2", "x14 y12 w580 h395 +0x0400", tabNames)
     tabs._tabNames := tabNames
     Theme.RegisterControl(helpGui, tabs, "Tab")
 
     ; --- TAB 1: SHORTCUTS ---
     tabs.UseTab(1)
     helpGui.SetFont("s11 w700")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Global App & Audio Shortcuts"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Global App & Audio Shortcuts"), "Text", "tabText")
     helpGui.SetFont("s9 w400")
     scCol1 := "Cycle Pointer Modes:`n"
         . "Toggle OBS WebSocket:`n"
@@ -1373,15 +1472,15 @@ ShowHelpWindow(cfg, state := "", *) {
         . FormatHK(cfg.HwMuteHotkey) "`n"
         . FormatHK(cfg.ObsMuteHotkey) "  /  " FormatHK(cfg.ObsRecHotkey) "  /  " FormatHK(cfg.ObsPauseHotkey) "`n"
         . FormatHK(cfg.ZoomMuteHotkey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y68 w165", scCol1), "Text", "tabMuted")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x195 y68 w290", scCol2), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y92 w185", scCol1), "Text", "tabMuted")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x225 y92 w340", scCol2), "Text", "tabText")
 
     helpGui.SetFont("s9 italic")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y255 w460", "Click any button below to customize your shortcuts directly:"), "Text", "tabMuted")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y316 w540", "Click any button below to customize your shortcuts directly:"), "Text", "tabMuted")
     helpGui.SetFont("s9 w400")
-    btnAppHk := helpGui.Add("Button", "x25 y280 w145 h28", "Edit App Shortcuts")
-    btnObsHk := helpGui.Add("Button", "x180 y280 w145 h28", "Edit OBS Settings")
-    btnZoomHk := helpGui.Add("Button", "x335 y280 w145 h28", "Edit Zoom Shortcuts")
+    btnAppHk := helpGui.Add("Button", "x32 y346 w170 h34", "Edit App Shortcuts")
+    btnObsHk := helpGui.Add("Button", "x219 y346 w170 h34", "Edit OBS Settings")
+    btnZoomHk := helpGui.Add("Button", "x406 y346 w170 h34", "Edit Zoom Shortcuts")
     Theme.RegisterControl(helpGui, btnAppHk, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnObsHk, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnZoomHk, "Button", "tabButton")
@@ -1392,7 +1491,7 @@ ShowHelpWindow(cfg, state := "", *) {
     ; --- TAB 2: POINTER & PPT ---
     tabs.UseTab(2)
     helpGui.SetFont("s11 w700")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Smart PowerPoint & Hardware Clicker Controls"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Smart PowerPoint & Hardware Clicker Controls"), "Text", "tabText")
     helpGui.SetFont("s9 w400")
     pptGuide := "1. Full PPT + Mute:`n"
         . "Routes slide keys (Arrows, PgUp/PgDn, Space, Enter, Tab, Esc, Shift+F5) directly to PowerPoint in the background using Hybrid COM + ControlSend with a 150ms debounce shield, while keeping your clicker's mute button active.`n`n"
@@ -1400,11 +1499,11 @@ ShowHelpWindow(cfg, state := "", *) {
         . "Leaves slide keys untouched for normal typing while your clicker's mute button still toggles your microphone.`n`n"
         . "3. Smooth Background PPT Animations (Windows DWM Fix):`n"
         . "Capture PowerPoint in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings."
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y68 w460 h200", pptGuide), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y92 w540 h230", pptGuide), "Text", "tabText")
 
-    btnTester := helpGui.Add("Button", "x25 y280 w145 h28", "Launch Clicker Tester")
-    btnHwMute := helpGui.Add("Button", "x180 y280 w145 h28", "Change Mute Button")
-    btnIntercepts := helpGui.Add("Button", "x335 y280 w145 h28", "Configure Intercepts")
+    btnTester := helpGui.Add("Button", "x32 y346 w170 h34", "Launch Clicker Tester")
+    btnHwMute := helpGui.Add("Button", "x219 y346 w170 h34", "Change Mute Button")
+    btnIntercepts := helpGui.Add("Button", "x406 y346 w170 h34", "Configure Intercepts")
     Theme.RegisterControl(helpGui, btnTester, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnHwMute, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnIntercepts, "Button", "tabButton")
@@ -1415,7 +1514,7 @@ ShowHelpWindow(cfg, state := "", *) {
     ; --- TAB 3: AUDIO & SYNC ---
     tabs.UseTab(3)
     helpGui.SetFont("s11 w700")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Audio Profiles, OBS WebSocket v5 & Zoom UIA"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Audio Profiles, OBS WebSocket v5 & Zoom UIA"), "Text", "tabText")
     helpGui.SetFont("s9 w400")
     syncGuide := "• 3 Audio Routing Profiles:`n"
         . "   1. Pro OBS Setup (VB-Cable): Controls OBS mic directly.`n"
@@ -1423,11 +1522,11 @@ ShowHelpWindow(cfg, state := "", *) {
         . "   3. Dual App Sync (OBS + Zoom): Keeps OBS and Zoom mics synchronized 2-way.`n`n"
         . "• OBS WebSocket v5: In OBS Studio > Tools > WebSocket Server Settings, enable the server (port 4455) for real-time Mic, Recording, Studio Mode & Scene telemetry.`n`n"
         . "• Zoom UIA Monitoring: In Zoom Settings > Accessibility, enable 'Always show meeting controls' for background Mic, Recording, and Unread Chat tracking."
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y68 w460 h200", syncGuide), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y92 w540 h230", syncGuide), "Text", "tabText")
 
-    btnWizard := helpGui.Add("Button", "x25 y280 w145 h28", "Audio Setup Wizard")
-    btnObsCfg := helpGui.Add("Button", "x180 y280 w145 h28", "OBS Settings")
-    btnZoomCfg := helpGui.Add("Button", "x335 y280 w145 h28", "Zoom Shortcuts")
+    btnWizard := helpGui.Add("Button", "x32 y346 w170 h34", "Audio Setup Wizard")
+    btnObsCfg := helpGui.Add("Button", "x219 y346 w170 h34", "OBS Settings")
+    btnZoomCfg := helpGui.Add("Button", "x406 y346 w170 h34", "Zoom Shortcuts")
     Theme.RegisterControl(helpGui, btnWizard, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnObsCfg, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnZoomCfg, "Button", "tabButton")
@@ -1438,7 +1537,7 @@ ShowHelpWindow(cfg, state := "", *) {
     ; --- TAB 4: HUD & THEME ---
     tabs.UseTab(4)
     helpGui.SetFont("s11 w700")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Multi-Tier HUD Overlay & Live Appearance"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Multi-Tier HUD Overlay & Live Appearance"), "Text", "tabText")
     helpGui.SetFont("s9 w400")
     hudGuide := "• Adaptive 3-Tier HUD Stack:`n"
         . "   Row 1 (Bottom): Live (Green) / Muted (Red) Mic Indicator with breathing animation.`n"
@@ -1448,12 +1547,12 @@ ShowHelpWindow(cfg, state := "", *) {
         . "   Left-Drag any HUD pill to reposition the stack (coordinates save automatically).`n"
         . "   Right-Click any HUD pill to open the PresenterSync menu right at your cursor.`n`n"
         . "• Try Interactive Live Adjustments Below (No Restart Required):"
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y68 w460 h175", hudGuide), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y92 w540 h195", hudGuide), "Text", "tabText")
 
-    btnTogExtra := helpGui.Add("Button", "x25 y250 w215 h26", "Toggle Extra HUDs (ON/OFF)")
-    btnTogText := helpGui.Add("Button", "x265 y250 w215 h26", "Toggle HUD Text Labels")
-    btnCycTheme := helpGui.Add("Button", "x25 y284 w215 h26", "Cycle Theme (System/Dark/Light)")
-    btnResetPos := helpGui.Add("Button", "x265 y284 w215 h26", "Reset HUD Position")
+    btnTogExtra := helpGui.Add("Button", "x32 y300 w260 h34", "Toggle Extra HUDs (ON/OFF)")
+    btnTogText := helpGui.Add("Button", "x316 y300 w260 h34", "Toggle HUD Text Labels")
+    btnCycTheme := helpGui.Add("Button", "x32 y346 w260 h34", "Cycle Theme (System/Dark/Light)")
+    btnResetPos := helpGui.Add("Button", "x316 y346 w260 h34", "Reset HUD Position")
     Theme.RegisterControl(helpGui, btnTogExtra, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnTogText, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnCycTheme, "Button", "tabButton")
@@ -1462,9 +1561,9 @@ ShowHelpWindow(cfg, state := "", *) {
     ; --- TAB 5: LIVE STATUS ---
     tabs.UseTab(5)
     helpGui.SetFont("s11 w700")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Live Configuration & Telemetry Status"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Live Configuration & Telemetry Status"), "Text", "tabText")
     helpGui.SetFont("s9 w400")
-    statusTextCtrl := helpGui.Add("Text", "x25 y72 w460 h165", BuildLiveStatusSummary(cfg, state))
+    statusTextCtrl := helpGui.Add("Text", "x32 y96 w540 h215", BuildLiveStatusSummary(cfg, state))
     Theme.RegisterControl(helpGui, statusTextCtrl, "Text", "tabText")
 
     RefreshHelpStatus(*) {
@@ -1509,9 +1608,9 @@ ShowHelpWindow(cfg, state := "", *) {
     btnCycTheme.OnEvent("Click", OnHelpCycleTheme)
     btnResetPos.OnEvent("Click", OnHelpResetPos)
 
-    btnRefreshStatus := helpGui.Add("Button", "x25 y280 w145 h28", "Refresh Status")
-    btnResetApp := helpGui.Add("Button", "x180 y280 w145 h28", "Reset Appearance")
-    btnOpenAbout := helpGui.Add("Button", "x335 y280 w145 h28", "About v" UIConstants.APP_VERSION)
+    btnRefreshStatus := helpGui.Add("Button", "x32 y346 w170 h34", "Refresh Status")
+    btnResetApp := helpGui.Add("Button", "x219 y346 w170 h34", "Reset Appearance")
+    btnOpenAbout := helpGui.Add("Button", "x406 y346 w170 h34", "About v" UIConstants.APP_VERSION)
     Theme.RegisterControl(helpGui, btnRefreshStatus, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnResetApp, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnOpenAbout, "Button", "tabButton")
@@ -1521,7 +1620,7 @@ ShowHelpWindow(cfg, state := "", *) {
 
     tabs.UseTab()
 
-    btn := helpGui.Add("Button", "w120 x200 y380 h30 Default", "Got it!")
+    btn := helpGui.Add("Button", "w140 x234 y418 h34 Default", "Got it!")
     Theme.RegisterControl(helpGui, btn, "Button")
     CloseHelp(*) {
         if Theme.OpenWindows.Has(helpGui.Hwnd)
@@ -1532,7 +1631,7 @@ ShowHelpWindow(cfg, state := "", *) {
     helpGui.OnEvent("Close", CloseHelp)
     helpGui.OnEvent("Escape", CloseHelp)
 
-    helpGui.Show("AutoSize")
+    helpGui.Show("w608 h464")
     return helpGui
 }
 
@@ -1543,33 +1642,33 @@ ShowAboutWindow(cfg := "", state := "", *) {
     iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSync.ico"
 
     if FileExist(iconSource) {
-        aboutGui.Add("Picture", "x153 y15 w64 h64", iconSource)
+        aboutGui.Add("Picture", "x158 y15 w64 h64", iconSource)
     }
 
     aboutGui.SetFont("s16 w700", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w350 Center y+12", "PresenterSync"), "Text")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "PresenterSync"), "Text")
 
     aboutGui.SetFont("s10 w700")
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w350 Center y+4", "Version " UIConstants.APP_VERSION), "Text", "accent")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+4", "Version " UIConstants.APP_VERSION), "Text", "accent")
 
     aboutGui.SetFont("s9 w400")
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 w330 Center y+8", "OBS Studio WebSocket v5, Zoom UIA Telemetry & Smart PowerPoint Control Suite"), "Text", "muted")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 w340 Center y+8", "OBS Studio WebSocket v5, Zoom UIA Telemetry & Smart PowerPoint Control Suite"), "Text", "muted")
 
     aboutGui.SetFont("s10 w400")
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w350 Center y+12", "Created by Saabith Jiffry"), "Text")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "Created by Saabith Jiffry"), "Text")
 
-    gitBtn := aboutGui.Add("Button", "w105 x25 y+20 h28", "GitHub Repo")
+    gitBtn := aboutGui.Add("Button", "w110 x18 y+20 h32", "GitHub Repo")
     Theme.RegisterControl(aboutGui, gitBtn, "Button")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    helpBtn := aboutGui.Add("Button", "w105 x+10 h28", "Help && Guide")
+    helpBtn := aboutGui.Add("Button", "w110 x+12 h32", "Help && Guide")
     Theme.RegisterControl(aboutGui, helpBtn, "Button")
     if IsObject(cfg)
         helpBtn.OnEvent("Click", (*) => ShowHelpWindow(cfg, state))
     else
         helpBtn.Enabled := false
 
-    closeBtn := aboutGui.Add("Button", "w105 x+10 h28 Default", "Close")
+    closeBtn := aboutGui.Add("Button", "w110 x+12 h32 Default", "Close")
     Theme.RegisterControl(aboutGui, closeBtn, "Button")
     CloseAbout(*) {
         if Theme.OpenWindows.Has(aboutGui.Hwnd)
@@ -1612,7 +1711,7 @@ ChangeAppHotkeysUI(cfg, *) {
 
     BuildSettingsWindow("Edit App Shortcuts", elements, SaveAppHk, {
         saveBtnText: "Save && Restart",
-        saveBtnOpts: "xm w280 Default y+15"
+        saveBtnOpts: "xm w280 h32 Default y+15"
     })
 }
 
@@ -1635,7 +1734,7 @@ ChangeZoomShortcutsUI(cfg, *) {
 
     BuildSettingsWindow("Edit Zoom Shortcuts", elements, SaveZoomHk, {
         saveBtnText: "Save && Restart",
-        saveBtnOpts: "w280 Default y+15"
+        saveBtnOpts: "w280 h32 Default y+15"
     })
 }
 
@@ -1672,7 +1771,7 @@ ChangeObsSettingsUI(cfg, *) {
 
     BuildSettingsWindow("OBS Settings", elements, SaveObsSettings, {
         saveBtnText: "Save && Restart",
-        saveBtnOpts: "w280 Default y+15"
+        saveBtnOpts: "w280 h32 Default y+15"
     })
 }
 
@@ -1689,7 +1788,7 @@ ChangeHwMuteHotkeyUI(cfg, *) {
 
     BuildSettingsWindow("Edit Pointer Mute Button", elements, SaveHwMuteHk, {
         saveBtnText: "Save && Restart",
-        saveBtnOpts: "w250 Default y+15"
+        saveBtnOpts: "w250 h32 Default y+15"
     })
 }
 
@@ -1716,7 +1815,7 @@ ConfigurePointerKeysUI(cfg, *) {
 
     BuildSettingsWindow("Configure Pointer Intercepts", elements, SavePointerKeys, {
         saveBtnText: "Save && Restart",
-        saveBtnOpts: "w250 Default y+15"
+        saveBtnOpts: "w250 h32 Default y+15"
     })
 }
 
@@ -1734,7 +1833,7 @@ ShowPointerTester(*) {
     keyDisplay.SetFont("s14 w700")
     Theme.RegisterControl(testerGui, keyDisplay, "Text", "accent")
 
-    btn := testerGui.Add("Button", "w100 x75 y+20 Default", "Close")
+    btn := testerGui.Add("Button", "w110 x70 y+20 h32 Default", "Close")
     Theme.RegisterControl(testerGui, btn, "Button")
 
     ih := InputHook("L0 V")
