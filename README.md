@@ -1,4 +1,4 @@
-# PresenterSync v2.0.0 🎙️📊
+# PresenterSync v2.1.0 🎙️📊
 
 PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It bridges OBS Studio, Zoom, and Microsoft PowerPoint, allowing you to control your slides, track recording/studio/scene/chat telemetry, and manage your microphone without ever losing window focus or broadcasting a hot mic.
 

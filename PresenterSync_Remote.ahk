@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.0.0
+; Version: 2.1.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
