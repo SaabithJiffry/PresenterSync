@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 1.1.0
+; Version: 1.3.0
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
@@ -12,6 +12,7 @@ ProcessSetPriority "High"
 SetKeyDelay 50, 50 
 
 #Include <WebSocket>
+#Include <UIA>
 
 ; === CONFIGURATION & MEMORY ===
 global ConfigFile := A_ScriptDir "\MicOverlay_Config.ini"
@@ -40,13 +41,33 @@ SetTrayCheck(itemText, enabled) {
         A_TrayMenu.Uncheck(itemText)
 }
 
+global AudioRoutingMode := Integer(IniRead(ConfigFile, "Settings", "AudioRoutingMode", 0))
 global ObsMuteHotkey := IniRead(ConfigFile, "Settings", "ObsHotkey", "None")
+global ObsRecHotkey := IniRead(ConfigFile, "Settings", "ObsRecHotkey", "^F9")
+global ObsPauseHotkey := IniRead(ConfigFile, "Settings", "ObsPauseHotkey", "^F10")
+global ZoomMuteHotkey := IniRead(ConfigFile, "Settings", "ZoomMuteHotkey", "!a")
+global ZoomRecHotkey := IniRead(ConfigFile, "Settings", "ZoomRecHotkey", "")
+if (ZoomRecHotkey = "") {
+    ZoomRecHotkey := "!r"
+    IniWrite(ZoomRecHotkey, ConfigFile, "Settings", "ZoomRecHotkey")
+}
+global ZoomPauseHotkey := IniRead(ConfigFile, "Settings", "ZoomPauseHotkey", "")
+if (ZoomPauseHotkey = "") {
+    ZoomPauseHotkey := "!p"
+    IniWrite(ZoomPauseHotkey, ConfigFile, "Settings", "ZoomPauseHotkey")
+}
 global obsPassword := IniRead(ConfigFile, "Settings", "ObsPassword", "")
 global targetMicName := IniRead(ConfigFile, "Settings", "TargetMicName", "Mic/Aux")
 
 global EnablePPT := ReadIniBool("Settings", "EnablePPT")
 global EnableMicOnly := ReadIniBool("Settings", "EnableMicOnly")
 global EnableWS := ReadIniBool("Settings", "EnableWS")
+global EnableZoom := ReadIniBool("Settings", "EnableZoom")
+
+if (EnableWS && EnableZoom) {
+    EnableZoom := false
+    WriteIniBool("Settings", "EnableZoom", false)
+}
 
 global ShowIndicator := ReadIniBool("Settings", "ShowIndicator", true)
 global ShowText := ReadIniBool("Settings", "ShowText")
@@ -68,15 +89,17 @@ global CatchEsc := ReadIniBool("Pointer", "CatchEsc", true)
 ; --- NEW DYNAMIC HOTKEYS ---
 global PptHotkey := IniRead(ConfigFile, "Settings", "PptHotkey", "^F12")
 global WsHotkey := IniRead(ConfigFile, "Settings", "WsHotkey", "!F12")
+global ZoomHotkey := IniRead(ConfigFile, "Settings", "ZoomHotkey", "^!F12")
 global IndHotkey := IniRead(ConfigFile, "Settings", "IndHotkey", "^+F12")
 global ExitHotkey := IniRead(ConfigFile, "Settings", "ExitHotkey", "!+F12")
 global SuspendHotkey := IniRead(ConfigFile, "Settings", "SuspendHotkey", "^!+F12")
 global HwMuteHotkey := IniRead(ConfigFile, "Settings", "HwMuteHotkey", "b") ; Pointer Mute Button
 
-; 1. First-run: Only ask for the Hotkey
-if (ObsMuteHotkey = "None") {
-    ObsMuteHotkey := PromptForHotkey()
-    IniWrite(ObsMuteHotkey, ConfigFile, "Settings", "ObsHotkey")
+; 1. First-run / missing shortcut setup: Audio Routing Mode + shortcuts
+if (AudioRoutingMode == 0
+    || ((AudioRoutingMode == 1 || AudioRoutingMode == 3) && (ObsMuteHotkey = "None" || ObsMuteHotkey = ""))
+    || ((AudioRoutingMode == 2 || AudioRoutingMode == 3) && ZoomMuteHotkey = "")) {
+    PromptForSetup()
 }
 
 ; 2. Boot-up check: If WS is enabled but password is missing, ask for it
@@ -100,8 +123,15 @@ if (FirstRun) {
 ; --- RESTORED VARIABLES ---
 global obsWs := ""
 global obsConnected := false
+global zoomConnected := false
+global IsSyncing := false
+global zoomLastMuted := -1
 
 global isMuted := IniRead(ConfigFile, "Settings", "IsMuted", 0)
+global recState := 0 ; 0 = NOT REC, 1 = REC, 2 = PAUSED
+global studioModeActive := false
+global currentSceneName := "Scene"
+global unreadChatCount := 0
 global baseAlpha := OpacityLevel     
 global currentAlpha := baseAlpha
 global breathDir := AggressivePulse ? -20 : -5      
@@ -113,34 +143,102 @@ global borderMuted := 0x4444EF
 global iconLive := "064E3B"   
 global iconMuted := "540808"  
 
+global recColorOff := "374151"
+global recBorderOff := 0x514137
+global recIconOff := "9CA3AF"
+global recColorActive := "DC2626"
+global recBorderActive := 0x2626DC
+global recIconActive := "7F1D1D"
+global recColorPaused := "D97706"
+global recBorderPaused := 0x0677D9
+global recIconPaused := "78350F"
+
+global studioColorOff := "374151"
+global studioBorderOff := 0x514137
+global studioIconOff := "9CA3AF"
+global studioColorOn := "7C3AED"
+global studioBorderOn := 0xED3A7C
+global studioIconOn := "4C1D95"
+global sceneColor := "1E293B"
+global sceneBorder := 0x3B291E
+
+global chatColorClear := "374151"
+global chatBorderClear := 0x514137
+global chatIconClear := "9CA3AF"
+global chatColorAlert := "2563EB"
+global chatBorderAlert := 0xEB6325
+global chatIconAlert := "1E3A8A"
+
 ; --- SETUP GUIS ---
-PromptForHotkey() {
-    Suspend(True) 
-    
-    hkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Setup")
-    hkGui.OnEvent("Close", (*) => ExitApp()) 
-    
-    hkGui.Add("Text", "w250", "Press your OBS Mute shortcut:")
-    hkCtrl := hkGui.Add("Hotkey", "w250")
-    btn := hkGui.Add("Button", "w250 Default y+15", "Save && Start")
-    
-    savedHk := ""
-    btn.OnEvent("Click", SaveHk)
-    
-    SaveHk(*) {
-        if (hkCtrl.Value = "") {
-            hkGui.Opt("+OwnDialogs") ; Forces the MsgBox to appear on top
-            MsgBox("Please enter a shortcut.", "Setup", "Icon!")
+PromptForSetup() {
+    global AudioRoutingMode, ObsMuteHotkey, ZoomMuteHotkey, ConfigFile
+    Suspend(True)
+
+    setupGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Audio Setup")
+    setupGui.OnEvent("Close", (*) => ExitApp())
+
+    setupGui.Add("Text", "w280", "Select your Audio Routing Profile:")
+    modes := [
+        "1: Pro OBS Setup (VB-Cable)",
+        "2: Standard Direct Mic (Zoom-Only)",
+        "3: Dual App Sync (OBS + Zoom Direct)"
+    ]
+    initialMode := (AudioRoutingMode >= 1 && AudioRoutingMode <= 3) ? AudioRoutingMode : 1
+    modeDrop := setupGui.Add("DropDownList", "w280 Choose" initialMode, modes)
+
+    obsLbl := setupGui.Add("Text", "w280 y+15", "OBS Mute Shortcut:")
+    obsVal := (ObsMuteHotkey != "None") ? ObsMuteHotkey : ""
+    obsCtrl := setupGui.Add("Hotkey", "w280", obsVal)
+
+    zoomLbl := setupGui.Add("Text", "w280 y+10", "Zoom Mute Shortcut (Default Alt+A):")
+    zoomCtrl := setupGui.Add("Hotkey", "w280", ZoomMuteHotkey != "" ? ZoomMuteHotkey : "!a")
+
+    btn := setupGui.Add("Button", "w280 Default y+15", "Save && Start")
+
+    UpdateFieldStates(*) {
+        sel := modeDrop.Value
+        obsEnabled := (sel == 1 || sel == 3)
+        zoomEnabled := (sel == 2 || sel == 3)
+        obsLbl.Enabled := obsEnabled
+        obsCtrl.Enabled := obsEnabled
+        zoomLbl.Enabled := zoomEnabled
+        zoomCtrl.Enabled := zoomEnabled
+    }
+    modeDrop.OnEvent("Change", UpdateFieldStates)
+    UpdateFieldStates()
+
+    SaveSetup(*) {
+        sel := modeDrop.Value
+        if ((sel == 1 || sel == 3) && obsCtrl.Value = "") {
+            setupGui.Opt("+OwnDialogs")
+            MsgBox("Please enter your OBS Mute shortcut.", "Setup", "Icon!")
             return
         }
-        savedHk := hkCtrl.Value
-        Suspend(False) 
-        hkGui.Destroy()
+        if ((sel == 2 || sel == 3) && zoomCtrl.Value = "") {
+            setupGui.Opt("+OwnDialogs")
+            MsgBox("Please enter your Zoom Mute shortcut.", "Setup", "Icon!")
+            return
+        }
+
+        AudioRoutingMode := sel
+        IniWrite(AudioRoutingMode, ConfigFile, "Settings", "AudioRoutingMode")
+
+        if (sel == 1 || sel == 3) {
+            ObsMuteHotkey := obsCtrl.Value
+            IniWrite(ObsMuteHotkey, ConfigFile, "Settings", "ObsHotkey")
+        }
+        if (sel == 2 || sel == 3) {
+            ZoomMuteHotkey := zoomCtrl.Value
+            IniWrite(ZoomMuteHotkey, ConfigFile, "Settings", "ZoomMuteHotkey")
+        }
+
+        Suspend(False)
+        setupGui.Destroy()
     }
-    
-    hkGui.Show()
-    WinWaitClose(hkGui.Hwnd)
-    return savedHk
+
+    btn.OnEvent("Click", SaveSetup)
+    setupGui.Show()
+    WinWaitClose(setupGui.Hwnd)
 }
 
 PromptForPassword() {
@@ -181,7 +279,7 @@ ShowHelpWindow(*) {
     helpGui.SetFont("s10 w400", "Segoe UI")
     
     ; Create a tabbed interface (420px wide, 290px tall)
-    tabs := helpGui.Add("Tab3", "w420 h290", ["Shortcuts", "Pointer Modes", "OBS Sync", "Pro Tips"])
+    tabs := helpGui.Add("Tab3", "w420 h290", ["Shortcuts", "Pointer Modes", "OBS & Zoom Sync", "Pro Tips"])
     
     ; --- TAB 1: SHORTCUTS ---
     tabs.UseTab(1)
@@ -190,6 +288,7 @@ ShowHelpWindow(*) {
     helpGui.SetFont("s10 w400")
     helpGui.Add("Text", "x25 y+15", FormatHK(PptHotkey) " :  Cycle Pointer Modes")
     helpGui.Add("Text", "x25 y+10", FormatHK(WsHotkey) " :  Toggle OBS WebSocket Sync")
+    helpGui.Add("Text", "x25 y+10", FormatHK(ZoomHotkey) " :  Toggle Zoom Monitoring")
     helpGui.Add("Text", "x25 y+10", FormatHK(IndHotkey) " :  Hide/Unhide Indicator")
     helpGui.Add("Text", "x25 y+10", FormatHK(SuspendHotkey) " :  Suspend All Hotkeys")
     helpGui.Add("Text", "x25 y+10", FormatHK(ExitHotkey) " :  Exit PresenterSync")
@@ -204,12 +303,12 @@ ShowHelpWindow(*) {
     helpGui.SetFont("s10 w400")
     helpGui.Add("Text", "x25 y+10 w370", "1. Full PPT + Mute:`nRoutes your clicker to PowerPoint while still allowing the hardware mute button to trigger OBS.`n`n2. Pointer Mute Only:`nBypasses PowerPoint completely. Your clicker only controls the mute overlay.`n`n* If you need to type normally while presenting, go to Settings > 'Configure Pointer Intercepts' to disable specific keys (like Space or Enter).")
 
-    ; --- TAB 3: OBS SYNC ---
+    ; --- TAB 3: OBS & ZOOM SYNC ---
     tabs.UseTab(3)
     helpGui.SetFont("s12 w700")
-    helpGui.Add("Text", "x25 y45", "OBS WebSocket Sync")
+    helpGui.Add("Text", "x25 y45", "OBS WebSocket & Zoom UIA Sync")
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "x25 y+10 w370", "PresenterSync uses OBS WebSocket v5 to talk directly to OBS Studio behind the scenes.`n`n• True 2-Way Sync: If you mute the mic inside OBS with your mouse, the PresenterSync overlay updates instantly to match.`n• Reliability: Clicker commands are sent instantly over the local network to prevent input drops.`n`nMake sure WebSocket is enabled in OBS (Tools > WebSocket Server Settings).")
+    helpGui.Add("Text", "x25 y+10 w370", "• OBS WebSocket v5: Enable in OBS (Tools > WebSocket Server Settings) for instant 2-way mic sync.`n`n• Zoom UIA Monitoring: Provides 2-way background sync with Zoom even if a host mutes you or you click Mute in Zoom.`n`n• Zoom Requirement: In Zoom Settings > Accessibility (or General), check 'Always show meeting controls' so PresenterSync can read Zoom's toolbar reliably in the background.")
 
     ; --- TAB 4: PRO TIPS ---
     tabs.UseTab(4)
@@ -240,7 +339,7 @@ ShowAboutWindow(*) {
     aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
     
     aboutGui.SetFont("s10 w400")
-    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.1.0")
+    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.3.0")
     aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
     
     ; Two 110px buttons with 10px spacing = 230px total. Centered in 350px width (60px padding)
@@ -264,6 +363,9 @@ ChangeAppHotkeysUI(*) {
     
     hkGui.Add("Text", "xm w150", "Toggle OBS WebSocket:")
     wsCtrl := hkGui.Add("Hotkey", "x+10 w120", WsHotkey)
+
+    hkGui.Add("Text", "xm w150", "Toggle Zoom Monitor:")
+    zoomHkCtrl := hkGui.Add("Hotkey", "x+10 w120", ZoomHotkey)
     
     hkGui.Add("Text", "xm w150", "Toggle Indicator:")
     indCtrl := hkGui.Add("Hotkey", "x+10 w120", IndHotkey)
@@ -278,14 +380,14 @@ ChangeAppHotkeysUI(*) {
     btn.OnEvent("Click", SaveAppHk)
     
     SaveAppHk(*) {
-        ; Check if any of the 4 inputs were cleared
-        if (pptCtrl.Value = "" || wsCtrl.Value = "" || indCtrl.Value = "" || exitCtrl.Value = "") {
+        if (pptCtrl.Value = "" || wsCtrl.Value = "" || zoomHkCtrl.Value = "" || indCtrl.Value = "" || exitCtrl.Value = "") {
             hkGui.Opt("+OwnDialogs") ; Forces the MsgBox to appear on top
             MsgBox("Shortcuts cannot be left blank.", "Error", "Icon!")
             return
         }
         IniWrite(pptCtrl.Value, ConfigFile, "Settings", "PptHotkey")
         IniWrite(wsCtrl.Value, ConfigFile, "Settings", "WsHotkey")
+        IniWrite(zoomHkCtrl.Value, ConfigFile, "Settings", "ZoomHotkey")
         IniWrite(indCtrl.Value, ConfigFile, "Settings", "IndHotkey")
         IniWrite(suspCtrl.Value, ConfigFile, "Settings", "SuspendHotkey")
         IniWrite(exitCtrl.Value, ConfigFile, "Settings", "ExitHotkey")
@@ -295,29 +397,83 @@ ChangeAppHotkeysUI(*) {
     hkGui.Show()
 }
 
-ChangeMuteHotkeyUI(*) {
-    Suspend(True) 
-    
-    hkGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit System Mute Shortcut")
-    hkGui.OnEvent("Close", (*) => Suspend(False)) 
-    
-    hkGui.Add("Text", "w250", "Press your new OBS Mute shortcut:")
-    hkCtrl := hkGui.Add("Hotkey", "w250", ObsMuteHotkey)
-    btn := hkGui.Add("Button", "w250 Default y+15", "Save && Restart")
-    
-    btn.OnEvent("Click", SaveMuteHk)
-    
-    SaveMuteHk(*) {
-        if (hkCtrl.Value = "") {
-            hkGui.Opt("+OwnDialogs") ; Forces the MsgBox to appear on top
-            MsgBox("Please enter a shortcut.", "Error", "Icon!")
+ChangeZoomShortcutsUI(*) {
+    Suspend(True)
+
+    zmGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit Zoom Shortcuts")
+    zmGui.OnEvent("Close", (*) => Suspend(False))
+
+    zmGui.Add("Text", "w280", "Zoom Mute Shortcut (Default Alt+A):")
+    muteCtrl := zmGui.Add("Hotkey", "w280", ZoomMuteHotkey)
+
+    zmGui.Add("Text", "w280 y+10", "Start/Stop Recording Shortcut (Default Alt+R):")
+    recCtrl := zmGui.Add("Hotkey", "w280", ZoomRecHotkey)
+
+    zmGui.Add("Text", "w280 y+10", "Pause/Resume Recording Shortcut (Default Alt+P):")
+    pauseCtrl := zmGui.Add("Hotkey", "w280", ZoomPauseHotkey)
+
+    btn := zmGui.Add("Button", "w280 Default y+15", "Save && Restart")
+
+    btn.OnEvent("Click", SaveZoomHk)
+
+    SaveZoomHk(*) {
+        if (muteCtrl.Value = "") {
+            zmGui.Opt("+OwnDialogs")
+            MsgBox("Zoom Mute shortcut cannot be empty.", "Error", "Icon!")
             return
         }
-        IniWrite(hkCtrl.Value, ConfigFile, "Settings", "ObsHotkey")
-        Reload() 
+        IniWrite(muteCtrl.Value, ConfigFile, "Settings", "ZoomMuteHotkey")
+        IniWrite(recCtrl.Value != "" ? recCtrl.Value : "!r", ConfigFile, "Settings", "ZoomRecHotkey")
+        IniWrite(pauseCtrl.Value != "" ? pauseCtrl.Value : "!p", ConfigFile, "Settings", "ZoomPauseHotkey")
+        Reload()
     }
-    
-    hkGui.Show()
+
+    zmGui.Show()
+}
+
+SetRoutingMode(mode) {
+    global AudioRoutingMode, ObsMuteHotkey, ZoomMuteHotkey, ConfigFile
+    IniWrite(mode, ConfigFile, "Settings", "AudioRoutingMode")
+    if ((mode == 2 || mode == 3) && ZoomMuteHotkey = "")
+        IniWrite("!a", ConfigFile, "Settings", "ZoomMuteHotkey")
+    Reload()
+}
+
+ChangeObsSettingsUI(*) {
+    Suspend(True)
+
+    obsGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "OBS Settings")
+    obsGui.OnEvent("Close", (*) => Suspend(False))
+
+    obsGui.Add("Text", "w280", "OBS Mute Shortcut:")
+    muteCtrl := obsGui.Add("Hotkey", "w280", (ObsMuteHotkey != "None") ? ObsMuteHotkey : "")
+
+    obsGui.Add("Text", "w280 y+10", "Start/Stop Recording Shortcut:")
+    recCtrl := obsGui.Add("Hotkey", "w280", ObsRecHotkey)
+
+    obsGui.Add("Text", "w280 y+10", "Pause/Resume Recording Shortcut:")
+    pauseCtrl := obsGui.Add("Hotkey", "w280", ObsPauseHotkey)
+
+    obsGui.Add("Text", "w280 y+10", "Exact OBS Audio Source Name (e.g., Mic/Aux):")
+    micCtrl := obsGui.Add("Edit", "w280", targetMicName)
+
+    btn := obsGui.Add("Button", "w280 Default y+15", "Save && Restart")
+    btn.OnEvent("Click", SaveObsSettings)
+
+    SaveObsSettings(*) {
+        if (muteCtrl.Value = "" || micCtrl.Value = "") {
+            obsGui.Opt("+OwnDialogs")
+            MsgBox("OBS Mute shortcut and Audio Source Name cannot be empty.", "Error", "Icon!")
+            return
+        }
+        IniWrite(muteCtrl.Value, ConfigFile, "Settings", "ObsHotkey")
+        IniWrite(recCtrl.Value != "" ? recCtrl.Value : "^F9", ConfigFile, "Settings", "ObsRecHotkey")
+        IniWrite(pauseCtrl.Value != "" ? pauseCtrl.Value : "^F10", ConfigFile, "Settings", "ObsPauseHotkey")
+        IniWrite(micCtrl.Value, ConfigFile, "Settings", "TargetMicName")
+        Reload()
+    }
+
+    obsGui.Show()
 }
 
 ChangeHwMuteHotkeyUI(*) {
@@ -376,30 +532,7 @@ ConfigurePointerKeysUI(*) {
     pkGui.Show()
 }
 
-ChangeMicNameUI(*) {
-    Suspend(True) 
-    
-    micGuiPrompt := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit OBS Audio Source")
-    micGuiPrompt.OnEvent("Close", (*) => Suspend(False)) 
-    
-    micGuiPrompt.Add("Text", "w280", "Enter exact OBS Audio Source Name (e.g., Mic/Aux):")
-    micCtrl := micGuiPrompt.Add("Edit", "w280", targetMicName)
-    btn := micGuiPrompt.Add("Button", "w280 Default y+15", "Save && Restart")
-    
-    btn.OnEvent("Click", SaveMicName)
-    
-    SaveMicName(*) {
-        if (micCtrl.Value = "") {
-            micGuiPrompt.Opt("+OwnDialogs")
-            MsgBox("Audio source name cannot be empty.", "Error", "Icon!")
-            return
-        }
-        IniWrite(micCtrl.Value, ConfigFile, "Settings", "TargetMicName")
-        Reload() 
-    }
-    
-    micGuiPrompt.Show()
-}
+; Removed standalone ChangeMicNameUI (merged into ChangeObsSettingsUI)
 
 ; --- CRYPTOGRAPHY ENGINE ---
 HashSHA256_Base64(stringToHash) {
@@ -490,7 +623,13 @@ HandleObsMessage(ws, rawMsg) {
     else if (opCode == 2) {
         obsConnected := true
         stateJson := '{"op":6,"d":{"requestType":"GetInputMute","requestId":"InitState","requestData":{"inputName":"' targetMicName '"}}}'
-        ws.sendText(stateJson) 
+        ws.sendText(stateJson)
+        recJson := '{"op":6,"d":{"requestType":"GetRecordStatus","requestId":"InitRecState"}}'
+        ws.sendText(recJson)
+        studioJson := '{"op":6,"d":{"requestType":"GetStudioModeEnabled","requestId":"InitStudioState"}}'
+        ws.sendText(studioJson)
+        sceneJson := '{"op":6,"d":{"requestType":"GetCurrentProgramScene","requestId":"InitSceneState"}}'
+        ws.sendText(sceneJson)
     }
     else if (opCode == 5) {
         if (InStr(msg, '"eventType":"InputMuteStateChanged"') || InStr(msg, '"eventType": "InputMuteStateChanged"')) {
@@ -498,7 +637,29 @@ HandleObsMessage(ws, rawMsg) {
                 if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                     isMutedOBS := (matchMuted[1] == "true")
                     SyncUIState(isMutedOBS)
+                    PushObsMuteToZoom(isMutedOBS)
                 }
+            }
+        }
+        else if (InStr(msg, '"eventType":"RecordStateChanged"') || InStr(msg, '"eventType": "RecordStateChanged"')) {
+            if (RegExMatch(msg, '"outputState"\s*:\s*"([^"]+)"', &matchRecOut)) {
+                outState := matchRecOut[1]
+                if (outState = "OBS_WEBSOCKET_OUTPUT_STARTED" || outState = "OBS_WEBSOCKET_OUTPUT_RESUMED")
+                    SyncRecState(1)
+                else if (outState = "OBS_WEBSOCKET_OUTPUT_PAUSED")
+                    SyncRecState(2)
+                else if (outState = "OBS_WEBSOCKET_OUTPUT_STOPPED")
+                    SyncRecState(0)
+            }
+        }
+        else if (InStr(msg, '"eventType":"StudioModeStateChanged"') || InStr(msg, '"eventType": "StudioModeStateChanged"')) {
+            if (RegExMatch(msg, '"studioModeEnabled"\s*:\s*(true|false)', &matchStudio)) {
+                SyncStudioState(matchStudio[1] == "true")
+            }
+        }
+        else if (InStr(msg, '"eventType":"CurrentProgramSceneChanged"') || InStr(msg, '"eventType": "CurrentProgramSceneChanged"')) {
+            if (RegExMatch(msg, '"sceneName"\s*:\s*"([^"]+)"', &matchScene)) {
+                SyncSceneState(matchScene[1])
             }
         }
     }
@@ -507,9 +668,260 @@ HandleObsMessage(ws, rawMsg) {
             if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                 isMutedOBS := (matchMuted[1] == "true")
                 SyncUIState(isMutedOBS)
+                PushObsMuteToZoom(isMutedOBS)
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitRecState"') || InStr(msg, '"requestId": "InitRecState"')) {
+            if (RegExMatch(msg, '"outputActive"\s*:\s*(true|false)', &matchActive)) {
+                active := (matchActive[1] == "true")
+                paused := false
+                if (RegExMatch(msg, '"outputPaused"\s*:\s*(true|false)', &matchPaused))
+                    paused := (matchPaused[1] == "true")
+                SyncRecState(active ? (paused ? 2 : 1) : 0)
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitStudioState"') || InStr(msg, '"requestId": "InitStudioState"')) {
+            if (RegExMatch(msg, '"studioModeEnabled"\s*:\s*(true|false)', &matchStudio)) {
+                SyncStudioState(matchStudio[1] == "true")
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitSceneState"') || InStr(msg, '"requestId": "InitSceneState"')) {
+            if (RegExMatch(msg, '"currentProgramSceneName"\s*:\s*"([^"]+)"', &matchScene) || RegExMatch(msg, '"sceneName"\s*:\s*"([^"]+)"', &matchScene)) {
+                SyncSceneState(matchScene[1])
             }
         }
     }
+}
+
+ReleaseSyncLock() {
+    global IsSyncing
+    IsSyncing := false
+}
+
+PushObsMuteToZoom(obsIsMuted) {
+    global AudioRoutingMode, IsSyncing, ZoomMuteHotkey
+    if (AudioRoutingMode != 3 || IsSyncing || ZoomMuteHotkey = "")
+        return
+    if !WinExist("ahk_exe Zoom.exe")
+        return
+
+    zoomState := DetectZoomStates()
+    if (zoomState.hasMic && zoomState.muted == obsIsMuted)
+        return
+
+    IsSyncing := true
+    SetKeyDelay -1, 30
+    try ControlSend FormatSendKey(ZoomMuteHotkey),, "ahk_exe Zoom.exe"
+    SetKeyDelay 50, 50
+    SetTimer ReleaseSyncLock, -1000
+}
+
+DetectZoomStates() {
+    result := {foundWindow: false, hasMic: false, muted: false, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
+    hwndList := WinGetList("ahk_exe Zoom.exe")
+    if (hwndList.Length == 0)
+        return result
+
+    result.foundWindow := true
+    for hwnd in hwndList {
+        names := UIA.GetWindowElementNames(hwnd, true)
+        for n in names {
+            if (!result.hasMic) {
+                if RegExMatch(n, "i)\bunmute\b.*\baudio\b|^unmute$") {
+                    result.hasMic := true
+                    result.muted := true
+                } else if RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute$") {
+                    result.hasMic := true
+                    result.muted := false
+                }
+            }
+            if (!result.hasRec) {
+                if RegExMatch(n, "i)\bresume\b.*\brecording\b") {
+                    result.hasRec := true
+                    result.recState := 2
+                } else if RegExMatch(n, "i)\b(pause|stop)\b.*\brecording\b") {
+                    result.hasRec := true
+                    result.recState := 1
+                } else if RegExMatch(n, "i)^record(\b|,|$)|^record (on this computer|to the cloud)") {
+                    result.hasRec := true
+                    result.recState := 0
+                }
+            }
+            if (!result.hasChat) {
+                if RegExMatch(n, "i)\bchat\b.*?(\d+)\s*unread", &mChat) {
+                    result.hasChat := true
+                    result.unreadChat := Integer(mChat[1])
+                } else if RegExMatch(n, "i)^chat(\b|,|$)|open chat|show chat|chat panel") {
+                    result.hasChat := true
+                    result.unreadChat := 0
+                }
+            }
+        }
+        if (result.hasMic && result.hasRec && result.hasChat)
+            break
+    }
+    return result
+}
+
+ZoomStateMonitor() {
+    global EnableZoom, EnableWS, AudioRoutingMode, zoomConnected, isMuted
+    global obsConnected, IsSyncing, ObsMuteHotkey, zoomLastMuted
+
+    if (!EnableZoom && !EnableWS)
+        return
+
+    state := DetectZoomStates()
+    if (state.hasChat)
+        SyncChatState(state.unreadChat)
+
+    if (!state.hasMic) {
+        zoomConnected := false
+        zoomLastMuted := -1
+        return
+    }
+
+    zoomConnected := true
+    if (EnableZoom && !EnableWS) {
+        SyncUIState(state.muted)
+        if (state.hasRec)
+            SyncRecState(state.recState)
+    } else if (EnableWS && AudioRoutingMode == 3 && obsConnected && !IsSyncing) {
+        if (zoomLastMuted != -1 && state.muted != zoomLastMuted && state.muted != isMuted) {
+            if (ObsMuteHotkey != "None" && ObsMuteHotkey != "") {
+                IsSyncing := true
+                SetKeyDelay -1, 30
+                try ControlSend FormatSendKey(ObsMuteHotkey),, "ahk_exe obs64.exe"
+                SetKeyDelay 50, 50
+                SetTimer ReleaseSyncLock, -1000
+            }
+        }
+    }
+    zoomLastMuted := state.muted
+}
+
+UpdateZoomMonitorTimer() {
+    global EnableZoom, EnableWS
+    if (EnableZoom || EnableWS)
+        SetTimer ZoomStateMonitor, 500
+    else
+        SetTimer ZoomStateMonitor, 0
+}
+UpdateZoomMonitorTimer()
+
+SyncChatState(newCount) {
+    global unreadChatCount
+    if (unreadChatCount != newCount) {
+        unreadChatCount := newCount
+        ApplyChatAppearance()
+    }
+}
+
+ApplyChatAppearance() {
+    global unreadChatCount, ChatGui, ChatIconText, ChatLabelText, ShowText, MonoIcon
+    global chatColorClear, chatBorderClear, chatIconClear
+    global chatColorAlert, chatBorderAlert, chatIconAlert
+
+    if (!IsSet(ChatGui))
+        return
+
+    hasUnread := (unreadChatCount > 0)
+    bg := hasUnread ? chatColorAlert : chatColorClear
+    brd := hasUnread ? chatBorderAlert : chatBorderClear
+    ic := MonoIcon ? (hasUnread ? chatIconAlert : chatIconClear) : (hasUnread ? "White" : "D1D5DB")
+
+    ChatGui.BackColor := bg
+    ChatIconText.Opt("c" ic)
+    ChatLabelText.Opt("c" ic)
+    if (ShowText) {
+        ChatIconText.Visible := true
+        ChatLabelText.Visible := true
+        ChatLabelText.Value := hasUnread ? (unreadChatCount " NEW") : "CHAT"
+    } else {
+        ChatIconText.Visible := !hasUnread
+        ChatLabelText.Visible := hasUnread
+        ChatLabelText.Value := String(unreadChatCount)
+    }
+    DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", ChatGui.Hwnd, "Int", 34, "Int*", brd, "Int", 4)
+}
+
+SyncStudioState(isEnabled) {
+    global studioModeActive
+    if (studioModeActive != isEnabled) {
+        studioModeActive := isEnabled
+        ApplyStudioAppearance()
+    }
+}
+
+ApplyStudioAppearance() {
+    global studioModeActive, StudioGui, StudioIconText, ShowText, MonoIcon
+    global studioColorOff, studioBorderOff, studioIconOff
+    global studioColorOn, studioBorderOn, studioIconOn
+
+    if (!IsSet(StudioGui))
+        return
+
+    if (ShowText)
+        global StudioLabelText
+
+    bg := studioModeActive ? studioColorOn : studioColorOff
+    brd := studioModeActive ? studioBorderOn : studioBorderOff
+    ic := MonoIcon ? (studioModeActive ? studioIconOn : studioIconOff) : (studioModeActive ? "White" : "D1D5DB")
+
+    StudioGui.BackColor := bg
+    StudioIconText.Opt("c" ic)
+    if (ShowText)
+        StudioLabelText.Opt("c" ic)
+    DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", StudioGui.Hwnd, "Int", 34, "Int*", brd, "Int", 4)
+}
+
+SyncSceneState(sceneName) {
+    global currentSceneName, SceneGui, SceneLabelText
+    if (sceneName != "" && currentSceneName != sceneName) {
+        currentSceneName := sceneName
+        if (IsSet(SceneGui) && IsSet(SceneLabelText))
+            SceneLabelText.Value := currentSceneName
+    }
+}
+
+SyncRecState(newState) {
+    global recState
+    if (recState != newState) {
+        recState := newState
+        ApplyRecAppearance()
+    }
+}
+
+ApplyRecAppearance() {
+    global recState, RecGui, RecIconText, ShowText, MonoIcon
+    global recColorOff, recBorderOff, recIconOff
+    global recColorActive, recBorderActive, recIconActive
+    global recColorPaused, recBorderPaused, recIconPaused
+
+    if (!IsSet(RecGui))
+        return
+
+    if (ShowText)
+        global RecLabelText
+
+    if (recState == 1) {
+        bg := recColorActive, brd := recBorderActive, ic := MonoIcon ? recIconActive : "White"
+        glyph := Chr(0xE7C8), lbl := "REC"
+    } else if (recState == 2) {
+        bg := recColorPaused, brd := recBorderPaused, ic := MonoIcon ? recIconPaused : "White"
+        glyph := Chr(0xE769), lbl := "PAUSED"
+    } else {
+        bg := recColorOff, brd := recBorderOff, ic := MonoIcon ? recIconOff : "D1D5DB"
+        glyph := Chr(0xE71A), lbl := "NOT REC"
+    }
+
+    RecGui.BackColor := bg
+    RecIconText.Opt("c" ic)
+    RecIconText.Value := glyph
+    if (ShowText) {
+        RecLabelText.Opt("c" ic)
+        RecLabelText.Value := lbl
+    }
+    DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", RecGui.Hwnd, "Int", 34, "Int*", brd, "Int", 4)
 }
 
 SyncUIState(obsIsMuted) {
@@ -538,6 +950,10 @@ A_TrayMenu.Add()
 A_TrayMenu.Add("Enable OBS WebSocket Sync", ToggleWS)
 if (EnableWS)
     A_TrayMenu.Check("Enable OBS WebSocket Sync")
+
+A_TrayMenu.Add("Enable Zoom Monitoring", ToggleZoom)
+if (EnableZoom)
+    A_TrayMenu.Check("Enable Zoom Monitoring")
 
 ; MAIN UI TOGGLE
 A_TrayMenu.Add("Show Mute Indicator", ToggleIndicator)
@@ -576,26 +992,22 @@ else if (OpacityLevel == 127)
 AppearanceMenu.Add("Transparency Level", OpacityMenu)
 
 ScaleMenu := Menu()
-ScaleMenu.Add("Tiny (x0.25)", (*) => SetScale(0.25))
-ScaleMenu.Add("Small (x0.5)", (*) => SetScale(0.5))
-ScaleMenu.Add("Normal (x1.0)", (*) => SetScale(1.0))
-ScaleMenu.Add("Large (x1.5)", (*) => SetScale(1.5))
-ScaleMenu.Add("Huge (x2.0)", (*) => SetScale(2.0))
-ScaleMenu.Add("Massive (x2.5)", (*) => SetScale(2.5))
+ScaleOptions := [
+    {label: "Tiny (x0.25)", val: 0.25},
+    {label: "Small (x0.5)", val: 0.5},
+    {label: "Normal (x1.0)", val: 1.0},
+    {label: "Large (x1.5)", val: 1.5},
+    {label: "Huge (x2.0)", val: 2.0},
+    {label: "Massive (x2.5)", val: 2.5},
+    {label: "Colossal (x3.0)", val: 3.0},
+    {label: "Gigantic (x5.0)", val: 5.0}
+]
+for opt in ScaleOptions {
+    ScaleMenu.Add(opt.label, ((v, *) => SetScale(v)).Bind(opt.val))
+    if (Abs(IndicatorScale - opt.val) < 0.001)
+        ScaleMenu.Check(opt.label)
+}
 
-if (IndicatorScale == 0.25)
-    ScaleMenu.Check("Tiny (x0.25)")
-else if (IndicatorScale == 0.5)
-    ScaleMenu.Check("Small (x0.5)")
-else if (IndicatorScale == 1.0)
-    ScaleMenu.Check("Normal (x1.0)")
-else if (IndicatorScale == 1.5)
-    ScaleMenu.Check("Large (x1.5)")
-else if (IndicatorScale == 2.0)
-    ScaleMenu.Check("Huge (x2.0)")
-else if (IndicatorScale == 2.5)
-    ScaleMenu.Check("Massive (x2.5)")
-    
 AppearanceMenu.Add("Indicator Scale", ScaleMenu)
 
 SetScale(val) {
@@ -612,12 +1024,24 @@ A_TrayMenu.Add()
 
 ; SETTINGS SUBMENU
 SettingsMenu := Menu()
+RoutingMenu := Menu()
+RoutingModes := [
+    {label: "1: Pro OBS Setup (VB-Cable)", mode: 1},
+    {label: "2: Standard Direct Mic (Zoom-Only)", mode: 2},
+    {label: "3: Dual App Sync (OBS + Zoom)", mode: 3}
+]
+for rm in RoutingModes {
+    RoutingMenu.Add(rm.label, ((m, *) => SetRoutingMode(m)).Bind(rm.mode))
+    if (AudioRoutingMode == rm.mode)
+        RoutingMenu.Check(rm.label)
+}
+SettingsMenu.Add("Audio Routing Mode", RoutingMenu)
 SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
 SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI)
 SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI)
 SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI)
-SettingsMenu.Add("Change System Mute Shortcut", ChangeMuteHotkeyUI) 
-SettingsMenu.Add("Change OBS Audio Source Name", ChangeMicNameUI)
+SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI)
+SettingsMenu.Add("Change Zoom Shortcuts", ChangeZoomShortcutsUI)
 SettingsMenu.Add("Reset Indicator Position", ResetTrayPosition)
 
 A_TrayMenu.Add("Settings", SettingsMenu)
@@ -712,7 +1136,7 @@ CyclePointerMode(*) {
 }
 
 ToggleWS(*) {
-    global EnableWS, obsWs, obsConnected, obsPassword, ConfigFile
+    global EnableWS, EnableZoom, obsWs, obsConnected, obsPassword, zoomConnected, zoomLastMuted, ConfigFile
     ToolTip()
 
     EnableWS := !EnableWS
@@ -725,6 +1149,14 @@ ToggleWS(*) {
                 return
             }
             IniWrite(obsPassword, ConfigFile, "Settings", "ObsPassword")
+        }
+
+        if (EnableZoom) {
+            EnableZoom := false
+            zoomConnected := false
+            zoomLastMuted := -1
+            WriteIniBool("Settings", "EnableZoom", false)
+            SetTrayCheck("Enable Zoom Monitoring", false)
         }
 
         WriteIniBool("Settings", "EnableWS", true)
@@ -743,24 +1175,57 @@ ToggleWS(*) {
         }
     }
 
+    UpdateZoomMonitorTimer()
+    UpdateHudVisibility()
+    SetTimer RemoveToolTip, -2000
+}
+
+ToggleZoom(*) {
+    global EnableZoom, EnableWS, obsWs, obsConnected, zoomConnected, zoomLastMuted
+    ToolTip()
+
+    EnableZoom := !EnableZoom
+
+    if (EnableZoom) {
+        if (EnableWS) {
+            EnableWS := false
+            WriteIniBool("Settings", "EnableWS", false)
+            SetTrayCheck("Enable OBS WebSocket Sync", false)
+            SetTimer ConnectToOBS, 0
+            obsConnected := false
+            if (obsWs) {
+                obsWs.shutdown()
+                obsWs := ""
+            }
+        }
+
+        WriteIniBool("Settings", "EnableZoom", true)
+        SetTrayCheck("Enable Zoom Monitoring", true)
+        ToolTip "Zoom Monitoring: ON"
+    } else {
+        WriteIniBool("Settings", "EnableZoom", false)
+        SetTrayCheck("Enable Zoom Monitoring", false)
+        zoomConnected := false
+        zoomLastMuted := -1
+        ToolTip "Zoom Monitoring: OFF"
+    }
+
+    UpdateZoomMonitorTimer()
+    UpdateHudVisibility()
     SetTimer RemoveToolTip, -2000
 }
 
 ToggleIndicator(*) {
-    global ShowIndicator, isMuted, AggressivePulse, baseWidth, baseHeight, posX, posY, MicGui
+    global ShowIndicator, isMuted, AggressivePulse
     ShowIndicator := !ShowIndicator
     IniWrite(ShowIndicator ? 1 : 0, ConfigFile, "Settings", "ShowIndicator")
 
-    if (ShowIndicator) {
-        SetTrayCheck("Show Mute Indicator", true)
-        MicGui.Show("NoActivate w" baseWidth " h" baseHeight " " posX " " posY)
-        if (isMuted)
-            SetTimer BreathingAnimation, (AggressivePulse ? 15 : 40)
-    } else {
-        SetTrayCheck("Show Mute Indicator", false)
-        MicGui.Hide()
+    SetTrayCheck("Show Mute Indicator", ShowIndicator)
+    UpdateHudVisibility()
+    if (ShowIndicator && isMuted)
+        SetTimer BreathingAnimation, (AggressivePulse ? 15 : 40)
+    else if (!ShowIndicator)
         SetTimer BreathingAnimation, 0
-    }
 }
 ToggleText(*) {
     IniWrite(ShowText ? 0 : 1, ConfigFile, "Settings", "ShowText")
@@ -826,17 +1291,39 @@ savedY := IniRead(ConfigFile, "Position", "Y", "Default")
 
 global baseWidth := Round((ShowText ? 140 : 80) * IndicatorScale)
 global baseHeight := Round(40 * IndicatorScale)
+global hudGap := Max(2, Round(6 * IndicatorScale))
+global recHeight := Round(34 * IndicatorScale)
+global recW := Round((baseWidth - hudGap) * 0.54)
+global chatW := baseWidth - hudGap - recW
+global row3Height := Round(30 * IndicatorScale)
+global studioW := Round((baseWidth - hudGap) * 0.38)
+global sceneW := baseWidth - hudGap - studioW
 global iconSize := Max(1, Round(18 * IndicatorScale))
 global textSize := Max(1, Round(13 * IndicatorScale))
+global subIconSize := Max(1, Round(12 * IndicatorScale))
+global subTextSize := Max(1, Round(9 * IndicatorScale))
+global miniTextSize := Max(1, Round(9 * IndicatorScale))
 
 if (savedX = "Default" || savedY = "Default") {
     MonitorGetWorkArea(1, &Left, &Top, &Right, &Bottom)
-    savedX := Right - baseWidth - 20 
-    savedY := Bottom - baseHeight - 20 
+    savedX := Max(Left + 10, Right - baseWidth - 20)
+    savedY := Max(Top + 10, Bottom - baseHeight - 20)
 }
 
 posX := "x" savedX
 posY := "y" savedY
+
+StyleHudWindow(guiObj, borderColor) {
+    global SleekCorners, currentAlpha
+    cornerStyle := SleekCorners ? 3 : 2
+    DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", guiObj.Hwnd, "Int", 33, "Int*", cornerStyle, "Int", 4)
+    DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", guiObj.Hwnd, "Int", 34, "Int*", borderColor, "Int", 4)
+    margins := Buffer(16, 0)
+    NumPut("Int", 1, margins, 0), NumPut("Int", 1, margins, 4)
+    NumPut("Int", 1, margins, 8), NumPut("Int", 1, margins, 12)
+    DllCall("dwmapi\DwmExtendFrameIntoClientArea", "Ptr", guiObj.Hwnd, "Ptr", margins)
+    WinSetTransparent(currentAlpha, guiObj.Hwnd)
+}
 
 ; --- GUI SETUP ---
 MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
@@ -866,27 +1353,193 @@ if (ShowText) {
     IconText.SetFont("s" iconSize, IconFont) 
 }
 
-cornerStyle := SleekCorners ? 3 : 2
-initialBorder := isMuted ? borderMuted : borderLive
-DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", MicGui.Hwnd, "Int", 33, "Int*", cornerStyle, "Int", 4)
-DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", MicGui.Hwnd, "Int", 34, "Int*", initialBorder, "Int", 4)
-margins := Buffer(16, 0)
-NumPut("Int", 1, margins, 0), NumPut("Int", 1, margins, 4)
-NumPut("Int", 1, margins, 8), NumPut("Int", 1, margins, 12)
-DllCall("dwmapi\DwmExtendFrameIntoClientArea", "Ptr", MicGui.Hwnd, "Ptr", margins)
+StyleHudWindow(MicGui, isMuted ? borderMuted : borderLive)
+
+; --- ROW 2: RECORDING & ZOOM CHAT GUIS ---
+RecGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+RecGui.BackColor := recColorOff
+RecGui.MarginX := 0
+RecGui.MarginY := 0
+
+if (ShowText) {
+    rIconW := Round(18 * IndicatorScale)
+    rIconX := Round(6 * IndicatorScale)
+    rTextX := rIconX + rIconW + Round(2 * IndicatorScale)
+    rTextW := Max(8, recW - rTextX - Round(2 * IndicatorScale))
+
+    global RecIconText := RecGui.Add("Text", "x" rIconX " y0 w" rIconW " h" recHeight " Center +0x200 BackgroundTrans cD1D5DB", Chr(0xE71A))
+    RecIconText.SetFont("s" subIconSize, IconFont)
+    global RecLabelText := RecGui.Add("Text", "x" rTextX " y0 w" rTextW " h" recHeight " Left +0x200 BackgroundTrans cD1D5DB", "NOT REC")
+    RecLabelText.SetFont("s" subTextSize " w700", "Segoe UI")
+} else {
+    global RecIconText := RecGui.Add("Text", "x0 y0 w" recW " h" recHeight " Center +0x200 BackgroundTrans cD1D5DB", Chr(0xE71A))
+    RecIconText.SetFont("s" subIconSize, IconFont)
+}
+
+StyleHudWindow(RecGui, recBorderOff)
+ApplyRecAppearance()
+
+ChatGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+ChatGui.BackColor := chatColorClear
+ChatGui.MarginX := 0
+ChatGui.MarginY := 0
+
+if (ShowText) {
+    cIconW := Round(16 * IndicatorScale)
+    cIconX := Round(5 * IndicatorScale)
+    cTextX := cIconX + cIconW + Round(2 * IndicatorScale)
+    cTextW := Max(8, chatW - cTextX - Round(2 * IndicatorScale))
+
+    global ChatIconText := ChatGui.Add("Text", "x" cIconX " y0 w" cIconW " h" recHeight " Center +0x200 BackgroundTrans cD1D5DB", Chr(0xE8BD))
+    ChatIconText.SetFont("s" subIconSize, IconFont)
+    global ChatLabelText := ChatGui.Add("Text", "x" cTextX " y0 w" cTextW " h" recHeight " Left +0x200 BackgroundTrans cD1D5DB", "CHAT")
+    ChatLabelText.SetFont("s" subTextSize " w700", "Segoe UI")
+} else {
+    global ChatIconText := ChatGui.Add("Text", "x0 y0 w" chatW " h" recHeight " Center +0x200 BackgroundTrans cD1D5DB", Chr(0xE8BD))
+    ChatIconText.SetFont("s" subIconSize, IconFont)
+    global ChatLabelText := ChatGui.Add("Text", "x0 y0 w" chatW " h" recHeight " Center +0x200 BackgroundTrans cFFFFFF Hidden", "0")
+    ChatLabelText.SetFont("s" subTextSize " w700", "Segoe UI")
+}
+
+StyleHudWindow(ChatGui, chatBorderClear)
+ApplyChatAppearance()
+
+; --- ROW 3: STUDIO MODE & ACTIVE SCENE GUIS ---
+StudioGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+StudioGui.BackColor := studioColorOff
+StudioGui.MarginX := 0
+StudioGui.MarginY := 0
+
+if (ShowText) {
+    stIconW := Round(16 * IndicatorScale)
+    stIconX := Round(4 * IndicatorScale)
+    stTextX := stIconX + stIconW
+    stTextW := Max(8, studioW - stTextX - Round(2 * IndicatorScale))
+    global StudioIconText := StudioGui.Add("Text", "x" stIconX " y0 w" stIconW " h" row3Height " Center +0x200 BackgroundTrans cD1D5DB", Chr(0xE7F4))
+    StudioIconText.SetFont("s" Max(1, Round(11 * IndicatorScale)), IconFont)
+    global StudioLabelText := StudioGui.Add("Text", "x" stTextX " y0 w" stTextW " h" row3Height " Left +0x200 BackgroundTrans cD1D5DB", "STUDIO")
+    StudioLabelText.SetFont("s" Max(1, Round(8 * IndicatorScale)) " w700", "Segoe UI")
+} else {
+    global StudioIconText := StudioGui.Add("Text", "x0 y0 w" studioW " h" row3Height " Center +0x200 BackgroundTrans cD1D5DB", Chr(0xE7F4))
+    StudioIconText.SetFont("s" Max(1, Round(12 * IndicatorScale)), IconFont)
+}
+StyleHudWindow(StudioGui, studioBorderOff)
+ApplyStudioAppearance()
+
+SceneGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+SceneGui.BackColor := sceneColor
+SceneGui.MarginX := 0
+SceneGui.MarginY := 0
+
+scPad := Round(4 * IndicatorScale)
+global SceneLabelText := SceneGui.Add("Text", "x" scPad " y0 w" Max(8, sceneW - 2 * scPad) " h" row3Height " Center +0x200 +0x80 BackgroundTrans cFFFFFF", currentSceneName)
+SceneLabelText.SetFont("s" miniTextSize " w600", "Segoe UI")
+StyleHudWindow(SceneGui, sceneBorder)
+
+ComputeHudLayout(anchorX, anchorY) {
+    global baseWidth, baseHeight, recHeight, recW, chatW, row3Height, studioW, sceneW, hudGap
+    recY := anchorY - recHeight - hudGap
+    row3Y := recY - row3Height - hudGap
+    return {
+        micX: anchorX,
+        micY: anchorY,
+        micW: baseWidth,
+        micH: baseHeight,
+        recX: anchorX,
+        recY: recY,
+        recW: recW,
+        recH: recHeight,
+        chatX: anchorX + recW + hudGap,
+        chatY: recY,
+        chatW: chatW,
+        chatH: recHeight,
+        studioX: anchorX,
+        studioY: row3Y,
+        studioW: studioW,
+        studioH: row3Height,
+        sceneX: anchorX + studioW + hudGap,
+        sceneY: row3Y,
+        sceneW: sceneW,
+        sceneH: row3Height
+    }
+}
+
+UpdateHudLayout(anchorX := "", anchorY := "") {
+    global MicGui, RecGui, ChatGui, StudioGui, SceneGui, savedX, savedY
+    if (anchorX = "" || anchorY = "") {
+        if (IsSet(MicGui) && DllCall("IsWindowVisible", "Ptr", MicGui.Hwnd))
+            try WinGetPos(&anchorX, &anchorY,,, MicGui.Hwnd)
+        if (anchorX = "" || anchorY = "")
+            anchorX := savedX, anchorY := savedY
+    }
+    savedX := anchorX, savedY := anchorY
+    pos := ComputeHudLayout(anchorX, anchorY)
+    if IsSet(MicGui)
+        MicGui.Move(pos.micX, pos.micY, pos.micW, pos.micH)
+    if IsSet(RecGui)
+        RecGui.Move(pos.recX, pos.recY, pos.recW, pos.recH)
+    if IsSet(ChatGui)
+        ChatGui.Move(pos.chatX, pos.chatY, pos.chatW, pos.chatH)
+    if IsSet(StudioGui)
+        StudioGui.Move(pos.studioX, pos.studioY, pos.studioW, pos.studioH)
+    if IsSet(SceneGui)
+        SceneGui.Move(pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH)
+}
+
+UpdateHudVisibility() {
+    global ShowIndicator, EnableWS, EnableZoom, MicGui, RecGui, ChatGui, StudioGui, SceneGui, savedX, savedY
+
+    if (!ShowIndicator) {
+        if IsSet(MicGui)
+            MicGui.Hide()
+        if IsSet(RecGui)
+            RecGui.Hide()
+        if IsSet(ChatGui)
+            ChatGui.Hide()
+        if IsSet(StudioGui)
+            StudioGui.Hide()
+        if IsSet(SceneGui)
+            SceneGui.Hide()
+        return
+    }
+
+    curX := savedX, curY := savedY
+    if (IsSet(MicGui) && DllCall("IsWindowVisible", "Ptr", MicGui.Hwnd))
+        try WinGetPos(&curX, &curY,,, MicGui.Hwnd)
+    pos := ComputeHudLayout(curX, curY)
+
+    MicGui.Show("NoActivate x" pos.micX " y" pos.micY " w" pos.micW " h" pos.micH)
+    if (EnableWS || EnableZoom) {
+        RecGui.Show("NoActivate x" pos.recX " y" pos.recY " w" pos.recW " h" pos.recH)
+        ChatGui.Show("NoActivate x" pos.chatX " y" pos.chatY " w" pos.chatW " h" pos.chatH)
+    } else {
+        RecGui.Hide()
+        ChatGui.Hide()
+    }
+
+    if (EnableWS) {
+        StudioGui.Show("NoActivate x" pos.studioX " y" pos.studioY " w" pos.studioW " h" pos.studioH)
+        SceneGui.Show("NoActivate x" pos.sceneX " y" pos.sceneY " w" pos.sceneW " h" pos.sceneH)
+    } else {
+        StudioGui.Hide()
+        SceneGui.Hide()
+    }
+}
 
 if (ShowIndicator) {
-    MicGui.Show("NoActivate w" baseWidth " h" baseHeight " " posX " " posY) 
+    pos := ComputeHudLayout(savedX, savedY)
+    MicGui.Show("NoActivate x" pos.micX " y" pos.micY " w" pos.micW " h" pos.micH)
+    UpdateHudVisibility()
     if (isMuted)
         SetTimer BreathingAnimation, (AggressivePulse ? 15 : 40)
 } else {
-    MicGui.Hide()
+    UpdateHudVisibility()
 }
-WinSetTransparent(currentAlpha, MicGui.Hwnd)
 
 ; --- SYSTEM HOTKEYS ---
 try Hotkey(PptHotkey, (*) => CyclePointerMode())
 try Hotkey(WsHotkey, (*) => ToggleWS())
+try Hotkey(ZoomHotkey, (*) => ToggleZoom())
 try Hotkey(IndHotkey, (*) => ToggleIndicator())
 try Hotkey(SuspendHotkey, (*) => ToggleSuspend())
 try Hotkey(ExitHotkey, (*) => ExitTrayApp())
@@ -989,39 +1642,98 @@ if (HwMuteHotkey != "") {
 HotIf
 
 ; --- MUTE CONTROL ---
-Hotkey("~" ObsMuteHotkey, LaptopKeyboardMute)
+FormatSendKey(hk) {
+    return RegExReplace(hk, "([a-zA-Z0-9]+)$", "{$1}")
+}
+
+if ((AudioRoutingMode == 1 || AudioRoutingMode == 3) && ObsMuteHotkey != "None" && ObsMuteHotkey != "")
+    try Hotkey("~" ObsMuteHotkey, LaptopKeyboardMute)
+if ((AudioRoutingMode == 2 || AudioRoutingMode == 3) && ZoomMuteHotkey != "")
+    try Hotkey("~" ZoomMuteHotkey, LaptopKeyboardMute)
+if (ObsRecHotkey != "")
+    try Hotkey("~" ObsRecHotkey, LaptopObsRecToggle)
+if (ObsPauseHotkey != "")
+    try Hotkey("~" ObsPauseHotkey, LaptopObsPauseToggle)
+if (ZoomRecHotkey != "")
+    try Hotkey("~" ZoomRecHotkey, LaptopZoomRecToggle)
+if (ZoomPauseHotkey != "")
+    try Hotkey("~" ZoomPauseHotkey, LaptopZoomPauseToggle)
+
+LaptopObsRecToggle(ThisHotkey) {
+    global obsConnected, recState
+    if (!obsConnected && EnableWS)
+        SyncRecState(recState == 0 ? 1 : 0)
+}
+
+LaptopObsPauseToggle(ThisHotkey) {
+    global obsConnected, recState
+    if (!obsConnected && EnableWS && recState != 0)
+        SyncRecState(recState == 1 ? 2 : 1)
+}
+
+LaptopZoomRecToggle(ThisHotkey) {
+    global EnableZoom, recState
+    if (EnableZoom)
+        SyncRecState(recState == 0 ? 1 : 0)
+}
+
+LaptopZoomPauseToggle(ThisHotkey) {
+    global EnableZoom, recState
+    if (EnableZoom && recState != 0)
+        SyncRecState(recState == 1 ? 2 : 1)
+}
 
 LaptopKeyboardMute(ThisHotkey) {
-    global obsConnected, isMuted
-    
-    ; OBS natively receives this physical keystroke. Do NOT send it a second time.
-    ; Only update the UI manually if the WebSocket is turned off.
-    if (!obsConnected) {
+    global obsConnected, zoomConnected, isMuted
+
+    ; Target app natively receives this physical keystroke. Do NOT send it a second time.
+    ; Only update the UI manually if active telemetry listeners are off.
+    if (!obsConnected && !zoomConnected) {
         SyncUIState(!isMuted)
     }
 }
 
 TriggerMute() {
-    global obsConnected, isMuted, ObsMuteHotkey, EnablePPT, EnableMicOnly
-    
+    global obsConnected, isMuted, ObsMuteHotkey, ZoomMuteHotkey, AudioRoutingMode, EnablePPT, EnableMicOnly
+
     ; Failsafe: Abort if hardware triggers are turned off
     if !(EnablePPT || EnableMicOnly) {
         return
     }
-    
-    ; If OBS isn't running, play a distinct error tone and abort
-    if !WinExist("ahk_exe obs64.exe") {
-        SoundPlay "*16"
-        return
+
+    obsOpen := WinExist("ahk_exe obs64.exe")
+    zoomOpen := WinExist("ahk_exe Zoom.exe")
+
+    if (AudioRoutingMode == 1) {
+        if !obsOpen {
+            SoundPlay "*16"
+            return
+        }
+        SetKeyDelay -1, 30
+        try ControlSend FormatSendKey(ObsMuteHotkey),, "ahk_exe obs64.exe"
+        SetKeyDelay 50, 50
+    } else if (AudioRoutingMode == 2) {
+        if !zoomOpen {
+            SoundPlay "*16"
+            return
+        }
+        SetKeyDelay -1, 30
+        try ControlSend FormatSendKey(ZoomMuteHotkey),, "ahk_exe Zoom.exe"
+        SetKeyDelay 50, 50
+    } else if (AudioRoutingMode == 3) {
+        if (!obsOpen && !zoomOpen) {
+            SoundPlay "*16"
+            return
+        }
+        SetKeyDelay -1, 30
+        if (obsOpen && ObsMuteHotkey != "None" && ObsMuteHotkey != "")
+            try ControlSend FormatSendKey(ObsMuteHotkey),, "ahk_exe obs64.exe"
+        if (zoomOpen && ZoomMuteHotkey != "")
+            try ControlSend FormatSendKey(ZoomMuteHotkey),, "ahk_exe Zoom.exe"
+        SetKeyDelay 50, 50
     }
-    
-    formattedKey := RegExReplace(ObsMuteHotkey, "([a-zA-Z0-9]+)$", "{$1}")
-    
-    SetKeyDelay -1, 30
-    try ControlSend formattedKey,, "ahk_exe obs64.exe"
-    SetKeyDelay 50, 50 
-    
-    if (!obsConnected) {
+
+    if (!obsConnected && !zoomConnected) {
         SyncUIState(!isMuted)
     }
 }
@@ -1161,19 +1873,41 @@ BreathingAnimation() {
 
 OnMessage(0x0201, WM_LBUTTONDOWN)
 WM_LBUTTONDOWN(wParam, lParam, msg, hwnd) {
-    global ConfigFile, MicGui
-    if (hwnd != MicGui.Hwnd)
+    global ConfigFile, MicGui, RecGui, ChatGui, StudioGui, SceneGui
+    global recHeight, recW, row3Height, studioW, hudGap
+
+    isHudHwnd := (hwnd == MicGui.Hwnd)
+        || (IsSet(RecGui) && hwnd == RecGui.Hwnd)
+        || (IsSet(ChatGui) && hwnd == ChatGui.Hwnd)
+        || (IsSet(StudioGui) && hwnd == StudioGui.Hwnd)
+        || (IsSet(SceneGui) && hwnd == SceneGui.Hwnd)
+    if (!isHudHwnd)
         return
+
     PostMessage(0xA1, 2,,, "ahk_id " hwnd)
-    KeyWait "LButton" 
-    WinGetPos(&X, &Y,,, MicGui.Hwnd)
+    KeyWait "LButton"
+    WinGetPos(&X, &Y,,, "ahk_id " hwnd)
+
+    if (IsSet(RecGui) && hwnd == RecGui.Hwnd) {
+        Y := Y + recHeight + hudGap
+    } else if (IsSet(ChatGui) && hwnd == ChatGui.Hwnd) {
+        X := X - recW - hudGap
+        Y := Y + recHeight + hudGap
+    } else if (IsSet(StudioGui) && hwnd == StudioGui.Hwnd) {
+        Y := Y + row3Height + hudGap + recHeight + hudGap
+    } else if (IsSet(SceneGui) && hwnd == SceneGui.Hwnd) {
+        X := X - studioW - hudGap
+        Y := Y + row3Height + hudGap + recHeight + hudGap
+    }
+
     IniWrite(X, ConfigFile, "Position", "X")
     IniWrite(Y, ConfigFile, "Position", "Y")
+    UpdateHudLayout(X, Y)
 }
 
 OnMessage(0x02E0, WM_DPICHANGED)
 WM_DPICHANGED(wParam, lParam, msg, hwnd) {
-    global MicGui, baseWidth
+    global MicGui
     if (hwnd != MicGui.Hwnd)
         return
     newLeft := NumGet(lParam, 0, "Int")
@@ -1181,6 +1915,7 @@ WM_DPICHANGED(wParam, lParam, msg, hwnd) {
     newRight := NumGet(lParam, 8, "Int")
     newBottom := NumGet(lParam, 12, "Int")
     MicGui.Move(newLeft, newTop, newRight - newLeft, newBottom - newTop)
+    UpdateHudLayout(newLeft, newTop)
 }
 
 ; --- POINTER TESTER ---
