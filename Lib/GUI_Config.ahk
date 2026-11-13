@@ -207,9 +207,11 @@ class Theme {
     static FocusExistingWindow(winKey) {
         if (winKey != "" && this.NamedWindows.Has(winKey)) {
             existing := this.NamedWindows[winKey]
-            if (IsObject(existing) && WinExist("ahk_id " existing.Hwnd)) {
-                try WinActivate("ahk_id " existing.Hwnd)
-                return existing
+            try {
+                if (IsObject(existing) && WinExist("ahk_id " existing.Hwnd)) {
+                    WinActivate("ahk_id " existing.Hwnd)
+                    return existing
+                }
             }
             this.NamedWindows.Delete(winKey)
         }
@@ -449,7 +451,7 @@ FormatHkDisplayText(hkVal) {
     i := 1
     len := StrLen(hkVal)
     hasCtrl := false, hasShift := false, hasAlt := false, hasWin := false
-    while (i <= len) {
+    while (i < len) {
         ch := SubStr(hkVal, i, 1)
         if (ch = "^")
             hasCtrl := true
@@ -1023,6 +1025,10 @@ class Config {
 
         this.EnablePPT := this.ReadBool("Settings", "EnablePPT")
         this.EnableMicOnly := this.ReadBool("Settings", "EnableMicOnly")
+        if (this.EnablePPT && this.EnableMicOnly) {
+            this.EnableMicOnly := false
+            this.WriteBool("Settings", "EnableMicOnly", false)
+        }
         this.EnableWS := this.ReadBool("Settings", "EnableWS")
         this.EnableZoom := this.ReadBool("Settings", "EnableZoom")
 
@@ -1909,7 +1915,7 @@ ChangeObsSettingsUI(cfg, *) {
     })
 }
 
-ChangeHwMuteHotkeyUI(cfg, *) {
+OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply) {
     existing := Theme.FocusExistingWindow("Edit Pointer Mute Button")
     if IsObject(existing)
         return existing
@@ -1924,52 +1930,108 @@ ChangeHwMuteHotkeyUI(cfg, *) {
     dlg.SetFont("s10 w600", Theme.UiFont)
     Theme.RegisterControl(dlg, dlg.Add("Text", "w280", "Presentation Clicker Mute Button"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w280 y+4", "Press the desired button on your clicker/pointer, or type a custom key name:"), "Text", "muted")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w280 y+4", "Press a button on your clicker, or click the box to type a custom key name:"), "Text", "muted")
 
-    editKey := dlg.Add("Edit", "w280 y+12 Center", cfg.HwMuteHotkey)
+    editKey := dlg.Add("Edit", "w280 y+12 Center", currentKey)
     editKey.SetFont("s12 w700", Theme.UiFont)
     Theme.RegisterControl(dlg, editKey, "Edit", "accent")
 
     statusTxt := dlg.Add("Text", "w280 y+6 Center", "Listening for clicker input...")
     Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
 
-    btnSave := dlg.Add("Button", "w280 h32 y+12 Default", "Save & Restart")
+    btnSave := dlg.Add("Button", "w280 h32 y+12 Default", saveBtnLabel)
     Theme.RegisterControl(dlg, btnSave, "Button", "accent")
 
-    ih := InputHook("L0 V")
+    ih := InputHook("L0")
     ih.KeyOpt("{All}", "N")
+    ih.KeyOpt("{Enter}{NumpadEnter}{Escape}{Tab}{LShift}{RShift}{LControl}{RControl}{LAlt}{RAlt}{LWin}{RWin}", "-N V")
     ih.OnKeyDown := (ihHook, VK, SC) => (
         keyName := GetKeyName(Format("vk{:X}sc{:X}", VK, SC)),
-        editKey.Value := keyName,
-        statusTxt.Value := "Captured: " keyName
+        (keyName != "" && !dlg._closed) ? (
+            editKey.Value := keyName,
+            statusTxt.Value := "Captured: " keyName
+        ) : 0
     )
-    ih.Start()
+
+    StartCapture(*) {
+        if (dlg._closed)
+            return
+        try ih.Start()
+        statusTxt.Value := "Listening for clicker input..."
+    }
+
+    StopCapture(*) {
+        try ih.Stop()
+        if (!dlg._closed && WinExist("ahk_id " dlg.Hwnd))
+            statusTxt.Value := "Manual typing mode (type key name)"
+    }
+
+    editKey.OnEvent("Focus", StopCapture)
+    editKey.OnEvent("LoseFocus", StartCapture)
+
+    OnActivateMsg(wParam, lParam, msg, hwnd) {
+        if (dlg._closed || hwnd != dlg.Hwnd)
+            return
+        if ((wParam & 0xFFFF) == 0) {
+            try ih.Stop()
+        } else {
+            try focused := dlg.FocusedCtrl
+            catch
+                focused := ""
+            if (focused != editKey)
+                StartCapture()
+        }
+    }
+    OnMessage(0x0006, OnActivateMsg)
 
     Cleanup(*) {
         if (dlg._closed)
             return
         dlg._closed := true
-        ih.Stop()
+        OnMessage(0x0006, OnActivateMsg, 0)
+        try ih.Stop()
         Theme.UnregisterWindow(dlg, "Edit Pointer Mute Button")
         Theme.ReleaseSuspend()
         dlg.Destroy()
     }
 
-    btnSave.OnEvent("Click", (*) => (
-        val := Trim(editKey.Value),
-        (val != "" ? (
-            cfg.HwMuteHotkey := val,
-            cfg.Write("Settings", "HwMuteHotkey", val),
-            Cleanup(),
-            Reload()
-        ) : MsgBox("Please press a button to register it.", "Error", "Icon!"))
-    ))
+    SaveKey(*) {
+        val := Trim(editKey.Value)
+        if (val = "") {
+            dlg.Opt("+OwnDialogs")
+            MsgBox("Please press or enter a button name to register it.", "Error", "Icon!")
+            return
+        }
+        try {
+            HotIf (*) => false
+            Hotkey(val, (*) => 0, "Off")
+            HotIf
+        } catch {
+            HotIf
+            dlg.Opt("+OwnDialogs")
+            MsgBox("'" val "' is not a valid AutoHotkey key name.`nExamples: b, PgDn, F12, Media_Play_Pause", "Invalid Key", "Icon!")
+            return
+        }
+        Cleanup()
+        onApply.Call(val)
+    }
 
+    btnSave.OnEvent("Click", SaveKey)
     dlg.OnEvent("Close", Cleanup)
     dlg.OnEvent("Escape", Cleanup)
 
     dlg.Show("AutoSize Center")
+    btnSave.Focus()
+    StartCapture()
     return dlg
+}
+
+ChangeHwMuteHotkeyUI(cfg, *) {
+    return OpenPointerKeyCaptureDialog(cfg.HwMuteHotkey, "Save & Restart", (val) => (
+        cfg.HwMuteHotkey := val,
+        cfg.Write("Settings", "HwMuteHotkey", val),
+        Reload()
+    ))
 }
 
 ConfigurePointerKeysUI(cfg, *) {
@@ -2093,19 +2155,25 @@ GetLocalNetworkEndpoints() {
 }
 
 ParseCandidateEndpoints(rawStr, defaultPort := "4455") {
+    defPort := (IsInteger(defaultPort) && Integer(defaultPort) >= 1 && Integer(defaultPort) <= 65535) ? String(Integer(defaultPort)) : "4455"
     endpoints := []
     seen := Map()
     for item in StrSplit(rawStr, [",", ";"]) {
         clean := Trim(item)
         if (clean = "")
             continue
-        clean := RegExReplace(clean, "^wss?://", "")
+        clean := RegExReplace(clean, "i)^wss?://", "")
+        clean := RTrim(clean, "/ ")
+        if (clean = "")
+            continue
         host := clean
-        port := defaultPort
+        port := defPort
         if RegExMatch(clean, "^(.*?):(\d+)$", &m) {
             host := m[1]
             port := m[2]
         }
+        if (host = "")
+            continue
         key := host ":" port
         if (!seen.Has(key)) {
             seen[key] := true
@@ -2113,7 +2181,7 @@ ParseCandidateEndpoints(rawStr, defaultPort := "4455") {
         }
     }
     if (endpoints.Length == 0)
-        endpoints.Push({host: "127.0.0.1", port: defaultPort, raw: "127.0.0.1:" defaultPort})
+        endpoints.Push({host: "127.0.0.1", port: defPort, raw: "127.0.0.1:" defPort})
     return endpoints
 }
 
@@ -2168,7 +2236,16 @@ ShowRemoteCompanionInfo(cfg, *) {
 
     btnCopy := dlg.Add("Button", "w360 h30 y+10", "Copy Universal String to Clipboard")
     Theme.RegisterControl(dlg, btnCopy, "Button", "accent")
-    btnCopy.OnEvent("Click", (*) => (A_Clipboard := universalString, TrayTip("Copied!", "Universal connection string copied to clipboard.", 1)))
+    ResetCopyBtn(*) {
+        if (!dlg._closed && WinExist("ahk_id " dlg.Hwnd))
+            btnCopy.Text := "Copy Universal String to Clipboard"
+    }
+    btnCopy.OnEvent("Click", (*) => (
+        A_Clipboard := universalString,
+        btnCopy.Text := "✓ Copied to Clipboard!",
+        SetTimer(ResetCopyBtn, -1800),
+        TrayTip("Copied!", "Universal connection string copied to clipboard.", 1)
+    ))
 
     statusLine := "OBS Port: 4455  |  Password: " (cfg.obsPassword != "" ? "Configured" : "None") "  |  Mic: " cfg.targetMicName
     Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+12 Center", statusLine), "Text", "muted")
@@ -2318,7 +2395,7 @@ SyncSceneState(cfg, state, sceneName) {
     if (sceneName != "" && state.currentSceneName != sceneName) {
         state.currentSceneName := sceneName
         state.ComputeDimensions(cfg)
-        if (cfg.ShowIndicator && cfg.ShowExtraHuds) {
+        if (cfg.ShowIndicator && cfg.ShowExtraHuds && !state.isDraggingHud) {
             UpdateHudLayout(state, state.savedX, state.savedY)
             RenderAllHudPills(cfg, state)
         }
@@ -2722,6 +2799,10 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         cfg.Write("Position", "Y", anchor.y)
     }
     UpdateHudLayout(state, anchor.x, anchor.y)
+    state.currentAlpha := state.baseAlpha
+    ApplyMicAppearance(cfg, state)
+    if (cfg.ShowIndicator && state.isMuted)
+        SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 }
 
 WM_RBUTTONUP(state, wParam, lParam, msg, hwnd) {

@@ -97,7 +97,8 @@ class RemoteConfig {
 
     Load() {
         this.HostAddress := this.Read("Connection", "HostAddress", "127.0.0.1")
-        this.HostPort := this.Read("Connection", "HostPort", "4455")
+        rawPort := Trim(this.Read("Connection", "HostPort", "4455"))
+        this.HostPort := (IsInteger(rawPort) && Integer(rawPort) >= 1 && Integer(rawPort) <= 65535) ? String(Integer(rawPort)) : "4455"
         this.ObsPassword := this.Read("Connection", "ObsPassword", "")
         this.TargetMicName := this.Read("Connection", "TargetMicName", "Mic/Aux")
         this.HeartbeatSeconds := this.ReadInt("Connection", "HeartbeatSeconds", 30)
@@ -159,6 +160,7 @@ class RemoteConfig {
 class RemoteState {
     obsWs := ""
     obsConnected := false
+    connStatus := "searching"
     activeHost := ""
     candidateIndex := 1
     candidates := []
@@ -175,6 +177,8 @@ class RemoteState {
     reconnectTimerFn := ""
     heartbeatTimerFn := ""
     rebuildTrayFn := ""
+    pointerHotIfFn := ""
+    activePointerKey := ""
 
     MicGui := ""
     IconFont := ""
@@ -214,6 +218,7 @@ class RemoteState {
         this.breathTimerFn := BreathingAnimation.Bind(cfg, this)
         this.reconnectTimerFn := ConnectToRemoteOBS.Bind(cfg, this)
         this.heartbeatTimerFn := RemoteHeartbeatTick.Bind(cfg, this)
+        this.pointerHotIfFn := CheckRemotePointerEnable.Bind(cfg)
 
         this.ComputeDimensions(cfg)
     }
@@ -244,26 +249,34 @@ AppConfig := RemoteConfig()
 AppState := RemoteState(AppConfig)
 AppState.rebuildTrayFn := BuildRemoteTrayMenu.Bind(AppConfig, AppState)
 
-; === FIRST-RUN / CONNECTION PROMPT ===
-if (AppConfig.FirstRun || AppConfig.HostAddress = "") {
-    ShowRemoteConnectionUI(AppConfig, AppState, true)
-}
-
 ; === INITIALIZE HUD & HOTKEYS ===
 InitRemoteHUD(AppConfig, AppState)
 BuildRemoteTrayMenu(AppConfig, AppState)
 RegisterRemotePointerHotkey(AppConfig, AppState)
 
-; Start network connection
-SetTimer AppState.reconnectTimerFn, -100
+; === FIRST-RUN / CONNECTION PROMPT ===
+if (AppConfig.FirstRun || AppConfig.HostAddress = "") {
+    ShowRemoteConnectionUI(AppConfig, AppState, true)
+} else {
+    ; Start network connection
+    SetTimer AppState.reconnectTimerFn, -100
+}
 
 ; --- REMOTE NETWORKING ENGINE ---
 
+GetRemoteEffectiveAlpha(state) {
+    return state.obsConnected ? state.baseAlpha : Max(60, Round(state.baseAlpha * 0.4))
+}
+
 ConnectToRemoteOBS(cfg, state) {
     SetTimer state.reconnectTimerFn, 0
+    SetTimer state.heartbeatTimerFn, 0
 
     if (state.obsConnected)
         return
+
+    state.connStatus := "searching"
+    state.activeHost := ""
 
     if IsObject(state.obsWs) {
         try state.obsWs.shutdown()
@@ -285,6 +298,11 @@ ConnectToRemoteOBS(cfg, state) {
         }, true, "", 2000) ; 2000ms connection timeout for fast failover
     } catch {
         state.obsWs := ""
+        SetTimer state.breathTimerFn, 0
+        if (IsObject(state.MicGui)) {
+            state.currentAlpha := GetRemoteEffectiveAlpha(state)
+            ApplyMicAppearance(cfg, state)
+        }
         FailoverToNextCandidate(cfg, state)
     }
 }
@@ -309,16 +327,28 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     if (state.obsWs == ws)
         state.obsWs := ""
 
+    wasConnected := state.obsConnected
     state.obsConnected := false
     state.activeHost := ""
     SetTimer state.heartbeatTimerFn, 0
+    SetTimer state.breathTimerFn, 0
 
-    ; Visual feedback on HUD: Dim slightly while reconnecting
+    ; Visual feedback on HUD: Dim while disconnected
     if (IsObject(state.MicGui)) {
-        state.currentAlpha := Max(60, Round(state.baseAlpha * 0.4))
+        state.currentAlpha := GetRemoteEffectiveAlpha(state)
         ApplyMicAppearance(cfg, state)
     }
 
+    if (!wasConnected && status == 4009) {
+        state.connStatus := "auth_failed"
+        SetTimer state.reconnectTimerFn, 0
+        if (IsObject(state.rebuildTrayFn))
+            try state.rebuildTrayFn.Call()
+        TrayTip("PresenterSync Remote", "OBS WebSocket authentication failed. Check password in Change OBS Connection.", 3)
+        return
+    }
+
+    state.connStatus := "searching"
     if (IsObject(state.rebuildTrayFn))
         try state.rebuildTrayFn.Call()
 
@@ -352,6 +382,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         ; Op 2: Identified - Connection and Auth Succeeded!
         SetTimer state.reconnectTimerFn, 0
         state.obsConnected := true
+        state.connStatus := "connected"
         state.activeHost := candidate.raw
 
         ; Start keep-alive heartbeat timer (prevents Wi-Fi radio sleep / router conntrack drops)
@@ -360,7 +391,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
 
         ; Restore base alpha & query initial mic mute status
         state.currentAlpha := state.baseAlpha
-        stateJson := '{"op":6,"d":{"requestType":"GetInputMute","requestId":"InitRemoteMute","requestData":{"inputName":"' cfg.TargetMicName '"}}}'
+        escMic := EscapeJsonStr(cfg.TargetMicName)
+        stateJson := '{"op":6,"d":{"requestType":"GetInputMute","requestId":"InitRemoteMute","requestData":{"inputName":"' escMic '"}}}'
         ws.sendText(stateJson)
 
         if (IsObject(state.rebuildTrayFn))
@@ -369,8 +401,14 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
     else if (opCode == 5) {
         ; Op 5: Event payload
         if (InStr(msg, '"eventType":"InputMuteStateChanged"') || InStr(msg, '"eventType": "InputMuteStateChanged"')) {
-            if (InStr(msg, '"inputName":"' cfg.TargetMicName '"') || InStr(msg, '"inputName": "' cfg.TargetMicName '"')) {
+            escMic := EscapeJsonStr(cfg.TargetMicName)
+            if (InStr(msg, '"inputName":"' escMic '"') || InStr(msg, '"inputName": "' escMic '"')) {
                 if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
+                    if (state.connStatus = "mic_error") {
+                        state.connStatus := "connected"
+                        if (IsObject(state.rebuildTrayFn))
+                            try state.rebuildTrayFn.Call()
+                    }
                     isMutedNow := (matchMuted[1] == "true")
                     SyncRemoteMuteState(cfg, state, isMutedNow)
                 }
@@ -380,7 +418,16 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
     else if (opCode == 7) {
         ; Op 7: Request Response
         if (InStr(msg, '"requestId":"InitRemoteMute"') || InStr(msg, '"requestId": "InitRemoteMute"')) {
-            if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
+            if (RegExMatch(msg, '"result"\s*:\s*false')) {
+                state.connStatus := "mic_error"
+                SetTimer state.breathTimerFn, 0
+                state.currentAlpha := state.baseAlpha
+                ApplyMicAppearance(cfg, state)
+                if (IsObject(state.rebuildTrayFn))
+                    try state.rebuildTrayFn.Call()
+                TrayTip("PresenterSync Remote", "Audio source '" cfg.TargetMicName "' was not found in OBS Studio.", 2)
+            } else if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
+                state.connStatus := "connected"
                 isMutedNow := (matchMuted[1] == "true")
                 state.isMuted := isMutedNow
                 cfg.IsMuted := isMutedNow
@@ -393,6 +440,12 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 } else {
                     SetTimer state.breathTimerFn, 0
                 }
+            }
+        }
+        else if (InStr(msg, '"requestId":"RemoteClickerMute"') || InStr(msg, '"requestId": "RemoteClickerMute"')) {
+            if (RegExMatch(msg, '"result"\s*:\s*false')) {
+                ToolTip "PresenterSync Remote: Audio source '" cfg.TargetMicName "' not found in OBS"
+                SetTimer RemoveToolTip, -2500
             }
         }
     }
@@ -436,28 +489,48 @@ OnRemoteClickerMute(cfg, state, *) {
         return
     }
 
-    req := '{"op":6,"d":{"requestType":"ToggleInputMute","requestId":"RemoteClickerMute","requestData":{"inputName":"' cfg.TargetMicName '"}}}'
+    escMic := EscapeJsonStr(cfg.TargetMicName)
+    req := '{"op":6,"d":{"requestType":"ToggleInputMute","requestId":"RemoteClickerMute","requestData":{"inputName":"' escMic '"}}}'
     try state.obsWs.sendText(req)
 }
 
+CheckRemotePointerEnable(cfg, ThisHotkey) {
+    return cfg.EnablePointerMute && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
+}
+
 RegisterRemotePointerHotkey(cfg, state) {
+    UnregisterRemotePointerHotkey(cfg, state)
     if (!cfg.EnablePointerMute || cfg.HwMuteHotkey = "" || cfg.HwMuteHotkey = "None")
         return
     try {
+        HotIf state.pointerHotIfFn
         Hotkey cfg.HwMuteHotkey, OnRemoteClickerMute.Bind(cfg, state), "On"
+        state.activePointerKey := cfg.HwMuteHotkey
+        HotIf
+    } catch {
+        HotIf
     }
 }
 
-UnregisterRemotePointerHotkey(cfg) {
-    if (cfg.HwMuteHotkey != "" && cfg.HwMuteHotkey != "None") {
-        try Hotkey cfg.HwMuteHotkey, "Off"
+UnregisterRemotePointerHotkey(cfg, state) {
+    keyToClear := (state.activePointerKey != "") ? state.activePointerKey : cfg.HwMuteHotkey
+    if (keyToClear != "" && keyToClear != "None") {
+        try {
+            HotIf state.pointerHotIfFn
+            Hotkey keyToClear, "Off"
+            HotIf
+        } catch {
+            HotIf
+        }
     }
+    state.activePointerKey := ""
 }
 
 ; --- SINGLE-PILL HUD CREATION & DRAGGING ---
 
 InitRemoteHUD(cfg, state) {
     state.ComputeDimensions(cfg)
+    state.currentAlpha := GetRemoteEffectiveAlpha(state)
 
     ; Only create a single layered GDI+ window for the Mic HUD
     state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
@@ -465,7 +538,7 @@ InitRemoteHUD(cfg, state) {
 
     if (cfg.ShowIndicator) {
         state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", state.savedX, state.savedY, state.baseWidth, state.baseHeight))
-        if (state.isMuted)
+        if (state.isMuted && state.obsConnected)
             SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     }
 
@@ -491,6 +564,10 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         cfg.Write("Position", "X", X)
         cfg.Write("Position", "Y", Y)
     }
+    state.currentAlpha := GetRemoteEffectiveAlpha(state)
+    ApplyMicAppearance(cfg, state)
+    if (cfg.ShowIndicator && state.obsConnected && state.isMuted)
+        SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 }
 
 WM_REMOTE_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
@@ -499,14 +576,15 @@ WM_REMOTE_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
 }
 
 RefreshRemoteHudAppearance(cfg, state) {
+    state.baseAlpha := cfg.OpacityLevel
+    state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
     state.ComputeDimensions(cfg)
-    state.currentAlpha := state.baseAlpha
+    state.currentAlpha := GetRemoteEffectiveAlpha(state)
     ApplyMicAppearance(cfg, state)
     if (cfg.ShowIndicator) {
         state.MicGui.Move(state.savedX, state.savedY, state.baseWidth, state.baseHeight)
         state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", state.savedX, state.savedY, state.baseWidth, state.baseHeight))
-        if (state.isMuted) {
-            state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
+        if (state.isMuted && state.obsConnected) {
             SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
         } else {
             SetTimer state.breathTimerFn, 0
@@ -524,7 +602,14 @@ BuildRemoteTrayMenu(cfg, state) {
     A_TrayMenu.Delete()
 
     ; 1. STATUS LINE
-    statusText := state.obsConnected ? ("● Connected: " state.activeHost) : "○ Searching for OBS Host..."
+    if (state.connStatus = "auth_failed")
+        statusText := "✕ Auth Failed (Check Password)"
+    else if (state.obsConnected && state.connStatus = "mic_error")
+        statusText := "⚠ Connected (Mic Not Found): " state.activeHost
+    else if (state.obsConnected)
+        statusText := "● Connected: " state.activeHost
+    else
+        statusText := "○ Searching for OBS Host..."
     A_TrayMenu.Add(statusText, (*) => 0)
     A_TrayMenu.Disable(statusText)
     A_TrayMenu.Add()
@@ -699,12 +784,13 @@ ToggleRemotePointerMute(cfg, state, *) {
     if (cfg.EnablePointerMute)
         RegisterRemotePointerHotkey(cfg, state)
     else
-        UnregisterRemotePointerHotkey(cfg)
+        UnregisterRemotePointerHotkey(cfg, state)
     BuildRemoteTrayMenu(cfg, state)
 }
 
 ToggleRemoteSuspend(*) {
     Suspend(-1)
+    Theme.WasSuspendedBeforeDialogs := A_IsSuspended
     if A_IsSuspended {
         A_TrayMenu.Check("Suspend All Hotkeys")
         TrayTip("PresenterSync Remote", "All hotkeys suspended.", 1)
@@ -717,69 +803,14 @@ ToggleRemoteSuspend(*) {
 ; --- SETTINGS DIALOGS ---
 
 ChangeRemotePointerKeyUI(cfg, state, *) {
-    existing := Theme.FocusExistingWindow("Edit Pointer Mute Button")
-    if IsObject(existing)
-        return existing
-
-    Theme.AcquireSuspend()
-
-    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit Pointer Mute Button")
-    dlg._closed := false
-    Theme.ApplyToWindow(dlg)
-    Theme.NamedWindows["Edit Pointer Mute Button"] := dlg
-
-    dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w280", "Presentation Clicker Mute Button"), "Text")
-    dlg.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w280 y+4", "Press the desired button on your clicker/pointer, or type a custom key name:"), "Text", "muted")
-
-    editKey := dlg.Add("Edit", "w280 y+12 Center", cfg.HwMuteHotkey)
-    editKey.SetFont("s12 w700", Theme.UiFont)
-    Theme.RegisterControl(dlg, editKey, "Edit", "accent")
-
-    statusTxt := dlg.Add("Text", "w280 y+6 Center", "Listening for clicker input...")
-    Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
-
-    btnSave := dlg.Add("Button", "w280 h32 y+12 Default", "Save & Apply")
-    Theme.RegisterControl(dlg, btnSave, "Button", "accent")
-
-    ih := InputHook("L0 V")
-    ih.KeyOpt("{All}", "N")
-    ih.OnKeyDown := (ihHook, VK, SC) => (
-        keyName := GetKeyName(Format("vk{:X}sc{:X}", VK, SC)),
-        editKey.Value := keyName,
-        statusTxt.Value := "Captured: " keyName
-    )
-    ih.Start()
-
-    Cleanup(*) {
-        if (dlg._closed)
-            return
-        dlg._closed := true
-        ih.Stop()
-        Theme.UnregisterWindow(dlg, "Edit Pointer Mute Button")
-        Theme.ReleaseSuspend()
-        dlg.Destroy()
-    }
-
-    btnSave.OnEvent("Click", (*) => (
-        val := Trim(editKey.Value),
-        (val != "" ? (
-            UnregisterRemotePointerHotkey(cfg),
-            cfg.HwMuteHotkey := val,
-            cfg.Write("Pointer", "HwMuteHotkey", val),
-            RegisterRemotePointerHotkey(cfg, state),
-            Cleanup(),
-            BuildRemoteTrayMenu(cfg, state),
-            TrayTip("Pointer Mute", "Mute button registered: " val, 1)
-        ) : MsgBox("Please press a button to register it.", "Error", "Icon!"))
+    return OpenPointerKeyCaptureDialog(cfg.HwMuteHotkey, "Save & Apply", (val) => (
+        UnregisterRemotePointerHotkey(cfg, state),
+        cfg.HwMuteHotkey := val,
+        cfg.Write("Pointer", "HwMuteHotkey", val),
+        RegisterRemotePointerHotkey(cfg, state),
+        BuildRemoteTrayMenu(cfg, state),
+        TrayTip("Pointer Mute", cfg.EnablePointerMute ? ("Mute button registered: " val) : ("Mute button saved (Pointer Mute disabled): " val), 1)
     ))
-
-    dlg.OnEvent("Close", Cleanup)
-    dlg.OnEvent("Escape", Cleanup)
-
-    dlg.Show("AutoSize Center")
-    return dlg
 }
 
 ShowRemoteAboutUI(*) {
@@ -807,7 +838,7 @@ ShowRemoteAboutUI(*) {
     aboutGui.SetFont("s10 w400 norm", Theme.UiFont)
     Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "Created by Saabith Jiffry"), "Text")
 
-    gitBtn := aboutGui.Add("Button", "w120 x50 y+20 h32", "GitHub Repo")
+    gitBtn := aboutGui.Add("Button", "w120 x60 y+20 h32", "GitHub Repo")
     Theme.RegisterControl(aboutGui, gitBtn, "Button")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
@@ -832,6 +863,8 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
 
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "OBS Remote Connection")
     dlg._closed := false
+    dlg._testSeq := 0
+    dlg._testWs := ""
     Theme.ApplyToWindow(dlg)
     Theme.NamedWindows["OBS Remote Connection"] := dlg
 
@@ -864,21 +897,42 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     btnTest := dlg.Add("Button", "w360 h30 y+8", "Test Connection")
     Theme.RegisterControl(dlg, btnTest, "Button")
 
-    btnTest.OnEvent("Click", (*) => TestConnectionAction(editHost.Value, editPort.Value, editPw.Value, statusTxt))
+    btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt))
 
     btnSave := dlg.Add("Button", "w360 h32 y+12 Default", isInitialBoot ? "Connect & Start" : "Save & Reconnect")
     Theme.RegisterControl(dlg, btnSave, "Button", "accent")
+
+    CleanupDialog(exitIfInitial := false, *) {
+        if (dlg._closed)
+            return
+        dlg._closed := true
+        dlg._testSeq += 1
+        if IsObject(dlg._testWs) {
+            try dlg._testWs.shutdown()
+            dlg._testWs := ""
+        }
+        Theme.UnregisterWindow(dlg, "OBS Remote Connection")
+        dlg.Destroy()
+        if (exitIfInitial)
+            ExitApp()
+    }
 
     SaveAndConnect(*) {
         h := Trim(editHost.Value)
         p := Trim(editPort.Value)
         m := Trim(editMic.Value)
         if (h = "" || p = "" || m = "") {
+            dlg.Opt("+OwnDialogs")
             MsgBox("Host Address, Port, and Audio Source cannot be empty.", "Error", "Icon!")
             return
         }
+        if (!IsInteger(p) || Integer(p) < 1 || Integer(p) > 65535) {
+            dlg.Opt("+OwnDialogs")
+            MsgBox("OBS WebSocket Port must be a number between 1 and 65535.", "Error", "Icon!")
+            return
+        }
         cfg.HostAddress := h
-        cfg.HostPort := p
+        cfg.HostPort := String(Integer(p))
         cfg.ObsPassword := editPw.Value
         cfg.TargetMicName := m
         cfg.FirstRun := false
@@ -889,78 +943,135 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         cfg.Write("Connection", "TargetMicName", cfg.TargetMicName)
         cfg.WriteBool("Settings", "FirstRun", false)
 
-        dlg.Destroy()
+        CleanupDialog(false)
 
         ; Disconnect existing and trigger fresh failover connection
+        SetTimer state.reconnectTimerFn, 0
+        SetTimer state.heartbeatTimerFn, 0
         state.obsConnected := false
+        state.connStatus := "searching"
+        state.activeHost := ""
         state.candidateIndex := 1
         state.candidates := []
+        if (IsObject(state.rebuildTrayFn))
+            try state.rebuildTrayFn.Call()
         ConnectToRemoteOBS(cfg, state)
     }
 
     btnSave.OnEvent("Click", SaveAndConnect)
 
-    dlg.OnEvent("Close", (*) => (isInitialBoot ? ExitApp() : dlg.Destroy()))
-    dlg.OnEvent("Escape", (*) => (isInitialBoot ? ExitApp() : dlg.Destroy()))
+    dlg.OnEvent("Close", (*) => CleanupDialog(isInitialBoot))
+    dlg.OnEvent("Escape", (*) => CleanupDialog(isInitialBoot))
 
     dlg.Show("AutoSize Center")
     return dlg
 }
 
-TestConnectionAction(hostStr, portStr, pwStr, statusLabel) {
-    endpoints := ParseCandidateEndpoints(hostStr, portStr)
+TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
+    if (dlg._closed || !WinExist("ahk_id " dlg.Hwnd))
+        return
+
+    portClean := Trim(portStr)
+    if (!IsInteger(portClean) || Integer(portClean) < 1 || Integer(portClean) > 65535) {
+        statusLabel.Value := "Error: Port must be between 1 and 65535."
+        return
+    }
+
+    endpoints := ParseCandidateEndpoints(hostStr, portClean)
     if (endpoints.Length == 0) {
         statusLabel.Value := "Error: No valid host address provided."
         return
     }
 
+    dlg._testSeq += 1
+    mySeq := dlg._testSeq
+    if IsObject(dlg._testWs) {
+        try dlg._testWs.shutdown()
+        dlg._testWs := ""
+    }
+
     currentIndex := 1
-    testWs := ""
     testSuccess := false
+    btnTest.Enabled := false
+
+    IsCancelled() {
+        return dlg._closed || dlg._testSeq != mySeq || !WinExist("ahk_id " dlg.Hwnd)
+    }
+
+    FinishTest(msg) {
+        if IsObject(dlg._testWs) {
+            try dlg._testWs.shutdown()
+            dlg._testWs := ""
+        }
+        if (IsCancelled())
+            return
+        statusLabel.Value := msg
+        btnTest.Enabled := true
+    }
 
     TryNextCandidate() {
-        if (testSuccess)
+        if (IsCancelled() || testSuccess)
             return
         if (currentIndex > endpoints.Length) {
-            statusLabel.Value := "✕ All " endpoints.Length " candidate(s) unreachable (Check IP, Port & Firewall)"
+            FinishTest("✕ All " endpoints.Length " candidate(s) unreachable (Check IP, Port & Firewall)")
             return
         }
 
         target := endpoints[currentIndex]
         statusLabel.Value := "Testing " target.raw " (" currentIndex "/" endpoints.Length ")..."
+        SetTimer RunCurrentProbe, -15
 
-        OnTestMsg(ws, raw) {
-            msg := (Type(raw) == "Buffer") ? StrGet(raw, "UTF-8") : String(raw)
-            if RegExMatch(msg, '"op"\s*:\s*0') {
-                authStr := ""
-                if (RegExMatch(msg, '"salt"\s*:\s*"([^"]+)"', &mSalt) && RegExMatch(msg, '"challenge"\s*:\s*"([^"]+)"', &mChal)) {
-                    secret := HashSHA256_Base64(pwStr . mSalt[1])
-                    authResponse := HashSHA256_Base64(secret . mChal[1])
-                    authStr := ',"authentication":"' authResponse '"'
+        RunCurrentProbe() {
+            if (IsCancelled() || testSuccess)
+                return
+
+            OnTestMsg(ws, raw) {
+                if (IsCancelled()) {
+                    try ws.shutdown()
+                    return
                 }
-                ws.sendText('{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":0' authStr '}}')
-            } else if RegExMatch(msg, '"op"\s*:\s*2') {
-                testSuccess := true
-                statusLabel.Value := "✓ Connected to " target.raw " (" currentIndex "/" endpoints.Length ")!"
-                try ws.shutdown()
+                msg := (Type(raw) == "Buffer") ? StrGet(raw, "UTF-8") : String(raw)
+                if RegExMatch(msg, '"op"\s*:\s*0') {
+                    authStr := ""
+                    if (RegExMatch(msg, '"salt"\s*:\s*"([^"]+)"', &mSalt) && RegExMatch(msg, '"challenge"\s*:\s*"([^"]+)"', &mChal)) {
+                        secret := HashSHA256_Base64(pwStr . mSalt[1])
+                        authResponse := HashSHA256_Base64(secret . mChal[1])
+                        authStr := ',"authentication":"' authResponse '"'
+                    }
+                    ws.sendText('{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":0' authStr '}}')
+                } else if RegExMatch(msg, '"op"\s*:\s*2') {
+                    testSuccess := true
+                    FinishTest("✓ Connected to " target.raw " (" currentIndex "/" endpoints.Length ")!")
+                }
             }
-        }
 
-        OnTestClose(ws, st, re) {
-            if (!testSuccess) {
+            OnTestClose(ws, st, re) {
+                if (IsCancelled() || testSuccess)
+                    return
+                if IsObject(dlg._testWs) {
+                    try dlg._testWs.shutdown()
+                    dlg._testWs := ""
+                }
+                if (st == 4009) {
+                    FinishTest("✕ Auth failed on " target.raw " (Wrong OBS password)")
+                    return
+                }
                 currentIndex += 1
                 TryNextCandidate()
             }
-        }
 
-        try {
-            testWs := WebSocket("ws://" target.host ":" target.port, {
-                message: OnTestMsg,
-                close: OnTestClose
-            }, true, "", 2000)
-        } catch {
-            currentIndex += 1
-            TryNextCandidate()
+            try {
+                dlg._testWs := WebSocket("ws://" target.host ":" target.port, {
+                    message: OnTestMsg,
+                    close: OnTestClose
+                }, true, "", 2000)
+            } catch {
+                dlg._testWs := ""
+                if (IsCancelled())
+                    return
+                currentIndex += 1
+                TryNextCandidate()
+            }
         }
     }
 
