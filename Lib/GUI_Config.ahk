@@ -3,6 +3,9 @@
 ; Description: UIConstants, Config & OverlayState classes, Settings GUIs, HUD layout & animations
 ; ==============================================================================
 
+#Include "%A_LineFile%\..\Gdip.ahk"
+#Include "%A_LineFile%\..\OBS_Network.ahk"
+
 class UIConstants {
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 140
@@ -55,6 +58,13 @@ class UIConstants {
     static PULSE_MIN_RATIO_AGGRESSIVE := 0.2
     static PULSE_MIN_RATIO_NORMAL := 0.6
     static DRAG_SYNC_INTERVAL_MS := 16
+    static PPT_DEBOUNCE_MS := 150
+    static ZOOM_POLL_INTERVAL_MS := 500
+    static ZOOM_REC_GRACE_MS := 1500
+    static SYNC_LOCK_TIMEOUT_MS := 1000
+    static OBS_RECONNECT_MS := 5000
+    static OBS_INIT_DELAY_MS := 100
+    static TOOLTIP_DURATION_MS := 2000
 
     ; --- Opacity Presets & Corner Constants ---
     static OPACITY_SOLID := 255
@@ -159,14 +169,30 @@ class Config {
 
     ReadBool(section, key, defaultValue := 0) {
         value := IniRead(this.ConfigFile, section, key, defaultValue)
-        switch (StrLower(value)) {
+        switch (StrLower(String(value))) {
             case "1", "true", "yes", "on":
                 return true
             case "0", "false", "no", "off", "":
                 return false
             default:
-                return !!Integer(value)
+                try return !!Integer(value)
+                catch
+                    return !!defaultValue
         }
+    }
+
+    ReadInt(section, key, defaultValue := 0) {
+        value := IniRead(this.ConfigFile, section, key, defaultValue)
+        try return Integer(value)
+        catch
+            return defaultValue
+    }
+
+    ReadFloat(section, key, defaultValue := 1.0) {
+        value := IniRead(this.ConfigFile, section, key, defaultValue)
+        try return Float(value)
+        catch
+            return defaultValue
     }
 
     WriteBool(section, key, value) {
@@ -174,10 +200,20 @@ class Config {
     }
 
     Load() {
-        this.AudioRoutingMode := Integer(this.Read("Settings", "AudioRoutingMode", 0))
+        this.AudioRoutingMode := this.ReadInt("Settings", "AudioRoutingMode", 0)
+        if (this.AudioRoutingMode < 0 || this.AudioRoutingMode > 3)
+            this.AudioRoutingMode := 0
         this.ObsMuteHotkey := this.Read("Settings", "ObsHotkey", "None")
-        this.ObsRecHotkey := this.Read("Settings", "ObsRecHotkey", "^F9")
-        this.ObsPauseHotkey := this.Read("Settings", "ObsPauseHotkey", "^F10")
+        this.ObsRecHotkey := this.Read("Settings", "ObsRecHotkey", "")
+        if (this.ObsRecHotkey = "") {
+            this.ObsRecHotkey := "^F9"
+            this.Write("Settings", "ObsRecHotkey", this.ObsRecHotkey)
+        }
+        this.ObsPauseHotkey := this.Read("Settings", "ObsPauseHotkey", "")
+        if (this.ObsPauseHotkey = "") {
+            this.ObsPauseHotkey := "^F10"
+            this.Write("Settings", "ObsPauseHotkey", this.ObsPauseHotkey)
+        }
         this.ZoomMuteHotkey := this.Read("Settings", "ZoomMuteHotkey", "!a")
         this.ZoomRecHotkey := this.Read("Settings", "ZoomRecHotkey", "")
         if (this.ZoomRecHotkey = "") {
@@ -207,8 +243,12 @@ class Config {
         this.MonoIcon := this.ReadBool("Settings", "MonoIcon")
         this.SleekCorners := this.ReadBool("Settings", "SleekCorners")
         this.AggressivePulse := this.ReadBool("Settings", "AggressivePulse")
-        this.OpacityLevel := Integer(this.Read("Settings", "OpacityLevel", 220))
-        this.IndicatorScale := Float(this.Read("Settings", "IndicatorScale", 1.0))
+        this.OpacityLevel := this.ReadInt("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
+        if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
+            this.OpacityLevel := UIConstants.OPACITY_FROSTED
+        this.IndicatorScale := this.ReadFloat("Settings", "IndicatorScale", 1.0)
+        if (this.IndicatorScale <= 0.0 || this.IndicatorScale > 10.0)
+            this.IndicatorScale := 1.0
         this.FirstRun := this.ReadBool("Settings", "FirstRun", true)
         this.IsMuted := this.ReadBool("Settings", "IsMuted", false)
 
@@ -232,6 +272,12 @@ class Config {
     }
 
     ResetAppearance() {
+        this.ShowText := false
+        this.MonoIcon := false
+        this.SleekCorners := false
+        this.AggressivePulse := false
+        this.OpacityLevel := UIConstants.OPACITY_FROSTED
+        this.IndicatorScale := 1.0
         this.Write("Settings", "ShowText", 0)
         this.Write("Settings", "MonoIcon", 0)
         this.Write("Settings", "SleekCorners", 0)
@@ -241,6 +287,8 @@ class Config {
     }
 
     ResetPosition() {
+        this.savedX := "Default"
+        this.savedY := "Default"
         this.Write("Position", "X", "Default")
         this.Write("Position", "Y", "Default")
     }
@@ -402,6 +450,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
     doSuspend := opts.HasOwnProp("suspend") ? opts.suspend : true
     doShow := opts.HasOwnProp("show") ? opts.show : true
     doWaitClose := opts.HasOwnProp("waitClose") ? opts.waitClose : false
+    wasSuspended := A_IsSuspended
 
     if (doSuspend)
         Suspend(True)
@@ -410,7 +459,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
     if (opts.HasOwnProp("onClose") && opts.onClose) {
         dlg.OnEvent("Close", (*) => opts.onClose.Call(dlg))
     } else {
-        dlg.OnEvent("Close", (*) => (doSuspend ? Suspend(False) : 0, dlg.Destroy()))
+        dlg.OnEvent("Close", (*) => ((doSuspend && !wasSuspended) ? Suspend(False) : 0, dlg.Destroy()))
     }
 
     ctrls := Map()
@@ -484,6 +533,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
 }
 
 PromptForSetup(cfg) {
+    wasSuspended := A_IsSuspended
     modes := [
         "1: Pro OBS Setup (VB-Cable)",
         "2: Standard Direct Mic (Zoom-Only)",
@@ -528,7 +578,8 @@ PromptForSetup(cfg) {
             cfg.Write("Settings", "ZoomMuteHotkey", cfg.ZoomMuteHotkey)
         }
 
-        Suspend(False)
+        if (!wasSuspended)
+            Suspend(False)
         dlg.Destroy()
     }
 
@@ -786,6 +837,9 @@ ConfigurePointerKeysUI(cfg, *) {
 }
 
 ShowPointerTester(*) {
+    wasSuspended := A_IsSuspended
+    Suspend(True)
+
     testerGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Pointer Tester")
 
     testerGui.SetFont("s10", "Segoe UI")
@@ -809,6 +863,8 @@ ShowPointerTester(*) {
 
     Cleanup(*) {
         ih.Stop()
+        if (!wasSuspended)
+            Suspend(False)
         testerGui.Destroy()
     }
 
@@ -824,7 +880,7 @@ GetCornerRadius(cfg, h) {
     return cfg.SleekCorners ? (h / 2.0) : Min(UIConstants.CORNER_RADIUS_DEFAULT * cfg.IndicatorScale, h / 2.0)
 }
 
-ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", customH := "", customAlpha := "") {
+ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", customH := "", customAlpha := "", overrideMuted := "") {
     if (!IsObject(state.MicGui))
         return false
 
@@ -834,12 +890,13 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
     w := (customW != "") ? customW : pos.micW
     h := (customH != "") ? customH : pos.micH
     alpha := (customAlpha != "") ? customAlpha : state.currentAlpha
+    mutedState := (overrideMuted != "") ? overrideMuted : state.isMuted
 
-    bgRgb := state.isMuted ? state.colors.muted : state.colors.live
-    brdBgr := state.isMuted ? state.colors.borderMuted : state.colors.borderLive
-    icHex := cfg.MonoIcon ? (state.isMuted ? state.colors.iconMuted : state.colors.iconLive) : "FFFFFF"
-    glyph := state.isMuted ? Chr(0xF781) : Chr(0xE720)
-    lbl := state.isMuted ? "MUTED" : "LIVE"
+    bgRgb := mutedState ? state.colors.muted : state.colors.live
+    brdBgr := mutedState ? state.colors.borderMuted : state.colors.borderLive
+    icHex := cfg.MonoIcon ? (mutedState ? state.colors.iconMuted : state.colors.iconLive) : "FFFFFF"
+    glyph := mutedState ? Chr(0xF781) : Chr(0xE720)
+    lbl := mutedState ? "MUTED" : "LIVE"
     contentArgb := Gdip.HexToArgb(icHex)
 
     if (cfg.ShowText) {
@@ -1116,11 +1173,6 @@ UpdateHudVisibility(cfg, state) {
         return
     }
 
-    curX := state.savedX, curY := state.savedY
-    if (IsObject(state.MicGui) && DllCall("IsWindowVisible", "Ptr", state.MicGui.Hwnd))
-        try WinGetPos(&curX, &curY,,, state.MicGui.Hwnd)
-    state.savedX := curX, state.savedY := curY
-
     state.currentAlpha := state.baseAlpha
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
     state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
@@ -1166,9 +1218,8 @@ PlayMuteAnimation(cfg, state) {
     fadeStep := Round(state.baseAlpha / UIConstants.FADE_STEPS)
     widthIncrement := (cfg.ShowText ? UIConstants.POP_WIDTH_INC_TEXT : UIConstants.POP_WIDTH_INC_ICON) * cfg.IndicatorScale
     heightIncrement := UIConstants.POP_HEIGHT_INC * cfg.IndicatorScale
+    prevMuted := !state.isMuted
 
-    ; Note: Render fade-out using previous visual state before switching?
-    ; Actually state.isMuted was already updated by SyncUIState, or we can render smoothly:
     Loop UIConstants.FADE_STEPS {
         state.currentAlpha -= fadeStep
         if (state.currentAlpha < 0)
@@ -1179,7 +1230,7 @@ PlayMuteAnimation(cfg, state) {
         offsetX := Round((popWidth - state.baseWidth) / 2)
         offsetY := Round((popHeight - state.baseHeight) / 2)
 
-        ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, state.currentAlpha)
+        ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, state.currentAlpha, prevMuted)
         Sleep UIConstants.FADE_SLEEP_MS
     }
 
@@ -1193,7 +1244,7 @@ PlayMuteAnimation(cfg, state) {
         offsetX := Round((popWidth - state.baseWidth) / 2)
         offsetY := Round((popHeight - state.baseHeight) / 2)
 
-        ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, state.currentAlpha)
+        ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, state.currentAlpha, state.isMuted)
         Sleep UIConstants.FADE_SLEEP_MS
     }
 
@@ -1207,7 +1258,7 @@ PlayMuteAnimation(cfg, state) {
 }
 
 BreathingAnimation(cfg, state) {
-    if (!IsObject(state.MicGui))
+    if (!IsObject(state.MicGui) || state.isDraggingHud)
         return
 
     minRatio := cfg.AggressivePulse ? UIConstants.PULSE_MIN_RATIO_AGGRESSIVE : UIConstants.PULSE_MIN_RATIO_NORMAL

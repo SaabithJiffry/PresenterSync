@@ -49,7 +49,7 @@ The ready-to-run `.exe` version (no AutoHotkey installation required) is current
 If you prefer to run the raw script or compile it yourself:
 1. Download and install [AutoHotkey v2](https://www.autohotkey.com/).
 2. Clone or download this repository.
-3. Ensure `WebSocket.ahk` and `UIA.ahk` are located inside the `Lib` folder.
+3. Ensure the `Lib` folder contains `WebSocket.ahk`, `UIA.ahk`, `Crypto.ahk`, `Gdip.ahk`, `OBS_Network.ahk`, and `GUI_Config.ahk`.
 4. Run `PresenterSync.ahk`.
 
 ## 🎮 How It Works
