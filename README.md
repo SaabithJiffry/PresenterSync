@@ -58,14 +58,17 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 * WebSocket communication is powered by the [AutoHotkey-WebSocket](https://github.com/thqby/ahk2_lib) library by [thqby](https://github.com/thqby).
 
 
-## ⚠️️ Known Limitations
+## ⚠️️ Known Limitations & Background Animation Declaration
 
-**Background PowerPoint Animations (Windows GPU Throttling)**
-When PowerPoint is running in the background (e.g., when OBS or Zoom is your active, in-focus window), Windows aggressively throttles its DirectX rendering engine to conserve system resources. 
+**Background PowerPoint Animations (Windows DWM / DirectX GPU Throttling)**
+PresenterSync uses a **Hybrid COM (`ComObjActive`) + `ControlSend` fallback architecture** paired with a **150ms hardware debounce shield** to dispatch native slide transitions (`View.Next()` / `View.Previous()`) without stealing window focus, triggering synthetic key-hold fast-forwarding, or breaking `{Tab}` + `{Enter}` hyperlink navigation.
 
-Because of this hardcoded OS behavior, duration-based slide animations (like Fades, Wipes, or Morphs) may freeze or instantly snap to their final frame when triggered by PresenterSync. 
+However, when PowerPoint's fullscreen slideshow (`ahk_class screenClass`) is running in the background (e.g., while OBS Studio or Zoom is your active foreground window), **Windows OS aggressively throttles PowerPoint's DirectX GPU rendering loop** to conserve system resources. Because of this hardcoded OS behavior, duration-based slide animations (like Fades, Wipes, or Morphs) may still freeze or snap to their final frame unless Windows is prevented from throttling the unfocused presentation window.
 
-* **The Good News:** Instantaneous animations (like standard "Appear" effects for bullet points or equations) are completely unaffected and display seamlessly.
-* **Stability:** Your slide progression and inputs remain 100% functionally stable; this is purely a visual rendering limitation imposed by Windows OS, not a dropped input.
+* **Instantaneous Animations:** Standard "Appear" effects (for bullet points, code, or equations) are completely unaffected and render seamlessly.
+* **Input & UAC Stability:** Slide progression and clicker inputs remain 100% functionally stable. If PresenterSync and PowerPoint run under different privilege levels (e.g., Administrator vs. Standard User), PresenterSync automatically falls back from COM to `ControlSend`.
+* **Recommended Setup for Smooth Background Animations:**
+  1. In OBS Studio, capture the PowerPoint Slide Show using **Window Capture** with **Capture Method** set to **`Windows 10 (1903 and up)`** (uses the Windows Graphics Capture API to signal active frame consumption).
+  2. In **Windows Settings > System > Display > Graphics**, set `POWERPNT.EXE` to **High performance**.
 
-We are actively tracking this behavior and documenting advanced environmental workarounds. For further details, research, or to contribute to the discussion, please refer to [Issue #16](https://github.com/SaabithJiffry/PresenterSync/issues/16).
+For full technical details, historical test logs, and advanced multi-monitor/GPU workarounds, please refer to [Issue #16](https://github.com/SaabithJiffry/PresenterSync/issues/16).
