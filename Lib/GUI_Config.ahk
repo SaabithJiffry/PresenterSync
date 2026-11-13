@@ -239,7 +239,9 @@ class Theme {
         if (this.initialized)
             return
         Gdip.Startup()
-        this.UiFont := "Segoe UI"
+        osParts := StrSplit(A_OSVersion, ".")
+        buildNum := (osParts.Length >= 3) ? Integer(osParts[3]) : 0
+        this.UiFont := (buildNum >= 22000) ? "Segoe UI Variable Text" : "Segoe UI"
         this.hUxtheme := DllCall("GetModuleHandle", "Str", "uxtheme", "Ptr")
         if (!this.hUxtheme)
             this.hUxtheme := DllCall("LoadLibrary", "Str", "uxtheme", "Ptr")
@@ -255,23 +257,28 @@ class Theme {
         this.initialized := true
     }
 
-    static GetFont(hwnd, bold := false) {
+    static GetFont(hwnd, boldOrWeight := false) {
         hFont := SendMessage(0x0031, 0, 0, hwnd) ; WM_GETFONT
         if (!hFont)
             hFont := DllCall("GetStockObject", "Int", 17, "Ptr") ; DEFAULT_GUI_FONT
-        if (!bold || !hFont)
-            return hFont
         lf := Buffer(92, 0)
         if (DllCall("GetObjectW", "Ptr", hFont, "Int", 92, "Ptr", lf) == 0)
             return hFont
-        fontKey := NumGet(lf, 0, "Int") ":" StrGet(lf.Ptr + 28, 32, "UTF-16")
+        targetWeight := (boldOrWeight is Integer && boldOrWeight > 1) ? boldOrWeight : (boldOrWeight ? 600 : 400)
+        targetFace := this.UiFont
+        fontKey := NumGet(lf, 0, "Int") ":" targetWeight ":" targetFace
         if this.BoldFontCache.Has(fontKey)
             return this.BoldFontCache[fontKey]
-        NumPut("Int", 600, lf, 16) ; FW_SEMIBOLD (600)
-        hBold := DllCall("CreateFontIndirectW", "Ptr", lf, "Ptr")
-        if (hBold) {
-            this.BoldFontCache[fontKey] := hBold
-            return hBold
+        NumPut("Int", targetWeight, lf, 16) ; fwWeight
+        NumPut("UChar", 0, lf, 20)          ; lfItalic = 0 (strictly non-italic)
+        NumPut("UChar", 0, lf, 21)          ; lfUnderline = 0
+        NumPut("UChar", 0, lf, 22)          ; lfStrikeOut = 0
+        NumPut("UChar", 5, lf, 26)          ; lfQuality = 5 (CLEARTYPE_QUALITY)
+        StrPut(targetFace, lf.Ptr + 28, 32, "UTF-16")
+        hNewFont := DllCall("CreateFontIndirectW", "Ptr", lf, "Ptr")
+        if (hNewFont) {
+            this.BoldFontCache[fontKey] := hNewFont
+            return hNewFont
         }
         return hFont
     }
@@ -619,8 +626,8 @@ ButtonFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         }
 
         btnTxt := IsObject(ctrl) ? StrReplace(ctrl.Text, "&&", "&") : ""
-        hFont := Theme.GetFont(hwnd, isDefaultBtn)
-        DrawFluentControlText(hdcMem, btnTxt, 4, 0, w - 8, h, hFont, txtBgr, 0x0025)
+        hFont := Theme.GetFont(hwnd, 400)
+        DrawFluentControlText(hdcMem, btnTxt, 4, 0, w - 8, h, hFont, txtBgr, 0x0825)
 
         DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", w, "Int", h, "Ptr", hdcMem, "Int", 0, "Int", 0, "UInt", 0x00CC0020)
         DllCall("SelectObject", "Ptr", hdcMem, "Ptr", obm)
@@ -1356,6 +1363,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
 
     if (opts.HasOwnProp("saveBtnText") && opts.saveBtnText != "") {
         saveBtnOpts := opts.HasOwnProp("saveBtnOpts") ? opts.saveBtnOpts : "w280 h32 Default y+15"
+        dlg.SetFont("s10 w400 norm", Theme.UiFont)
         saveBtn := dlg.Add("Button", saveBtnOpts, opts.saveBtnText)
         Theme.RegisterControl(dlg, saveBtn, "Button")
         saveBtn.OnEvent("Click", HandleSave)
@@ -1441,7 +1449,7 @@ PromptForSetup(cfg, isInitialBoot := false) {
         waitClose: true,
         onClose: isInitialBoot ? ((*) => ExitApp()) : ((dlg) => dlg.Destroy()),
         onInit: UpdateFieldStates,
-        saveBtnText: isInitialBoot ? "Save && Start" : "Save && Restart",
+        saveBtnText: isInitialBoot ? "Save & Start" : "Save & Restart",
         saveBtnOpts: "w280 h32 Default y+15"
     })
 }
@@ -1485,13 +1493,38 @@ GetRoutingModeLabel(mode) {
     return "Unconfigured"
 }
 
+BuildLiveStatusValues(cfg, state := "") {
+    ptrMode := cfg.EnablePPT ? "Full PPT + Mute" : (cfg.EnableMicOnly ? "Pointer Mute Only" : "OFF")
+    syncMode := cfg.EnableWS ? "OBS WebSocket v5" : (cfg.EnableZoom ? "Zoom UIA Monitoring" : "Basic (1-Tier Mic Only)")
+    connInfo := ""
+    if IsObject(state) {
+        if (cfg.EnableWS)
+            connInfo := state.obsConnected ? " (Connected - Scene: " state.currentSceneName ")" : " (Waiting for OBS...)"
+        else if (cfg.EnableZoom)
+            connInfo := state.zoomConnected ? " (Active Meeting Detected)" : " (Waiting for Zoom Meeting...)"
+    }
+    hudStatus := (cfg.ShowIndicator ? "Visible" : "Hidden")
+        . "  |  Extra HUDs: " (cfg.ShowExtraHuds ? "ON" : "OFF")
+        . "  |  Labels: " (cfg.ShowText ? "ON" : "OFF")
+        . "  |  Scale: " Round(cfg.IndicatorScale, 2) "x"
+    themeStatus := cfg.ThemeMode " (Active: " (Theme.IsDarkMode() ? "Dark Mode" : "Light Mode") ")"
+
+    return "v" UIConstants.APP_VERSION "`n"
+        . GetRoutingModeLabel(cfg.AudioRoutingMode) "`n"
+        . ptrMode "`n"
+        . syncMode . connInfo "`n"
+        . hudStatus "`n"
+        . themeStatus "`n"
+        . cfg.targetMicName
+}
+
 BuildLiveStatusSummary(cfg, state := "") {
     ptrMode := cfg.EnablePPT ? "Full PPT + Mute" : (cfg.EnableMicOnly ? "Pointer Mute Only" : "OFF")
     syncMode := cfg.EnableWS ? "OBS WebSocket v5" : (cfg.EnableZoom ? "Zoom UIA Monitoring" : "Basic (1-Tier Mic Only)")
     connInfo := ""
     if IsObject(state) {
         if (cfg.EnableWS)
-            connInfo := state.obsConnected ? " (Connected — Scene: " state.currentSceneName ")" : " (Waiting for OBS...)"
+            connInfo := state.obsConnected ? " (Connected - Scene: " state.currentSceneName ")" : " (Waiting for OBS...)"
         else if (cfg.EnableZoom)
             connInfo := state.zoomConnected ? " (Active Meeting Detected)" : " (Waiting for Zoom Meeting...)"
     }
@@ -1518,7 +1551,7 @@ ShowHelpWindow(cfg, state := "", *) {
         return existing
     }
 
-    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync v" UIConstants.APP_VERSION " — Interactive Help & Guide")
+    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync v" UIConstants.APP_VERSION " - Interactive Help & Guide")
     Theme.ApplyToWindow(helpGui)
     Theme.NamedWindows["HelpWindow"] := helpGui
 
@@ -1529,9 +1562,9 @@ ShowHelpWindow(cfg, state := "", *) {
 
     ; --- TAB 1: SHORTCUTS ---
     tabs.UseTab(1)
-    helpGui.SetFont("s11 w700")
+    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Global App & Audio Shortcuts"), "Text", "tabText")
-    helpGui.SetFont("s9 w400")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
     scCol1 := "Cycle Pointer Modes:`n"
         . "Toggle OBS WebSocket:`n"
         . "Toggle Zoom Monitor:`n"
@@ -1553,9 +1586,9 @@ ShowHelpWindow(cfg, state := "", *) {
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y92 w185", scCol1), "Text", "tabMuted")
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x225 y92 w340", scCol2), "Text", "tabText")
 
-    helpGui.SetFont("s9 italic")
+    helpGui.SetFont("s9 italic", Theme.UiFont)
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y316 w540", "Click any button below to customize your shortcuts directly:"), "Text", "tabMuted")
-    helpGui.SetFont("s9 w400")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
     btnAppHk := helpGui.Add("Button", "x32 y346 w170 h34", "Edit App Shortcuts")
     btnObsHk := helpGui.Add("Button", "x219 y346 w170 h34", "Edit OBS Settings")
     btnZoomHk := helpGui.Add("Button", "x406 y346 w170 h34", "Edit Zoom Shortcuts")
@@ -1568,9 +1601,9 @@ ShowHelpWindow(cfg, state := "", *) {
 
     ; --- TAB 2: POINTER & PPT ---
     tabs.UseTab(2)
-    helpGui.SetFont("s11 w700")
+    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Smart PowerPoint & Hardware Clicker Controls"), "Text", "tabText")
-    helpGui.SetFont("s9 w400")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
     pptGuide := "1. Full PPT + Mute:`n"
         . "Routes slide keys (Arrows, PgUp/PgDn, Space, Enter, Tab, Esc, Shift+F5) directly to PowerPoint in the background using Hybrid COM + ControlSend with a 150ms debounce shield, while keeping your clicker's mute button active.`n`n"
         . "2. Pointer Mute Only:`n"
@@ -1591,15 +1624,15 @@ ShowHelpWindow(cfg, state := "", *) {
 
     ; --- TAB 3: AUDIO & SYNC ---
     tabs.UseTab(3)
-    helpGui.SetFont("s11 w700")
+    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Audio Profiles, OBS WebSocket v5 & Zoom UIA"), "Text", "tabText")
-    helpGui.SetFont("s9 w400")
-    syncGuide := "• 3 Audio Routing Profiles:`n"
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    syncGuide := Chr(0x2022) " 3 Audio Routing Profiles:`n"
         . "   1. Pro OBS Setup (VB-Cable): Controls OBS mic directly.`n"
         . "   2. Standard Direct Mic (Zoom-Only): Controls Zoom mic directly.`n"
         . "   3. Dual App Sync (OBS + Zoom): Keeps OBS and Zoom mics synchronized 2-way.`n`n"
-        . "• OBS WebSocket v5: In OBS Studio > Tools > WebSocket Server Settings, enable the server (port 4455) for real-time Mic, Recording, Studio Mode & Scene telemetry.`n`n"
-        . "• Zoom UIA Monitoring: In Zoom Settings > Accessibility, enable 'Always show meeting controls' for background Mic, Recording, and Unread Chat tracking."
+        . Chr(0x2022) " OBS WebSocket v5: In OBS Studio > Tools > WebSocket Server Settings, enable the server (port 4455) for real-time Mic, Recording, Studio Mode & Scene telemetry.`n`n"
+        . Chr(0x2022) " Zoom UIA Monitoring: In Zoom Settings > Accessibility, enable 'Always show meeting controls' for background Mic, Recording, and Unread Chat tracking."
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y92 w540 h230", syncGuide), "Text", "tabText")
 
     btnWizard := helpGui.Add("Button", "x32 y346 w170 h34", "Audio Setup Wizard")
@@ -1614,17 +1647,17 @@ ShowHelpWindow(cfg, state := "", *) {
 
     ; --- TAB 4: HUD & THEME ---
     tabs.UseTab(4)
-    helpGui.SetFont("s11 w700")
+    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Multi-Tier HUD Overlay & Live Appearance"), "Text", "tabText")
-    helpGui.SetFont("s9 w400")
-    hudGuide := "• Adaptive 3-Tier HUD Stack:`n"
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    hudGuide := Chr(0x2022) " Adaptive 3-Tier HUD Stack:`n"
         . "   Row 1 (Bottom): Live (Green) / Muted (Red) Mic Indicator with breathing animation.`n"
         . "   Row 2 (Middle): 3-state Recording (NOT REC / REC / PAUSED) + Unread Chat badge.`n"
         . "   Row 3 (Top - OBS): Studio Mode badge + auto-expanding Active Scene name pill.`n`n"
-        . "• Direct Mouse Controls:`n"
+        . Chr(0x2022) " Direct Mouse Controls:`n"
         . "   Left-Drag any HUD pill to reposition the stack (coordinates save automatically).`n"
         . "   Right-Click any HUD pill to open the PresenterSync menu right at your cursor.`n`n"
-        . "• Try Interactive Live Adjustments Below (No Restart Required):"
+        . Chr(0x2022) " Try Interactive Live Adjustments Below (No Restart Required):"
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y92 w540 h195", hudGuide), "Text", "tabText")
 
     btnTogExtra := helpGui.Add("Button", "x32 y300 w260 h34", "Toggle Extra HUDs (ON/OFF)")
@@ -1638,15 +1671,23 @@ ShowHelpWindow(cfg, state := "", *) {
 
     ; --- TAB 5: LIVE STATUS ---
     tabs.UseTab(5)
-    helpGui.SetFont("s11 w700")
+    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y62 w540", "Live Configuration & Telemetry Status"), "Text", "tabText")
-    helpGui.SetFont("s9 w400")
-    statusTextCtrl := helpGui.Add("Text", "x32 y96 w540 h215", BuildLiveStatusSummary(cfg, state))
-    Theme.RegisterControl(helpGui, statusTextCtrl, "Text", "tabText")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    statusCol1 := "PresenterSync Version:`n"
+        . "Audio Routing Profile:`n"
+        . "Active Pointer Mode:`n"
+        . "Telemetry Engine:`n"
+        . "HUD Overlay Status:`n"
+        . "Application Theme:`n"
+        . "Target OBS Mic Source:"
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x32 y96 w175", statusCol1), "Text", "tabMuted")
+    statusValCtrl := helpGui.Add("Text", "x215 y96 w355 h215", BuildLiveStatusValues(cfg, state))
+    Theme.RegisterControl(helpGui, statusValCtrl, "Text", "tabText")
 
     RefreshHelpStatus(*) {
         if WinExist("ahk_id " helpGui.Hwnd)
-            statusTextCtrl.Value := BuildLiveStatusSummary(cfg, state)
+            statusValCtrl.Value := BuildLiveStatusValues(cfg, state)
     }
     if IsObject(state)
         state.refreshHelpFn := RefreshHelpStatus
@@ -1706,6 +1747,7 @@ ShowHelpWindow(cfg, state := "", *) {
 
     tabs.UseTab()
 
+    helpGui.SetFont("s10 w400 norm", Theme.UiFont)
     btn := helpGui.Add("Button", "w140 x234 y418 h34 Default", "Got it!")
     Theme.RegisterControl(helpGui, btn, "Button")
     CloseHelp(*) {
@@ -1737,23 +1779,24 @@ ShowAboutWindow(cfg := "", state := "", *) {
         aboutGui.Add("Picture", "x158 y15 w64 h64", iconSource)
     }
 
-    aboutGui.SetFont("s16 w700", Theme.UiFont)
+    aboutGui.SetFont("s16 w700 norm", Theme.UiFont)
     Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "PresenterSync"), "Text")
 
-    aboutGui.SetFont("s10 w700")
+    aboutGui.SetFont("s10 w700 norm", Theme.UiFont)
     Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+4", "Version " UIConstants.APP_VERSION), "Text", "accent")
 
-    aboutGui.SetFont("s9 w400")
+    aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
     Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 w340 Center y+8", "OBS Studio WebSocket v5, Zoom UIA Telemetry & Smart PowerPoint Control Suite"), "Text", "muted")
 
-    aboutGui.SetFont("s10 w400")
+    aboutGui.SetFont("s10 w400 norm", Theme.UiFont)
     Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "Created by Saabith Jiffry"), "Text")
 
+    aboutGui.SetFont("s10 w400 norm", Theme.UiFont)
     gitBtn := aboutGui.Add("Button", "w110 x18 y+20 h32", "GitHub Repo")
     Theme.RegisterControl(aboutGui, gitBtn, "Button")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    helpBtn := aboutGui.Add("Button", "w110 x+12 h32", "Help && Guide")
+    helpBtn := aboutGui.Add("Button", "w110 x+12 h32", "Help & Guide")
     Theme.RegisterControl(aboutGui, helpBtn, "Button")
     if IsObject(cfg)
         helpBtn.OnEvent("Click", (*) => ShowHelpWindow(cfg, state))
@@ -1801,7 +1844,7 @@ ChangeAppHotkeysUI(cfg, *) {
     ]
 
     return BuildSettingsWindow("Edit App Shortcuts", elements, SaveAppHk, {
-        saveBtnText: "Save && Restart",
+        saveBtnText: "Save & Restart",
         saveBtnOpts: "xm w300 h32 Default y+16"
     })
 }
@@ -1824,7 +1867,7 @@ ChangeZoomShortcutsUI(cfg, *) {
     ]
 
     return BuildSettingsWindow("Edit Zoom Shortcuts", elements, SaveZoomHk, {
-        saveBtnText: "Save && Restart",
+        saveBtnText: "Save & Restart",
         saveBtnOpts: "w300 h32 Default y+15"
     })
 }
@@ -1861,7 +1904,7 @@ ChangeObsSettingsUI(cfg, *) {
     ]
 
     return BuildSettingsWindow("OBS Settings", elements, SaveObsSettings, {
-        saveBtnText: "Save && Restart",
+        saveBtnText: "Save & Restart",
         saveBtnOpts: "w280 h32 Default y+15"
     })
 }
@@ -1878,7 +1921,7 @@ ChangeHwMuteHotkeyUI(cfg, *) {
     ]
 
     return BuildSettingsWindow("Edit Pointer Mute Button", elements, SaveHwMuteHk, {
-        saveBtnText: "Save && Restart",
+        saveBtnText: "Save & Restart",
         saveBtnOpts: "w260 h32 Default y+15"
     })
 }
@@ -1905,7 +1948,7 @@ ConfigurePointerKeysUI(cfg, *) {
     ]
 
     return BuildSettingsWindow("Configure Pointer Intercepts", elements, SavePointerKeys, {
-        saveBtnText: "Save && Restart",
+        saveBtnText: "Save & Restart",
         saveBtnOpts: "w260 h32 Default y+15"
     })
 }
@@ -1922,13 +1965,14 @@ ShowPointerTester(*) {
     Theme.ApplyToWindow(testerGui)
     Theme.NamedWindows["PointerTester"] := testerGui
 
-    testerGui.SetFont("s10", Theme.UiFont)
+    testerGui.SetFont("s10 norm", Theme.UiFont)
     Theme.RegisterControl(testerGui, testerGui.Add("Text", "w250 Center", "Press any button on your clicker."), "Text")
 
     keyDisplay := testerGui.Add("Text", "w250 Center y+15", "Listening...")
-    keyDisplay.SetFont("s14 w700")
+    keyDisplay.SetFont("s14 w700 norm", Theme.UiFont)
     Theme.RegisterControl(testerGui, keyDisplay, "Text", "accent")
 
+    testerGui.SetFont("s10 w400 norm", Theme.UiFont)
     btn := testerGui.Add("Button", "w110 x70 y+20 h32 Default", "Close")
     Theme.RegisterControl(testerGui, btn, "Button")
 

@@ -31,7 +31,7 @@ Before connecting PresenterSync to OBS, enable the WebSocket server inside OBS S
 4. Ensure the **Server Port** is set to `4455` (the default).
 5. Check the box for **Enable Authentication**.
 6. Click **Generate Password** (or type a custom password). Click **Apply** and **OK**. 
-*Keep this password handy—PresenterSync will ask for it the first time you enable OBS WebSocket Sync.*
+*Keep this password handy - PresenterSync will ask for it the first time you enable OBS WebSocket Sync.*
 
 ### Zoom (UIA Background Monitoring)
 To let PresenterSync read Zoom's Mute, Recording, and Unread Chat controls reliably in the background:
