@@ -74,7 +74,7 @@ global ShowText := ReadIniBool("Settings", "ShowText")
 global MonoIcon := ReadIniBool("Settings", "MonoIcon")
 global SleekCorners := ReadIniBool("Settings", "SleekCorners")
 global AggressivePulse := ReadIniBool("Settings", "AggressivePulse")
-global OpacityLevel := IniRead(ConfigFile, "Settings", "OpacityLevel", 220)
+global OpacityLevel := Integer(IniRead(ConfigFile, "Settings", "OpacityLevel", 220))
 global IndicatorScale := Float(IniRead(ConfigFile, "Settings", "IndicatorScale", 1.0))
 global FirstRun := ReadIniBool("Settings", "FirstRun", true)
 
@@ -127,7 +127,7 @@ global zoomConnected := false
 global IsSyncing := false
 global zoomLastMuted := -1
 
-global isMuted := IniRead(ConfigFile, "Settings", "IsMuted", 0)
+global isMuted := ReadIniBool("Settings", "IsMuted", false)
 global recState := 0 ; 0 = NOT REC, 1 = REC, 2 = PAUSED
 global studioModeActive := false
 global currentSceneName := "Scene"
@@ -593,6 +593,9 @@ HandleObsClose(ws, status, reason) {
     }
     
     obsConnected := false
+    SyncRecState(0)
+    SyncStudioState(false)
+    SyncSceneState("Scene")
     SetTimer ConnectToOBS, 5000
 }
 
@@ -724,7 +727,9 @@ DetectZoomStates() {
 
     result.foundWindow := true
     for hwnd in hwndList {
-        names := UIA.GetWindowElementNames(hwnd, true)
+        if !DllCall("IsWindowVisible", "Ptr", hwnd)
+            continue
+        names := UIA.GetWindowElementNames(hwnd, false)
         for n in names {
             if (!result.hasMic) {
                 if RegExMatch(n, "i)\bunmute\b.*\baudio\b|^unmute$") {
@@ -773,10 +778,14 @@ ZoomStateMonitor() {
     state := DetectZoomStates()
     if (state.hasChat)
         SyncChatState(state.unreadChat)
+    else
+        SyncChatState(0)
 
     if (!state.hasMic) {
         zoomConnected := false
         zoomLastMuted := -1
+        if (EnableZoom && !EnableWS)
+            SyncRecState(0)
         return
     }
 
@@ -785,6 +794,8 @@ ZoomStateMonitor() {
         SyncUIState(state.muted)
         if (state.hasRec)
             SyncRecState(state.recState)
+        else
+            SyncRecState(0)
     } else if (EnableWS && AudioRoutingMode == 3 && obsConnected && !IsSyncing) {
         if (zoomLastMuted != -1 && state.muted != zoomLastMuted && state.muted != isMuted) {
             if (ObsMuteHotkey != "None" && ObsMuteHotkey != "") {
@@ -853,15 +864,12 @@ SyncStudioState(isEnabled) {
 }
 
 ApplyStudioAppearance() {
-    global studioModeActive, StudioGui, StudioIconText, ShowText, MonoIcon
+    global studioModeActive, StudioGui, StudioIconText, StudioLabelText, ShowText, MonoIcon
     global studioColorOff, studioBorderOff, studioIconOff
     global studioColorOn, studioBorderOn, studioIconOn
 
     if (!IsSet(StudioGui))
         return
-
-    if (ShowText)
-        global StudioLabelText
 
     bg := studioModeActive ? studioColorOn : studioColorOff
     brd := studioModeActive ? studioBorderOn : studioBorderOff
@@ -869,7 +877,7 @@ ApplyStudioAppearance() {
 
     StudioGui.BackColor := bg
     StudioIconText.Opt("c" ic)
-    if (ShowText)
+    if (ShowText && IsObject(StudioLabelText))
         StudioLabelText.Opt("c" ic)
     DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", StudioGui.Hwnd, "Int", 34, "Int*", brd, "Int", 4)
 }
@@ -892,16 +900,13 @@ SyncRecState(newState) {
 }
 
 ApplyRecAppearance() {
-    global recState, RecGui, RecIconText, ShowText, MonoIcon
+    global recState, RecGui, RecIconText, RecLabelText, ShowText, MonoIcon
     global recColorOff, recBorderOff, recIconOff
     global recColorActive, recBorderActive, recIconActive
     global recColorPaused, recBorderPaused, recIconPaused
 
     if (!IsSet(RecGui))
         return
-
-    if (ShowText)
-        global RecLabelText
 
     if (recState == 1) {
         bg := recColorActive, brd := recBorderActive, ic := MonoIcon ? recIconActive : "White"
@@ -917,7 +922,7 @@ ApplyRecAppearance() {
     RecGui.BackColor := bg
     RecIconText.Opt("c" ic)
     RecIconText.Value := glyph
-    if (ShowText) {
+    if (ShowText && IsObject(RecLabelText)) {
         RecLabelText.Opt("c" ic)
         RecLabelText.Value := lbl
     }
@@ -1173,6 +1178,9 @@ ToggleWS(*) {
             obsWs.shutdown()
             obsWs := ""
         }
+        SyncRecState(0)
+        SyncStudioState(false)
+        SyncSceneState("Scene")
     }
 
     UpdateZoomMonitorTimer()
@@ -1197,6 +1205,9 @@ ToggleZoom(*) {
                 obsWs.shutdown()
                 obsWs := ""
             }
+            SyncRecState(0)
+            SyncStudioState(false)
+            SyncSceneState("Scene")
         }
 
         WriteIniBool("Settings", "EnableZoom", true)
@@ -1207,6 +1218,8 @@ ToggleZoom(*) {
         SetTrayCheck("Enable Zoom Monitoring", false)
         zoomConnected := false
         zoomLastMuted := -1
+        SyncRecState(0)
+        SyncChatState(0)
         ToolTip "Zoom Monitoring: OFF"
     }
 
@@ -1216,7 +1229,7 @@ ToggleZoom(*) {
 }
 
 ToggleIndicator(*) {
-    global ShowIndicator, isMuted, AggressivePulse
+    global ShowIndicator, isMuted, AggressivePulse, ConfigFile
     ShowIndicator := !ShowIndicator
     IniWrite(ShowIndicator ? 1 : 0, ConfigFile, "Settings", "ShowIndicator")
 
@@ -1304,10 +1317,19 @@ global subIconSize := Max(1, Round(12 * IndicatorScale))
 global subTextSize := Max(1, Round(9 * IndicatorScale))
 global miniTextSize := Max(1, Round(9 * IndicatorScale))
 
-if (savedX = "Default" || savedY = "Default") {
+if (savedX = "Default" || savedY = "Default" || !IsInteger(savedX) || !IsInteger(savedY)) {
     MonitorGetWorkArea(1, &Left, &Top, &Right, &Bottom)
+    stackTopPad := 10 + recHeight + row3Height + (2 * hudGap)
     savedX := Max(Left + 10, Right - baseWidth - 20)
-    savedY := Max(Top + 10, Bottom - baseHeight - 20)
+    savedY := Max(Top + stackTopPad, Bottom - baseHeight - 20)
+} else {
+    savedX := Integer(savedX)
+    savedY := Integer(savedY)
+    vLeft := SysGet(76), vTop := SysGet(77)
+    vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+    stackTopPad := recHeight + row3Height + (2 * hudGap)
+    savedX := Max(vLeft, Min(savedX, vRight - baseWidth))
+    savedY := Max(vTop + stackTopPad, Min(savedY, vBottom - baseHeight))
 }
 
 posX := "x" savedX
@@ -1351,6 +1373,7 @@ if (ShowText) {
 } else {
     global IconText := MicGui.Add("Text", "x0 y0 w" baseWidth " h" baseHeight " Center +0x200 BackgroundTrans c" activeIconColor, initialIcon)
     IconText.SetFont("s" iconSize, IconFont) 
+    global LabelText := ""
 }
 
 StyleHudWindow(MicGui, isMuted ? borderMuted : borderLive)
@@ -1374,6 +1397,7 @@ if (ShowText) {
 } else {
     global RecIconText := RecGui.Add("Text", "x0 y0 w" recW " h" recHeight " Center +0x200 BackgroundTrans cD1D5DB", Chr(0xE71A))
     RecIconText.SetFont("s" subIconSize, IconFont)
+    global RecLabelText := ""
 }
 
 StyleHudWindow(RecGui, recBorderOff)
@@ -1422,6 +1446,7 @@ if (ShowText) {
 } else {
     global StudioIconText := StudioGui.Add("Text", "x0 y0 w" studioW " h" row3Height " Center +0x200 BackgroundTrans cD1D5DB", Chr(0xE7F4))
     StudioIconText.SetFont("s" Max(1, Round(12 * IndicatorScale)), IconFont)
+    global StudioLabelText := ""
 }
 StyleHudWindow(StudioGui, studioBorderOff)
 ApplyStudioAppearance()
@@ -1464,7 +1489,7 @@ ComputeHudLayout(anchorX, anchorY) {
     }
 }
 
-UpdateHudLayout(anchorX := "", anchorY := "") {
+UpdateHudLayout(anchorX := "", anchorY := "", skipHwnd := 0) {
     global MicGui, RecGui, ChatGui, StudioGui, SceneGui, savedX, savedY
     if (anchorX = "" || anchorY = "") {
         if (IsSet(MicGui) && DllCall("IsWindowVisible", "Ptr", MicGui.Hwnd))
@@ -1474,20 +1499,20 @@ UpdateHudLayout(anchorX := "", anchorY := "") {
     }
     savedX := anchorX, savedY := anchorY
     pos := ComputeHudLayout(anchorX, anchorY)
-    if IsSet(MicGui)
+    if (IsSet(MicGui) && MicGui.Hwnd != skipHwnd)
         MicGui.Move(pos.micX, pos.micY, pos.micW, pos.micH)
-    if IsSet(RecGui)
+    if (IsSet(RecGui) && RecGui.Hwnd != skipHwnd)
         RecGui.Move(pos.recX, pos.recY, pos.recW, pos.recH)
-    if IsSet(ChatGui)
+    if (IsSet(ChatGui) && ChatGui.Hwnd != skipHwnd)
         ChatGui.Move(pos.chatX, pos.chatY, pos.chatW, pos.chatH)
-    if IsSet(StudioGui)
+    if (IsSet(StudioGui) && StudioGui.Hwnd != skipHwnd)
         StudioGui.Move(pos.studioX, pos.studioY, pos.studioW, pos.studioH)
-    if IsSet(SceneGui)
+    if (IsSet(SceneGui) && SceneGui.Hwnd != skipHwnd)
         SceneGui.Move(pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH)
 }
 
 UpdateHudVisibility() {
-    global ShowIndicator, EnableWS, EnableZoom, MicGui, RecGui, ChatGui, StudioGui, SceneGui, savedX, savedY
+    global ShowIndicator, EnableWS, EnableZoom, MicGui, RecGui, ChatGui, StudioGui, SceneGui, savedX, savedY, baseAlpha
 
     if (!ShowIndicator) {
         if IsSet(MicGui)
@@ -1509,9 +1534,12 @@ UpdateHudVisibility() {
     pos := ComputeHudLayout(curX, curY)
 
     MicGui.Show("NoActivate x" pos.micX " y" pos.micY " w" pos.micW " h" pos.micH)
+    WinSetTransparent(baseAlpha, MicGui.Hwnd)
     if (EnableWS || EnableZoom) {
         RecGui.Show("NoActivate x" pos.recX " y" pos.recY " w" pos.recW " h" pos.recH)
+        WinSetTransparent(baseAlpha, RecGui.Hwnd)
         ChatGui.Show("NoActivate x" pos.chatX " y" pos.chatY " w" pos.chatW " h" pos.chatH)
+        WinSetTransparent(baseAlpha, ChatGui.Hwnd)
     } else {
         RecGui.Hide()
         ChatGui.Hide()
@@ -1519,7 +1547,9 @@ UpdateHudVisibility() {
 
     if (EnableWS) {
         StudioGui.Show("NoActivate x" pos.studioX " y" pos.studioY " w" pos.studioW " h" pos.studioH)
+        WinSetTransparent(baseAlpha, StudioGui.Hwnd)
         SceneGui.Show("NoActivate x" pos.sceneX " y" pos.sceneY " w" pos.sceneW " h" pos.sceneH)
+        WinSetTransparent(baseAlpha, SceneGui.Hwnd)
     } else {
         StudioGui.Hide()
         SceneGui.Hide()
@@ -1643,30 +1673,34 @@ HotIf
 
 ; --- MUTE CONTROL ---
 FormatSendKey(hk) {
-    return RegExReplace(hk, "([a-zA-Z0-9]+)$", "{$1}")
+    return RegExReplace(hk, "([a-zA-Z0-9_]+)$", "{$1}")
+}
+
+FormatPassthroughHook(hk) {
+    return "~$" RegExReplace(hk, "^[~*$]+")
 }
 
 if ((AudioRoutingMode == 1 || AudioRoutingMode == 3) && ObsMuteHotkey != "None" && ObsMuteHotkey != "")
-    try Hotkey("~" ObsMuteHotkey, LaptopKeyboardMute)
+    try Hotkey(FormatPassthroughHook(ObsMuteHotkey), LaptopKeyboardMute)
 if ((AudioRoutingMode == 2 || AudioRoutingMode == 3) && ZoomMuteHotkey != "")
-    try Hotkey("~" ZoomMuteHotkey, LaptopKeyboardMute)
+    try Hotkey(FormatPassthroughHook(ZoomMuteHotkey), LaptopKeyboardMute)
 if (ObsRecHotkey != "")
-    try Hotkey("~" ObsRecHotkey, LaptopObsRecToggle)
+    try Hotkey(FormatPassthroughHook(ObsRecHotkey), LaptopObsRecToggle)
 if (ObsPauseHotkey != "")
-    try Hotkey("~" ObsPauseHotkey, LaptopObsPauseToggle)
+    try Hotkey(FormatPassthroughHook(ObsPauseHotkey), LaptopObsPauseToggle)
 if (ZoomRecHotkey != "")
-    try Hotkey("~" ZoomRecHotkey, LaptopZoomRecToggle)
+    try Hotkey(FormatPassthroughHook(ZoomRecHotkey), LaptopZoomRecToggle)
 if (ZoomPauseHotkey != "")
-    try Hotkey("~" ZoomPauseHotkey, LaptopZoomPauseToggle)
+    try Hotkey(FormatPassthroughHook(ZoomPauseHotkey), LaptopZoomPauseToggle)
 
 LaptopObsRecToggle(ThisHotkey) {
-    global obsConnected, recState
+    global obsConnected, EnableWS, recState
     if (!obsConnected && EnableWS)
         SyncRecState(recState == 0 ? 1 : 0)
 }
 
 LaptopObsPauseToggle(ThisHotkey) {
-    global obsConnected, recState
+    global obsConnected, EnableWS, recState
     if (!obsConnected && EnableWS && recState != 0)
         SyncRecState(recState == 1 ? 2 : 1)
 }
@@ -1694,7 +1728,7 @@ LaptopKeyboardMute(ThisHotkey) {
 }
 
 TriggerMute() {
-    global obsConnected, isMuted, ObsMuteHotkey, ZoomMuteHotkey, AudioRoutingMode, EnablePPT, EnableMicOnly
+    global obsConnected, zoomConnected, isMuted, ObsMuteHotkey, ZoomMuteHotkey, AudioRoutingMode, EnablePPT, EnableMicOnly
 
     ; Failsafe: Abort if hardware triggers are turned off
     if !(EnablePPT || EnableMicOnly) {
@@ -1741,11 +1775,7 @@ TriggerMute() {
 PlayMuteAnimation() {
     global isMuted, colorLive, colorMuted, borderLive, borderMuted
     global iconLive, iconMuted, ShowText, MonoIcon, baseWidth, baseHeight, ShowIndicator
-    global currentAlpha, baseAlpha, IconText, MicGui, AggressivePulse, breathDir, IndicatorScale
-    
-    if (ShowText) {
-        global LabelText
-    }
+    global currentAlpha, baseAlpha, IconText, LabelText, MicGui, AggressivePulse, breathDir, IndicatorScale
     
     if (!ShowIndicator) {
         MicGui.BackColor := isMuted ? colorMuted : colorLive
@@ -1871,23 +1901,12 @@ BreathingAnimation() {
     WinSetTransparent(currentAlpha, MicGui.Hwnd)
 }
 
-OnMessage(0x0201, WM_LBUTTONDOWN)
-WM_LBUTTONDOWN(wParam, lParam, msg, hwnd) {
-    global ConfigFile, MicGui, RecGui, ChatGui, StudioGui, SceneGui
+global isDraggingHud := false
+global activeDragHwnd := 0
+
+AnchorFromHwnd(hwnd, X, Y) {
+    global RecGui, ChatGui, StudioGui, SceneGui
     global recHeight, recW, row3Height, studioW, hudGap
-
-    isHudHwnd := (hwnd == MicGui.Hwnd)
-        || (IsSet(RecGui) && hwnd == RecGui.Hwnd)
-        || (IsSet(ChatGui) && hwnd == ChatGui.Hwnd)
-        || (IsSet(StudioGui) && hwnd == StudioGui.Hwnd)
-        || (IsSet(SceneGui) && hwnd == SceneGui.Hwnd)
-    if (!isHudHwnd)
-        return
-
-    PostMessage(0xA1, 2,,, "ahk_id " hwnd)
-    KeyWait "LButton"
-    WinGetPos(&X, &Y,,, "ahk_id " hwnd)
-
     if (IsSet(RecGui) && hwnd == RecGui.Hwnd) {
         Y := Y + recHeight + hudGap
     } else if (IsSet(ChatGui) && hwnd == ChatGui.Hwnd) {
@@ -1899,10 +1918,55 @@ WM_LBUTTONDOWN(wParam, lParam, msg, hwnd) {
         X := X - studioW - hudGap
         Y := Y + row3Height + hudGap + recHeight + hudGap
     }
+    return {x: X, y: Y}
+}
 
-    IniWrite(X, ConfigFile, "Position", "X")
-    IniWrite(Y, ConfigFile, "Position", "Y")
-    UpdateHudLayout(X, Y)
+DragSyncTick() {
+    global isDraggingHud, activeDragHwnd
+    if (!isDraggingHud || !activeDragHwnd)
+        return
+    try {
+        WinGetPos(&curX, &curY,,, "ahk_id " activeDragHwnd)
+        anchor := AnchorFromHwnd(activeDragHwnd, curX, curY)
+        UpdateHudLayout(anchor.x, anchor.y, activeDragHwnd)
+    }
+}
+
+OnMessage(0x0003, WM_HUD_MOVE)
+WM_HUD_MOVE(wParam, lParam, msg, hwnd) {
+    global isDraggingHud, activeDragHwnd
+    if (isDraggingHud && hwnd == activeDragHwnd)
+        DragSyncTick()
+}
+
+OnMessage(0x0201, WM_LBUTTONDOWN)
+WM_LBUTTONDOWN(wParam, lParam, msg, hwnd) {
+    global ConfigFile, MicGui, RecGui, ChatGui, StudioGui, SceneGui
+    global isDraggingHud, activeDragHwnd
+
+    isHudHwnd := (hwnd == MicGui.Hwnd)
+        || (IsSet(RecGui) && hwnd == RecGui.Hwnd)
+        || (IsSet(ChatGui) && hwnd == ChatGui.Hwnd)
+        || (IsSet(StudioGui) && hwnd == StudioGui.Hwnd)
+        || (IsSet(SceneGui) && hwnd == SceneGui.Hwnd)
+    if (!isHudHwnd)
+        return
+
+    activeDragHwnd := hwnd
+    isDraggingHud := true
+    SetTimer DragSyncTick, 16
+    PostMessage(0xA1, 2,,, "ahk_id " hwnd)
+    KeyWait "LButton"
+    isDraggingHud := false
+    activeDragHwnd := 0
+    SetTimer DragSyncTick, 0
+
+    WinGetPos(&X, &Y,,, "ahk_id " hwnd)
+    anchor := AnchorFromHwnd(hwnd, X, Y)
+
+    IniWrite(anchor.x, ConfigFile, "Position", "X")
+    IniWrite(anchor.y, ConfigFile, "Position", "Y")
+    UpdateHudLayout(anchor.x, anchor.y)
 }
 
 OnMessage(0x02E0, WM_DPICHANGED)
