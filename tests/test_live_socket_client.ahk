@@ -158,3 +158,4 @@ try {
     FileAppend("[FAIL] WebSocket connection failed: " err.Message "`n", "*")
     ExitApp(1)
 }
+
