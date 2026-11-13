@@ -8,3 +8,9 @@ PresenterSync_Remote.ini
 
 # AutoHotkey Backup/Temporary Files
 *.bak
+
+# Test Logs & Generated Fixtures
+*.log
+tests/*.ini
+tests/*.log
+tests/debug_*.txt
