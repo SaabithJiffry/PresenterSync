@@ -1477,16 +1477,20 @@ ApplyStudioAppearance(cfg, state) {
     return Gdip.RenderPill(state.StudioGui.Hwnd, pos.studioX, pos.studioY, pos.studioW, pos.studioH, Gdip.HexToArgb(bg), Gdip.BgrToArgb(brd), state.baseAlpha, GetCornerRadius(cfg, pos.studioH), iconCfg, labelCfg)
 }
 
+RenderAllHudPills(cfg, state) {
+    ApplyMicAppearance(cfg, state)
+    ApplyRecAppearance(cfg, state)
+    ApplyChatAppearance(cfg, state)
+    ApplyStudioAppearance(cfg, state)
+    ApplySceneAppearance(cfg, state)
+}
+
 SyncSceneState(cfg, state, sceneName) {
     if (sceneName != "" && state.currentSceneName != sceneName) {
         state.currentSceneName := sceneName
         state.ComputeDimensions(cfg)
         UpdateHudLayout(state, state.savedX, state.savedY)
-        ApplyMicAppearance(cfg, state)
-        ApplyRecAppearance(cfg, state)
-        ApplyChatAppearance(cfg, state)
-        ApplyStudioAppearance(cfg, state)
-        ApplySceneAppearance(cfg, state)
+        RenderAllHudPills(cfg, state)
     }
 }
 
@@ -1623,11 +1627,7 @@ InitHUD(cfg, state, showWindows := true) {
     state.StudioGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.SceneGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
 
-    ApplyMicAppearance(cfg, state)
-    ApplyRecAppearance(cfg, state)
-    ApplyChatAppearance(cfg, state)
-    ApplyStudioAppearance(cfg, state)
-    ApplySceneAppearance(cfg, state)
+    RenderAllHudPills(cfg, state)
 
     if (showWindows) {
         UpdateHudVisibility(cfg, state)
