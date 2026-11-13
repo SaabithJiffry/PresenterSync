@@ -588,7 +588,7 @@ ButtonFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         DllCall("DeleteObject", "Ptr", hBrParent)
 
         style := DllCall("GetWindowLong", "Ptr", hwnd, "Int", -16, "Int") ; GWL_STYLE
-        isDefaultBtn := ((style & 0x0F) == 1) || (IsObject(ctrl) && ctrl.HasOwnProp("_themeRole") && ctrl._themeRole = "primary")
+        isDefaultBtn := ((style & 0x0F) == 1) || (IsObject(ctrl) && ctrl.HasOwnProp("_themeRole") && (ctrl._themeRole = "accent" || ctrl._themeRole = "primary"))
         isEnabled := DllCall("IsWindowEnabled", "Ptr", hwnd)
         isHover := Theme.HoverMap.Get(hwnd, false)
         isPress := Theme.PressMap.Get(hwnd, false)
@@ -1244,12 +1244,20 @@ class OverlayState {
         reqSceneW := Gdip.MeasureTextWidth(this.currentSceneName, "Segoe UI", this.miniTextSize, 1) + (2 * scPad) + Round(4 * cfg.IndicatorScale)
         this.sceneW := Max(minSceneW, reqSceneW)
 
-        maxRowW := Max(this.baseWidth, this.studioW + this.hudGap + this.sceneW, this.recW + this.hudGap + this.chatW)
+        extraRow2 := (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom))
+        extraRow3 := (cfg.ShowExtraHuds && cfg.EnableWS)
+        maxRowW := this.baseWidth
+        if (extraRow2)
+            maxRowW := Max(maxRowW, this.recW + this.hudGap + this.chatW)
+        if (extraRow3)
+            maxRowW := Max(maxRowW, this.studioW + this.hudGap + this.sceneW)
+        extraTopPad := (extraRow2 ? (this.recHeight + this.hudGap) : 0) + (extraRow3 ? (this.row3Height + this.hudGap) : 0)
+
         rawX := cfg.savedX
         rawY := cfg.savedY
         if (rawX = "Default" || rawY = "Default" || !IsInteger(rawX) || !IsInteger(rawY)) {
             MonitorGetWorkArea(1, &Left, &Top, &Right, &Bottom)
-            stackTopPad := UIConstants.SCREEN_MIN_PAD + this.recHeight + this.row3Height + (2 * this.hudGap)
+            stackTopPad := UIConstants.SCREEN_MIN_PAD + extraTopPad
             this.savedX := Max(Left + UIConstants.SCREEN_MIN_PAD, Right - maxRowW - UIConstants.SCREEN_MARGIN_X)
             this.savedY := Max(Top + stackTopPad, Bottom - this.baseHeight - UIConstants.SCREEN_MARGIN_Y)
         } else {
@@ -1257,9 +1265,8 @@ class OverlayState {
             sy := Integer(rawY)
             vLeft := SysGet(76), vTop := SysGet(77)
             vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
-            stackTopPad := this.recHeight + this.row3Height + (2 * this.hudGap)
             this.savedX := Max(vLeft, Min(sx, vRight - maxRowW))
-            this.savedY := Max(vTop + stackTopPad, Min(sy, vBottom - this.baseHeight))
+            this.savedY := Max(vTop + extraTopPad, Min(sy, vBottom - this.baseHeight))
         }
     }
 }
@@ -1278,7 +1285,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
     doShow := opts.HasOwnProp("show") ? opts.show : true
     doWaitClose := opts.HasOwnProp("waitClose") ? opts.waitClose : false
 
-    if (doShow && !doWaitClose) {
+    if (doShow) {
         existing := Theme.FocusExistingWindow(title)
         if IsObject(existing)
             return existing
@@ -1382,9 +1389,10 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
         opts.onInit.Call(ctrls, dlg)
 
     if (doShow) {
+        dlgHwnd := dlg.Hwnd
         dlg.Show()
         if (doWaitClose)
-            WinWaitClose(dlg.Hwnd)
+            WinWaitClose("ahk_id " dlgHwnd)
     }
     return dlg
 }
@@ -1411,7 +1419,7 @@ PromptForSetup(cfg, isInitialBoot := false) {
 
     SaveSetup(values, ctrls, dlg) {
         sel := values["mode"]
-        if ((sel == 1 || sel == 3) && values["obsHotkey"] = "") {
+        if (!cfg.EnableWS && (sel == 1 || sel == 3) && values["obsHotkey"] = "") {
             dlg.Opt("+OwnDialogs")
             MsgBox("Please enter your OBS Mute shortcut.", "Setup", "Icon!")
             return
@@ -1426,7 +1434,7 @@ PromptForSetup(cfg, isInitialBoot := false) {
         cfg.Write("Settings", "AudioRoutingMode", cfg.AudioRoutingMode)
 
         if (sel == 1 || sel == 3) {
-            cfg.ObsMuteHotkey := values["obsHotkey"]
+            cfg.ObsMuteHotkey := (values["obsHotkey"] != "") ? values["obsHotkey"] : "None"
             cfg.Write("Settings", "ObsHotkey", cfg.ObsMuteHotkey)
         }
         if (sel == 2 || sel == 3) {
@@ -1460,7 +1468,7 @@ PromptForSetup(cfg, isInitialBoot := false) {
     })
 }
 
-PromptForPassword() {
+PromptForPassword(promptText := "Enter your OBS WebSocket Password:") {
     savedPw := ""
 
     SavePw(values, ctrls, dlg) {
@@ -1471,7 +1479,7 @@ PromptForPassword() {
     }
 
     elements := [
-        {type: "Text", opts: "w250", text: "Enter your OBS WebSocket Password:"},
+        {type: "Text", opts: "w250", text: promptText},
         {type: "Edit", id: "password", opts: "w250 Password", required: true, errorTitle: "Setup", errorMsg: "Password cannot be empty."}
     ]
 
@@ -1959,14 +1967,14 @@ ChangeObsSettingsUI(cfg, *) {
     }
 
     elements := [
-        {type: "Text", opts: "w280", text: "OBS Mute Shortcut:"},
-        {type: "Hotkey", id: "mute", opts: "w280", value: (cfg.ObsMuteHotkey != "None") ? cfg.ObsMuteHotkey : "", required: (cfg.AudioRoutingMode != 2), errorMsg: "OBS Mute shortcut and Audio Source Name cannot be empty."},
+        {type: "Text", opts: "w280", text: "OBS Mute Shortcut" (cfg.EnableWS ? " (Optional with WebSocket):" : ":")},
+        {type: "Hotkey", id: "mute", opts: "w280", value: (cfg.ObsMuteHotkey != "None") ? cfg.ObsMuteHotkey : "", required: (!cfg.EnableWS && cfg.AudioRoutingMode != 2), errorMsg: "OBS Mute shortcut cannot be empty unless WebSocket Sync is enabled."},
         {type: "Text", opts: "w280 y+10", text: "Start/Stop Recording Shortcut:"},
         {type: "Hotkey", id: "rec", opts: "w280", value: cfg.ObsRecHotkey},
         {type: "Text", opts: "w280 y+10", text: "Pause/Resume Recording Shortcut:"},
         {type: "Hotkey", id: "pause", opts: "w280", value: cfg.ObsPauseHotkey},
         {type: "Text", opts: "w280 y+10", text: "Exact OBS Audio Source Name (e.g., Mic/Aux):"},
-        {type: "Edit", id: "mic", opts: "w280", value: cfg.targetMicName, required: true, errorMsg: "OBS Mute shortcut and Audio Source Name cannot be empty."},
+        {type: "Edit", id: "mic", opts: "w280", value: cfg.targetMicName, required: true, errorMsg: "Exact OBS Audio Source Name cannot be empty."},
         {type: "Text", opts: "w280 y+10", text: "OBS WebSocket Password (Optional):"},
         {type: "Edit", id: "pw", opts: "w280 Password", value: cfg.obsPassword}
     ]
@@ -2058,15 +2066,22 @@ OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply) {
     }
 
     SaveKey(*) {
+        static dummyHotIf := (*) => false
+        static dummyHandler := (*) => 0
         val := Trim(editKey.Value)
         if (val = "") {
             dlg.Opt("+OwnDialogs")
             MsgBox("Please press or enter a button name to register it.", "Error", "Icon!")
             return
         }
+        if (StrLower(val) = "none") {
+            Cleanup()
+            onApply.Call("None")
+            return
+        }
         try {
-            HotIf (*) => false
-            Hotkey(val, (*) => 0, "Off")
+            HotIf dummyHotIf
+            Hotkey(val, dummyHandler, "Off")
             HotIf
         } catch {
             HotIf
@@ -2535,6 +2550,7 @@ SyncUIState(cfg, state, obsIsMuted) {
 
 ; --- HUD APPEARANCE & CONFIG HELPERS ---
 RefreshHudAppearance(cfg, state) {
+    state.animSeq += 1
     state.baseAlpha := cfg.OpacityLevel
     state.currentAlpha := cfg.OpacityLevel
     state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
@@ -2670,6 +2686,7 @@ UpdateHudLayout(state, anchorX := "", anchorY := "", skipHwnd := 0) {
 }
 
 UpdateHudVisibility(cfg, state) {
+    state.animSeq += 1
     if (!cfg.ShowIndicator) {
         if IsObject(state.MicGui)
             state.MicGui.Hide()
@@ -2686,8 +2703,10 @@ UpdateHudVisibility(cfg, state) {
 
     state.currentAlpha := state.baseAlpha
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
-    ApplyMicAppearance(cfg, state)
-    state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
+    if IsObject(state.MicGui) {
+        ApplyMicAppearance(cfg, state)
+        state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
+    }
 
     if (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom)) {
         ApplyRecAppearance(cfg, state)
@@ -2772,7 +2791,7 @@ PlayMuteAnimation(cfg, state) {
     state.currentAlpha := state.baseAlpha
     ApplyMicAppearance(cfg, state, state.savedX, state.savedY, state.baseWidth, state.baseHeight, state.currentAlpha)
 
-    if (state.isMuted && cfg.ShowIndicator) {
+    if (state.isMuted && cfg.ShowIndicator && (!state.HasOwnProp("activeHost") || state.obsConnected)) {
         state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     } else {

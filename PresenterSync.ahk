@@ -31,23 +31,12 @@ Theme.Init(AppConfig.ThemeMode)
 
 ; 1. First-run / missing shortcut setup: Audio Routing Mode + shortcuts
 if (AppConfig.AudioRoutingMode == 0
-    || ((AppConfig.AudioRoutingMode == 1 || AppConfig.AudioRoutingMode == 3) && (AppConfig.ObsMuteHotkey = "None" || AppConfig.ObsMuteHotkey = ""))
+    || (!AppConfig.EnableWS && (AppConfig.AudioRoutingMode == 1 || AppConfig.AudioRoutingMode == 3) && (AppConfig.ObsMuteHotkey = "None" || AppConfig.ObsMuteHotkey = ""))
     || ((AppConfig.AudioRoutingMode == 2 || AppConfig.AudioRoutingMode == 3) && AppConfig.ZoomMuteHotkey = "")) {
     PromptForSetup(AppConfig, true)
 }
 
-; 2. Boot-up check: If WS is enabled but password is missing, ask for it
-if (AppConfig.EnableWS && AppConfig.obsPassword = "") {
-    AppConfig.obsPassword := PromptForPassword()
-    if (AppConfig.obsPassword != "") {
-        AppConfig.Write("Settings", "ObsPassword", AppConfig.obsPassword)
-    } else {
-        AppConfig.EnableWS := false
-        AppConfig.WriteBool("Settings", "EnableWS", false)
-    }
-}
-
-; 3. Initialize State, HUD, Tray Menu & Background Services
+; 2. Initialize State, HUD, Tray Menu & Background Services
 AppState := OverlayState(AppConfig)
 AppState.rebuildTrayFn := BuildTrayMenu.Bind(AppConfig, AppState)
 BuildTrayMenu(AppConfig, AppState)
@@ -303,15 +292,6 @@ ToggleWS(cfg, state, *) {
     cfg.EnableWS := !cfg.EnableWS
 
     if (cfg.EnableWS) {
-        if (cfg.obsPassword = "") {
-            cfg.obsPassword := PromptForPassword()
-            if (cfg.obsPassword = "") {
-                cfg.EnableWS := false
-                return
-            }
-            cfg.Write("Settings", "ObsPassword", cfg.obsPassword)
-        }
-
         if (cfg.EnableZoom) {
             cfg.EnableZoom := false
             state.zoomConnected := false
@@ -526,29 +506,46 @@ IsPptInterceptActive(cfg) {
     return cfg.EnablePPT && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows
+IsPptKeyNotMute(cfg, pptKey) {
+    muteKey := cfg.HwMuteHotkey
+    if (muteKey = "" || StrLower(muteKey) = "none")
+        return true
+    cleanMute := LTrim(muteKey, "~*$")
+    cleanPpt := LTrim(pptKey, "~*$")
+    normMute := GetKeyName(cleanMute)
+    normPpt := GetKeyName(cleanPpt)
+    if (normMute != "" && normPpt != "")
+        return StrLower(normMute) != StrLower(normPpt)
+    return StrLower(cleanMute) != StrLower(cleanPpt)
+}
+
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Down")
 $Down::SendToPPT(AppConfig, "{Down}")
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Up")
 $Up::SendToPPT(AppConfig, "{Up}")
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Left")
 $Left::SendToPPT(AppConfig, "{Left}")
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Right")
 $Right::SendToPPT(AppConfig, "{Right}")
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchPg
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchPg && IsPptKeyNotMute(AppConfig, "PgDn")
 $PgDn::SendToPPT(AppConfig, "{PgDn}")
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchPg && IsPptKeyNotMute(AppConfig, "PgUp")
 $PgUp::SendToPPT(AppConfig, "{PgUp}")
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchSpace
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchSpace && IsPptKeyNotMute(AppConfig, "Space")
 $Space::SendToPPT(AppConfig, "{Space}")
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEnter
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEnter && IsPptKeyNotMute(AppConfig, "Enter")
 $Enter::SendToPPT(AppConfig, "{Enter}")
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchTab
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchTab && IsPptKeyNotMute(AppConfig, "Tab")
 $Tab::SendToPPT(AppConfig, "{Tab}")
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEsc
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEsc && IsPptKeyNotMute(AppConfig, "Esc")
 $Esc::SendToPPT(AppConfig, "{Esc}")
 
-#HotIf IsPptInterceptActive(AppConfig)
+#HotIf IsPptInterceptActive(AppConfig) && IsPptKeyNotMute(AppConfig, "+F5")
 $+F5::SendToPPT(AppConfig, "{Blind}{F5}") ; Always intercepted if PPT mode is active
 
 #HotIf ; Reset directive
@@ -693,7 +690,9 @@ TriggerMute(cfg, state) {
     zoomOpen := WinExist("ahk_exe Zoom.exe")
 
     if (cfg.AudioRoutingMode == 1) {
-        if !obsOpen {
+        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+            return
+        if (!obsOpen || cfg.ObsMuteHotkey = "None" || cfg.ObsMuteHotkey = "") {
             SoundPlay "*16"
             return
         }
@@ -709,6 +708,8 @@ TriggerMute(cfg, state) {
         try ControlSend FormatSendKey(cfg.ZoomMuteHotkey),, "ahk_exe Zoom.exe"
         SetKeyDelay 50, 50
     } else if (cfg.AudioRoutingMode == 3) {
+        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+            return
         if (!obsOpen && !zoomOpen) {
             SoundPlay "*16"
             return

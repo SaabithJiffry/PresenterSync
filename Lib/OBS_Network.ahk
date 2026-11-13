@@ -26,6 +26,45 @@ EscapeJsonStr(str) {
     return s
 }
 
+UnescapeJsonStr(str) {
+    s := String(str)
+    s := StrReplace(s, '\"', '"')
+    s := StrReplace(s, "\/", "/")
+    s := StrReplace(s, "\r", "`r")
+    s := StrReplace(s, "\n", "`n")
+    s := StrReplace(s, "\t", "`t")
+    s := StrReplace(s, "\\", "\")
+    return s
+}
+
+TrySendWsText(ws, payload) {
+    if (!IsObject(ws))
+        return false
+    try {
+        ws.sendText(payload)
+        return true
+    } catch {
+        return false
+    }
+}
+
+SendObsRequest(ws, requestType, requestId, requestDataJson := "") {
+    dataPart := (requestDataJson != "") ? (',"requestData":' requestDataJson) : ""
+    payload := '{"op":6,"d":{"requestType":"' requestType '","requestId":"' requestId '"' dataPart '}}'
+    return TrySendWsText(ws, payload)
+}
+
+SendObsToggleInputMute(ws, micName, requestId := "HostClickerMute") {
+    escMic := EscapeJsonStr(micName)
+    return SendObsRequest(ws, "ToggleInputMute", requestId, '{"inputName":"' escMic '"}')
+}
+
+SendObsSetInputMute(ws, micName, muted, requestId := "ZoomSyncObsMute") {
+    escMic := EscapeJsonStr(micName)
+    mutedStr := muted ? "true" : "false"
+    return SendObsRequest(ws, "SetInputMute", requestId, '{"inputName":"' escMic '","inputMuted":' mutedStr '}')
+}
+
 FormatPassthroughHook(hk) {
     return "~$" RegExReplace(hk, "^[~*$]+")
 }
@@ -63,10 +102,24 @@ HandleObsClose(cfg, state, ws, status, reason) {
 
     if (!state.obsConnected) {
         if (status == 4009) {
-            cfg.obsPassword := ""
-            cfg.Write("Settings", "ObsPassword", "")
-            MsgBox("PresenterSync detected an incorrect OBS password.`n`nPlease re-enter your OBS WebSocket details.", "Authentication Failed", "Icon!")
-            Reload()
+            SetTimer state.obsTimerFn, 0
+            newPw := PromptForPassword("OBS WebSocket authentication failed or a password is required.`n`nEnter your OBS WebSocket password (or close to disable WebSocket Sync):")
+            if (newPw != "") {
+                cfg.obsPassword := newPw
+                cfg.Write("Settings", "ObsPassword", newPw)
+                SetTimer state.obsTimerFn, -100
+            } else {
+                cfg.obsPassword := ""
+                cfg.Write("Settings", "ObsPassword", "")
+                cfg.EnableWS := false
+                cfg.WriteBool("Settings", "EnableWS", false)
+                if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+                    try state.rebuildTrayFn.Call()
+                UpdateZoomMonitorTimer(cfg, state)
+                UpdateHudVisibility(cfg, state)
+                if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
+                    try state.refreshHelpFn.Call()
+            }
             return
         }
         SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
@@ -102,20 +155,16 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
 
         ; 2047 = EventSubscription::All (all standard low-volume events; excludes 20Hz InputVolumeMeters)
         identifyJson := '{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":2047' authString '}}'
-        ws.sendText(identifyJson)
+        TrySendWsText(ws, identifyJson)
     }
     else if (opCode == 2) {
         SetTimer state.obsTimerFn, 0
         state.obsConnected := true
         escMic := EscapeJsonStr(cfg.targetMicName)
-        stateJson := '{"op":6,"d":{"requestType":"GetInputMute","requestId":"InitState","requestData":{"inputName":"' escMic '"}}}'
-        ws.sendText(stateJson)
-        recJson := '{"op":6,"d":{"requestType":"GetRecordStatus","requestId":"InitRecState"}}'
-        ws.sendText(recJson)
-        studioJson := '{"op":6,"d":{"requestType":"GetStudioModeEnabled","requestId":"InitStudioState"}}'
-        ws.sendText(studioJson)
-        sceneJson := '{"op":6,"d":{"requestType":"GetCurrentProgramScene","requestId":"InitSceneState"}}'
-        ws.sendText(sceneJson)
+        SendObsRequest(ws, "GetInputMute", "InitState", '{"inputName":"' escMic '"}')
+        SendObsRequest(ws, "GetRecordStatus", "InitRecState")
+        SendObsRequest(ws, "GetStudioModeEnabled", "InitStudioState")
+        SendObsRequest(ws, "GetCurrentProgramScene", "InitSceneState")
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
             try state.refreshHelpFn.Call()
     }
@@ -147,17 +196,25 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             }
         }
         else if (InStr(msg, '"eventType":"CurrentProgramSceneChanged"') || InStr(msg, '"eventType": "CurrentProgramSceneChanged"')) {
-            if (RegExMatch(msg, '"sceneName"\s*:\s*"([^"]+)"', &matchScene)) {
-                SyncSceneState(cfg, state, matchScene[1])
+            if (RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchScene)) {
+                SyncSceneState(cfg, state, UnescapeJsonStr(matchScene[1]))
             }
         }
     }
     else if (opCode == 7) {
         if (InStr(msg, '"requestId":"InitState"') || InStr(msg, '"requestId": "InitState"')) {
-            if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
+            if (RegExMatch(msg, '"result"\s*:\s*false')) {
+                TrayTip("PresenterSync", "Audio source '" cfg.targetMicName "' was not found in OBS Studio.", 2)
+            } else if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                 isMutedOBS := (matchMuted[1] == "true")
                 PushObsMuteToZoom(cfg, state, isMutedOBS)
                 SyncUIState(cfg, state, isMutedOBS)
+            }
+        }
+        else if (InStr(msg, '"requestId":"HostClickerMute"') || InStr(msg, '"requestId": "HostClickerMute"')) {
+            if (RegExMatch(msg, '"result"\s*:\s*false')) {
+                ToolTip("PresenterSync: Audio source '" cfg.targetMicName "' not found in OBS")
+                SetTimer(() => ToolTip(), -2500)
             }
         }
         else if (InStr(msg, '"requestId":"InitRecState"') || InStr(msg, '"requestId": "InitRecState"')) {
@@ -175,8 +232,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             }
         }
         else if (InStr(msg, '"requestId":"InitSceneState"') || InStr(msg, '"requestId": "InitSceneState"')) {
-            if (RegExMatch(msg, '"currentProgramSceneName"\s*:\s*"([^"]+)"', &matchScene) || RegExMatch(msg, '"sceneName"\s*:\s*"([^"]+)"', &matchScene)) {
-                SyncSceneState(cfg, state, matchScene[1])
+            if (RegExMatch(msg, '"currentProgramSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchScene) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchScene)) {
+                SyncSceneState(cfg, state, UnescapeJsonStr(matchScene[1]))
             }
         }
     }
@@ -293,13 +350,14 @@ ZoomStateMonitor(cfg, state) {
         }
     } else if (cfg.EnableWS && cfg.AudioRoutingMode == 3 && state.obsConnected && !state.IsSyncing) {
         if (state.zoomLastMuted != -1 && zoomInfo.muted != state.zoomLastMuted && zoomInfo.muted != state.isMuted) {
-            if (cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "" && WinExist("ahk_exe obs64.exe")) {
-                state.IsSyncing := true
+            state.IsSyncing := true
+            sentWs := SendObsSetInputMute(state.obsWs, cfg.targetMicName, zoomInfo.muted)
+            if (!sentWs && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "" && WinExist("ahk_exe obs64.exe")) {
                 SetKeyDelay -1, 30
                 try ControlSend FormatSendKey(cfg.ObsMuteHotkey),, "ahk_exe obs64.exe"
                 SetKeyDelay 50, 50
-                SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
             }
+            SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
         }
     }
     state.zoomLastMuted := zoomInfo.muted
