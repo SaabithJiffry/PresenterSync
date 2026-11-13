@@ -126,6 +126,8 @@ global obsConnected := false
 global zoomConnected := false
 global IsSyncing := false
 global zoomLastMuted := -1
+global zoomRecGraceUntil := 0
+global zoomSawRecControl := false
 
 global isMuted := ReadIniBool("Settings", "IsMuted", false)
 global recState := 0 ; 0 = NOT REC, 1 = REC, 2 = PAUSED
@@ -709,7 +711,7 @@ PushObsMuteToZoom(obsIsMuted) {
         return
 
     zoomState := DetectZoomStates()
-    if (zoomState.hasMic && zoomState.muted == obsIsMuted)
+    if (!zoomState.hasMic || zoomState.muted == obsIsMuted)
         return
 
     IsSyncing := true
@@ -771,6 +773,7 @@ DetectZoomStates() {
 ZoomStateMonitor() {
     global EnableZoom, EnableWS, AudioRoutingMode, zoomConnected, isMuted
     global obsConnected, IsSyncing, ObsMuteHotkey, zoomLastMuted
+    global zoomRecGraceUntil, zoomSawRecControl
 
     if (!EnableZoom && !EnableWS)
         return
@@ -784,18 +787,23 @@ ZoomStateMonitor() {
     if (!state.hasMic) {
         zoomConnected := false
         zoomLastMuted := -1
+        zoomSawRecControl := false
         if (EnableZoom && !EnableWS)
             SyncRecState(0)
         return
     }
 
-    zoomConnected := true
+    zoomConnected := (EnableZoom && !EnableWS)
     if (EnableZoom && !EnableWS) {
         SyncUIState(state.muted)
-        if (state.hasRec)
-            SyncRecState(state.recState)
-        else
+        if (state.hasRec) {
+            zoomSawRecControl := true
+            if (A_TickCount >= zoomRecGraceUntil)
+                SyncRecState(state.recState)
+        } else if (zoomSawRecControl && A_TickCount >= zoomRecGraceUntil) {
+            zoomSawRecControl := false
             SyncRecState(0)
+        }
     } else if (EnableWS && AudioRoutingMode == 3 && obsConnected && !IsSyncing) {
         if (zoomLastMuted != -1 && state.muted != zoomLastMuted && state.muted != isMuted) {
             if (ObsMuteHotkey != "None" && ObsMuteHotkey != "") {
@@ -1141,7 +1149,8 @@ CyclePointerMode(*) {
 }
 
 ToggleWS(*) {
-    global EnableWS, EnableZoom, obsWs, obsConnected, obsPassword, zoomConnected, zoomLastMuted, ConfigFile
+    global EnableWS, EnableZoom, obsWs, obsConnected, obsPassword, zoomConnected, zoomLastMuted
+    global zoomRecGraceUntil, zoomSawRecControl, ConfigFile
     ToolTip()
 
     EnableWS := !EnableWS
@@ -1160,6 +1169,8 @@ ToggleWS(*) {
             EnableZoom := false
             zoomConnected := false
             zoomLastMuted := -1
+            zoomRecGraceUntil := 0
+            zoomSawRecControl := false
             WriteIniBool("Settings", "EnableZoom", false)
             SetTrayCheck("Enable Zoom Monitoring", false)
         }
@@ -1174,11 +1185,16 @@ ToggleWS(*) {
         ToolTip "WebSocket Sync: OFF"
         SetTimer ConnectToOBS, 0
         obsConnected := false
+        zoomConnected := false
+        zoomLastMuted := -1
+        zoomRecGraceUntil := 0
+        zoomSawRecControl := false
         if (obsWs) {
             obsWs.shutdown()
             obsWs := ""
         }
         SyncRecState(0)
+        SyncChatState(0)
         SyncStudioState(false)
         SyncSceneState("Scene")
     }
@@ -1190,6 +1206,7 @@ ToggleWS(*) {
 
 ToggleZoom(*) {
     global EnableZoom, EnableWS, obsWs, obsConnected, zoomConnected, zoomLastMuted
+    global zoomRecGraceUntil, zoomSawRecControl
     ToolTip()
 
     EnableZoom := !EnableZoom
@@ -1210,6 +1227,8 @@ ToggleZoom(*) {
             SyncSceneState("Scene")
         }
 
+        zoomRecGraceUntil := 0
+        zoomSawRecControl := false
         WriteIniBool("Settings", "EnableZoom", true)
         SetTrayCheck("Enable Zoom Monitoring", true)
         ToolTip "Zoom Monitoring: ON"
@@ -1218,6 +1237,8 @@ ToggleZoom(*) {
         SetTrayCheck("Enable Zoom Monitoring", false)
         zoomConnected := false
         zoomLastMuted := -1
+        zoomRecGraceUntil := 0
+        zoomSawRecControl := false
         SyncRecState(0)
         SyncChatState(0)
         ToolTip "Zoom Monitoring: OFF"
@@ -1684,14 +1705,37 @@ if ((AudioRoutingMode == 1 || AudioRoutingMode == 3) && ObsMuteHotkey != "None" 
     try Hotkey(FormatPassthroughHook(ObsMuteHotkey), LaptopKeyboardMute)
 if ((AudioRoutingMode == 2 || AudioRoutingMode == 3) && ZoomMuteHotkey != "")
     try Hotkey(FormatPassthroughHook(ZoomMuteHotkey), LaptopKeyboardMute)
-if (ObsRecHotkey != "")
-    try Hotkey(FormatPassthroughHook(ObsRecHotkey), LaptopObsRecToggle)
-if (ObsPauseHotkey != "")
-    try Hotkey(FormatPassthroughHook(ObsPauseHotkey), LaptopObsPauseToggle)
-if (ZoomRecHotkey != "")
-    try Hotkey(FormatPassthroughHook(ZoomRecHotkey), LaptopZoomRecToggle)
-if (ZoomPauseHotkey != "")
-    try Hotkey(FormatPassthroughHook(ZoomPauseHotkey), LaptopZoomPauseToggle)
+obsRecHook := (ObsRecHotkey != "") ? FormatPassthroughHook(ObsRecHotkey) : ""
+zoomRecHook := (ZoomRecHotkey != "") ? FormatPassthroughHook(ZoomRecHotkey) : ""
+if (obsRecHook != "" && obsRecHook = zoomRecHook) {
+    try Hotkey(obsRecHook, LaptopCombinedRecToggle)
+} else {
+    if (obsRecHook != "")
+        try Hotkey(obsRecHook, LaptopObsRecToggle)
+    if (zoomRecHook != "")
+        try Hotkey(zoomRecHook, LaptopZoomRecToggle)
+}
+
+obsPauseHook := (ObsPauseHotkey != "") ? FormatPassthroughHook(ObsPauseHotkey) : ""
+zoomPauseHook := (ZoomPauseHotkey != "") ? FormatPassthroughHook(ZoomPauseHotkey) : ""
+if (obsPauseHook != "" && obsPauseHook = zoomPauseHook) {
+    try Hotkey(obsPauseHook, LaptopCombinedPauseToggle)
+} else {
+    if (obsPauseHook != "")
+        try Hotkey(obsPauseHook, LaptopObsPauseToggle)
+    if (zoomPauseHook != "")
+        try Hotkey(zoomPauseHook, LaptopZoomPauseToggle)
+}
+
+LaptopCombinedRecToggle(ThisHotkey) {
+    LaptopObsRecToggle(ThisHotkey)
+    LaptopZoomRecToggle(ThisHotkey)
+}
+
+LaptopCombinedPauseToggle(ThisHotkey) {
+    LaptopObsPauseToggle(ThisHotkey)
+    LaptopZoomPauseToggle(ThisHotkey)
+}
 
 LaptopObsRecToggle(ThisHotkey) {
     global obsConnected, EnableWS, recState
@@ -1706,15 +1750,19 @@ LaptopObsPauseToggle(ThisHotkey) {
 }
 
 LaptopZoomRecToggle(ThisHotkey) {
-    global EnableZoom, recState
-    if (EnableZoom)
+    global EnableZoom, EnableWS, recState, zoomRecGraceUntil
+    if (EnableZoom && !EnableWS) {
+        zoomRecGraceUntil := A_TickCount + 1500
         SyncRecState(recState == 0 ? 1 : 0)
+    }
 }
 
 LaptopZoomPauseToggle(ThisHotkey) {
-    global EnableZoom, recState
-    if (EnableZoom && recState != 0)
+    global EnableZoom, EnableWS, recState, zoomRecGraceUntil
+    if (EnableZoom && !EnableWS && recState != 0) {
+        zoomRecGraceUntil := A_TickCount + 1500
         SyncRecState(recState == 1 ? 2 : 1)
+    }
 }
 
 LaptopKeyboardMute(ThisHotkey) {
@@ -1776,6 +1824,7 @@ PlayMuteAnimation() {
     global isMuted, colorLive, colorMuted, borderLive, borderMuted
     global iconLive, iconMuted, ShowText, MonoIcon, baseWidth, baseHeight, ShowIndicator
     global currentAlpha, baseAlpha, IconText, LabelText, MicGui, AggressivePulse, breathDir, IndicatorScale
+    global savedX, savedY
     
     if (!ShowIndicator) {
         MicGui.BackColor := isMuted ? colorMuted : colorLive
@@ -1794,7 +1843,8 @@ PlayMuteAnimation() {
     }
 
     SetTimer BreathingAnimation, 0
-    WinGetPos(&baseX, &baseY,,, MicGui.Hwnd)
+    baseX := savedX
+    baseY := savedY
     
     fadeStep := Round(baseAlpha / 10)
     iconW := Round(30 * IndicatorScale)
