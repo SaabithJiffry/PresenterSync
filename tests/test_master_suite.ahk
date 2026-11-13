@@ -233,6 +233,58 @@ summaryTxt := BuildLiveStatusSummary(cfg)
 Assert("BuildLiveStatusSummary includes v2.2.2 and Remote Host",
     InStr(summaryTxt, "v2.2.2") && InStr(summaryTxt, "Remote Companion Host:"))
 
+; ==============================================================================
+; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
+; ==============================================================================
+rawScene := 'Scene "Main" \ 1'
+escScene := EscapeJsonStr(rawScene)
+Assert("EscapeJsonStr/UnescapeJsonStr round-trip", UnescapeJsonStr(escScene) == rawScene)
+Assert("UnescapeJsonStr decodes \/ and \t", UnescapeJsonStr('Cam\/A\tDeck') == "Cam/A`tDeck")
+
+mockWs := {sent: [], sendText: (this, txt) => this.sent.Push(txt)}
+brokenWs := {sendText: (this, txt) => (ThrowError())}
+ThrowError() {
+    throw Error("simulated closed socket")
+}
+Assert("TrySendWsText rejects non-object ws", TrySendWsText("", "hi") == false)
+Assert("TrySendWsText catches closed socket throws", TrySendWsText(brokenWs, "hi") == false)
+Assert("SendObsToggleInputMute formats escaped payload",
+    SendObsToggleInputMute(mockWs, 'Mic "A"', "HostClickerMute")
+    && mockWs.sent.Length == 1
+    && InStr(mockWs.sent[1], '"requestType":"ToggleInputMute"')
+    && InStr(mockWs.sent[1], '"requestId":"HostClickerMute"')
+    && InStr(mockWs.sent[1], '"inputName":"Mic \"A\""'))
+Assert("SendObsSetInputMute sets inputMuted bool",
+    SendObsSetInputMute(mockWs, "Mic/Aux", true, "ZoomSyncObsMute")
+    && mockWs.sent.Length == 2
+    && InStr(mockWs.sent[2], '"requestType":"SetInputMute"')
+    && InStr(mockWs.sent[2], '"inputMuted":true'))
+
+dimIni := A_ScriptDir "\dim_test_config.ini"
+if FileExist(dimIni)
+    FileDelete(dimIni)
+cfgDim := Config(dimIni)
+cfgDim.IndicatorScale := 1.0
+cfgDim.ShowText := false
+cfgDim.EnableWS := true
+cfgDim.EnableZoom := false
+cfgDim.ShowExtraHuds := false
+vTop := SysGet(77)
+cfgDim.savedX := 200
+cfgDim.savedY := vTop + 5
+stDimNoExtra := OverlayState(cfgDim)
+Assert("OverlayState.ComputeDimensions skips extra HUD headroom when ShowExtraHuds=false", stDimNoExtra.savedY == vTop + 5)
+
+cfgDim.ShowExtraHuds := true
+stDimExtra := OverlayState(cfgDim)
+expectedTopPad := stDimExtra.recHeight + stDimExtra.row3Height + (2 * stDimExtra.hudGap)
+Assert("OverlayState.ComputeDimensions reserves extra HUD headroom when ShowExtraHuds=true", stDimExtra.savedY == vTop + expectedTopPad)
+
+Assert("PromptForPassword accepts optional promptText", PromptForPassword.MinParams == 0 && PromptForPassword.MaxParams == 1)
+
+if FileExist(dimIni)
+    FileDelete(dimIni)
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -249,4 +301,4 @@ for item in results
     report .= item "`n"
 
 FileAppend(report, A_ScriptDir "\master_audit_results.log")
-ExitApp()
+ExitApp(FailCount > 0 ? 1 : 0)

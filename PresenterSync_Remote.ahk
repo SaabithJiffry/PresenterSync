@@ -332,6 +332,7 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     state.activeHost := ""
     SetTimer state.heartbeatTimerFn, 0
     SetTimer state.breathTimerFn, 0
+    state.animSeq += 1
 
     ; Visual feedback on HUD: Dim while disconnected
     if (IsObject(state.MicGui)) {
@@ -376,7 +377,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
 
         ; Identify for standard events (excluding 20Hz volume meters)
         identifyJson := '{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":2047' authString '}}'
-        ws.sendText(identifyJson)
+        TrySendWsText(ws, identifyJson)
     }
     else if (opCode == 2) {
         ; Op 2: Identified - Connection and Auth Succeeded!
@@ -392,8 +393,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         ; Restore base alpha & query initial mic mute status
         state.currentAlpha := state.baseAlpha
         escMic := EscapeJsonStr(cfg.TargetMicName)
-        stateJson := '{"op":6,"d":{"requestType":"GetInputMute","requestId":"InitRemoteMute","requestData":{"inputName":"' escMic '"}}}'
-        ws.sendText(stateJson)
+        SendObsRequest(ws, "GetInputMute", "InitRemoteMute", '{"inputName":"' escMic '"}')
 
         if (IsObject(state.rebuildTrayFn))
             try state.rebuildTrayFn.Call()
@@ -454,11 +454,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
 RemoteHeartbeatTick(cfg, state) {
     if (!state.obsConnected || !IsObject(state.obsWs))
         return
-    try {
-        ; Lightweight request to keep TCP session alive
-        hbJson := '{"op":6,"d":{"requestType":"GetVersion","requestId":"KeepAlive"}}'
-        state.obsWs.sendText(hbJson)
-    }
+    ; Lightweight request to keep TCP session alive
+    SendObsRequest(state.obsWs, "GetVersion", "KeepAlive")
 }
 
 SyncRemoteMuteState(cfg, state, newMuted) {
@@ -489,9 +486,10 @@ OnRemoteClickerMute(cfg, state, *) {
         return
     }
 
-    escMic := EscapeJsonStr(cfg.TargetMicName)
-    req := '{"op":6,"d":{"requestType":"ToggleInputMute","requestId":"RemoteClickerMute","requestData":{"inputName":"' escMic '"}}}'
-    try state.obsWs.sendText(req)
+    if (!SendObsToggleInputMute(state.obsWs, cfg.TargetMicName, "RemoteClickerMute")) {
+        ToolTip "PresenterSync Remote: Not connected to OBS host"
+        SetTimer RemoveToolTip, -2000
+    }
 }
 
 CheckRemotePointerEnable(cfg, ThisHotkey) {
@@ -576,6 +574,7 @@ WM_REMOTE_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
 }
 
 RefreshRemoteHudAppearance(cfg, state) {
+    state.animSeq += 1
     state.baseAlpha := cfg.OpacityLevel
     state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
     state.ComputeDimensions(cfg)
@@ -647,7 +646,7 @@ BuildRemoteTrayMenu(cfg, state) {
         OpacityMenu.Check("Solid (100%)")
     else if (cfg.OpacityLevel == UIConstants.OPACITY_FROSTED)
         OpacityMenu.Check("Frosted (85%)")
-    else
+    else if (cfg.OpacityLevel == UIConstants.OPACITY_GHOST)
         OpacityMenu.Check("Ghost (50%)")
     AppearanceMenu.Add("Transparency Level", OpacityMenu)
 
@@ -1084,7 +1083,7 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
                         authResponse := HashSHA256_Base64(secret . mChal[1])
                         authStr := ',"authentication":"' authResponse '"'
                     }
-                    ws.sendText('{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":0' authStr '}}')
+                    TrySendWsText(ws, '{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":0' authStr '}}')
                 } else if RegExMatch(msg, '"op"\s*:\s*2') {
                     testSuccess := true
                     FinishTest("✓ Connected to " target.raw " (" currentIndex "/" endpoints.Length ")!")
