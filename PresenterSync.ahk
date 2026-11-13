@@ -19,8 +19,7 @@ SetKeyDelay 50, 50
 #Include <GUI_Config>
 
 Gdip.Startup()
-Theme.Init()
-OnExit((*) => Gdip.Shutdown())
+OnExit((*) => (UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\PresenterSync.ico")
@@ -28,12 +27,13 @@ A_IconTip := "PresenterSync v" UIConstants.APP_VERSION
 
 ; === CONFIGURATION & STATE ===
 AppConfig := Config(A_ScriptDir "\MicOverlay_Config.ini")
+Theme.Init(AppConfig.ThemeMode)
 
 ; 1. First-run / missing shortcut setup: Audio Routing Mode + shortcuts
 if (AppConfig.AudioRoutingMode == 0
     || ((AppConfig.AudioRoutingMode == 1 || AppConfig.AudioRoutingMode == 3) && (AppConfig.ObsMuteHotkey = "None" || AppConfig.ObsMuteHotkey = ""))
     || ((AppConfig.AudioRoutingMode == 2 || AppConfig.AudioRoutingMode == 3) && AppConfig.ZoomMuteHotkey = "")) {
-    PromptForSetup(AppConfig)
+    PromptForSetup(AppConfig, true)
 }
 
 ; 2. Boot-up check: If WS is enabled but password is missing, ask for it
@@ -47,8 +47,12 @@ if (AppConfig.EnableWS && AppConfig.obsPassword = "") {
     }
 }
 
-; 3. Show Help screen on very first launch
+; 3. Initialize State, HUD, Tray Menu & Background Services
 AppState := OverlayState(AppConfig)
+AppState.rebuildTrayFn := BuildTrayMenu.Bind(AppConfig, AppState)
+BuildTrayMenu(AppConfig, AppState)
+InitHUD(AppConfig, AppState)
+
 if (AppConfig.FirstRun) {
     AppConfig.FirstRun := false
     AppConfig.WriteBool("Settings", "FirstRun", false)
@@ -66,11 +70,11 @@ BuildTrayMenu(cfg, state) {
     A_TrayMenu.Delete()
 
     ; 1. POINTER CONTROLS (LIVE PRESENTATION)
-    A_TrayMenu.Add("Enable Full Pointer Controls (PPT + Mute)", TogglePPT.Bind(cfg))
+    A_TrayMenu.Add("Enable Full Pointer Controls (PPT + Mute)", TogglePPT.Bind(cfg, state))
     if (cfg.EnablePPT)
         A_TrayMenu.Check("Enable Full Pointer Controls (PPT + Mute)")
 
-    A_TrayMenu.Add("Enable Pointer Mute Only", ToggleMicOnly.Bind(cfg))
+    A_TrayMenu.Add("Enable Pointer Mute Only", ToggleMicOnly.Bind(cfg, state))
     if (cfg.EnableMicOnly)
         A_TrayMenu.Check("Enable Pointer Mute Only")
 
@@ -148,9 +152,9 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("Indicator Scale", ScaleMenu)
 
     ThemeMenu := Menu()
-    ThemeMenu.Add("Follow System", SetThemeMode.Bind(cfg, ThemeMenu, "System"))
-    ThemeMenu.Add("Dark Mode", SetThemeMode.Bind(cfg, ThemeMenu, "Dark"))
-    ThemeMenu.Add("Light Mode", SetThemeMode.Bind(cfg, ThemeMenu, "Light"))
+    ThemeMenu.Add("Follow System", ApplyThemeLive.Bind(cfg, state, ThemeMenu, "System"))
+    ThemeMenu.Add("Dark Mode", ApplyThemeLive.Bind(cfg, state, ThemeMenu, "Dark"))
+    ThemeMenu.Add("Light Mode", ApplyThemeLive.Bind(cfg, state, ThemeMenu, "Light"))
     if (cfg.ThemeMode = "Dark")
         ThemeMenu.Check("Dark Mode")
     else if (cfg.ThemeMode = "Light")
@@ -182,7 +186,7 @@ BuildTrayMenu(cfg, state) {
             RoutingMenu.Check(rm.label)
     }
     SettingsMenu.Add("Audio Routing Mode", RoutingMenu)
-    SettingsMenu.Add("Run Audio Setup Wizard...", (*) => (PromptForSetup(cfg), BuildTrayMenu(cfg, state)))
+    SettingsMenu.Add("Run Audio Setup Wizard...", (*) => PromptForSetup(cfg, false))
     SettingsMenu.Add()
     SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI.Bind(cfg))
     SettingsMenu.Add("Change Zoom Shortcuts", ChangeZoomShortcutsUI.Bind(cfg))
@@ -204,10 +208,15 @@ BuildTrayMenu(cfg, state) {
         A_TrayMenu.Check("Suspend All Hotkeys")
     A_TrayMenu.Add("Exit PresenterSync", ExitTrayApp)
 }
-BuildTrayMenu(AppConfig, AppState)
+
+NotifyHelpRefresh(state) {
+    if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
+}
 
 ToggleSuspend(*) {
     Suspend(-1)
+    Theme.WasSuspendedBeforeDialogs := A_IsSuspended
     if A_IsSuspended {
         A_TrayMenu.Check("Suspend All Hotkeys")
         TrayTip("PresenterSync", "All hotkeys suspended.", 1)
@@ -217,7 +226,7 @@ ToggleSuspend(*) {
     }
 }
 
-TogglePPT(cfg, *) {
+TogglePPT(cfg, state := "", *) {
     ToolTip()
 
     cfg.EnablePPT := !cfg.EnablePPT
@@ -234,10 +243,11 @@ TogglePPT(cfg, *) {
     }
 
     cfg.WriteBool("Settings", "EnablePPT", cfg.EnablePPT)
+    NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
-ToggleMicOnly(cfg, *) {
+ToggleMicOnly(cfg, state := "", *) {
     ToolTip()
 
     cfg.EnableMicOnly := !cfg.EnableMicOnly
@@ -254,10 +264,11 @@ ToggleMicOnly(cfg, *) {
     }
 
     cfg.WriteBool("Settings", "EnableMicOnly", cfg.EnableMicOnly)
+    NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
-CyclePointerMode(cfg, *) {
+CyclePointerMode(cfg, state := "", *) {
     ToolTip()
 
     if (cfg.EnablePPT) {
@@ -280,6 +291,7 @@ CyclePointerMode(cfg, *) {
         ToolTip "Pointer Mode: Full PPT + Mute"
     }
 
+    NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
@@ -322,8 +334,8 @@ ToggleWS(cfg, state, *) {
         state.zoomLastMuted := -1
         state.zoomRecGraceUntil := 0
         state.zoomSawRecControl := false
-        if (state.obsWs) {
-            state.obsWs.shutdown()
+        if IsObject(state.obsWs) {
+            try state.obsWs.shutdown()
             state.obsWs := ""
         }
         SyncRecState(cfg, state, 0)
@@ -334,6 +346,7 @@ ToggleWS(cfg, state, *) {
 
     UpdateZoomMonitorTimer(cfg, state)
     UpdateHudVisibility(cfg, state)
+    NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
@@ -349,8 +362,8 @@ ToggleZoom(cfg, state, *) {
             SetTrayCheck("Enable OBS WebSocket Sync", false)
             SetTimer state.obsTimerFn, 0
             state.obsConnected := false
-            if (state.obsWs) {
-                state.obsWs.shutdown()
+            if IsObject(state.obsWs) {
+                try state.obsWs.shutdown()
                 state.obsWs := ""
             }
             SyncRecState(cfg, state, 0)
@@ -377,6 +390,7 @@ ToggleZoom(cfg, state, *) {
 
     UpdateZoomMonitorTimer(cfg, state)
     UpdateHudVisibility(cfg, state)
+    NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
@@ -390,6 +404,7 @@ ToggleIndicator(cfg, state, *) {
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     else if (!cfg.ShowIndicator)
         SetTimer state.breathTimerFn, 0
+    NotifyHelpRefresh(state)
 }
 
 ToggleExtraHuds(cfg, state, *) {
@@ -399,6 +414,7 @@ ToggleExtraHuds(cfg, state, *) {
 
     SetTrayCheck("Show Extra HUDs", cfg.ShowExtraHuds)
     UpdateHudVisibility(cfg, state)
+    NotifyHelpRefresh(state)
     ToolTip(cfg.ShowExtraHuds ? "Extra HUDs: ON" : "Extra HUDs: OFF")
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -408,6 +424,7 @@ ToggleText(cfg, state, *) {
     cfg.WriteBool("Settings", "ShowText", cfg.ShowText)
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
 }
 
 ToggleMono(cfg, state, *) {
@@ -415,6 +432,7 @@ ToggleMono(cfg, state, *) {
     cfg.WriteBool("Settings", "MonoIcon", cfg.MonoIcon)
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
 }
 
 ToggleCorners(cfg, state, *) {
@@ -422,6 +440,7 @@ ToggleCorners(cfg, state, *) {
     cfg.WriteBool("Settings", "SleekCorners", cfg.SleekCorners)
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
 }
 
 TogglePulse(cfg, state, *) {
@@ -429,6 +448,7 @@ TogglePulse(cfg, state, *) {
     cfg.WriteBool("Settings", "AggressivePulse", cfg.AggressivePulse)
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
 }
 
 SetSolid(cfg, state, *) {
@@ -436,6 +456,7 @@ SetSolid(cfg, state, *) {
     cfg.Write("Settings", "OpacityLevel", UIConstants.OPACITY_SOLID)
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
 }
 
 SetFrosted(cfg, state, *) {
@@ -443,6 +464,7 @@ SetFrosted(cfg, state, *) {
     cfg.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
 }
 
 SetGhost(cfg, state, *) {
@@ -450,66 +472,81 @@ SetGhost(cfg, state, *) {
     cfg.Write("Settings", "OpacityLevel", UIConstants.OPACITY_GHOST)
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
+}
+
+ApplyThemeLive(cfg, state, themeMenu, mode, *) {
+    SetThemeMode(cfg, themeMenu, mode)
+    NotifyHelpRefresh(state)
 }
 
 ApplyScaleLive(cfg, state, val, *) {
     SetScale(cfg, state, val)
     BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
 }
 
 ApplyResetPositionLive(cfg, state, *) {
     ResetTrayPosition(cfg, state)
-    BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
 }
 
 ApplyResetAppearanceLive(cfg, state, *) {
     ResetAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
+    NotifyHelpRefresh(state)
 }
 
 ExitTrayApp(*) {
     ExitApp()
 }
 
-InitHUD(AppConfig, AppState)
-
 ; --- SYSTEM HOTKEYS ---
-try Hotkey(AppConfig.PptHotkey, (*) => CyclePointerMode(AppConfig))
-try Hotkey(AppConfig.WsHotkey, (*) => ToggleWS(AppConfig, AppState))
-try Hotkey(AppConfig.ZoomHotkey, (*) => ToggleZoom(AppConfig, AppState))
-try Hotkey(AppConfig.IndHotkey, (*) => ToggleIndicator(AppConfig, AppState))
-try Hotkey(AppConfig.SuspendHotkey, (*) => ToggleSuspend())
-try Hotkey(AppConfig.ExitHotkey, (*) => ExitTrayApp())
+if (AppConfig.PptHotkey != "")
+    try Hotkey(AppConfig.PptHotkey, (*) => CyclePointerMode(AppConfig, AppState))
+if (AppConfig.WsHotkey != "")
+    try Hotkey(AppConfig.WsHotkey, (*) => ToggleWS(AppConfig, AppState))
+if (AppConfig.ZoomHotkey != "")
+    try Hotkey(AppConfig.ZoomHotkey, (*) => ToggleZoom(AppConfig, AppState))
+if (AppConfig.IndHotkey != "")
+    try Hotkey(AppConfig.IndHotkey, (*) => ToggleIndicator(AppConfig, AppState))
+if (AppConfig.SuspendHotkey != "")
+    try Hotkey(AppConfig.SuspendHotkey, (*) => ToggleSuspend())
+if (AppConfig.ExitHotkey != "")
+    try Hotkey(AppConfig.ExitHotkey, (*) => ExitTrayApp())
 
 RemoveToolTip() {
     ToolTip
 }
 
 ; --- POWERPOINT CONTROLS (OMNI-CATCH) ---
+IsPptInterceptActive(cfg) {
+    return cfg.EnablePPT && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
+}
 
-#HotIf AppConfig.EnablePPT && AppConfig.CatchArrows
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows
 $Down::SendToPPT(AppConfig, "{Down}")
 $Up::SendToPPT(AppConfig, "{Up}")
 $Left::SendToPPT(AppConfig, "{Left}")
 $Right::SendToPPT(AppConfig, "{Right}")
 
-#HotIf AppConfig.EnablePPT && AppConfig.CatchPg
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchPg
 $PgDn::SendToPPT(AppConfig, "{PgDn}")
 $PgUp::SendToPPT(AppConfig, "{PgUp}")
 
-#HotIf AppConfig.EnablePPT && AppConfig.CatchSpace
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchSpace
 $Space::SendToPPT(AppConfig, "{Space}")
 
-#HotIf AppConfig.EnablePPT && AppConfig.CatchEnter
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEnter
 $Enter::SendToPPT(AppConfig, "{Enter}")
 
-#HotIf AppConfig.EnablePPT && AppConfig.CatchTab
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchTab
 $Tab::SendToPPT(AppConfig, "{Tab}")
 
-#HotIf AppConfig.EnablePPT && AppConfig.CatchEsc
+#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEsc
 $Esc::SendToPPT(AppConfig, "{Esc}")
 
-#HotIf AppConfig.EnablePPT
+#HotIf IsPptInterceptActive(AppConfig)
 $+F5::SendToPPT(AppConfig, "{Blind}{F5}") ; Always intercepted if PPT mode is active
 
 #HotIf ; Reset directive
@@ -559,7 +596,7 @@ SendToPPT(cfg, Key) {
 
 ; --- DYNAMIC HARDWARE MUTE TRIGGER ---
 CheckPointerEnable(cfg, ThisHotkey) {
-    return (cfg.EnablePPT || cfg.EnableMicOnly)
+    return (cfg.EnablePPT || cfg.EnableMicOnly) && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
 HotIf CheckPointerEnable.Bind(AppConfig)
