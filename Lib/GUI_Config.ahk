@@ -7,6 +7,8 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
+    static APP_VERSION := "2.0.0"
+
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 140
     static BASE_WIDTH_ICON := 80
@@ -1082,57 +1084,233 @@ PromptForPassword() {
 }
 
 FormatHK(hk) {
+    if (hk = "" || hk = "None")
+        return "None"
     str := StrReplace(hk, "+", "Shift + ")
     str := StrReplace(str, "^", "Ctrl + ")
     str := StrReplace(str, "!", "Alt + ")
     str := StrReplace(str, "#", "Win + ")
+    if (StrLen(str) == 1)
+        str := StrUpper(str)
     return str
 }
 
-ShowHelpWindow(cfg, *) {
-    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Help & Guide")
+GetRoutingModeLabel(mode) {
+    if (mode == 1)
+        return "Mode 1: Pro OBS Setup (VB-Cable)"
+    if (mode == 2)
+        return "Mode 2: Standard Direct Mic (Zoom-Only)"
+    if (mode == 3)
+        return "Mode 3: Dual App Sync (OBS + Zoom)"
+    return "Unconfigured"
+}
+
+BuildLiveStatusSummary(cfg, state := "") {
+    ptrMode := cfg.EnablePPT ? "Full PPT + Mute" : (cfg.EnableMicOnly ? "Pointer Mute Only" : "OFF")
+    syncMode := cfg.EnableWS ? "OBS WebSocket v5" : (cfg.EnableZoom ? "Zoom UIA Monitoring" : "Basic (1-Tier Mic Only)")
+    connInfo := ""
+    if IsObject(state) {
+        if (cfg.EnableWS)
+            connInfo := state.obsConnected ? " (Connected — Scene: " state.currentSceneName ")" : " (Waiting for OBS...)"
+        else if (cfg.EnableZoom)
+            connInfo := state.zoomConnected ? " (Active Meeting Detected)" : " (Waiting for Zoom Meeting...)"
+    }
+    hudStatus := (cfg.ShowIndicator ? "Visible" : "Hidden")
+        . "  |  Extra HUDs: " (cfg.ShowExtraHuds ? "ON" : "OFF")
+        . "  |  Labels: " (cfg.ShowText ? "ON" : "OFF")
+        . "  |  Scale: " Round(cfg.IndicatorScale, 2) "x"
+    themeStatus := cfg.ThemeMode " (Active: " (Theme.IsDarkMode() ? "Dark Mode" : "Light Mode") ")"
+
+    return "PresenterSync Version:   v" UIConstants.APP_VERSION "`n"
+        . "Audio Routing Profile:   " GetRoutingModeLabel(cfg.AudioRoutingMode) "`n"
+        . "Active Pointer Mode:     " ptrMode "`n"
+        . "Telemetry Engine:        " syncMode . connInfo "`n"
+        . "HUD Overlay Status:      " hudStatus "`n"
+        . "Application Theme:       " themeStatus "`n"
+        . "Target OBS Mic Source:   " cfg.targetMicName
+}
+
+ShowHelpWindow(cfg, state := "", *) {
+    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync v" UIConstants.APP_VERSION " — Interactive Help & Guide")
     Theme.ApplyToWindow(helpGui)
 
-    tabNames := ["Shortcuts", "Pointer Modes", "OBS & Zoom Sync", "Pro Tips"]
-    tabs := helpGui.Add("Tab2", "w420 h290", tabNames)
+    tabNames := ["Shortcuts", "Pointer & PPT", "Audio & Sync", "HUD & Theme", "Live Status"]
+    tabs := helpGui.Add("Tab2", "w500 h360", tabNames)
     tabs._tabNames := tabNames
     Theme.RegisterControl(helpGui, tabs, "Tab")
 
+    ; --- TAB 1: SHORTCUTS ---
     tabs.UseTab(1)
-    helpGui.SetFont("s12 w700")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y45", "Global Keyboard Shortcuts"), "Text", "tabText")
-    helpGui.SetFont("s10 w400")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+15", FormatHK(cfg.PptHotkey) " :  Cycle Pointer Modes"), "Text", "tabText")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.WsHotkey) " :  Toggle OBS WebSocket Sync"), "Text", "tabText")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.ZoomHotkey) " :  Toggle Zoom Monitoring"), "Text", "tabText")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.IndHotkey) " :  Hide/Unhide Indicator"), "Text", "tabText")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.SuspendHotkey) " :  Suspend All Hotkeys"), "Text", "tabText")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.ExitHotkey) " :  Exit PresenterSync"), "Text", "tabText")
+    helpGui.SetFont("s11 w700")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Global App & Audio Shortcuts"), "Text", "tabText")
+    helpGui.SetFont("s9 w400")
+    scCol1 := "Cycle Pointer Modes:`n"
+        . "Toggle OBS WebSocket:`n"
+        . "Toggle Zoom Monitor:`n"
+        . "Show / Hide HUD:`n"
+        . "Suspend All Hotkeys:`n"
+        . "Exit PresenterSync:`n"
+        . "Clicker Mute Button:`n"
+        . "OBS Mute / Rec / Pause:`n"
+        . "Zoom Mute / Rec / Pause:"
+    scCol2 := FormatHK(cfg.PptHotkey) "`n"
+        . FormatHK(cfg.WsHotkey) "`n"
+        . FormatHK(cfg.ZoomHotkey) "`n"
+        . FormatHK(cfg.IndHotkey) "`n"
+        . FormatHK(cfg.SuspendHotkey) "`n"
+        . FormatHK(cfg.ExitHotkey) "`n"
+        . FormatHK(cfg.HwMuteHotkey) "`n"
+        . FormatHK(cfg.ObsMuteHotkey) "  /  " FormatHK(cfg.ObsRecHotkey) "  /  " FormatHK(cfg.ObsPauseHotkey) "`n"
+        . FormatHK(cfg.ZoomMuteHotkey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y68 w165", scCol1), "Text", "tabMuted")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x195 y68 w290", scCol2), "Text", "tabText")
 
     helpGui.SetFont("s9 italic")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+15 w370", "Note: You can rebind these shortcuts in the Settings menu."), "Text", "tabMuted")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y255 w460", "Click any button below to customize your shortcuts directly:"), "Text", "tabMuted")
+    helpGui.SetFont("s9 w400")
+    btnAppHk := helpGui.Add("Button", "x25 y280 w145 h28", "Edit App Shortcuts")
+    btnObsHk := helpGui.Add("Button", "x180 y280 w145 h28", "Edit OBS Settings")
+    btnZoomHk := helpGui.Add("Button", "x335 y280 w145 h28", "Edit Zoom Shortcuts")
+    Theme.RegisterControl(helpGui, btnAppHk, "Button")
+    Theme.RegisterControl(helpGui, btnObsHk, "Button")
+    Theme.RegisterControl(helpGui, btnZoomHk, "Button")
+    btnAppHk.OnEvent("Click", (*) => ChangeAppHotkeysUI(cfg))
+    btnObsHk.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
+    btnZoomHk.OnEvent("Click", (*) => ChangeZoomShortcutsUI(cfg))
 
+    ; --- TAB 2: POINTER & PPT ---
     tabs.UseTab(2)
-    helpGui.SetFont("s12 w700")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y45", "Hardware Pointer Controls"), "Text", "tabText")
-    helpGui.SetFont("s10 w400")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10 w370", "1. Full PPT + Mute:`nRoutes your clicker to PowerPoint while still allowing the hardware mute button to trigger OBS.`n`n2. Pointer Mute Only:`nBypasses PowerPoint completely. Your clicker only controls the mute overlay.`n`n* If you need to type normally while presenting, go to Settings > 'Configure Pointer Intercepts' to disable specific keys (like Space or Enter)."), "Text", "tabText")
+    helpGui.SetFont("s11 w700")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Smart PowerPoint & Hardware Clicker Controls"), "Text", "tabText")
+    helpGui.SetFont("s9 w400")
+    pptGuide := "1. Full PPT + Mute:`n"
+        . "Routes slide keys (Arrows, PgUp/PgDn, Space, Enter, Tab, Esc, Shift+F5) directly to PowerPoint in the background using Hybrid COM + ControlSend with a 150ms debounce shield, while keeping your clicker's mute button active.`n`n"
+        . "2. Pointer Mute Only:`n"
+        . "Leaves slide keys untouched for normal typing while your clicker's mute button still toggles your microphone.`n`n"
+        . "3. Smooth Background PPT Animations (Windows DWM Fix):`n"
+        . "Capture PowerPoint in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings."
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y68 w460 h200", pptGuide), "Text", "tabText")
 
+    btnTester := helpGui.Add("Button", "x25 y280 w145 h28", "Launch Clicker Tester")
+    btnHwMute := helpGui.Add("Button", "x180 y280 w145 h28", "Change Mute Button")
+    btnIntercepts := helpGui.Add("Button", "x335 y280 w145 h28", "Configure Intercepts")
+    Theme.RegisterControl(helpGui, btnTester, "Button")
+    Theme.RegisterControl(helpGui, btnHwMute, "Button")
+    Theme.RegisterControl(helpGui, btnIntercepts, "Button")
+    btnTester.OnEvent("Click", (*) => ShowPointerTester())
+    btnHwMute.OnEvent("Click", (*) => ChangeHwMuteHotkeyUI(cfg))
+    btnIntercepts.OnEvent("Click", (*) => ConfigurePointerKeysUI(cfg))
+
+    ; --- TAB 3: AUDIO & SYNC ---
     tabs.UseTab(3)
-    helpGui.SetFont("s12 w700")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y45", "OBS WebSocket & Zoom UIA Sync"), "Text", "tabText")
-    helpGui.SetFont("s10 w400")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10 w370", "• OBS WebSocket v5: Enable in OBS (Tools > WebSocket Server Settings) for instant 2-way mic sync.`n`n• Zoom UIA Monitoring: Provides 2-way background sync with Zoom even if a host mutes you or you click Mute in Zoom.`n`n• Zoom Requirement: In Zoom Settings > Accessibility (or General), check 'Always show meeting controls' so PresenterSync can read Zoom's toolbar reliably in the background."), "Text", "tabText")
+    helpGui.SetFont("s11 w700")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Audio Profiles, OBS WebSocket v5 & Zoom UIA"), "Text", "tabText")
+    helpGui.SetFont("s9 w400")
+    syncGuide := "• 3 Audio Routing Profiles:`n"
+        . "   1. Pro OBS Setup (VB-Cable): Controls OBS mic directly.`n"
+        . "   2. Standard Direct Mic (Zoom-Only): Controls Zoom mic directly.`n"
+        . "   3. Dual App Sync (OBS + Zoom): Keeps OBS and Zoom mics synchronized 2-way.`n`n"
+        . "• OBS WebSocket v5: In OBS Studio > Tools > WebSocket Server Settings, enable the server (port 4455) for real-time Mic, Recording, Studio Mode & Scene telemetry.`n`n"
+        . "• Zoom UIA Monitoring: In Zoom Settings > Accessibility, enable 'Always show meeting controls' for background Mic, Recording, and Unread Chat tracking."
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y68 w460 h200", syncGuide), "Text", "tabText")
 
+    btnWizard := helpGui.Add("Button", "x25 y280 w145 h28", "Audio Setup Wizard")
+    btnObsCfg := helpGui.Add("Button", "x180 y280 w145 h28", "OBS Settings")
+    btnZoomCfg := helpGui.Add("Button", "x335 y280 w145 h28", "Zoom Shortcuts")
+    Theme.RegisterControl(helpGui, btnWizard, "Button")
+    Theme.RegisterControl(helpGui, btnObsCfg, "Button")
+    Theme.RegisterControl(helpGui, btnZoomCfg, "Button")
+    btnWizard.OnEvent("Click", (*) => PromptForSetup(cfg))
+    btnObsCfg.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
+    btnZoomCfg.OnEvent("Click", (*) => ChangeZoomShortcutsUI(cfg))
+
+    ; --- TAB 4: HUD & THEME ---
     tabs.UseTab(4)
-    helpGui.SetFont("s12 w700")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y45", "Customizing & Smooth Animations"), "Text", "tabText")
-    helpGui.SetFont("s10 w400")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10 w370", "• HUD Controls: Left-drag any HUD pill to reposition it (saves automatically), or Right-Click any HUD pill to open the PresenterSync menu directly at your cursor.`n`n• Live Appearance & Theme: Toggle 'Show Extra HUDs' or use 'Indicator Appearance' to customize labels, opacity, scale, pulse, and App Theme (Follow System / Dark / Light) live without interrupting OBS sync.`n`n• Smooth PPT Animations: Capture the Slideshow in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings."), "Text", "tabText")
+    helpGui.SetFont("s11 w700")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Multi-Tier HUD Overlay & Live Appearance"), "Text", "tabText")
+    helpGui.SetFont("s9 w400")
+    hudGuide := "• Adaptive 3-Tier HUD Stack:`n"
+        . "   Row 1 (Bottom): Live (Green) / Muted (Red) Mic Indicator with breathing animation.`n"
+        . "   Row 2 (Middle): 3-state Recording (NOT REC / REC / PAUSED) + Unread Chat badge.`n"
+        . "   Row 3 (Top - OBS): Studio Mode badge + auto-expanding Active Scene name pill.`n`n"
+        . "• Direct Mouse Controls:`n"
+        . "   Left-Drag any HUD pill to reposition the stack (coordinates save automatically).`n"
+        . "   Right-Click any HUD pill to open the PresenterSync menu right at your cursor.`n`n"
+        . "• Try Interactive Live Adjustments Below (No Restart Required):"
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y68 w460 h175", hudGuide), "Text", "tabText")
+
+    btnTogExtra := helpGui.Add("Button", "x25 y250 w215 h26", "Toggle Extra HUDs (ON/OFF)")
+    btnTogText := helpGui.Add("Button", "x265 y250 w215 h26", "Toggle HUD Text Labels")
+    btnCycTheme := helpGui.Add("Button", "x25 y284 w215 h26", "Cycle Theme (System/Dark/Light)")
+    btnResetPos := helpGui.Add("Button", "x265 y284 w215 h26", "Reset HUD Position")
+    Theme.RegisterControl(helpGui, btnTogExtra, "Button")
+    Theme.RegisterControl(helpGui, btnTogText, "Button")
+    Theme.RegisterControl(helpGui, btnCycTheme, "Button")
+    Theme.RegisterControl(helpGui, btnResetPos, "Button")
+
+    ; --- TAB 5: LIVE STATUS ---
+    tabs.UseTab(5)
+    helpGui.SetFont("s11 w700")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y42 w460", "Live Configuration & Telemetry Status"), "Text", "tabText")
+    helpGui.SetFont("s9 w400")
+    statusTextCtrl := helpGui.Add("Text", "x25 y72 w460 h165", BuildLiveStatusSummary(cfg, state))
+    Theme.RegisterControl(helpGui, statusTextCtrl, "Text", "tabText")
+
+    RefreshHelpStatus(*) {
+        if WinExist(helpGui.Hwnd)
+            statusTextCtrl.Value := BuildLiveStatusSummary(cfg, state)
+    }
+
+    OnHelpToggleExtra(*) {
+        cfg.ShowExtraHuds := !cfg.ShowExtraHuds
+        cfg.WriteBool("Settings", "ShowExtraHuds", cfg.ShowExtraHuds)
+        if IsObject(state)
+            RefreshHudAppearance(cfg, state)
+        RefreshHelpStatus()
+    }
+
+    OnHelpToggleText(*) {
+        cfg.ShowText := !cfg.ShowText
+        cfg.WriteBool("Settings", "ShowText", cfg.ShowText)
+        if IsObject(state)
+            RefreshHudAppearance(cfg, state)
+        RefreshHelpStatus()
+    }
+
+    OnHelpCycleTheme(*) {
+        nextMode := (cfg.ThemeMode = "System") ? "Dark" : ((cfg.ThemeMode = "Dark") ? "Light" : "System")
+        SetThemeMode(cfg, "", nextMode)
+        RefreshHelpStatus()
+    }
+
+    OnHelpResetPos(*) {
+        ResetTrayPosition(cfg, state)
+        RefreshHelpStatus()
+    }
+
+    OnHelpResetAppearance(*) {
+        ResetAppearance(cfg, state)
+        RefreshHelpStatus()
+    }
+
+    btnTogExtra.OnEvent("Click", OnHelpToggleExtra)
+    btnTogText.OnEvent("Click", OnHelpToggleText)
+    btnCycTheme.OnEvent("Click", OnHelpCycleTheme)
+    btnResetPos.OnEvent("Click", OnHelpResetPos)
+
+    btnRefreshStatus := helpGui.Add("Button", "x25 y280 w145 h28", "Refresh Status")
+    btnResetApp := helpGui.Add("Button", "x180 y280 w145 h28", "Reset Appearance")
+    btnOpenAbout := helpGui.Add("Button", "x335 y280 w145 h28", "About v" UIConstants.APP_VERSION)
+    Theme.RegisterControl(helpGui, btnRefreshStatus, "Button")
+    Theme.RegisterControl(helpGui, btnResetApp, "Button")
+    Theme.RegisterControl(helpGui, btnOpenAbout, "Button")
+    btnRefreshStatus.OnEvent("Click", RefreshHelpStatus)
+    btnResetApp.OnEvent("Click", OnHelpResetAppearance)
+    btnOpenAbout.OnEvent("Click", (*) => ShowAboutWindow(cfg, state))
 
     tabs.UseTab()
 
-    btn := helpGui.Add("Button", "w100 x160 y310 Default", "Got it!")
+    btn := helpGui.Add("Button", "w120 x200 y380 h30 Default", "Got it!")
     Theme.RegisterControl(helpGui, btn, "Button")
     CloseHelp(*) {
         if Theme.OpenWindows.Has(helpGui.Hwnd)
@@ -1147,28 +1325,40 @@ ShowHelpWindow(cfg, *) {
     return helpGui
 }
 
-ShowAboutWindow(*) {
+ShowAboutWindow(cfg := "", state := "", *) {
     aboutGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "About PresenterSync")
     Theme.ApplyToWindow(aboutGui)
 
     iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSync.ico"
 
     if FileExist(iconSource) {
-        aboutGui.Add("Picture", "x143 y15 w64 h64", iconSource)
+        aboutGui.Add("Picture", "x153 y15 w64 h64", iconSource)
     }
 
     aboutGui.SetFont("s16 w700", "Segoe UI")
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync"), "Text")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w350 Center y+12", "PresenterSync"), "Text")
+
+    aboutGui.SetFont("s10 w700")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w350 Center y+4", "Version " UIConstants.APP_VERSION), "Text", "accent")
+
+    aboutGui.SetFont("s9 w400")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 w330 Center y+8", "OBS Studio WebSocket v5, Zoom UIA Telemetry & Smart PowerPoint Control Suite"), "Text", "muted")
 
     aboutGui.SetFont("s10 w400")
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.3.0"), "Text", "muted")
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry"), "Text")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w350 Center y+12", "Created by Saabith Jiffry"), "Text")
 
-    gitBtn := aboutGui.Add("Button", "w110 x60 y+25", "GitHub Repo")
+    gitBtn := aboutGui.Add("Button", "w105 x25 y+20 h28", "GitHub Repo")
     Theme.RegisterControl(aboutGui, gitBtn, "Button")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    closeBtn := aboutGui.Add("Button", "w110 x+10 Default", "Close")
+    helpBtn := aboutGui.Add("Button", "w105 x+10 h28", "Help && Guide")
+    Theme.RegisterControl(aboutGui, helpBtn, "Button")
+    if IsObject(cfg)
+        helpBtn.OnEvent("Click", (*) => ShowHelpWindow(cfg, state))
+    else
+        helpBtn.Enabled := false
+
+    closeBtn := aboutGui.Add("Button", "w105 x+10 h28 Default", "Close")
     Theme.RegisterControl(aboutGui, closeBtn, "Button")
     CloseAbout(*) {
         if Theme.OpenWindows.Has(aboutGui.Hwnd)

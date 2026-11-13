@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 1.3.0
+; Version: 2.0.0
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
@@ -24,6 +24,7 @@ OnExit((*) => Gdip.Shutdown())
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\PresenterSync.ico")
+A_IconTip := "PresenterSync v" UIConstants.APP_VERSION
 
 ; === CONFIGURATION & STATE ===
 AppConfig := Config(A_ScriptDir "\MicOverlay_Config.ini")
@@ -47,13 +48,12 @@ if (AppConfig.EnableWS && AppConfig.obsPassword = "") {
 }
 
 ; 3. Show Help screen on very first launch
+AppState := OverlayState(AppConfig)
 if (AppConfig.FirstRun) {
     AppConfig.FirstRun := false
     AppConfig.WriteBool("Settings", "FirstRun", false)
-    ShowHelpWindow(AppConfig)
+    ShowHelpWindow(AppConfig, AppState)
 }
-
-AppState := OverlayState(AppConfig)
 
 if (AppConfig.EnableWS)
     SetTimer AppState.obsTimerFn, -UIConstants.OBS_INIT_DELAY_MS
@@ -196,8 +196,8 @@ BuildTrayMenu(cfg, state) {
     A_TrayMenu.Add("Settings", SettingsMenu)
 
     ; 5. HELP, SAFETY & EXIT
-    A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg))
-    A_TrayMenu.Add("About PresenterSync", ShowAboutWindow)
+    A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg, state))
+    A_TrayMenu.Add("About PresenterSync", ShowAboutWindow.Bind(cfg, state))
     A_TrayMenu.Add()
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
     if A_IsSuspended
