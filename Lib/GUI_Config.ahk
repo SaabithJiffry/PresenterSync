@@ -110,39 +110,62 @@ class UIConstants {
     static BORDER_CHAT_ALERT := 0xEB6325
     static ICON_CHAT_ALERT := "1E3A8A"
 
-    ; --- System Theme (Dark / Light Mode) Palette ---
-    static DARK_BG := "1E1E1E"
-    static DARK_SURFACE := "252525"
-    static DARK_INPUT_BG := "2B2B2B"
-    static DARK_TEXT := "F3F4F6"
-    static DARK_TEXT_MUTED := "9CA3AF"
-    static DARK_TEXT_DISABLED := "6B7280"
-    static DARK_ACCENT := "60A5FA"
-    static LIGHT_ACCENT := "0055CC"
-    static DARK_BG_BGR := 0x1E1E1E
-    static DARK_SURFACE_BGR := 0x252525
-    static DARK_TAB_ACTIVE_BGR := 0x2D2D2D
-    static DARK_TAB_INACTIVE_BGR := 0x1A1A1A
-    static DARK_INPUT_BG_BGR := 0x2B2B2B
-    static DARK_INPUT_DISABLED_BGR := 0x222222
-    static DARK_BORDER_BGR := 0x555555
-    static DARK_BORDER_SUBTLE_BGR := 0x3F3F3F
-    static DARK_BORDER_DISABLED_BGR := 0x383838
-    static DARK_ACCENT_BGR := 0xFA9E58
-    static DARK_TEXT_BGR := 0xF6F4F3
-    static DARK_TEXT_MUTED_BGR := 0x9EA2A8
-    static DARK_TEXT_DISABLED_BGR := 0x7A7A7A
+    ; --- Windows 11 Explorer / Fluent Theme Palette (Dark & Light) ---
+    static DARK_BG := "202020"
+    static DARK_SURFACE := "2C2C2C"
+    static DARK_INPUT_BG := "2D2D2D"
+    static DARK_TEXT := "FFFFFF"
+    static DARK_TEXT_MUTED := "C5C5C5"
+    static DARK_TEXT_DISABLED := "787878"
+    static DARK_ACCENT := "60CDFF"
+
+    static LIGHT_BG := "F3F3F3"
+    static LIGHT_SURFACE := "FFFFFF"
+    static LIGHT_INPUT_BG := "FBFBFB"
+    static LIGHT_TEXT := "1A1A1A"
+    static LIGHT_TEXT_MUTED := "5C5C5C"
+    static LIGHT_TEXT_DISABLED := "9E9E9E"
+    static LIGHT_ACCENT := "0067C0"
+
+    static DARK_BG_BGR := 0x202020
+    static DARK_SURFACE_BGR := 0x2C2C2C
+    static DARK_TAB_ACTIVE_BGR := 0x2C2C2C
+    static DARK_TAB_INACTIVE_BGR := 0x202020
+    static DARK_INPUT_BG_BGR := 0x2D2D2D
+    static DARK_INPUT_DISABLED_BGR := 0x242424
+    static DARK_BORDER_BGR := 0x3D3D3D
+    static DARK_BORDER_SUBTLE_BGR := 0x383838
+    static DARK_BORDER_DISABLED_BGR := 0x303030
+    static DARK_ACCENT_BGR := 0xFFCD60
+    static DARK_TEXT_BGR := 0xFFFFFF
+    static DARK_TEXT_MUTED_BGR := 0xC5C5C5
+    static DARK_TEXT_DISABLED_BGR := 0x787878
+
+    static LIGHT_BG_BGR := 0xF3F3F3
+    static LIGHT_SURFACE_BGR := 0xFFFFFF
+    static LIGHT_BORDER_BGR := 0xE5E5E5
+    static LIGHT_TEXT_BGR := 0x1A1A1A
+    static LIGHT_TEXT_MUTED_BGR := 0x5C5C5C
+    static LIGHT_TEXT_DISABLED_BGR := 0x9E9E9E
+    static LIGHT_ACCENT_BGR := 0xC06700
+
+    static FLUENT_CORNER_RADIUS := 6.0
+    static FLUENT_CARD_RADIUS := 8.0
 }
 
 class Theme {
     static OverrideMode := ""
     static OpenWindows := Map()
+    static HoverMap := Map()
+    static PressMap := Map()
     static hUxtheme := 0
     static fnSetPreferredAppMode := 0
     static fnFlushMenuThemes := 0
     static hkSubclassPtr := 0
     static tabSubclassPtr := 0
     static staticSubclassPtr := 0
+    static btnSubclassPtr := 0
+    static UiFont := "Segoe UI"
     static initialized := false
     static lastIsDark := -1
 
@@ -168,6 +191,9 @@ class Theme {
     static EnsureInitialized() {
         if (this.initialized)
             return
+        Gdip.Startup()
+        osBuild := Integer(StrSplit(A_OSVersion, ".")[3])
+        this.UiFont := (osBuild >= 22000) ? "Segoe UI Variable Text" : "Segoe UI"
         this.hUxtheme := DllCall("GetModuleHandle", "Str", "uxtheme", "Ptr")
         if (!this.hUxtheme)
             this.hUxtheme := DllCall("LoadLibrary", "Str", "uxtheme", "Ptr")
@@ -175,9 +201,10 @@ class Theme {
             this.fnSetPreferredAppMode := DllCall("GetProcAddress", "Ptr", this.hUxtheme, "Ptr", 135, "Ptr")
             this.fnFlushMenuThemes := DllCall("GetProcAddress", "Ptr", this.hUxtheme, "Ptr", 136, "Ptr")
         }
-        this.hkSubclassPtr := CallbackCreate(HotkeyDarkSubclassProc)
-        this.tabSubclassPtr := CallbackCreate(TabDarkSubclassProc)
-        this.staticSubclassPtr := CallbackCreate(StaticDarkSubclassProc)
+        this.hkSubclassPtr := CallbackCreate(HotkeyFluentSubclassProc)
+        this.tabSubclassPtr := CallbackCreate(TabFluentSubclassProc)
+        this.staticSubclassPtr := CallbackCreate(StaticFluentSubclassProc)
+        this.btnSubclassPtr := CallbackCreate(ButtonFluentSubclassProc)
         OnMessage(0x001A, WM_SETTINGCHANGE_Theme)
         this.initialized := true
     }
@@ -210,6 +237,16 @@ class Theme {
         useDark := isDark ? 1 : 0
         if (DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 20, "Int*", &useDark, "Int", 4) != 0)
             DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 19, "Int*", &useDark, "Int", 4)
+        ; DWMWA_WINDOW_CORNER_PREFERENCE = 33 (2 = DWMWCP_ROUND)
+        cornerPref := 2
+        DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 33, "Int*", &cornerPref, "Int", 4)
+        ; DWMWA_BORDER_COLOR = 34, DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36
+        brdColor := isDark ? UIConstants.DARK_BORDER_DISABLED_BGR : UIConstants.LIGHT_BORDER_BGR
+        capColor := isDark ? UIConstants.DARK_BG_BGR : UIConstants.LIGHT_BG_BGR
+        txtColor := isDark ? UIConstants.DARK_TEXT_BGR : UIConstants.LIGHT_TEXT_BGR
+        DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 34, "UInt*", &brdColor, "Int", 4)
+        DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 35, "UInt*", &capColor, "Int", 4)
+        DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 36, "UInt*", &txtColor, "Int", 4)
     }
 
     static ApplyToWindow(guiObj, isDark := "") {
@@ -218,8 +255,8 @@ class Theme {
             isDark := this.IsDarkMode()
         this.ApplyMenuTheme(isDark)
         this.ApplyTitleBarTheme(guiObj.Hwnd, isDark)
-        guiObj.BackColor := isDark ? UIConstants.DARK_BG : "Default"
-        guiObj.SetFont("s10 w400 " (isDark ? "c" UIConstants.DARK_TEXT : "cDefault"), "Segoe UI")
+        guiObj.BackColor := isDark ? UIConstants.DARK_BG : UIConstants.LIGHT_BG
+        guiObj.SetFont("s10 w400 " (isDark ? "c" UIConstants.DARK_TEXT : "c" UIConstants.LIGHT_TEXT), this.UiFont)
         guiObj._isDark := isDark
         if (!guiObj.HasOwnProp("_themedCtrls"))
             guiObj._themedCtrls := []
@@ -229,6 +266,8 @@ class Theme {
     static RegisterControl(guiObj, ctrl, ctrlType := "", role := "") {
         ctrl._themeType := ctrlType
         ctrl._themeRole := role
+        if (role = "tabButton")
+            ctrl._inTab := true
         if (guiObj.HasOwnProp("_themedCtrls"))
             guiObj._themedCtrls.Push(ctrl)
         this.ApplyToControl(ctrl, ctrlType, guiObj.HasOwnProp("_isDark") ? guiObj._isDark : "", role)
@@ -247,43 +286,36 @@ class Theme {
 
         if (ctrlType = "Button") {
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
+            DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.btnSubclassPtr, "Ptr", 4, "Ptr", 0)
+            DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Checkbox") {
-            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_BG " c" UIConstants.LIGHT_TEXT))
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
         } else if (ctrlType = "Edit") {
-            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_CFD" : "Explorer", "Ptr", 0)
         } else if (ctrlType = "DropDownList") {
-            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_CFD" : "Explorer", "Ptr", 0)
         } else if (ctrlType = "Hotkey") {
-            if (isDark)
-                DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.hkSubclassPtr, "Ptr", 1, "Ptr", 0)
-            else
-                DllCall("comctl32\RemoveWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.hkSubclassPtr, "Ptr", 1)
+            DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.hkSubclassPtr, "Ptr", 1, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Tab") {
-            if (isDark)
-                DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.tabSubclassPtr, "Ptr", 2, "Ptr", 0)
-            else
-                DllCall("comctl32\RemoveWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.tabSubclassPtr, "Ptr", 2)
+            DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.tabSubclassPtr, "Ptr", 2, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Text") {
             if (role = "accent") {
-                ctrl.Opt((isDark ? "+Background" UIConstants.DARK_BG " c" UIConstants.DARK_ACCENT : "+BackgroundDefault c" UIConstants.LIGHT_ACCENT))
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_ACCENT) : ("+Background" UIConstants.LIGHT_BG " c" UIConstants.LIGHT_ACCENT))
             } else if (role = "tabText") {
-                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_SURFACE " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_SURFACE " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
             } else if (role = "tabMuted") {
-                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_SURFACE " c" UIConstants.DARK_TEXT_MUTED) : "+BackgroundDefault cGray")
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_SURFACE " c" UIConstants.DARK_TEXT_MUTED) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT_MUTED))
             } else if (role = "muted") {
-                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT_MUTED) : "+BackgroundDefault cGray")
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT_MUTED) : ("+Background" UIConstants.LIGHT_BG " c" UIConstants.LIGHT_TEXT_MUTED))
             } else {
-                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_BG " c" UIConstants.LIGHT_TEXT))
             }
-            if (isDark)
-                DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.staticSubclassPtr, "Ptr", 3, "Ptr", 0)
-            else
-                DllCall("comctl32\RemoveWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.staticSubclassPtr, "Ptr", 3)
+            DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.staticSubclassPtr, "Ptr", 3, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         }
     }
@@ -362,58 +394,152 @@ FormatHkDisplayText(hkVal) {
     return out . keyPart
 }
 
-HotkeyDarkSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+DrawFluentRoundedBox(pGraphics, x, y, w, h, radius, fillArgb, strokeArgb := 0, bottomAccentArgb := 0) {
+    pPath := Gdip.CreateRoundedRectPath(x + 0.5, y + 0.5, w - 1.0, h - 1.0, radius)
+    if (!pPath)
+        return
+    pFill := 0
+    DllCall("gdiplus\GdipCreateSolidFill", "UInt", fillArgb, "Ptr*", &pFill)
+    if (pFill) {
+        DllCall("gdiplus\GdipFillPath", "Ptr", pGraphics, "Ptr", pFill, "Ptr", pPath)
+        DllCall("gdiplus\GdipDeleteBrush", "Ptr", pFill)
+    }
+    if (strokeArgb != 0) {
+        pPen := 0
+        DllCall("gdiplus\GdipCreatePen1", "UInt", strokeArgb, "Float", 1.0, "Int", 2, "Ptr*", &pPen)
+        if (pPen) {
+            DllCall("gdiplus\GdipDrawPath", "Ptr", pGraphics, "Ptr", pPen, "Ptr", pPath)
+            DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
+        }
+    }
+    DllCall("gdiplus\GdipDeletePath", "Ptr", pPath)
+
+    if (bottomAccentArgb != 0) {
+        pAccPath := Gdip.CreateRoundedRectPath(x + 2.0, y + h - 3.0, w - 4.0, 2.5, 1.25)
+        if (pAccPath) {
+            pAccFill := 0
+            DllCall("gdiplus\GdipCreateSolidFill", "UInt", bottomAccentArgb, "Ptr*", &pAccFill)
+            if (pAccFill) {
+                DllCall("gdiplus\GdipFillPath", "Ptr", pGraphics, "Ptr", pAccFill, "Ptr", pAccPath)
+                DllCall("gdiplus\GdipDeleteBrush", "Ptr", pAccFill)
+            }
+            DllCall("gdiplus\GdipDeletePath", "Ptr", pAccPath)
+        }
+    }
+}
+
+ButtonFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     if (uMsg == 0x0082) { ; WM_NCDESTROY
+        if Theme.HoverMap.Has(hwnd)
+            Theme.HoverMap.Delete(hwnd)
+        if Theme.PressMap.Has(hwnd)
+            Theme.PressMap.Delete(hwnd)
         DllCall("comctl32\RemoveWindowSubclass", "Ptr", hwnd, "Ptr", uIdSubclass, "Ptr", dwRefData)
         return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
     }
     if (uMsg == 0x0014) ; WM_ERASEBKGND
         return 1
 
+    if (uMsg == 0x0200) { ; WM_MOUSEMOVE
+        if (!Theme.HoverMap.Get(hwnd, false)) {
+            Theme.HoverMap[hwnd] := true
+            tme := Buffer(A_PtrSize == 8 ? 24 : 16, 0)
+            NumPut("UInt", tme.Size, tme, 0)
+            NumPut("UInt", 0x00000002, tme, 4) ; TME_LEAVE
+            NumPut("Ptr", hwnd, tme, 8)
+            DllCall("TrackMouseEvent", "Ptr", tme)
+            DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
+        }
+    } else if (uMsg == 0x02A3) { ; WM_MOUSELEAVE
+        Theme.HoverMap[hwnd] := false
+        Theme.PressMap[hwnd] := false
+        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
+    } else if (uMsg == 0x0201) { ; WM_LBUTTONDOWN
+        Theme.PressMap[hwnd] := true
+        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
+    } else if (uMsg == 0x0202) { ; WM_LBUTTONUP
+        Theme.PressMap[hwnd] := false
+        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
+    }
+
     if (uMsg == 0x000F) { ; WM_PAINT
         ps := Buffer(72, 0)
         hdc := DllCall("BeginPaint", "Ptr", hwnd, "Ptr", ps, "Ptr")
         rc := Buffer(16, 0)
         DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc)
-        isEnabled := DllCall("IsWindowEnabled", "Ptr", hwnd)
-        hasFocus := (DllCall("GetFocus", "Ptr") == hwnd)
+        w := NumGet(rc, 8, "Int"), h := NumGet(rc, 12, "Int")
 
-        bgColor := isEnabled ? UIConstants.DARK_INPUT_BG_BGR : UIConstants.DARK_INPUT_DISABLED_BGR
-        brdColor := hasFocus ? UIConstants.DARK_ACCENT_BGR : (isEnabled ? UIConstants.DARK_BORDER_BGR : UIConstants.DARK_BORDER_DISABLED_BGR)
-        txtColor := isEnabled ? UIConstants.DARK_TEXT_BGR : UIConstants.DARK_TEXT_DISABLED_BGR
-
-        hBrushBg := DllCall("CreateSolidBrush", "UInt", bgColor, "Ptr")
-        DllCall("FillRect", "Ptr", hdc, "Ptr", rc, "Ptr", hBrushBg)
-        DllCall("DeleteObject", "Ptr", hBrushBg)
-
-        hBrushBrd := DllCall("CreateSolidBrush", "UInt", brdColor, "Ptr")
-        DllCall("FrameRect", "Ptr", hdc, "Ptr", rc, "Ptr", hBrushBrd)
-        DllCall("DeleteObject", "Ptr", hBrushBrd)
+        hdcMem := DllCall("CreateCompatibleDC", "Ptr", hdc, "Ptr")
+        hbm := DllCall("CreateCompatibleBitmap", "Ptr", hdc, "Int", Max(1, w), "Int", Max(1, h), "Ptr")
+        obm := DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hbm, "Ptr")
 
         ctrl := GuiCtrlFromHwnd(hwnd)
-        dispTxt := IsObject(ctrl) ? FormatHkDisplayText(ctrl.Value) : "None"
+        parentDark := (IsObject(ctrl) && IsObject(ctrl.Gui) && ctrl.Gui.HasOwnProp("_isDark")) ? ctrl.Gui._isDark : Theme.IsDarkMode()
+        inTab := (IsObject(ctrl) && ctrl.HasOwnProp("_inTab") && ctrl._inTab)
+        parentBgBgr := parentDark ? (inTab ? UIConstants.DARK_SURFACE_BGR : UIConstants.DARK_BG_BGR) : (inTab ? UIConstants.LIGHT_SURFACE_BGR : UIConstants.LIGHT_BG_BGR)
 
-        hFont := SendMessage(0x0031, 0, 0, hwnd)
-        oldFont := hFont ? DllCall("SelectObject", "Ptr", hdc, "Ptr", hFont, "Ptr") : 0
-        DllCall("SetBkMode", "Ptr", hdc, "Int", 1)
-        DllCall("SetTextColor", "Ptr", hdc, "UInt", txtColor)
+        hBrParent := DllCall("CreateSolidBrush", "UInt", parentBgBgr, "Ptr")
+        DllCall("FillRect", "Ptr", hdcMem, "Ptr", rc, "Ptr", hBrParent)
+        DllCall("DeleteObject", "Ptr", hBrParent)
 
-        NumPut("Int", 6, rc, 0)
-        DllCall("DrawTextW", "Ptr", hdc, "WStr", dispTxt, "Int", -1, "Ptr", rc, "UInt", 0x24)
+        style := DllCall("GetWindowLong", "Ptr", hwnd, "Int", -16, "Int") ; GWL_STYLE
+        isDefaultBtn := ((style & 0x0F) == 1) || (IsObject(ctrl) && ctrl.HasOwnProp("_themeRole") && ctrl._themeRole = "primary")
+        isEnabled := DllCall("IsWindowEnabled", "Ptr", hwnd)
+        isHover := Theme.HoverMap.Get(hwnd, false)
+        isPress := Theme.PressMap.Get(hwnd, false)
 
-        if (oldFont)
-            DllCall("SelectObject", "Ptr", hdc, "Ptr", oldFont, "Ptr")
+        if (parentDark) {
+            if (!isEnabled) {
+                fillArgb := 0xFF252525, strokeArgb := 0xFF333333, txtArgb := 0xFF707070
+            } else if (isDefaultBtn) {
+                fillArgb := isPress ? 0xFF4CC2FF : (isHover ? 0xFF72D4FF : 0xFF60CDFF)
+                strokeArgb := 0xFF72D4FF
+                txtArgb := 0xFF0A0E14
+            } else {
+                fillArgb := isPress ? 0xFF272727 : (isHover ? 0xFF3A3A3A : 0xFF323232)
+                strokeArgb := isHover ? 0xFF505050 : 0xFF424242
+                txtArgb := 0xFFFFFFFF
+            }
+        } else {
+            if (!isEnabled) {
+                fillArgb := 0xFFF0F0F0, strokeArgb := 0xFFE0E0E0, txtArgb := 0xFF9E9E9E
+            } else if (isDefaultBtn) {
+                fillArgb := isPress ? 0xFF005A9E : (isHover ? 0xFF1874C4 : 0xFF0067C0)
+                strokeArgb := 0xFF005A9E
+                txtArgb := 0xFFFFFFFF
+            } else {
+                fillArgb := isPress ? 0xFFEFEFEF : (isHover ? 0xFFF6F6F6 : 0xFFFBFBFB)
+                strokeArgb := isHover ? 0xFFD0D0D0 : 0xFFE0E0E0
+                txtArgb := 0xFF1A1A1A
+            }
+        }
+
+        pGraphics := 0
+        DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcMem, "Ptr*", &pGraphics)
+        if (pGraphics) {
+            DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 4)
+            DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGraphics, "Int", 4)
+            DrawFluentRoundedBox(pGraphics, 0, 0, w, h, UIConstants.FLUENT_CORNER_RADIUS, fillArgb, strokeArgb)
+            btnTxt := IsObject(ctrl) ? StrReplace(ctrl.Text, "&&", "&") : ""
+            Gdip.DrawText(pGraphics, btnTxt, Theme.UiFont, 9.5, isDefaultBtn ? 1 : 0, txtArgb, 4, 0, w - 8, h, 1, 1)
+            DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
+        }
+
+        DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", w, "Int", h, "Ptr", hdcMem, "Int", 0, "Int", 0, "UInt", 0x00CC0020)
+        DllCall("SelectObject", "Ptr", hdcMem, "Ptr", obm)
+        DllCall("DeleteObject", "Ptr", hbm)
+        DllCall("DeleteDC", "Ptr", hdcMem)
         DllCall("EndPaint", "Ptr", hwnd, "Ptr", ps)
         return 0
     }
 
     res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
-    if (uMsg == 0x0007 || uMsg == 0x0008 || uMsg == 0x000A || uMsg == 0x0100 || uMsg == 0x0101 || uMsg == 0x0104 || uMsg == 0x0105 || uMsg == 0x0401)
-        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 1)
+    if (uMsg == 0x0007 || uMsg == 0x0008 || uMsg == 0x000A || uMsg == 0x00F4) ; focus / enable / BM_SETSTYLE
+        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 0)
     return res
 }
 
-TabDarkSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+HotkeyFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     if (uMsg == 0x0082) { ; WM_NCDESTROY
         DllCall("comctl32\RemoveWindowSubclass", "Ptr", hwnd, "Ptr", uIdSubclass, "Ptr", dwRefData)
         return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
@@ -428,64 +554,148 @@ TabDarkSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc)
         w := NumGet(rc, 8, "Int"), h := NumGet(rc, 12, "Int")
 
-        hBrBg := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_BG_BGR, "Ptr")
-        DllCall("FillRect", "Ptr", hdc, "Ptr", rc, "Ptr", hBrBg)
+        hdcMem := DllCall("CreateCompatibleDC", "Ptr", hdc, "Ptr")
+        hbm := DllCall("CreateCompatibleBitmap", "Ptr", hdc, "Int", Max(1, w), "Int", Max(1, h), "Ptr")
+        obm := DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hbm, "Ptr")
+
+        ctrl := GuiCtrlFromHwnd(hwnd)
+        parentDark := (IsObject(ctrl) && IsObject(ctrl.Gui) && ctrl.Gui.HasOwnProp("_isDark")) ? ctrl.Gui._isDark : Theme.IsDarkMode()
+        isEnabled := DllCall("IsWindowEnabled", "Ptr", hwnd)
+        hasFocus := (DllCall("GetFocus", "Ptr") == hwnd)
+
+        parentBgBgr := parentDark ? UIConstants.DARK_BG_BGR : UIConstants.LIGHT_BG_BGR
+        hBrParent := DllCall("CreateSolidBrush", "UInt", parentBgBgr, "Ptr")
+        DllCall("FillRect", "Ptr", hdcMem, "Ptr", rc, "Ptr", hBrParent)
+        DllCall("DeleteObject", "Ptr", hBrParent)
+
+        if (parentDark) {
+            fillArgb := isEnabled ? 0xFF2D2D2D : 0xFF242424
+            strokeArgb := hasFocus ? 0xFF505050 : (isEnabled ? 0xFF3D3D3D : 0xFF303030)
+            accArgb := hasFocus ? 0xFF60CDFF : (isEnabled ? 0xFF686868 : 0)
+            txtArgb := isEnabled ? 0xFFFFFFFF : 0xFF787878
+        } else {
+            fillArgb := isEnabled ? 0xFFFBFBFB : 0xFFF0F0F0
+            strokeArgb := hasFocus ? 0xFFD0D0D0 : (isEnabled ? 0xFFE0E0E0 : 0xFFE8E8E8)
+            accArgb := hasFocus ? 0xFF0067C0 : (isEnabled ? 0xFF8A8A8A : 0)
+            txtArgb := isEnabled ? 0xFF1A1A1A : 0xFF9E9E9E
+        }
+
+        dispTxt := IsObject(ctrl) ? FormatHkDisplayText(ctrl.Value) : "None"
+        pGraphics := 0
+        DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcMem, "Ptr*", &pGraphics)
+        if (pGraphics) {
+            DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 4)
+            DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGraphics, "Int", 4)
+            DrawFluentRoundedBox(pGraphics, 0, 0, w, h, UIConstants.FLUENT_CORNER_RADIUS, fillArgb, strokeArgb, accArgb)
+            Gdip.DrawText(pGraphics, dispTxt, Theme.UiFont, 9.5, 0, txtArgb, 8, 0, w - 16, h - 2, 0, 1)
+            DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
+        }
+
+        DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", w, "Int", h, "Ptr", hdcMem, "Int", 0, "Int", 0, "UInt", 0x00CC0020)
+        DllCall("SelectObject", "Ptr", hdcMem, "Ptr", obm)
+        DllCall("DeleteObject", "Ptr", hbm)
+        DllCall("DeleteDC", "Ptr", hdcMem)
+        DllCall("EndPaint", "Ptr", hwnd, "Ptr", ps)
+        return 0
+    }
+
+    res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+    if (uMsg == 0x0007 || uMsg == 0x0008 || uMsg == 0x000A || uMsg == 0x0100 || uMsg == 0x0101 || uMsg == 0x0104 || uMsg == 0x0105 || uMsg == 0x0401)
+        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 1)
+    return res
+}
+
+TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+    if (uMsg == 0x0082) { ; WM_NCDESTROY
+        DllCall("comctl32\RemoveWindowSubclass", "Ptr", hwnd, "Ptr", uIdSubclass, "Ptr", dwRefData)
+        return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+    }
+    if (uMsg == 0x0014) ; WM_ERASEBKGND
+        return 1
+
+    if (uMsg == 0x000F) { ; WM_PAINT
+        ps := Buffer(72, 0)
+        hdc := DllCall("BeginPaint", "Ptr", hwnd, "Ptr", ps, "Ptr")
+        rc := Buffer(16, 0)
+        DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc)
+        w := NumGet(rc, 8, "Int"), h := NumGet(rc, 12, "Int")
+
+        hdcMem := DllCall("CreateCompatibleDC", "Ptr", hdc, "Ptr")
+        hbm := DllCall("CreateCompatibleBitmap", "Ptr", hdc, "Int", Max(1, w), "Int", Max(1, h), "Ptr")
+        obm := DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hbm, "Ptr")
+
+        ctrl := GuiCtrlFromHwnd(hwnd)
+        parentDark := (IsObject(ctrl) && IsObject(ctrl.Gui) && ctrl.Gui.HasOwnProp("_isDark")) ? ctrl.Gui._isDark : Theme.IsDarkMode()
+        bgBgr := parentDark ? UIConstants.DARK_BG_BGR : UIConstants.LIGHT_BG_BGR
+
+        hBrBg := DllCall("CreateSolidBrush", "UInt", bgBgr, "Ptr")
+        DllCall("FillRect", "Ptr", hdcMem, "Ptr", rc, "Ptr", hBrBg)
         DllCall("DeleteObject", "Ptr", hBrBg)
 
         tabCount := SendMessage(0x1304, 0, 0, hwnd)
         curSel := SendMessage(0x130B, 0, 0, hwnd)
 
         itemRc := Buffer(16, 0)
-        panelTop := 28
+        panelTop := 30
         if (tabCount > 0) {
             SendMessage(0x130A, 0, itemRc.Ptr, hwnd)
-            panelTop := NumGet(itemRc, 12, "Int")
+            panelTop := NumGet(itemRc, 12, "Int") + 2
         }
 
-        bodyRc := Buffer(16, 0)
-        NumPut("Int", 0, bodyRc, 0), NumPut("Int", panelTop, bodyRc, 4), NumPut("Int", w, bodyRc, 8), NumPut("Int", h, bodyRc, 12)
-        hBrBody := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_SURFACE_BGR, "Ptr")
-        DllCall("FillRect", "Ptr", hdc, "Ptr", bodyRc, "Ptr", hBrBody)
-        DllCall("DeleteObject", "Ptr", hBrBody)
+        cardFill := parentDark ? 0xFF2C2C2C : 0xFFFFFFFF
+        cardStroke := parentDark ? 0xFF3D3D3D : 0xFFE5E5E5
+        tabActiveFill := parentDark ? 0xFF2C2C2C : 0xFFFFFFFF
+        tabActiveStroke := parentDark ? 0xFF3D3D3D : 0xFFE0E0E0
+        accPillArgb := parentDark ? 0xFF60CDFF : 0xFF0067C0
+        txtActiveArgb := parentDark ? 0xFFFFFFFF : 0xFF1A1A1A
+        txtMutedArgb := parentDark ? 0xFFC5C5C5 : 0xFF5C5C5C
 
-        hBrBorder := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_BORDER_SUBTLE_BGR, "Ptr")
-        DllCall("FrameRect", "Ptr", hdc, "Ptr", bodyRc, "Ptr", hBrBorder)
+        pGraphics := 0
+        DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcMem, "Ptr*", &pGraphics)
+        if (pGraphics) {
+            DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 4)
+            DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGraphics, "Int", 4)
 
-        hFont := SendMessage(0x0031, 0, 0, hwnd)
-        oldFont := hFont ? DllCall("SelectObject", "Ptr", hdc, "Ptr", hFont, "Ptr") : 0
-        DllCall("SetBkMode", "Ptr", hdc, "Int", 1)
+            ; Draw Windows 11 Explorer rounded card body
+            DrawFluentRoundedBox(pGraphics, 0, panelTop, w, h - panelTop, UIConstants.FLUENT_CARD_RADIUS, cardFill, cardStroke)
 
-        ctrl := GuiCtrlFromHwnd(hwnd)
-        tabNames := (IsObject(ctrl) && ctrl.HasOwnProp("_tabNames")) ? ctrl._tabNames : []
+            tabNames := (IsObject(ctrl) && ctrl.HasOwnProp("_tabNames")) ? ctrl._tabNames : []
+            Loop tabCount {
+                idx := A_Index - 1
+                SendMessage(0x130A, idx, itemRc.Ptr, hwnd)
+                tx := NumGet(itemRc, 0, "Int") + 1
+                ty := NumGet(itemRc, 4, "Int") + 1
+                tw := (NumGet(itemRc, 8, "Int") - NumGet(itemRc, 0, "Int")) - 2
+                th := (NumGet(itemRc, 12, "Int") - NumGet(itemRc, 4, "Int")) - 2
+                isSel := (idx == curSel)
 
-        Loop tabCount {
-            idx := A_Index - 1
-            SendMessage(0x130A, idx, itemRc.Ptr, hwnd)
-            isSel := (idx == curSel)
-            hBrTab := DllCall("CreateSolidBrush", "UInt", isSel ? UIConstants.DARK_TAB_ACTIVE_BGR : UIConstants.DARK_TAB_INACTIVE_BGR, "Ptr")
-            DllCall("FillRect", "Ptr", hdc, "Ptr", itemRc, "Ptr", hBrTab)
-            DllCall("DeleteObject", "Ptr", hBrTab)
-            DllCall("FrameRect", "Ptr", hdc, "Ptr", itemRc, "Ptr", hBrBorder)
+                if (isSel) {
+                    DrawFluentRoundedBox(pGraphics, tx, ty, tw, th, UIConstants.FLUENT_CORNER_RADIUS, tabActiveFill, tabActiveStroke)
+                    pillW := Max(16, Round(tw * 0.42))
+                    pillX := tx + Round((tw - pillW) / 2)
+                    pPill := Gdip.CreateRoundedRectPath(pillX, ty + th - 3.0, pillW, 3.0, 1.5)
+                    if (pPill) {
+                        pPillBr := 0
+                        DllCall("gdiplus\GdipCreateSolidFill", "UInt", accPillArgb, "Ptr*", &pPillBr)
+                        if (pPillBr) {
+                            DllCall("gdiplus\GdipFillPath", "Ptr", pGraphics, "Ptr", pPillBr, "Ptr", pPill)
+                            DllCall("gdiplus\GdipDeleteBrush", "Ptr", pPillBr)
+                        }
+                        DllCall("gdiplus\GdipDeletePath", "Ptr", pPill)
+                    }
+                }
 
-            if (isSel) {
-                accRc := Buffer(16, 0)
-                NumPut("Int", NumGet(itemRc, 0, "Int") + 1, accRc, 0)
-                NumPut("Int", NumGet(itemRc, 12, "Int") - 2, accRc, 4)
-                NumPut("Int", NumGet(itemRc, 8, "Int") - 1, accRc, 8)
-                NumPut("Int", NumGet(itemRc, 12, "Int"), accRc, 12)
-                hBrAcc := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_ACCENT_BGR, "Ptr")
-                DllCall("FillRect", "Ptr", hdc, "Ptr", accRc, "Ptr", hBrAcc)
-                DllCall("DeleteObject", "Ptr", hBrAcc)
+                lbl := (idx + 1 <= tabNames.Length) ? tabNames[idx + 1] : ("Tab " (idx + 1))
+                Gdip.DrawText(pGraphics, lbl, Theme.UiFont, 9.0, isSel ? 1 : 0, isSel ? txtActiveArgb : txtMutedArgb, tx + 2, ty, tw - 4, th, 1, 1)
             }
 
-            lbl := (idx + 1 <= tabNames.Length) ? tabNames[idx + 1] : ("Tab " (idx + 1))
-            DllCall("SetTextColor", "Ptr", hdc, "UInt", isSel ? UIConstants.DARK_TEXT_BGR : UIConstants.DARK_TEXT_MUTED_BGR)
-            DllCall("DrawTextW", "Ptr", hdc, "WStr", lbl, "Int", -1, "Ptr", itemRc, "UInt", 0x25)
+            DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
         }
 
-        DllCall("DeleteObject", "Ptr", hBrBorder)
-        if (oldFont)
-            DllCall("SelectObject", "Ptr", hdc, "Ptr", oldFont, "Ptr")
+        DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", w, "Int", h, "Ptr", hdcMem, "Int", 0, "Int", 0, "UInt", 0x00CC0020)
+        DllCall("SelectObject", "Ptr", hdcMem, "Ptr", obm)
+        DllCall("DeleteObject", "Ptr", hbm)
+        DllCall("DeleteDC", "Ptr", hdcMem)
         DllCall("EndPaint", "Ptr", hwnd, "Ptr", ps)
         return 0
     }
@@ -496,7 +706,7 @@ TabDarkSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     return res
 }
 
-StaticDarkSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+StaticFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     if (uMsg == 0x0082) { ; WM_NCDESTROY
         DllCall("comctl32\RemoveWindowSubclass", "Ptr", hwnd, "Ptr", uIdSubclass, "Ptr", dwRefData)
         return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
@@ -506,15 +716,16 @@ StaticDarkSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         hdc := DllCall("BeginPaint", "Ptr", hwnd, "Ptr", ps, "Ptr")
         rc := Buffer(16, 0)
         DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc)
-        hBrBg := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_BG_BGR, "Ptr")
+        ctrl := GuiCtrlFromHwnd(hwnd)
+        parentDark := (IsObject(ctrl) && IsObject(ctrl.Gui) && ctrl.Gui.HasOwnProp("_isDark")) ? ctrl.Gui._isDark : Theme.IsDarkMode()
+        hBrBg := DllCall("CreateSolidBrush", "UInt", parentDark ? UIConstants.DARK_BG_BGR : UIConstants.LIGHT_BG_BGR, "Ptr")
         DllCall("FillRect", "Ptr", hdc, "Ptr", rc, "Ptr", hBrBg)
         DllCall("DeleteObject", "Ptr", hBrBg)
-        ctrl := GuiCtrlFromHwnd(hwnd)
         txt := IsObject(ctrl) ? ctrl.Text : ""
         hFont := SendMessage(0x0031, 0, 0, hwnd)
         oldFont := hFont ? DllCall("SelectObject", "Ptr", hdc, "Ptr", hFont, "Ptr") : 0
         DllCall("SetBkMode", "Ptr", hdc, "Int", 1)
-        DllCall("SetTextColor", "Ptr", hdc, "UInt", UIConstants.DARK_TEXT_DISABLED_BGR)
+        DllCall("SetTextColor", "Ptr", hdc, "UInt", parentDark ? UIConstants.DARK_TEXT_DISABLED_BGR : UIConstants.LIGHT_TEXT_DISABLED_BGR)
         DllCall("DrawTextW", "Ptr", hdc, "WStr", txt, "Int", -1, "Ptr", rc, "UInt", 0x00)
         if (oldFont)
             DllCall("SelectObject", "Ptr", hdc, "Ptr", oldFont, "Ptr")
@@ -1171,9 +1382,9 @@ ShowHelpWindow(cfg, state := "", *) {
     btnAppHk := helpGui.Add("Button", "x25 y280 w145 h28", "Edit App Shortcuts")
     btnObsHk := helpGui.Add("Button", "x180 y280 w145 h28", "Edit OBS Settings")
     btnZoomHk := helpGui.Add("Button", "x335 y280 w145 h28", "Edit Zoom Shortcuts")
-    Theme.RegisterControl(helpGui, btnAppHk, "Button")
-    Theme.RegisterControl(helpGui, btnObsHk, "Button")
-    Theme.RegisterControl(helpGui, btnZoomHk, "Button")
+    Theme.RegisterControl(helpGui, btnAppHk, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnObsHk, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnZoomHk, "Button", "tabButton")
     btnAppHk.OnEvent("Click", (*) => ChangeAppHotkeysUI(cfg))
     btnObsHk.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
     btnZoomHk.OnEvent("Click", (*) => ChangeZoomShortcutsUI(cfg))
@@ -1194,9 +1405,9 @@ ShowHelpWindow(cfg, state := "", *) {
     btnTester := helpGui.Add("Button", "x25 y280 w145 h28", "Launch Clicker Tester")
     btnHwMute := helpGui.Add("Button", "x180 y280 w145 h28", "Change Mute Button")
     btnIntercepts := helpGui.Add("Button", "x335 y280 w145 h28", "Configure Intercepts")
-    Theme.RegisterControl(helpGui, btnTester, "Button")
-    Theme.RegisterControl(helpGui, btnHwMute, "Button")
-    Theme.RegisterControl(helpGui, btnIntercepts, "Button")
+    Theme.RegisterControl(helpGui, btnTester, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnHwMute, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnIntercepts, "Button", "tabButton")
     btnTester.OnEvent("Click", (*) => ShowPointerTester())
     btnHwMute.OnEvent("Click", (*) => ChangeHwMuteHotkeyUI(cfg))
     btnIntercepts.OnEvent("Click", (*) => ConfigurePointerKeysUI(cfg))
@@ -1217,9 +1428,9 @@ ShowHelpWindow(cfg, state := "", *) {
     btnWizard := helpGui.Add("Button", "x25 y280 w145 h28", "Audio Setup Wizard")
     btnObsCfg := helpGui.Add("Button", "x180 y280 w145 h28", "OBS Settings")
     btnZoomCfg := helpGui.Add("Button", "x335 y280 w145 h28", "Zoom Shortcuts")
-    Theme.RegisterControl(helpGui, btnWizard, "Button")
-    Theme.RegisterControl(helpGui, btnObsCfg, "Button")
-    Theme.RegisterControl(helpGui, btnZoomCfg, "Button")
+    Theme.RegisterControl(helpGui, btnWizard, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnObsCfg, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnZoomCfg, "Button", "tabButton")
     btnWizard.OnEvent("Click", (*) => PromptForSetup(cfg))
     btnObsCfg.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
     btnZoomCfg.OnEvent("Click", (*) => ChangeZoomShortcutsUI(cfg))
@@ -1243,10 +1454,10 @@ ShowHelpWindow(cfg, state := "", *) {
     btnTogText := helpGui.Add("Button", "x265 y250 w215 h26", "Toggle HUD Text Labels")
     btnCycTheme := helpGui.Add("Button", "x25 y284 w215 h26", "Cycle Theme (System/Dark/Light)")
     btnResetPos := helpGui.Add("Button", "x265 y284 w215 h26", "Reset HUD Position")
-    Theme.RegisterControl(helpGui, btnTogExtra, "Button")
-    Theme.RegisterControl(helpGui, btnTogText, "Button")
-    Theme.RegisterControl(helpGui, btnCycTheme, "Button")
-    Theme.RegisterControl(helpGui, btnResetPos, "Button")
+    Theme.RegisterControl(helpGui, btnTogExtra, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnTogText, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnCycTheme, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnResetPos, "Button", "tabButton")
 
     ; --- TAB 5: LIVE STATUS ---
     tabs.UseTab(5)
@@ -1301,9 +1512,9 @@ ShowHelpWindow(cfg, state := "", *) {
     btnRefreshStatus := helpGui.Add("Button", "x25 y280 w145 h28", "Refresh Status")
     btnResetApp := helpGui.Add("Button", "x180 y280 w145 h28", "Reset Appearance")
     btnOpenAbout := helpGui.Add("Button", "x335 y280 w145 h28", "About v" UIConstants.APP_VERSION)
-    Theme.RegisterControl(helpGui, btnRefreshStatus, "Button")
-    Theme.RegisterControl(helpGui, btnResetApp, "Button")
-    Theme.RegisterControl(helpGui, btnOpenAbout, "Button")
+    Theme.RegisterControl(helpGui, btnRefreshStatus, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnResetApp, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnOpenAbout, "Button", "tabButton")
     btnRefreshStatus.OnEvent("Click", RefreshHelpStatus)
     btnResetApp.OnEvent("Click", OnHelpResetAppearance)
     btnOpenAbout.OnEvent("Click", (*) => ShowAboutWindow(cfg, state))
@@ -1335,7 +1546,7 @@ ShowAboutWindow(cfg := "", state := "", *) {
         aboutGui.Add("Picture", "x153 y15 w64 h64", iconSource)
     }
 
-    aboutGui.SetFont("s16 w700", "Segoe UI")
+    aboutGui.SetFont("s16 w700", Theme.UiFont)
     Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w350 Center y+12", "PresenterSync"), "Text")
 
     aboutGui.SetFont("s10 w700")
@@ -1516,7 +1727,7 @@ ShowPointerTester(*) {
     testerGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Pointer Tester")
     Theme.ApplyToWindow(testerGui)
 
-    testerGui.SetFont("s10", "Segoe UI")
+    testerGui.SetFont("s10", Theme.UiFont)
     Theme.RegisterControl(testerGui, testerGui.Add("Text", "w250 Center", "Press any button on your clicker."), "Text")
 
     keyDisplay := testerGui.Add("Text", "w250 Center y+15", "Listening...")
