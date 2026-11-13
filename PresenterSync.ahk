@@ -608,10 +608,6 @@ if (AppConfig.HwMuteHotkey != "") {
 HotIf
 
 ; --- MUTE CONTROL ---
-FormatPassthroughHook(hk) {
-    return "~$" RegExReplace(hk, "^[~*$]+")
-}
-
 RegisterPassthroughHooks(cfg, state) {
     if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
         try Hotkey(FormatPassthroughHook(cfg.ObsMuteHotkey), LaptopKeyboardMute.Bind(cfg, state))
@@ -683,6 +679,12 @@ LaptopKeyboardMute(cfg, state, ThisHotkey) {
 }
 
 TriggerMute(cfg, state) {
+    static lastTick := 0
+    now := A_TickCount
+    if (now - lastTick < 150) ; 150ms hardware debounce shield
+        return false
+    lastTick := now
+
     if !(cfg.EnablePPT || cfg.EnableMicOnly) {
         return
     }

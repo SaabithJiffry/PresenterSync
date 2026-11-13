@@ -1,0 +1,100 @@
+=== PRESENTER SYNC MASTER TEST REPORT (v2.1.0) ===
+Total Tests Executed: 44
+Passed: 44
+Failed: 0
+Pass Rate: 100.0%
+
+[PASS] FormatSendKey single letter
+[PASS] FormatSendKey alt letter
+[PASS] FormatSendKey function key
+[PASS] FormatPassthroughHook standard
+[PASS] FormatPassthroughHook cleanup
+[PASS] Config instantiated
+[PASS] Mode 1 saved & retrieved
+[PASS] Mode 2 saved & retrieved
+[PASS] Mode 3 saved & retrieved
+[PASS] OBS v5 SHA256 authentication computation
+[PASS] Identify payload queued
+[PASS] Initial state queries dispatched (4 requests)
+[PASS] Event InputMuteStateChanged sets isMuted: true
+[PASS] Event RecordStateChanged started sets recState: 1
+[PASS] Event RecordStateChanged paused sets recState: 2
+[PASS] Event RecordStateChanged stopped sets recState: 0
+[PASS] Event StudioModeStateChanged sets studioModeActive: true
+[PASS] Event CurrentProgramSceneChanged sets sceneName: Camera Wide
+[PASS] Zoom regex: detects Mute
+[PASS] Zoom regex: detects Unmute
+[PASS] Zoom regex: ignores 'Mute all participants'
+[PASS] Zoom chat counter extraction 1
+[PASS] Zoom chat counter extraction 2
+[PASS] Tier 1 Mic Pill GDI+ Render
+[PASS] Tier 2 Rec Pill GDI+ Render
+[PASS] Tier 2 Chat Pill GDI+ Render
+[PASS] Tier 3 Studio Pill GDI+ Render
+[PASS] Tier 3 Scene Pill GDI+ Render
+[PASS] HUD Layout computation at scale 0.5x
+[PASS] HUD Layout computation at scale 1.0x
+[PASS] HUD Layout computation at scale 2.5x
+[PASS] HUD Layout computation at scale 5.0x
+[PASS] Remote candidate count == 3
+[PASS] Remote candidate 1 is mDNS
+[PASS] Remote candidate 2 is IPv4
+[PASS] Remote candidate 3 custom port
+[PASS] Remote debounce: initial press accepted
+[PASS] Remote debounce: 10ms switch bounce blocked
+[PASS] Remote debounce: 40ms switch bounce blocked
+[PASS] Remote debounce: 200ms press accepted
+[PASS] Remote debounce: exactly 2 dispatches sent
+[PASS] GetLocalNetworkEndpoints returns ips array
+[PASS] GetLocalNetworkEndpoints returns details array
+[PASS] Local ComputerName resolved
+=== PRESENTER SYNC MASTER TEST REPORT (v2.1.0) ===
+Total Tests Executed: 44
+Passed: 44
+Failed: 0
+Pass Rate: 100.0%
+
+[PASS] FormatSendKey single letter
+[PASS] FormatSendKey alt letter
+[PASS] FormatSendKey function key
+[PASS] FormatPassthroughHook standard
+[PASS] FormatPassthroughHook cleanup
+[PASS] Config instantiated
+[PASS] Mode 1 saved & retrieved
+[PASS] Mode 2 saved & retrieved
+[PASS] Mode 3 saved & retrieved
+[PASS] OBS v5 SHA256 authentication computation
+[PASS] Identify payload queued
+[PASS] Initial state queries dispatched (4 requests)
+[PASS] Event InputMuteStateChanged sets isMuted: true
+[PASS] Event RecordStateChanged started sets recState: 1
+[PASS] Event RecordStateChanged paused sets recState: 2
+[PASS] Event RecordStateChanged stopped sets recState: 0
+[PASS] Event StudioModeStateChanged sets studioModeActive: true
+[PASS] Event CurrentProgramSceneChanged sets sceneName: Camera Wide
+[PASS] Zoom regex: detects Mute
+[PASS] Zoom regex: detects Unmute
+[PASS] Zoom regex: ignores 'Mute all participants'
+[PASS] Zoom chat counter extraction 1
+[PASS] Zoom chat counter extraction 2
+[PASS] Tier 1 Mic Pill GDI+ Render
+[PASS] Tier 2 Rec Pill GDI+ Render
+[PASS] Tier 2 Chat Pill GDI+ Render
+[PASS] Tier 3 Studio Pill GDI+ Render
+[PASS] Tier 3 Scene Pill GDI+ Render
+[PASS] HUD Layout computation at scale 0.5x
+[PASS] HUD Layout computation at scale 1.0x
+[PASS] HUD Layout computation at scale 2.5x
+[PASS] HUD Layout computation at scale 5.0x
+[PASS] Remote candidate count == 3
+[PASS] Remote candidate 1 is mDNS
+[PASS] Remote candidate 2 is IPv4
+[PASS] Remote candidate 3 custom port
+[PASS] Remote debounce: initial press accepted
+[PASS] Remote debounce: 10ms switch bounce blocked
+[PASS] Remote debounce: 40ms switch bounce blocked
+[PASS] Remote debounce: 200ms press accepted
+[PASS] Remote debounce: exactly 2 dispatches sent
+[PASS] GetLocalNetworkEndpoints returns ips array
+[PASS] GetLocalNetworkEndpoints returns details array
+[PASS] Local ComputerName resolved

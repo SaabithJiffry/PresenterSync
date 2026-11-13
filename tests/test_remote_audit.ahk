@@ -36,31 +36,6 @@ Assert("GetLocalNetworkEndpoints detected at least 1 IP", endpoints.ips.Length >
 Assert("mDNS Hostname resolved", A_ComputerName != "", "Host: " A_ComputerName ".local")
 
 ; --- TEST 2: Candidate Parsing ---
-ParseCandidateEndpoints(rawStr, defaultPort := "4455") {
-    endpoints := []
-    seen := Map()
-    for item in StrSplit(rawStr, [",", ";"]) {
-        clean := Trim(item)
-        if (clean = "")
-            continue
-        clean := RegExReplace(clean, "^wss?://", "")
-        host := clean
-        port := defaultPort
-        if RegExMatch(clean, "^(.*?):(\d+)$", &m) {
-            host := m[1]
-            port := m[2]
-        }
-        key := host ":" port
-        if (!seen.Has(key)) {
-            seen[key] := true
-            endpoints.Push({host: host, port: port, raw: key})
-        }
-    }
-    if (endpoints.Length == 0)
-        endpoints.Push({host: "127.0.0.1", port: defaultPort, raw: "127.0.0.1:" defaultPort})
-    return endpoints
-}
-
 candidates1 := ParseCandidateEndpoints("STUDIO-PC.local, 192.168.1.50, 192.168.1.120:4456")
 Assert("Multi-candidate parsing count", candidates1.Length == 3, "Parsed " candidates1.Length " items")
 Assert("Candidate 1 hostname", candidates1[1].host == "STUDIO-PC.local" && candidates1[1].port == "4455")

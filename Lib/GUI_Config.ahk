@@ -1910,20 +1910,66 @@ ChangeObsSettingsUI(cfg, *) {
 }
 
 ChangeHwMuteHotkeyUI(cfg, *) {
-    SaveHwMuteHk(values, ctrls, dlg) {
-        cfg.Write("Settings", "HwMuteHotkey", values["hwMute"])
-        Reload()
+    existing := Theme.FocusExistingWindow("Edit Pointer Mute Button")
+    if IsObject(existing)
+        return existing
+
+    Theme.AcquireSuspend()
+
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit Pointer Mute Button")
+    dlg._closed := false
+    Theme.ApplyToWindow(dlg)
+    Theme.NamedWindows["Edit Pointer Mute Button"] := dlg
+
+    dlg.SetFont("s10 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w280", "Presentation Clicker Mute Button"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w280 y+4", "Press the desired button on your clicker/pointer, or type a custom key name:"), "Text", "muted")
+
+    editKey := dlg.Add("Edit", "w280 y+12 Center", cfg.HwMuteHotkey)
+    editKey.SetFont("s12 w700", Theme.UiFont)
+    Theme.RegisterControl(dlg, editKey, "Edit", "accent")
+
+    statusTxt := dlg.Add("Text", "w280 y+6 Center", "Listening for clicker input...")
+    Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
+
+    btnSave := dlg.Add("Button", "w280 h32 y+12 Default", "Save & Restart")
+    Theme.RegisterControl(dlg, btnSave, "Button", "accent")
+
+    ih := InputHook("L0 V")
+    ih.KeyOpt("{All}", "N")
+    ih.OnKeyDown := (ihHook, VK, SC) => (
+        keyName := GetKeyName(Format("vk{:X}sc{:X}", VK, SC)),
+        editKey.Value := keyName,
+        statusTxt.Value := "Captured: " keyName
+    )
+    ih.Start()
+
+    Cleanup(*) {
+        if (dlg._closed)
+            return
+        dlg._closed := true
+        ih.Stop()
+        Theme.UnregisterWindow(dlg, "Edit Pointer Mute Button")
+        Theme.ReleaseSuspend()
+        dlg.Destroy()
     }
 
-    elements := [
-        {type: "Text", opts: "w260", text: "Focus the box below and press the button on your presentation clicker:"},
-        {type: "Hotkey", id: "hwMute", opts: "w260", value: cfg.HwMuteHotkey, required: true, errorMsg: "Please press a button to register it."}
-    ]
+    btnSave.OnEvent("Click", (*) => (
+        val := Trim(editKey.Value),
+        (val != "" ? (
+            cfg.HwMuteHotkey := val,
+            cfg.Write("Settings", "HwMuteHotkey", val),
+            Cleanup(),
+            Reload()
+        ) : MsgBox("Please press a button to register it.", "Error", "Icon!"))
+    ))
 
-    return BuildSettingsWindow("Edit Pointer Mute Button", elements, SaveHwMuteHk, {
-        saveBtnText: "Save & Restart",
-        saveBtnOpts: "w260 h32 Default y+15"
-    })
+    dlg.OnEvent("Close", Cleanup)
+    dlg.OnEvent("Escape", Cleanup)
+
+    dlg.Show("AutoSize Center")
+    return dlg
 }
 
 ConfigurePointerKeysUI(cfg, *) {
@@ -2044,6 +2090,31 @@ GetLocalNetworkEndpoints() {
         }
     }
     return res
+}
+
+ParseCandidateEndpoints(rawStr, defaultPort := "4455") {
+    endpoints := []
+    seen := Map()
+    for item in StrSplit(rawStr, [",", ";"]) {
+        clean := Trim(item)
+        if (clean = "")
+            continue
+        clean := RegExReplace(clean, "^wss?://", "")
+        host := clean
+        port := defaultPort
+        if RegExMatch(clean, "^(.*?):(\d+)$", &m) {
+            host := m[1]
+            port := m[2]
+        }
+        key := host ":" port
+        if (!seen.Has(key)) {
+            seen[key] := true
+            endpoints.Push({host: host, port: port, raw: key})
+        }
+    }
+    if (endpoints.Length == 0)
+        endpoints.Push({host: "127.0.0.1", port: defaultPort, raw: "127.0.0.1:" defaultPort})
+    return endpoints
 }
 
 ShowRemoteCompanionInfo(cfg, *) {
