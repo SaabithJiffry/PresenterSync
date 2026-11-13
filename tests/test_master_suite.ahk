@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.2.2
-;              and PresenterSync Remote v2.2.2 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.2.3
+;              and PresenterSync Remote v2.2.3 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -225,13 +225,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.2.2", UIConstants.APP_VERSION == "2.2.2")
+Assert("APP_VERSION updated to 2.2.3", UIConstants.APP_VERSION == "2.2.3")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.2.2 and Remote Host",
-    InStr(summaryTxt, "v2.2.2") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.2.3 and Remote Host",
+    InStr(summaryTxt, "v2.2.3") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -282,6 +282,9 @@ Assert("OverlayState.ComputeDimensions reserves extra HUD headroom when ShowExtr
 
 Assert("PromptForPassword accepts optional promptText", PromptForPassword.MinParams == 0 && PromptForPassword.MaxParams == 1)
 
+Assert("Primary and Remote icon files exist",
+    FileExist(A_ScriptDir "\..\PresenterSync.ico") && FileExist(A_ScriptDir "\..\PresenterSyncRemote.ico"))
+
 if FileExist(dimIni)
     FileDelete(dimIni)
 
@@ -292,7 +295,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.2) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.3) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

@@ -3,13 +3,17 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.2.2
+; Version: 2.2.3
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
+;@Ahk2Exe-SetProductName PresenterSync Remote
+;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
+;@Ahk2Exe-SetVersion 2.2.3.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -20,8 +24,8 @@ ProcessSetPriority "High"
 Gdip.Startup()
 OnExit((*) => (Theme.Shutdown(), Gdip.Shutdown()))
 
-if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSync.ico"))
-    try TraySetIcon(A_ScriptDir "\PresenterSync.ico")
+if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSyncRemote.ico"))
+    try TraySetIcon(A_ScriptDir "\PresenterSyncRemote.ico")
 A_IconTip := "PresenterSync Remote v" UIConstants.APP_VERSION
 
 ; === CONFIGURATION & STATE ===
@@ -864,7 +868,7 @@ ShowRemoteAboutUI(*) {
     Theme.ApplyToWindow(aboutGui)
     Theme.NamedWindows["AboutRemoteWindow"] := aboutGui
 
-    iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSync.ico"
+    iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSyncRemote.ico"
     if FileExist(iconSource)
         aboutGui.Add("Picture", "x158 y15 w64 h64", iconSource)
 

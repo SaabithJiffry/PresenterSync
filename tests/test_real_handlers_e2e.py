@@ -1,5 +1,5 @@
 """
-End-to-End Live WebSocket Integration Test for PresenterSync v2.2.2
+End-to-End Live WebSocket Integration Test for PresenterSync v2.2.3
 Tests the real production handlers from Lib/OBS_Network.ahk, PresenterSync.ahk,
 and PresenterSync_Remote.ahk over live localhost RFC 6455 WebSocket v5 servers.
 """
