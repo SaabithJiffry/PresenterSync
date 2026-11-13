@@ -602,7 +602,7 @@ CheckPointerEnable(cfg, ThisHotkey) {
 }
 
 HotIf CheckPointerEnable.Bind(AppConfig)
-if (AppConfig.HwMuteHotkey != "") {
+if (AppConfig.HwMuteHotkey != "" && AppConfig.HwMuteHotkey != "None") {
     try Hotkey(AppConfig.HwMuteHotkey, (*) => TriggerMute(AppConfig, AppState), "On")
 }
 HotIf

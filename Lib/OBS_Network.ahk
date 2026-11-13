@@ -12,7 +12,18 @@ FormatSendKey(hk) {
         key := (StrLen(m[2]) == 1) ? StrLower(m[2]) : m[2]
         return m[1] "{" key "}"
     }
+    if RegExMatch(hk, "^(.*?)([{}^!+#])$", &m)
+        return m[1] "{" m[2] "}"
     return hk
+}
+
+EscapeJsonStr(str) {
+    s := StrReplace(String(str), "\", "\\")
+    s := StrReplace(s, '"', '\"')
+    s := StrReplace(s, "`r", "\r")
+    s := StrReplace(s, "`n", "\n")
+    s := StrReplace(s, "`t", "\t")
+    return s
 }
 
 FormatPassthroughHook(hk) {
@@ -51,10 +62,14 @@ HandleObsClose(cfg, state, ws, status, reason) {
         return
 
     if (!state.obsConnected) {
-        cfg.obsPassword := ""
-        cfg.Write("Settings", "ObsPassword", "")
-        MsgBox("PresenterSync detected an incorrect OBS password.`n`nPlease re-enter your OBS WebSocket details.", "Authentication Failed", "Icon!")
-        Reload()
+        if (status == 4009) {
+            cfg.obsPassword := ""
+            cfg.Write("Settings", "ObsPassword", "")
+            MsgBox("PresenterSync detected an incorrect OBS password.`n`nPlease re-enter your OBS WebSocket details.", "Authentication Failed", "Icon!")
+            Reload()
+            return
+        }
+        SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
         return
     }
 
@@ -92,7 +107,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
     else if (opCode == 2) {
         SetTimer state.obsTimerFn, 0
         state.obsConnected := true
-        stateJson := '{"op":6,"d":{"requestType":"GetInputMute","requestId":"InitState","requestData":{"inputName":"' cfg.targetMicName '"}}}'
+        escMic := EscapeJsonStr(cfg.targetMicName)
+        stateJson := '{"op":6,"d":{"requestType":"GetInputMute","requestId":"InitState","requestData":{"inputName":"' escMic '"}}}'
         ws.sendText(stateJson)
         recJson := '{"op":6,"d":{"requestType":"GetRecordStatus","requestId":"InitRecState"}}'
         ws.sendText(recJson)
@@ -105,7 +121,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
     }
     else if (opCode == 5) {
         if (InStr(msg, '"eventType":"InputMuteStateChanged"') || InStr(msg, '"eventType": "InputMuteStateChanged"')) {
-            if (InStr(msg, '"inputName":"' cfg.targetMicName '"') || InStr(msg, '"inputName": "' cfg.targetMicName '"')) {
+            escMic := EscapeJsonStr(cfg.targetMicName)
+            if (InStr(msg, '"inputName":"' escMic '"') || InStr(msg, '"inputName": "' escMic '"')) {
                 if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                     isMutedOBS := (matchMuted[1] == "true")
                     PushObsMuteToZoom(cfg, state, isMutedOBS)
