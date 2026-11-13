@@ -19,6 +19,7 @@ SetKeyDelay 50, 50
 #Include <GUI_Config>
 
 Gdip.Startup()
+Theme.Init()
 OnExit((*) => Gdip.Shutdown())
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSync.ico"))
@@ -61,6 +62,7 @@ UpdateZoomMonitorTimer(AppConfig, AppState)
 
 ; --- CUSTOM TRAY MENU ---
 BuildTrayMenu(cfg, state) {
+    Theme.ApplyMenuTheme()
     A_TrayMenu.Delete()
 
     ; MODULE CONTROLS
