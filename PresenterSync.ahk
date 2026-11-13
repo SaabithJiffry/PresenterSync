@@ -742,29 +742,28 @@ DetectZoomStates() {
                     result.muted := false
                 }
             }
-            if (!result.hasRec) {
+            if (result.recState == 0) {
                 if RegExMatch(n, "i)\bresume\b.*\brecording\b") {
                     result.hasRec := true
                     result.recState := 2
                 } else if RegExMatch(n, "i)\b(pause|stop)\b.*\brecording\b") {
                     result.hasRec := true
                     result.recState := 1
-                } else if RegExMatch(n, "i)^record(\b|,|$)|^record (on this computer|to the cloud)") {
+                } else if (!result.hasRec && RegExMatch(n, "i)^record(\b|,|$)|^record (on this computer|to the cloud)")) {
                     result.hasRec := true
                     result.recState := 0
                 }
             }
-            if (!result.hasChat) {
-                if RegExMatch(n, "i)\bchat\b.*?(\d+)\s*unread", &mChat) {
-                    result.hasChat := true
-                    result.unreadChat := Integer(mChat[1])
-                } else if RegExMatch(n, "i)^chat(\b|,|$)|open chat|show chat|chat panel") {
-                    result.hasChat := true
-                    result.unreadChat := 0
-                }
+            if RegExMatch(n, "i)\bchat\b.*?(\d+)\s*unread|(\d+)\s*unread.*\bchat\b", &mChat) {
+                result.hasChat := true
+                cnt := Integer(mChat[1] != "" ? mChat[1] : mChat[2])
+                if (cnt > result.unreadChat)
+                    result.unreadChat := cnt
+            } else if (!result.hasChat && RegExMatch(n, "i)^chat(\b|,|$)|open chat|show chat|chat panel")) {
+                result.hasChat := true
             }
         }
-        if (result.hasMic && result.hasRec && result.hasChat)
+        if (result.hasMic && result.hasRec && result.recState > 0 && result.hasChat && result.unreadChat > 0)
             break
     }
     return result
@@ -1827,6 +1826,8 @@ PlayMuteAnimation() {
     global savedX, savedY
     
     if (!ShowIndicator) {
+        SetTimer BreathingAnimation, 0
+        currentAlpha := baseAlpha
         MicGui.BackColor := isMuted ? colorMuted : colorLive
         activeFontColor := MonoIcon ? (isMuted ? iconMuted : iconLive) : "White"
         IconText.Opt("c" activeFontColor)
