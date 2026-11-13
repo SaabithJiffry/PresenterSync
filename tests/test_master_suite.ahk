@@ -288,8 +288,8 @@ hostIcoBuf := FileExist(hostIco) ? FileRead(hostIco, "RAW") : Buffer(0)
 remoteIcoBuf := FileExist(remoteIco) ? FileRead(remoteIco, "RAW") : Buffer(0)
 Assert("Primary and Remote icon files exist with multi-resolution frames",
     hostIcoBuf.Size >= 22 && remoteIcoBuf.Size >= 22
-    && NumGet(hostIcoBuf, 4, "UShort") >= 7
-    && NumGet(remoteIcoBuf, 4, "UShort") >= 7)
+    && NumGet(hostIcoBuf, 4, "UShort") >= 8
+    && NumGet(remoteIcoBuf, 4, "UShort") >= 8)
 
 if FileExist(dimIni)
     FileDelete(dimIni)
