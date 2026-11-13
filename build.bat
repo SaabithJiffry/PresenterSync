@@ -47,9 +47,10 @@ echo [OK] PresenterSync_Remote.exe built successfully.
 
 echo.
 echo Refreshing Windows Shell icon cache...
+set "REPO_DIR=%~dp0"
 set "HOST_EXE=%~dp0PresenterSync.exe"
 set "REMOTE_EXE=%~dp0PresenterSync_Remote.exe"
-powershell -NoProfile -Command "Add-Type -Namespace Win32 -Name Shell -MemberDefinition ('[DllImport(' + [char]34 + 'shell32.dll' + [char]34 + ')] public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);'); foreach ($p in @($env:HOST_EXE, $env:REMOTE_EXE)) { $ptr = [System.Runtime.InteropServices.Marshal]::StringToHGlobalUni($p); try { [Win32.Shell]::SHChangeNotify(0x00002000, 0x1005, $ptr, [IntPtr]::Zero) } finally { [System.Runtime.InteropServices.Marshal]::FreeHGlobal($ptr) } }; [Win32.Shell]::SHChangeNotify(0x08000000, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero)" >nul 2>&1
+powershell -NoProfile -Command "Add-Type -Namespace Win32 -Name Shell -MemberDefinition ('[DllImport(' + [char]34 + 'shell32.dll' + [char]34 + ')] public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);'); foreach ($p in @($env:HOST_EXE, $env:REMOTE_EXE)) { $ptr = [System.Runtime.InteropServices.Marshal]::StringToHGlobalUni($p); try { [Win32.Shell]::SHChangeNotify(0x00002000, 0x1005, $ptr, [IntPtr]::Zero) } finally { [System.Runtime.InteropServices.Marshal]::FreeHGlobal($ptr) } }; $dirPtr = [System.Runtime.InteropServices.Marshal]::StringToHGlobalUni($env:REPO_DIR.TrimEnd('\')); try { [Win32.Shell]::SHChangeNotify(0x00001000, 0x1005, $dirPtr, [IntPtr]::Zero) } finally { [System.Runtime.InteropServices.Marshal]::FreeHGlobal($dirPtr) }; [Win32.Shell]::SHChangeNotify(0x08000000, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero); $sh = New-Object -ComObject Shell.Application; foreach ($w in $sh.Windows()) { try { if ($w.Document.Folder.Self.Path -eq $env:REPO_DIR.TrimEnd('\')) { $w.Refresh() } } catch {} }" >nul 2>&1
 if exist "%SystemRoot%\System32\ie4uinit.exe" "%SystemRoot%\System32\ie4uinit.exe" -show >nul 2>&1
 
 echo.
