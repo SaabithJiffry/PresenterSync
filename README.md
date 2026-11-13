@@ -57,8 +57,8 @@ If you prefer to run the raw script or compile it yourself:
 ## 🎮 How It Works
 
 1. **Initial Setup:** On your first launch, choose your Audio Routing Mode (`1`, `2`, or `3`) and configure your OBS / Zoom fallback shortcuts.
-2. **Choose Monitoring Engine:** Right-click the PresenterSync tray icon to enable **OBS WebSocket Sync** or **Zoom Monitoring** (mutually exclusive).
-3. **Customize:** Left-drag any HUD pill to reposition the whole stack (coordinates save automatically), or use **Indicator Appearance** in the tray menu to change scale, labels, opacity, and corner style.
+2. **Choose Monitoring Engine:** Right-click the PresenterSync tray icon (or right-click directly on any HUD pill) to enable **OBS WebSocket Sync** or **Zoom Monitoring** (mutually exclusive).
+3. **Customize Live:** Left-drag any HUD pill to reposition the whole stack (coordinates save automatically), or use **Indicator Appearance** to change scale, labels, opacity, corner style, and **App Theme** (**Follow System**, **Dark Mode**, or **Light Mode**) live without interrupting your active session.
 
 **Default System Shortcuts:**
 *   `Ctrl + F12` : Cycle Pointer Modes (Full PPT + Mute / Mute Only / OFF)
