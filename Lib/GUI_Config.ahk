@@ -144,9 +144,23 @@ class Theme {
     static initialized := false
     static lastIsDark := -1
 
-    static Init() {
+    static Init(mode := "") {
         this.EnsureInitialized()
+        if (mode != "")
+            this.SetMode(mode, false)
         this.ApplyMenuTheme()
+    }
+
+    static SetMode(mode, refresh := true) {
+        m := StrLower(Trim(mode))
+        if (m = "dark")
+            this.OverrideMode := "dark"
+        else if (m = "light")
+            this.OverrideMode := "light"
+        else
+            this.OverrideMode := ""
+        if (refresh && this.initialized)
+            this.RefreshOpenWindows()
     }
 
     static EnsureInitialized() {
@@ -530,6 +544,7 @@ class Config {
 
     ShowIndicator := true
     ShowExtraHuds := true
+    ThemeMode := "System"
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -643,6 +658,9 @@ class Config {
 
         this.ShowIndicator := this.ReadBool("Settings", "ShowIndicator", true)
         this.ShowExtraHuds := this.ReadBool("Settings", "ShowExtraHuds", true)
+        rawTheme := StrLower(Trim(this.Read("Settings", "ThemeMode", "System")))
+        this.ThemeMode := (rawTheme = "dark") ? "Dark" : ((rawTheme = "light") ? "Light" : "System")
+        Theme.SetMode(this.ThemeMode)
         this.ShowText := this.ReadBool("Settings", "ShowText")
         this.MonoIcon := this.ReadBool("Settings", "MonoIcon")
         this.SleekCorners := this.ReadBool("Settings", "SleekCorners")
@@ -677,6 +695,7 @@ class Config {
 
     ResetAppearance() {
         this.ShowExtraHuds := true
+        this.ThemeMode := "System"
         this.ShowText := false
         this.MonoIcon := false
         this.SleekCorners := false
@@ -684,12 +703,14 @@ class Config {
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
+        this.Write("Settings", "ThemeMode", "System")
         this.Write("Settings", "ShowText", 0)
         this.Write("Settings", "MonoIcon", 0)
         this.Write("Settings", "SleekCorners", 0)
         this.Write("Settings", "AggressivePulse", 0)
         this.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         this.Write("Settings", "IndicatorScale", 1.0)
+        Theme.SetMode("System")
     }
 
     ResetPosition() {
@@ -1521,6 +1542,21 @@ SyncUIState(cfg, state, obsIsMuted) {
 }
 
 ; --- HUD APPEARANCE & CONFIG HELPERS ---
+SetThemeMode(cfg, themeMenu, mode, *) {
+    cfg.ThemeMode := mode
+    cfg.Write("Settings", "ThemeMode", mode)
+    themeMenu.Uncheck("Follow System")
+    themeMenu.Uncheck("Dark Mode")
+    themeMenu.Uncheck("Light Mode")
+    if (mode = "Dark")
+        themeMenu.Check("Dark Mode")
+    else if (mode = "Light")
+        themeMenu.Check("Light Mode")
+    else
+        themeMenu.Check("Follow System")
+    Theme.SetMode(mode)
+}
+
 SetScale(cfg, val, *) {
     cfg.Write("Settings", "IndicatorScale", val)
     Reload()

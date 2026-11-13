@@ -143,6 +143,19 @@ BuildTrayMenu(cfg, state) {
 
     AppearanceMenu.Add("Indicator Scale", ScaleMenu)
 
+    ThemeMenu := Menu()
+    ThemeMenu.Add("Follow System", SetThemeMode.Bind(cfg, ThemeMenu, "System"))
+    ThemeMenu.Add("Dark Mode", SetThemeMode.Bind(cfg, ThemeMenu, "Dark"))
+    ThemeMenu.Add("Light Mode", SetThemeMode.Bind(cfg, ThemeMenu, "Light"))
+    if (cfg.ThemeMode = "Dark")
+        ThemeMenu.Check("Dark Mode")
+    else if (cfg.ThemeMode = "Light")
+        ThemeMenu.Check("Light Mode")
+    else
+        ThemeMenu.Check("Follow System")
+
+    AppearanceMenu.Add("App Theme", ThemeMenu)
+
     AppearanceMenu.Add()
     AppearanceMenu.Add("Restore Default Appearance", ResetAppearance.Bind(cfg))
 
