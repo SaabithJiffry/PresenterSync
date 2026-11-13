@@ -2006,6 +2006,121 @@ ShowPointerTester(*) {
     return testerGui
 }
 
+GetLocalNetworkEndpoints() {
+    res := {ips: [], details: []}
+    seen := Map()
+    try {
+        wmi := ComObjGet("winmgmts:")
+        adapters := wmi.ExecQuery("SELECT Description, IPAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = True")
+        for adapter in adapters {
+            if !IsObject(adapter.IPAddress)
+                continue
+            desc := String(adapter.Description)
+            isVirtual := RegExMatch(desc, "i)(virtual|vmware|vbox|hyper-v|pseudo|loopback|npcap|tap-)")
+            for ip in adapter.IPAddress {
+                ipStr := String(ip)
+                if (InStr(ipStr, ".") && !seen.Has(ipStr) && ipStr != "127.0.0.1" && !RegExMatch(ipStr, "^169\.254\.")) {
+                    seen[ipStr] := true
+                    item := {name: desc, ip: ipStr, isVirtual: isVirtual}
+                    if (!isVirtual) {
+                        res.ips.InsertAt(1, ipStr)
+                        res.details.InsertAt(1, item)
+                    } else {
+                        res.ips.Push(ipStr)
+                        res.details.Push(item)
+                    }
+                }
+            }
+        }
+    }
+    if (res.ips.Length == 0) {
+        Loop 4 {
+            ipVal := A_IPAddress%A_Index%
+            if (ipVal != "" && ipVal != "127.0.0.1" && ipVal != "0.0.0.0" && !seen.Has(ipVal)) {
+                seen[ipVal] := true
+                res.ips.Push(ipVal)
+                res.details.Push({name: "Adapter " A_Index, ip: ipVal, isVirtual: false})
+            }
+        }
+    }
+    return res
+}
+
+ShowRemoteCompanionInfo(cfg, *) {
+    existing := Theme.FocusExistingWindow("Remote Companion Connection Info")
+    if IsObject(existing)
+        return existing
+
+    endpoints := GetLocalNetworkEndpoints()
+    candidates := [A_ComputerName ".local"]
+    for ep in endpoints.ips {
+        candidates.Push(ep)
+    }
+    universalString := ""
+    for idx, c in candidates {
+        universalString .= (idx > 1 ? ", " : "") c
+    }
+
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Remote Companion Connection Info")
+    dlg._closed := false
+    Theme.ApplyToWindow(dlg)
+    Theme.NamedWindows["Remote Companion Connection Info"] := dlg
+
+    dlg.SetFont("s10 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w360", "Host Details for PresenterSync Remote"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+4", "Enter these details on your secondary device (Smart Board / Laptop):"), "Text", "muted")
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+12", "Computer Name (mDNS):"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    editHost := dlg.Add("Edit", "w360 ReadOnly -Wrap", A_ComputerName ".local")
+    Theme.RegisterControl(dlg, editHost, "Edit")
+
+    ipListText := ""
+    for ep in endpoints.details {
+        ipListText .= (ep.isVirtual ? "[Virtual] " : "[LAN] ") ep.name ": " ep.ip "`n"
+    }
+    if (ipListText != "") {
+        dlg.SetFont("s9 w600", Theme.UiFont)
+        Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+8", "Detected Local IP Addresses:"), "Text")
+        dlg.SetFont("s9 w400", Theme.UiFont)
+        editIps := dlg.Add("Edit", "w360 r3 ReadOnly", RTrim(ipListText, "`n"))
+        Theme.RegisterControl(dlg, editIps, "Edit")
+    }
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+8", "Universal Connection String (Multi-Candidate):"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    editUniv := dlg.Add("Edit", "w360 ReadOnly -Wrap", universalString)
+    Theme.RegisterControl(dlg, editUniv, "Edit")
+
+    btnCopy := dlg.Add("Button", "w360 h30 y+10", "Copy Universal String to Clipboard")
+    Theme.RegisterControl(dlg, btnCopy, "Button", "accent")
+    btnCopy.OnEvent("Click", (*) => (A_Clipboard := universalString, TrayTip("Copied!", "Universal connection string copied to clipboard.", 1)))
+
+    statusLine := "OBS Port: 4455  |  Password: " (cfg.obsPassword != "" ? "Configured" : "None") "  |  Mic: " cfg.targetMicName
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+12 Center", statusLine), "Text", "muted")
+
+    btnClose := dlg.Add("Button", "w360 h32 y+12 Default", "Close")
+    Theme.RegisterControl(dlg, btnClose, "Button")
+
+    Cleanup(*) {
+        if (dlg._closed)
+            return
+        dlg._closed := true
+        Theme.UnregisterWindow(dlg, "Remote Companion Connection Info")
+        dlg.Destroy()
+    }
+
+    dlg.OnEvent("Close", Cleanup)
+    dlg.OnEvent("Escape", Cleanup)
+    btnClose.OnEvent("Click", Cleanup)
+
+    dlg.Show("AutoSize Center")
+    return dlg
+}
+
 ; --- HUD STATE SYNCHRONIZATION & APPEARANCE ---
 GetCornerRadius(cfg, h) {
     return cfg.SleekCorners ? (h / 2.0) : Min(UIConstants.CORNER_RADIUS_DEFAULT * cfg.IndicatorScale, h / 2.0)

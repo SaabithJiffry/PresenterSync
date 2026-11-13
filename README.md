@@ -19,6 +19,10 @@ PresenterSync is a lightweight, standalone Windows utility designed for live str
 *   **Extensive Appearance & Scale Customization:** Toggle text labels, switch to monochromatic icons, adjust transparency (`Ghost 50%` / `Frosted 85%` / `Solid 100%`), enable aggressive pulsing animations, choose corner styles, and scale the HUD across 8 presets (`0.25x`, `0.5x`, `1.0x`, `1.5x`, `2.0x`, `2.5x`, `3.0x`, `5.0x`).
 *   **Dynamic & Manual Dark / Light Theme:** Choose **Follow System**, **Dark Mode**, or **Light Mode** under **Indicator Appearance > App Theme** to dynamically style the system tray menu, submenus, and all settings/help/about/tester windows in real time.
 *   **Self-Healing Setup & Reset:** Automatically prompts for missing routing profiles/shortcuts or changed OBS passwords, and supports one-click factory appearance reset without losing custom screen position.
+*   **Smart Board Companion Client (`PresenterSync_Remote.ahk` / `.exe`):** Standalone, ultra-lean companion for Windows-based smart boards (OPS modules) and secondary laptops. Displays a floating single-pill mute HUD and transmits pointer clicker mute keystrokes back to OBS Studio over the local network (LAN) across any combination of Ethernet, 2.4 GHz, or 5 GHz Wi-Fi.
+    *   **Multi-Interface Failover Engine:** Accepts multi-candidate strings (`STUDIO-PC.local, 192.168.1.50, 192.168.1.125`) with fast 2-second failover and 30-second heartbeat keep-alives.
+    *   **Remote Clicker Mute:** Intercepts pointer keystrokes (default `b`) with a 150ms debounce shield and executes `ToggleInputMute` directly in OBS in < 5ms.
+    *   **Touchscreen Drag & Scale:** Fully touch-friendly drag-and-drop repositioning with scales up to `5.0x` for large 65"–86" 4K interactive displays.
 
 ## ⚙️ Prerequisites: OBS WebSocket & Zoom Setup
 
@@ -52,7 +56,24 @@ If you prefer to run the raw script or compile it yourself:
 1. Download and install [AutoHotkey v2](https://www.autohotkey.com/).
 2. Clone or download this repository.
 3. Ensure the `Lib` folder contains `WebSocket.ahk`, `UIA.ahk`, `Crypto.ahk`, `Gdip.ahk`, `OBS_Network.ahk`, and `GUI_Config.ahk`.
-4. Run `PresenterSync.ahk`.
+4. Run `PresenterSync.ahk` on the primary streaming laptop.
+5. Run `PresenterSync_Remote.ahk` on the smart board / secondary laptop.
+
+### Option C: 1-Click Portable Executable Build
+You can build standalone, zero-dependency `.exe` binaries for both the primary and remote apps:
+1. Ensure AutoHotkey v2 with compiler tools is installed.
+2. Double-click **`build.bat`**.
+3. It compiles:
+   * **`PresenterSync.exe`** (Primary Streaming Host)
+   * **`PresenterSync_Remote.exe`** (Smart Board Companion)
+4. Copy `PresenterSync_Remote.exe` to a USB drive or smart board OPS module and run it portably without any installation!
+
+## 📡 Smart Board Remote Companion Setup
+1. On the primary laptop, right-click the PresenterSync tray icon > **Settings** > **Remote Companion Info...**
+2. Click **Copy Universal String to Clipboard** (contains your computer name `.local` and all active Ethernet/Wi-Fi IPs).
+3. On the smart board, launch `PresenterSync_Remote` (script or `.exe`).
+4. Paste the connection string into the **Host Address** field, enter your OBS WebSocket password (if enabled), and click **Connect & Start**.
+5. Plug your presentation clicker into the smart board: pressing the mute button (default `b`) will immediately toggle OBS mute on the host laptop!
 
 ## 🎮 How It Works
 

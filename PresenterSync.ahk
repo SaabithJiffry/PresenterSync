@@ -191,6 +191,8 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI.Bind(cfg))
     SettingsMenu.Add("Change Zoom Shortcuts", ChangeZoomShortcutsUI.Bind(cfg))
     SettingsMenu.Add()
+    SettingsMenu.Add("Remote Companion Info...", (*) => ShowRemoteCompanionInfo(cfg))
+    SettingsMenu.Add()
     SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI.Bind(cfg))
     SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI.Bind(cfg))
     SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
