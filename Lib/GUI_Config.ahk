@@ -2405,8 +2405,15 @@ InitHUD(cfg, state, showWindows := true) {
 }
 
 ComputeHudLayout(state, anchorX, anchorY) {
-    recY := anchorY - state.recHeight - state.hudGap
-    row3Y := recY - state.row3Height - state.hudGap
+    recH := state.HasProp("recHeight") ? state.recHeight : 34
+    gap := state.HasProp("hudGap") ? state.hudGap : 6
+    r3H := state.HasProp("row3Height") ? state.row3Height : 30
+    recW := state.HasProp("recW") ? state.recW : 40
+    chatW := state.HasProp("chatW") ? state.chatW : 34
+    stuW := state.HasProp("studioW") ? state.studioW : 28
+    scnW := state.HasProp("sceneW") ? state.sceneW : 46
+    recY := anchorY - recH - gap
+    row3Y := recY - r3H - gap
     return {
         micX: anchorX,
         micY: anchorY,
@@ -2414,20 +2421,20 @@ ComputeHudLayout(state, anchorX, anchorY) {
         micH: state.baseHeight,
         recX: anchorX,
         recY: recY,
-        recW: state.recW,
-        recH: state.recHeight,
-        chatX: anchorX + state.recW + state.hudGap,
+        recW: recW,
+        recH: recH,
+        chatX: anchorX + recW + gap,
         chatY: recY,
-        chatW: state.chatW,
-        chatH: state.recHeight,
+        chatW: chatW,
+        chatH: recH,
         studioX: anchorX,
         studioY: row3Y,
-        studioW: state.studioW,
-        studioH: state.row3Height,
-        sceneX: anchorX + state.studioW + state.hudGap,
+        studioW: stuW,
+        studioH: r3H,
+        sceneX: anchorX + stuW + gap,
         sceneY: row3Y,
-        sceneW: state.sceneW,
-        sceneH: state.row3Height
+        sceneW: scnW,
+        sceneH: r3H
     }
 }
 
