@@ -7,6 +7,7 @@ class UIA {
     static _instance := 0
     static _trueCond := 0
     static _btnCond := 0
+    static _nameCacheReq := 0
 
     static Init() {
         if (!this._instance) {
@@ -15,6 +16,41 @@ class UIA {
             this._instance := ComObject("{ff48dba4-60ef-4201-aa87-54103eef594e}", "{30cbe57d-d9d0-452a-ab13-7ac5ac4825ee}")
         }
         return this._instance
+    }
+
+    static Shutdown() {
+        if (this._nameCacheReq) {
+            ObjRelease(this._nameCacheReq)
+            this._nameCacheReq := 0
+        }
+        if (this._btnCond) {
+            ObjRelease(this._btnCond)
+            this._btnCond := 0
+        }
+        if (this._trueCond) {
+            ObjRelease(this._trueCond)
+            this._trueCond := 0
+        }
+        this._instance := 0
+    }
+
+    static GetNameCacheRequest() {
+        uiaObj := this.Init()
+        if (!this._nameCacheReq) {
+            pReq := 0
+            try {
+                ComCall(20, uiaObj, "ptr*", &pReq) ; CreateCacheRequest
+                if (pReq) {
+                    ComCall(3, pReq, "int", 30005) ; AddProperty(UIA_NamePropertyId = 30005)
+                    ComCall(11, pReq, "int", 0)    ; put_AutomationElementMode(AutomationElementMode_None = 0)
+                    this._nameCacheReq := pReq
+                }
+            } catch {
+                if (pReq)
+                    ObjRelease(pReq)
+            }
+        }
+        return this._nameCacheReq
     }
 
     static GetTrueCondition() {
@@ -77,6 +113,24 @@ class UIA {
         return name
     }
 
+    static GetCachedElementName(pElem) {
+        if (!pElem)
+            return ""
+        bstr := 0
+        name := ""
+        try {
+            ComCall(55, pElem, "ptr*", &bstr) ; get_CachedName
+            if (bstr) {
+                name := StrGet(bstr, "UTF-16")
+                DllCall("oleaut32\SysFreeString", "ptr", bstr)
+            }
+        } catch {
+            if (bstr)
+                DllCall("oleaut32\SysFreeString", "ptr", bstr)
+        }
+        return name
+    }
+
     static GetElementControlType(pElem) {
         if (!pElem)
             return 0
@@ -95,9 +149,15 @@ class UIA {
             return names
 
         pCond := buttonsOnly ? this.GetButtonCondition() : this.GetTrueCondition()
+        pCacheReq := this.GetNameCacheRequest()
         pArr := 0
+        useCached := false
         try {
-            if (pCond) {
+            if (pCond && pCacheReq) {
+                ComCall(8, pRoot, "int", 4, "ptr", pCond, "ptr", pCacheReq, "ptr*", &pArr) ; FindAllBuildCache(TreeScope_Descendants = 4)
+                useCached := (pArr != 0)
+            }
+            if (!pArr && pCond) {
                 ComCall(6, pRoot, "int", 4, "ptr", pCond, "ptr*", &pArr) ; FindAll(TreeScope_Descendants = 4)
             }
             if (pArr) {
@@ -108,7 +168,7 @@ class UIA {
                     try {
                         ComCall(4, pArr, "int", A_Index - 1, "ptr*", &pChild) ; GetElement
                         if (pChild) {
-                            name := this.GetElementName(pChild)
+                            name := useCached ? this.GetCachedElementName(pChild) : this.GetElementName(pChild)
                             if (name != "")
                                 names.Push(name)
                             ObjRelease(pChild)

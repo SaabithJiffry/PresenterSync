@@ -230,11 +230,10 @@ class WebSocket {
 	}
 
 	onError(err, what := 0) {
-		if err != 12030
-			Throw WebSocket.Error(err, what - 5)
 		if this.readyState == 3
 			return
 		this.readyState := 3
+		try this.shutdown()
 		try this.onClose(1006, '')
 	}
 

@@ -156,10 +156,13 @@ class UIConstants {
 class Theme {
     static OverrideMode := ""
     static OpenWindows := Map()
+    static NamedWindows := Map()
     static HoverMap := Map()
     static PressMap := Map()
     static TabHoverMap := Map()
     static BoldFontCache := Map()
+    static SuspendLockCount := 0
+    static WasSuspendedBeforeDialogs := false
     static hUxtheme := 0
     static fnSetPreferredAppMode := 0
     static fnFlushMenuThemes := 0
@@ -176,6 +179,48 @@ class Theme {
         if (mode != "")
             this.SetMode(mode, false)
         this.ApplyMenuTheme()
+    }
+
+    static Shutdown() {
+        for _, hBold in this.BoldFontCache {
+            if (hBold)
+                DllCall("DeleteObject", "Ptr", hBold)
+        }
+        this.BoldFontCache.Clear()
+    }
+
+    static AcquireSuspend() {
+        if (this.SuspendLockCount == 0)
+            this.WasSuspendedBeforeDialogs := A_IsSuspended
+        this.SuspendLockCount += 1
+        Suspend(True)
+    }
+
+    static ReleaseSuspend() {
+        if (this.SuspendLockCount > 0) {
+            this.SuspendLockCount -= 1
+            if (this.SuspendLockCount == 0 && !this.WasSuspendedBeforeDialogs)
+                Suspend(False)
+        }
+    }
+
+    static FocusExistingWindow(winKey) {
+        if (winKey != "" && this.NamedWindows.Has(winKey)) {
+            existing := this.NamedWindows[winKey]
+            if (IsObject(existing) && WinExist("ahk_id " existing.Hwnd)) {
+                try WinActivate("ahk_id " existing.Hwnd)
+                return existing
+            }
+            this.NamedWindows.Delete(winKey)
+        }
+        return ""
+    }
+
+    static UnregisterWindow(guiObj, winKey := "") {
+        if (IsObject(guiObj) && this.OpenWindows.Has(guiObj.Hwnd))
+            this.OpenWindows.Delete(guiObj.Hwnd)
+        if (winKey != "" && this.NamedWindows.Has(winKey))
+            this.NamedWindows.Delete(winKey)
     }
 
     static SetMode(mode, refresh := true) {
@@ -216,15 +261,16 @@ class Theme {
             hFont := DllCall("GetStockObject", "Int", 17, "Ptr") ; DEFAULT_GUI_FONT
         if (!bold || !hFont)
             return hFont
-        if this.BoldFontCache.Has(hFont)
-            return this.BoldFontCache[hFont]
         lf := Buffer(92, 0)
         if (DllCall("GetObjectW", "Ptr", hFont, "Int", 92, "Ptr", lf) == 0)
             return hFont
+        fontKey := NumGet(lf, 0, "Int") ":" StrGet(lf.Ptr + 28, 32, "UTF-16")
+        if this.BoldFontCache.Has(fontKey)
+            return this.BoldFontCache[fontKey]
         NumPut("Int", 600, lf, 16) ; FW_SEMIBOLD (600)
         hBold := DllCall("CreateFontIndirectW", "Ptr", lf, "Ptr")
         if (hBold) {
-            this.BoldFontCache[hFont] := hBold
+            this.BoldFontCache[fontKey] := hBold
             return hBold
         }
         return hFont
@@ -671,8 +717,9 @@ TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
 
     if (uMsg == 0x0200) { ; WM_MOUSEMOVE
         hti := Buffer(12, 0)
-        NumPut("Int", lParam & 0xFFFF, hti, 0)
-        NumPut("Int", (lParam >> 16) & 0xFFFF, hti, 4)
+        mx := (lParam & 0xFFFF) - ((lParam & 0x8000) << 1)
+        my := ((lParam >> 16) & 0xFFFF) - (((lParam >> 16) & 0x8000) << 1)
+        NumPut("Int", mx, "Int", my, hti, 0)
         hitIdx := SendMessage(0x130D, 0, hti.Ptr, hwnd) ; TCM_HITTEST
         prevHover := Theme.TabHoverMap.Get(hwnd, -1)
         if (hitIdx != prevHover) {
@@ -819,15 +866,22 @@ StaticFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc)
         ctrl := GuiCtrlFromHwnd(hwnd)
         parentDark := (IsObject(ctrl) && IsObject(ctrl.Gui) && ctrl.Gui.HasOwnProp("_isDark")) ? ctrl.Gui._isDark : Theme.IsDarkMode()
-        hBrBg := DllCall("CreateSolidBrush", "UInt", parentDark ? UIConstants.DARK_BG_BGR : UIConstants.LIGHT_BG_BGR, "Ptr")
+        role := (IsObject(ctrl) && ctrl.HasOwnProp("_themeRole")) ? ctrl._themeRole : ""
+        inTab := (role = "tabText" || role = "tabMuted")
+        bgBgr := parentDark ? (inTab ? UIConstants.DARK_SURFACE_BGR : UIConstants.DARK_BG_BGR) : (inTab ? UIConstants.LIGHT_SURFACE_BGR : UIConstants.LIGHT_BG_BGR)
+        hBrBg := DllCall("CreateSolidBrush", "UInt", bgBgr, "Ptr")
         DllCall("FillRect", "Ptr", hdc, "Ptr", rc, "Ptr", hBrBg)
         DllCall("DeleteObject", "Ptr", hBrBg)
         txt := IsObject(ctrl) ? ctrl.Text : ""
+        style := DllCall("GetWindowLong", "Ptr", hwnd, "Int", -16, "Int")
+        dtFlags := ((style & 0x0200) ? 0x0024 : 0x0010) | ((style & 0x01) ? 0x01 : ((style & 0x02) ? 0x02 : 0x00))
+        if (style & 0x0080)
+            dtFlags |= 0x0800
         hFont := SendMessage(0x0031, 0, 0, hwnd)
         oldFont := hFont ? DllCall("SelectObject", "Ptr", hdc, "Ptr", hFont, "Ptr") : 0
         DllCall("SetBkMode", "Ptr", hdc, "Int", 1)
         DllCall("SetTextColor", "Ptr", hdc, "UInt", parentDark ? UIConstants.DARK_TEXT_DISABLED_BGR : UIConstants.LIGHT_TEXT_DISABLED_BGR)
-        DllCall("DrawTextW", "Ptr", hdc, "WStr", txt, "Int", -1, "Ptr", rc, "UInt", 0x00)
+        DllCall("DrawTextW", "Ptr", hdc, "WStr", txt, "Int", -1, "Ptr", rc, "UInt", dtFlags)
         if (oldFont)
             DllCall("SelectObject", "Ptr", hdc, "Ptr", oldFont, "Ptr")
         DllCall("EndPaint", "Ptr", hwnd, "Ptr", ps)
@@ -1058,6 +1112,7 @@ class OverlayState {
     baseAlpha := 220
     currentAlpha := 220
     breathDir := -5
+    animSeq := 0
 
     isDraggingHud := false
     activeDragHwnd := 0
@@ -1067,6 +1122,8 @@ class OverlayState {
     obsTimerFn := ""
     zoomTimerFn := ""
     releaseSyncTimerFn := ""
+    rebuildTrayFn := ""
+    refreshHelpFn := ""
 
     MicGui := ""
     RecGui := ""
@@ -1207,21 +1264,37 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
     doSuspend := opts.HasOwnProp("suspend") ? opts.suspend : true
     doShow := opts.HasOwnProp("show") ? opts.show : true
     doWaitClose := opts.HasOwnProp("waitClose") ? opts.waitClose : false
-    wasSuspended := A_IsSuspended
+
+    if (doShow && !doWaitClose) {
+        existing := Theme.FocusExistingWindow(title)
+        if IsObject(existing)
+            return existing
+    }
 
     if (doSuspend)
-        Suspend(True)
+        Theme.AcquireSuspend()
 
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", title)
+    dlg._closed := false
     Theme.ApplyToWindow(dlg)
+    if (doShow)
+        Theme.NamedWindows[title] := dlg
+
+    ReleaseDialogState(*) {
+        if (dlg._closed)
+            return
+        dlg._closed := true
+        Theme.UnregisterWindow(dlg, title)
+        if (doSuspend)
+            Theme.ReleaseSuspend()
+    }
+    dlg._releaseState := ReleaseDialogState
+
     CloseHandler(*) {
-        if Theme.OpenWindows.Has(dlg.Hwnd)
-            Theme.OpenWindows.Delete(dlg.Hwnd)
+        ReleaseDialogState()
         if (opts.HasOwnProp("onClose") && opts.onClose) {
             opts.onClose.Call(dlg)
         } else {
-            if (doSuspend && !wasSuspended)
-                Suspend(False)
             dlg.Destroy()
         }
     }
@@ -1302,8 +1375,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
     return dlg
 }
 
-PromptForSetup(cfg) {
-    wasSuspended := A_IsSuspended
+PromptForSetup(cfg, isInitialBoot := false) {
     modes := [
         "1: Pro OBS Setup (VB-Cable)",
         "2: Standard Direct Mic (Zoom-Only)",
@@ -1348,9 +1420,11 @@ PromptForSetup(cfg) {
             cfg.Write("Settings", "ZoomMuteHotkey", cfg.ZoomMuteHotkey)
         }
 
-        if (!wasSuspended)
-            Suspend(False)
+        if dlg.HasOwnProp("_releaseState")
+            dlg._releaseState.Call()
         dlg.Destroy()
+        if (!isInitialBoot)
+            Reload()
     }
 
     elements := [
@@ -1365,9 +1439,9 @@ PromptForSetup(cfg) {
     BuildSettingsWindow("PresenterSync Audio Setup", elements, SaveSetup, {
         suspend: true,
         waitClose: true,
-        onClose: (*) => ExitApp(),
+        onClose: isInitialBoot ? ((*) => ExitApp()) : ((dlg) => dlg.Destroy()),
         onInit: UpdateFieldStates,
-        saveBtnText: "Save && Start",
+        saveBtnText: isInitialBoot ? "Save && Start" : "Save && Restart",
         saveBtnOpts: "w280 h32 Default y+15"
     })
 }
@@ -1377,6 +1451,8 @@ PromptForPassword() {
 
     SavePw(values, ctrls, dlg) {
         savedPw := values["password"]
+        if dlg.HasOwnProp("_releaseState")
+            dlg._releaseState.Call()
         dlg.Destroy()
     }
 
@@ -1386,7 +1462,7 @@ PromptForPassword() {
     ]
 
     BuildSettingsWindow("WebSocket Setup", elements, SavePw, {
-        suspend: false,
+        suspend: true,
         waitClose: true,
         onClose: (dlg) => dlg.Destroy(),
         saveBtnText: "Save & Connect",
@@ -1396,15 +1472,7 @@ PromptForPassword() {
 }
 
 FormatHK(hk) {
-    if (hk = "" || hk = "None")
-        return "None"
-    str := StrReplace(hk, "+", "Shift + ")
-    str := StrReplace(str, "^", "Ctrl + ")
-    str := StrReplace(str, "!", "Alt + ")
-    str := StrReplace(str, "#", "Win + ")
-    if (StrLen(str) == 1)
-        str := StrUpper(str)
-    return str
+    return FormatHkDisplayText(hk)
 }
 
 GetRoutingModeLabel(mode) {
@@ -1443,8 +1511,16 @@ BuildLiveStatusSummary(cfg, state := "") {
 }
 
 ShowHelpWindow(cfg, state := "", *) {
+    existing := Theme.FocusExistingWindow("HelpWindow")
+    if IsObject(existing) {
+        if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+        return existing
+    }
+
     helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync v" UIConstants.APP_VERSION " — Interactive Help & Guide")
     Theme.ApplyToWindow(helpGui)
+    Theme.NamedWindows["HelpWindow"] := helpGui
 
     tabNames := ["Shortcuts", "Pointer & PPT", "Audio & Sync", "HUD & Theme", "Live Status"]
     tabs := helpGui.Add("Tab2", "x14 y12 w580 h395 +0x0400", tabNames)
@@ -1532,7 +1608,7 @@ ShowHelpWindow(cfg, state := "", *) {
     Theme.RegisterControl(helpGui, btnWizard, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnObsCfg, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnZoomCfg, "Button", "tabButton")
-    btnWizard.OnEvent("Click", (*) => PromptForSetup(cfg))
+    btnWizard.OnEvent("Click", (*) => PromptForSetup(cfg, false))
     btnObsCfg.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
     btnZoomCfg.OnEvent("Click", (*) => ChangeZoomShortcutsUI(cfg))
 
@@ -1569,8 +1645,16 @@ ShowHelpWindow(cfg, state := "", *) {
     Theme.RegisterControl(helpGui, statusTextCtrl, "Text", "tabText")
 
     RefreshHelpStatus(*) {
-        if WinExist(helpGui.Hwnd)
+        if WinExist("ahk_id " helpGui.Hwnd)
             statusTextCtrl.Value := BuildLiveStatusSummary(cfg, state)
+    }
+    if IsObject(state)
+        state.refreshHelpFn := RefreshHelpStatus
+
+    SyncTrayAndHelp() {
+        if (IsObject(state) && state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        RefreshHelpStatus()
     }
 
     OnHelpToggleExtra(*) {
@@ -1578,7 +1662,7 @@ ShowHelpWindow(cfg, state := "", *) {
         cfg.WriteBool("Settings", "ShowExtraHuds", cfg.ShowExtraHuds)
         if IsObject(state)
             RefreshHudAppearance(cfg, state)
-        RefreshHelpStatus()
+        SyncTrayAndHelp()
     }
 
     OnHelpToggleText(*) {
@@ -1586,23 +1670,23 @@ ShowHelpWindow(cfg, state := "", *) {
         cfg.WriteBool("Settings", "ShowText", cfg.ShowText)
         if IsObject(state)
             RefreshHudAppearance(cfg, state)
-        RefreshHelpStatus()
+        SyncTrayAndHelp()
     }
 
     OnHelpCycleTheme(*) {
         nextMode := (cfg.ThemeMode = "System") ? "Dark" : ((cfg.ThemeMode = "Dark") ? "Light" : "System")
         SetThemeMode(cfg, "", nextMode)
-        RefreshHelpStatus()
+        SyncTrayAndHelp()
     }
 
     OnHelpResetPos(*) {
         ResetTrayPosition(cfg, state)
-        RefreshHelpStatus()
+        SyncTrayAndHelp()
     }
 
     OnHelpResetAppearance(*) {
         ResetAppearance(cfg, state)
-        RefreshHelpStatus()
+        SyncTrayAndHelp()
     }
 
     btnTogExtra.OnEvent("Click", OnHelpToggleExtra)
@@ -1625,8 +1709,9 @@ ShowHelpWindow(cfg, state := "", *) {
     btn := helpGui.Add("Button", "w140 x234 y418 h34 Default", "Got it!")
     Theme.RegisterControl(helpGui, btn, "Button")
     CloseHelp(*) {
-        if Theme.OpenWindows.Has(helpGui.Hwnd)
-            Theme.OpenWindows.Delete(helpGui.Hwnd)
+        if (IsObject(state) && state.HasOwnProp("refreshHelpFn"))
+            state.refreshHelpFn := ""
+        Theme.UnregisterWindow(helpGui, "HelpWindow")
         helpGui.Destroy()
     }
     btn.OnEvent("Click", CloseHelp)
@@ -1638,8 +1723,13 @@ ShowHelpWindow(cfg, state := "", *) {
 }
 
 ShowAboutWindow(cfg := "", state := "", *) {
+    existing := Theme.FocusExistingWindow("AboutWindow")
+    if IsObject(existing)
+        return existing
+
     aboutGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "About PresenterSync")
     Theme.ApplyToWindow(aboutGui)
+    Theme.NamedWindows["AboutWindow"] := aboutGui
 
     iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSync.ico"
 
@@ -1673,8 +1763,7 @@ ShowAboutWindow(cfg := "", state := "", *) {
     closeBtn := aboutGui.Add("Button", "w110 x+12 h32 Default", "Close")
     Theme.RegisterControl(aboutGui, closeBtn, "Button")
     CloseAbout(*) {
-        if Theme.OpenWindows.Has(aboutGui.Hwnd)
-            Theme.OpenWindows.Delete(aboutGui.Hwnd)
+        Theme.UnregisterWindow(aboutGui, "AboutWindow")
         aboutGui.Destroy()
     }
     closeBtn.OnEvent("Click", CloseAbout)
@@ -1706,7 +1795,7 @@ ChangeAppHotkeysUI(cfg, *) {
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle Indicator:"},
         {type: "Hotkey", id: "ind", opts: "x+10 yp w130 h25", value: cfg.IndHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Suspend Hotkeys:"},
-        {type: "Hotkey", id: "susp", opts: "x+10 yp w130 h25", value: cfg.SuspendHotkey},
+        {type: "Hotkey", id: "susp", opts: "x+10 yp w130 h25", value: cfg.SuspendHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Exit PresenterSync:"},
         {type: "Hotkey", id: "exit", opts: "x+10 yp w130 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."}
     ]
@@ -1749,7 +1838,7 @@ SetRoutingMode(cfg, mode, *) {
 
 ChangeObsSettingsUI(cfg, *) {
     SaveObsSettings(values, ctrls, dlg) {
-        cfg.Write("Settings", "ObsHotkey", values["mute"])
+        cfg.Write("Settings", "ObsHotkey", values["mute"] != "" ? values["mute"] : "None")
         cfg.Write("Settings", "ObsRecHotkey", values["rec"] != "" ? values["rec"] : "^F9")
         cfg.Write("Settings", "ObsPauseHotkey", values["pause"] != "" ? values["pause"] : "^F10")
         cfg.Write("Settings", "TargetMicName", values["mic"])
@@ -1760,7 +1849,7 @@ ChangeObsSettingsUI(cfg, *) {
 
     elements := [
         {type: "Text", opts: "w280", text: "OBS Mute Shortcut:"},
-        {type: "Hotkey", id: "mute", opts: "w280", value: (cfg.ObsMuteHotkey != "None") ? cfg.ObsMuteHotkey : "", required: true, errorMsg: "OBS Mute shortcut and Audio Source Name cannot be empty."},
+        {type: "Hotkey", id: "mute", opts: "w280", value: (cfg.ObsMuteHotkey != "None") ? cfg.ObsMuteHotkey : "", required: (cfg.AudioRoutingMode != 2), errorMsg: "OBS Mute shortcut and Audio Source Name cannot be empty."},
         {type: "Text", opts: "w280 y+10", text: "Start/Stop Recording Shortcut:"},
         {type: "Hotkey", id: "rec", opts: "w280", value: cfg.ObsRecHotkey},
         {type: "Text", opts: "w280 y+10", text: "Pause/Resume Recording Shortcut:"},
@@ -1822,11 +1911,16 @@ ConfigurePointerKeysUI(cfg, *) {
 }
 
 ShowPointerTester(*) {
-    wasSuspended := A_IsSuspended
-    Suspend(True)
+    existing := Theme.FocusExistingWindow("PointerTester")
+    if IsObject(existing)
+        return existing
+
+    Theme.AcquireSuspend()
 
     testerGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Pointer Tester")
+    testerGui._closed := false
     Theme.ApplyToWindow(testerGui)
+    Theme.NamedWindows["PointerTester"] := testerGui
 
     testerGui.SetFont("s10", Theme.UiFont)
     Theme.RegisterControl(testerGui, testerGui.Add("Text", "w250 Center", "Press any button on your clicker."), "Text")
@@ -1845,16 +1939,17 @@ ShowPointerTester(*) {
 
     UpdateKeyDisplay(VK, SC) {
         keyName := GetKeyName(Format("vk{:X}sc{:X}", VK, SC))
-        if WinExist(testerGui.Hwnd)
+        if WinExist("ahk_id " testerGui.Hwnd)
             keyDisplay.Value := keyName
     }
 
     Cleanup(*) {
+        if (testerGui._closed)
+            return
+        testerGui._closed := true
         ih.Stop()
-        if Theme.OpenWindows.Has(testerGui.Hwnd)
-            Theme.OpenWindows.Delete(testerGui.Hwnd)
-        if (!wasSuspended)
-            Suspend(False)
+        Theme.UnregisterWindow(testerGui, "PointerTester")
+        Theme.ReleaseSuspend()
         testerGui.Destroy()
     }
 
@@ -1910,7 +2005,8 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
 SyncChatState(cfg, state, newCount) {
     if (state.unreadChatCount != newCount) {
         state.unreadChatCount := newCount
-        ApplyChatAppearance(cfg, state)
+        if (cfg.ShowIndicator && cfg.ShowExtraHuds)
+            ApplyChatAppearance(cfg, state)
     }
 }
 
@@ -1947,7 +2043,8 @@ ApplyChatAppearance(cfg, state) {
 SyncStudioState(cfg, state, isEnabled) {
     if (state.studioModeActive != isEnabled) {
         state.studioModeActive := isEnabled
-        ApplyStudioAppearance(cfg, state)
+        if (cfg.ShowIndicator && cfg.ShowExtraHuds)
+            ApplyStudioAppearance(cfg, state)
     }
 }
 
@@ -1991,8 +2088,12 @@ SyncSceneState(cfg, state, sceneName) {
     if (sceneName != "" && state.currentSceneName != sceneName) {
         state.currentSceneName := sceneName
         state.ComputeDimensions(cfg)
-        UpdateHudLayout(state, state.savedX, state.savedY)
-        RenderAllHudPills(cfg, state)
+        if (cfg.ShowIndicator && cfg.ShowExtraHuds) {
+            UpdateHudLayout(state, state.savedX, state.savedY)
+            RenderAllHudPills(cfg, state)
+        }
+        if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
+            try state.refreshHelpFn.Call()
     }
 }
 
@@ -2017,7 +2118,8 @@ ApplySceneAppearance(cfg, state) {
 SyncRecState(cfg, state, newState) {
     if (state.recState != newState) {
         state.recState := newState
-        ApplyRecAppearance(cfg, state)
+        if (cfg.ShowIndicator && cfg.ShowExtraHuds)
+            ApplyRecAppearance(cfg, state)
     }
 }
 
@@ -2208,24 +2310,24 @@ UpdateHudVisibility(cfg, state) {
 
     state.currentAlpha := state.baseAlpha
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
-    state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
     ApplyMicAppearance(cfg, state)
+    state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
 
     if (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom)) {
-        state.RecGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.recX, pos.recY, pos.recW, pos.recH))
         ApplyRecAppearance(cfg, state)
-        state.ChatGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.chatX, pos.chatY, pos.chatW, pos.chatH))
+        state.RecGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.recX, pos.recY, pos.recW, pos.recH))
         ApplyChatAppearance(cfg, state)
+        state.ChatGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.chatX, pos.chatY, pos.chatW, pos.chatH))
     } else {
         state.RecGui.Hide()
         state.ChatGui.Hide()
     }
 
     if (cfg.ShowExtraHuds && cfg.EnableWS) {
-        state.StudioGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.studioX, pos.studioY, pos.studioW, pos.studioH))
         ApplyStudioAppearance(cfg, state)
-        state.SceneGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH))
+        state.StudioGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.studioX, pos.studioY, pos.studioW, pos.studioH))
         ApplySceneAppearance(cfg, state)
+        state.SceneGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH))
     } else {
         state.StudioGui.Hide()
         state.SceneGui.Hide()
@@ -2236,6 +2338,9 @@ UpdateHudVisibility(cfg, state) {
 PlayMuteAnimation(cfg, state) {
     if (!IsObject(state.MicGui))
         return
+
+    state.animSeq += 1
+    mySeq := state.animSeq
 
     if (!cfg.ShowIndicator) {
         SetTimer state.breathTimerFn, 0
@@ -2254,6 +2359,8 @@ PlayMuteAnimation(cfg, state) {
     prevMuted := !state.isMuted
 
     Loop UIConstants.FADE_STEPS {
+        if (state.animSeq != mySeq || state.isDraggingHud)
+            return
         state.currentAlpha -= fadeStep
         if (state.currentAlpha < 0)
             state.currentAlpha := 0
@@ -2268,6 +2375,8 @@ PlayMuteAnimation(cfg, state) {
     }
 
     Loop UIConstants.FADE_STEPS {
+        if (state.animSeq != mySeq || state.isDraggingHud)
+            return
         state.currentAlpha += fadeStep
         if (state.currentAlpha > state.baseAlpha)
             state.currentAlpha := state.baseAlpha
@@ -2281,12 +2390,17 @@ PlayMuteAnimation(cfg, state) {
         Sleep UIConstants.FADE_SLEEP_MS
     }
 
-    state.currentAlpha := state.baseAlpha
-    ApplyMicAppearance(cfg, state, baseX, baseY, state.baseWidth, state.baseHeight, state.currentAlpha)
+    if (state.animSeq != mySeq)
+        return
 
-    if (state.isMuted) {
+    state.currentAlpha := state.baseAlpha
+    ApplyMicAppearance(cfg, state, state.savedX, state.savedY, state.baseWidth, state.baseHeight, state.currentAlpha)
+
+    if (state.isMuted && cfg.ShowIndicator) {
         state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+    } else {
+        SetTimer state.breathTimerFn, 0
     }
 }
 
@@ -2350,6 +2464,8 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     if (!isHudHwnd)
         return
 
+    prevX := state.savedX
+    prevY := state.savedY
     state.activeDragHwnd := hwnd
     state.isDraggingHud := true
     SetTimer state.dragTimerFn, UIConstants.DRAG_SYNC_INTERVAL_MS
@@ -2362,10 +2478,12 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     WinGetPos(&X, &Y,,, "ahk_id " hwnd)
     anchor := AnchorFromHwnd(state, hwnd, X, Y)
 
-    cfg.savedX := anchor.x
-    cfg.savedY := anchor.y
-    cfg.Write("Position", "X", anchor.x)
-    cfg.Write("Position", "Y", anchor.y)
+    if (anchor.x != prevX || anchor.y != prevY) {
+        cfg.savedX := anchor.x
+        cfg.savedY := anchor.y
+        cfg.Write("Position", "X", anchor.x)
+        cfg.Write("Position", "Y", anchor.y)
+    }
     UpdateHudLayout(state, anchor.x, anchor.y)
 }
 
@@ -2384,8 +2502,5 @@ WM_DPICHANGED(state, wParam, lParam, msg, hwnd) {
         return
     newLeft := NumGet(lParam, 0, "Int")
     newTop := NumGet(lParam, 4, "Int")
-    newRight := NumGet(lParam, 8, "Int")
-    newBottom := NumGet(lParam, 12, "Int")
-    state.MicGui.Move(newLeft, newTop, newRight - newLeft, newBottom - newTop)
     UpdateHudLayout(state, newLeft, newTop)
 }

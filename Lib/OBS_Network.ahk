@@ -8,7 +8,11 @@
 #Include "%A_LineFile%\..\Crypto.ahk"
 
 FormatSendKey(hk) {
-    return RegExReplace(hk, "([a-zA-Z0-9_]+)$", "{$1}")
+    if RegExMatch(hk, "^(.*?)([a-zA-Z0-9_]+)$", &m) {
+        key := (StrLen(m[2]) == 1) ? StrLower(m[2]) : m[2]
+        return m[1] "{" key "}"
+    }
+    return hk
 }
 
 ConnectToOBS(cfg, state) {
@@ -16,18 +20,29 @@ ConnectToOBS(cfg, state) {
     if (!cfg.EnableWS || state.obsConnected)
         return
 
+    if IsObject(state.obsWs) {
+        try state.obsWs.shutdown()
+        state.obsWs := ""
+    }
+
     try {
         state.obsWs := WebSocket("ws://127.0.0.1:4455", {
             message: HandleObsMessage.Bind(cfg, state),
             close: HandleObsClose.Bind(cfg, state)
         })
     } catch {
+        state.obsWs := ""
         if (cfg.EnableWS)
             SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
     }
 }
 
 HandleObsClose(cfg, state, ws, status, reason) {
+    if IsObject(ws)
+        try ws.shutdown()
+    if (state.obsWs == ws)
+        state.obsWs := ""
+
     if (!cfg.EnableWS)
         return
 
@@ -43,6 +58,8 @@ HandleObsClose(cfg, state, ws, status, reason) {
     SyncRecState(cfg, state, 0)
     SyncStudioState(cfg, state, false)
     SyncSceneState(cfg, state, "Scene")
+    if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
+        try state.refreshHelpFn.Call()
     SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
 }
 
@@ -64,7 +81,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             authString := ',"authentication":"' authResponse '"'
         }
 
-        identifyJson := '{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":33554431' authString '}}'
+        ; 2047 = EventSubscription::All (all standard low-volume events; excludes 20Hz InputVolumeMeters)
+        identifyJson := '{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":2047' authString '}}'
         ws.sendText(identifyJson)
     }
     else if (opCode == 2) {
@@ -78,14 +96,16 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         ws.sendText(studioJson)
         sceneJson := '{"op":6,"d":{"requestType":"GetCurrentProgramScene","requestId":"InitSceneState"}}'
         ws.sendText(sceneJson)
+        if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
+            try state.refreshHelpFn.Call()
     }
     else if (opCode == 5) {
         if (InStr(msg, '"eventType":"InputMuteStateChanged"') || InStr(msg, '"eventType": "InputMuteStateChanged"')) {
             if (InStr(msg, '"inputName":"' cfg.targetMicName '"') || InStr(msg, '"inputName": "' cfg.targetMicName '"')) {
                 if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                     isMutedOBS := (matchMuted[1] == "true")
-                    SyncUIState(cfg, state, isMutedOBS)
                     PushObsMuteToZoom(cfg, state, isMutedOBS)
+                    SyncUIState(cfg, state, isMutedOBS)
                 }
             }
         }
@@ -115,8 +135,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         if (InStr(msg, '"requestId":"InitState"') || InStr(msg, '"requestId": "InitState"')) {
             if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                 isMutedOBS := (matchMuted[1] == "true")
-                SyncUIState(cfg, state, isMutedOBS)
                 PushObsMuteToZoom(cfg, state, isMutedOBS)
+                SyncUIState(cfg, state, isMutedOBS)
             }
         }
         else if (InStr(msg, '"requestId":"InitRecState"') || InStr(msg, '"requestId": "InitRecState"')) {
@@ -172,6 +192,10 @@ DetectZoomStates(targetSpec := "ahk_exe Zoom.exe") {
     for hwnd in hwndList {
         if !DllCall("IsWindowVisible", "Ptr", hwnd)
             continue
+        ww := 0, wh := 0
+        try WinGetPos(,, &ww, &wh, hwnd)
+        if (ww < 50 || wh < 50)
+            continue
         names := UIA.GetWindowElementNames(hwnd, false)
         for n in names {
             if (!result.hasMic) {
@@ -221,15 +245,21 @@ ZoomStateMonitor(cfg, state) {
         SyncChatState(cfg, state, 0)
 
     if (!zoomInfo.hasMic) {
+        wasConn := state.zoomConnected
         state.zoomConnected := false
         state.zoomLastMuted := -1
         state.zoomSawRecControl := false
         if (cfg.EnableZoom && !cfg.EnableWS)
             SyncRecState(cfg, state, 0)
+        if (wasConn && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
         return
     }
 
+    wasConn := state.zoomConnected
     state.zoomConnected := (cfg.EnableZoom && !cfg.EnableWS)
+    if (state.zoomConnected != wasConn && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
     if (cfg.EnableZoom && !cfg.EnableWS) {
         SyncUIState(cfg, state, zoomInfo.muted)
         if (zoomInfo.hasRec) {
