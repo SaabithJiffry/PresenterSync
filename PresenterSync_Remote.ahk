@@ -181,6 +181,13 @@ class RemoteState {
 
     baseWidth := 80
     baseHeight := 40
+    hudGap := 6
+    recHeight := 34
+    recW := 40
+    chatW := 34
+    row3Height := 30
+    studioW := 28
+    sceneW := 46
     iconSize := 18
     textSize := 13
     savedX := 0
@@ -521,6 +528,7 @@ RefreshRemoteHudAppearance(cfg, state) {
     state.currentAlpha := state.baseAlpha
     ApplyMicAppearance(cfg, state)
     if (cfg.ShowIndicator) {
+        state.MicGui.Move(state.savedX, state.savedY, state.baseWidth, state.baseHeight)
         state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", state.savedX, state.savedY, state.baseWidth, state.baseHeight))
         if (state.isMuted) {
             state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
@@ -721,10 +729,13 @@ ToggleRemotePointerMute(cfg, state, *) {
 
 ToggleRemoteSuspend(*) {
     Suspend(-1)
-    if A_IsSuspended
+    if A_IsSuspended {
+        A_TrayMenu.Check("Suspend All Hotkeys")
         TrayTip("PresenterSync Remote", "All hotkeys suspended.", 1)
-    else
+    } else {
+        A_TrayMenu.Uncheck("Suspend All Hotkeys")
         TrayTip("PresenterSync Remote", "Hotkeys active.", 1)
+    }
 }
 
 ; --- SETTINGS DIALOGS ---
