@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.1.0
-;              and PresenterSync Remote v2.1.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.1.1
+;              and PresenterSync Remote v2.1.1 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -232,7 +232,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.1.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.1.1) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
