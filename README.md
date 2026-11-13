@@ -17,6 +17,7 @@ PresenterSync is a lightweight, standalone Windows utility designed for live str
     *   **Toggleable Extra HUDs:** Use **Show Extra HUDs** in the tray menu to collapse Row 2 and Row 3 down to just the Mic pill at any time while keeping OBS WebSocket Sync or Zoom Monitoring active in the background.
 *   **Smart PowerPoint Controls:** Safely route your arrow keys and presentation shortcuts directly to PowerPoint while keeping OBS or Zoom in the background.
 *   **Extensive Appearance & Scale Customization:** Toggle text labels, switch to monochromatic icons, adjust transparency (`Ghost 50%` / `Frosted 85%` / `Solid 100%`), enable aggressive pulsing animations, choose corner styles, and scale the HUD across 8 presets (`0.25x`, `0.5x`, `1.0x`, `1.5x`, `2.0x`, `2.5x`, `3.0x`, `5.0x`).
+*   **Dynamic System Dark & Light Mode:** Automatically adapts the system tray menu, submenus, and all settings/help/about/tester windows to match your Windows Dark or Light theme in real time.
 *   **Self-Healing Setup & Reset:** Automatically prompts for missing routing profiles/shortcuts or changed OBS passwords, and supports one-click factory appearance reset without losing custom screen position.
 
 ## ⚙️ Prerequisites: OBS WebSocket & Zoom Setup

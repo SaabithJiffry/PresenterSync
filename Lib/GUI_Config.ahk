@@ -107,6 +107,408 @@ class UIConstants {
     static COLOR_CHAT_ALERT := "2563EB"
     static BORDER_CHAT_ALERT := 0xEB6325
     static ICON_CHAT_ALERT := "1E3A8A"
+
+    ; --- System Theme (Dark / Light Mode) Palette ---
+    static DARK_BG := "1E1E1E"
+    static DARK_SURFACE := "252525"
+    static DARK_INPUT_BG := "2B2B2B"
+    static DARK_TEXT := "F3F4F6"
+    static DARK_TEXT_MUTED := "9CA3AF"
+    static DARK_TEXT_DISABLED := "6B7280"
+    static DARK_ACCENT := "60A5FA"
+    static LIGHT_ACCENT := "0055CC"
+    static DARK_BG_BGR := 0x1E1E1E
+    static DARK_SURFACE_BGR := 0x252525
+    static DARK_TAB_ACTIVE_BGR := 0x2D2D2D
+    static DARK_TAB_INACTIVE_BGR := 0x1A1A1A
+    static DARK_INPUT_BG_BGR := 0x2B2B2B
+    static DARK_INPUT_DISABLED_BGR := 0x222222
+    static DARK_BORDER_BGR := 0x555555
+    static DARK_BORDER_SUBTLE_BGR := 0x3F3F3F
+    static DARK_BORDER_DISABLED_BGR := 0x383838
+    static DARK_ACCENT_BGR := 0xFA9E58
+    static DARK_TEXT_BGR := 0xF6F4F3
+    static DARK_TEXT_MUTED_BGR := 0x9EA2A8
+    static DARK_TEXT_DISABLED_BGR := 0x7A7A7A
+}
+
+class Theme {
+    static OverrideMode := ""
+    static OpenWindows := Map()
+    static hUxtheme := 0
+    static fnSetPreferredAppMode := 0
+    static fnFlushMenuThemes := 0
+    static hkSubclassPtr := 0
+    static tabSubclassPtr := 0
+    static staticSubclassPtr := 0
+    static initialized := false
+    static lastIsDark := -1
+
+    static Init() {
+        this.EnsureInitialized()
+        this.ApplyMenuTheme()
+    }
+
+    static EnsureInitialized() {
+        if (this.initialized)
+            return
+        this.hUxtheme := DllCall("GetModuleHandle", "Str", "uxtheme", "Ptr")
+        if (!this.hUxtheme)
+            this.hUxtheme := DllCall("LoadLibrary", "Str", "uxtheme", "Ptr")
+        if (this.hUxtheme) {
+            this.fnSetPreferredAppMode := DllCall("GetProcAddress", "Ptr", this.hUxtheme, "Ptr", 135, "Ptr")
+            this.fnFlushMenuThemes := DllCall("GetProcAddress", "Ptr", this.hUxtheme, "Ptr", 136, "Ptr")
+        }
+        this.hkSubclassPtr := CallbackCreate(HotkeyDarkSubclassProc)
+        this.tabSubclassPtr := CallbackCreate(TabDarkSubclassProc)
+        this.staticSubclassPtr := CallbackCreate(StaticDarkSubclassProc)
+        OnMessage(0x001A, WM_SETTINGCHANGE_Theme)
+        this.initialized := true
+    }
+
+    static IsDarkMode() {
+        if (this.OverrideMode = "dark")
+            return true
+        if (this.OverrideMode = "light")
+            return false
+        try {
+            appsLight := RegRead("HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1)
+            return (appsLight == 0)
+        } catch {
+            return false
+        }
+    }
+
+    static ApplyMenuTheme(isDark := "") {
+        this.EnsureInitialized()
+        if (isDark = "")
+            isDark := this.IsDarkMode()
+        this.lastIsDark := isDark ? 1 : 0
+        if (this.fnSetPreferredAppMode)
+            DllCall(this.fnSetPreferredAppMode, "Int", isDark ? 2 : 3, "Int")
+        if (this.fnFlushMenuThemes)
+            DllCall(this.fnFlushMenuThemes)
+    }
+
+    static ApplyTitleBarTheme(hwnd, isDark) {
+        useDark := isDark ? 1 : 0
+        if (DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 20, "Int*", &useDark, "Int", 4) != 0)
+            DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 19, "Int*", &useDark, "Int", 4)
+    }
+
+    static ApplyToWindow(guiObj, isDark := "") {
+        this.EnsureInitialized()
+        if (isDark = "")
+            isDark := this.IsDarkMode()
+        this.ApplyMenuTheme(isDark)
+        this.ApplyTitleBarTheme(guiObj.Hwnd, isDark)
+        guiObj.BackColor := isDark ? UIConstants.DARK_BG : "Default"
+        guiObj.SetFont("s10 w400 " (isDark ? "c" UIConstants.DARK_TEXT : "cDefault"), "Segoe UI")
+        guiObj._isDark := isDark
+        if (!guiObj.HasOwnProp("_themedCtrls"))
+            guiObj._themedCtrls := []
+        this.OpenWindows[guiObj.Hwnd] := guiObj
+    }
+
+    static RegisterControl(guiObj, ctrl, ctrlType := "", role := "") {
+        ctrl._themeType := ctrlType
+        ctrl._themeRole := role
+        if (guiObj.HasOwnProp("_themedCtrls"))
+            guiObj._themedCtrls.Push(ctrl)
+        this.ApplyToControl(ctrl, ctrlType, guiObj.HasOwnProp("_isDark") ? guiObj._isDark : "", role)
+    }
+
+    static ApplyToControl(ctrl, ctrlType := "", isDark := "", role := "") {
+        this.EnsureInitialized()
+        if (!IsObject(ctrl))
+            return
+        if (isDark = "")
+            isDark := this.IsDarkMode()
+        if (ctrlType = "" && ctrl.HasOwnProp("_themeType"))
+            ctrlType := ctrl._themeType
+        if (role = "" && ctrl.HasOwnProp("_themeRole"))
+            role := ctrl._themeRole
+
+        if (ctrlType = "Button") {
+            DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
+        } else if (ctrlType = "Checkbox") {
+            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+            DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
+        } else if (ctrlType = "Edit") {
+            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+            DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_CFD" : "Explorer", "Ptr", 0)
+        } else if (ctrlType = "DropDownList") {
+            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+            DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_CFD" : "Explorer", "Ptr", 0)
+        } else if (ctrlType = "Hotkey") {
+            if (isDark)
+                DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.hkSubclassPtr, "Ptr", 1, "Ptr", 0)
+            else
+                DllCall("comctl32\RemoveWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.hkSubclassPtr, "Ptr", 1)
+            DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
+        } else if (ctrlType = "Tab") {
+            if (isDark)
+                DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.tabSubclassPtr, "Ptr", 2, "Ptr", 0)
+            else
+                DllCall("comctl32\RemoveWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.tabSubclassPtr, "Ptr", 2)
+            DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
+        } else if (ctrlType = "Text") {
+            if (role = "accent") {
+                ctrl.Opt((isDark ? "+Background" UIConstants.DARK_BG " c" UIConstants.DARK_ACCENT : "+BackgroundDefault c" UIConstants.LIGHT_ACCENT))
+            } else if (role = "tabText") {
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_SURFACE " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+            } else if (role = "tabMuted") {
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_SURFACE " c" UIConstants.DARK_TEXT_MUTED) : "+BackgroundDefault cGray")
+            } else if (role = "muted") {
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT_MUTED) : "+BackgroundDefault cGray")
+            } else {
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : "+BackgroundDefault cDefault")
+            }
+            if (isDark)
+                DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.staticSubclassPtr, "Ptr", 3, "Ptr", 0)
+            else
+                DllCall("comctl32\RemoveWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.staticSubclassPtr, "Ptr", 3)
+            DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
+        }
+    }
+
+    static RefreshWindow(guiObj, isDark := "") {
+        if (!IsObject(guiObj) || !WinExist("ahk_id " guiObj.Hwnd))
+            return
+        if (isDark = "")
+            isDark := this.IsDarkMode()
+        this.ApplyToWindow(guiObj, isDark)
+        if (guiObj.HasOwnProp("_themedCtrls")) {
+            for ctrl in guiObj._themedCtrls {
+                try this.ApplyToControl(ctrl, "", isDark)
+            }
+        }
+        DllCall("SetWindowPos", "Ptr", guiObj.Hwnd, "Ptr", 0, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", 0x0037)
+        DllCall("RedrawWindow", "Ptr", guiObj.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0585)
+    }
+
+    static RefreshOpenWindows(isDark := "") {
+        if (isDark = "")
+            isDark := this.IsDarkMode()
+        this.ApplyMenuTheme(isDark)
+        stale := []
+        for hwnd, guiObj in this.OpenWindows {
+            if (IsObject(guiObj) && WinExist("ahk_id " hwnd))
+                this.RefreshWindow(guiObj, isDark)
+            else
+                stale.Push(hwnd)
+        }
+        for hwnd in stale
+            this.OpenWindows.Delete(hwnd)
+    }
+}
+
+WM_SETTINGCHANGE_Theme(wParam, lParam, msg, hwnd) {
+    curDark := Theme.IsDarkMode() ? 1 : 0
+    if (curDark != Theme.lastIsDark)
+        Theme.RefreshOpenWindows(curDark == 1)
+}
+
+FormatHkDisplayText(hkVal) {
+    if (hkVal = "" || hkVal = "None")
+        return "None"
+    out := ""
+    i := 1
+    len := StrLen(hkVal)
+    hasCtrl := false, hasShift := false, hasAlt := false, hasWin := false
+    while (i <= len) {
+        ch := SubStr(hkVal, i, 1)
+        if (ch = "^")
+            hasCtrl := true
+        else if (ch = "+")
+            hasShift := true
+        else if (ch = "!")
+            hasAlt := true
+        else if (ch = "#")
+            hasWin := true
+        else if (ch = "~" || ch = "$" || ch = "*") {
+        } else {
+            break
+        }
+        i += 1
+    }
+    keyPart := SubStr(hkVal, i)
+    if (hasCtrl)
+        out .= "Ctrl + "
+    if (hasShift)
+        out .= "Shift + "
+    if (hasAlt)
+        out .= "Alt + "
+    if (hasWin)
+        out .= "Win + "
+    if (StrLen(keyPart) == 1)
+        keyPart := StrUpper(keyPart)
+    return out . keyPart
+}
+
+HotkeyDarkSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+    if (uMsg == 0x0082) { ; WM_NCDESTROY
+        DllCall("comctl32\RemoveWindowSubclass", "Ptr", hwnd, "Ptr", uIdSubclass, "Ptr", dwRefData)
+        return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+    }
+    if (uMsg == 0x0014) ; WM_ERASEBKGND
+        return 1
+
+    if (uMsg == 0x000F) { ; WM_PAINT
+        ps := Buffer(72, 0)
+        hdc := DllCall("BeginPaint", "Ptr", hwnd, "Ptr", ps, "Ptr")
+        rc := Buffer(16, 0)
+        DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc)
+        isEnabled := DllCall("IsWindowEnabled", "Ptr", hwnd)
+        hasFocus := (DllCall("GetFocus", "Ptr") == hwnd)
+
+        bgColor := isEnabled ? UIConstants.DARK_INPUT_BG_BGR : UIConstants.DARK_INPUT_DISABLED_BGR
+        brdColor := hasFocus ? UIConstants.DARK_ACCENT_BGR : (isEnabled ? UIConstants.DARK_BORDER_BGR : UIConstants.DARK_BORDER_DISABLED_BGR)
+        txtColor := isEnabled ? UIConstants.DARK_TEXT_BGR : UIConstants.DARK_TEXT_DISABLED_BGR
+
+        hBrushBg := DllCall("CreateSolidBrush", "UInt", bgColor, "Ptr")
+        DllCall("FillRect", "Ptr", hdc, "Ptr", rc, "Ptr", hBrushBg)
+        DllCall("DeleteObject", "Ptr", hBrushBg)
+
+        hBrushBrd := DllCall("CreateSolidBrush", "UInt", brdColor, "Ptr")
+        DllCall("FrameRect", "Ptr", hdc, "Ptr", rc, "Ptr", hBrushBrd)
+        DllCall("DeleteObject", "Ptr", hBrushBrd)
+
+        ctrl := GuiCtrlFromHwnd(hwnd)
+        dispTxt := IsObject(ctrl) ? FormatHkDisplayText(ctrl.Value) : "None"
+
+        hFont := SendMessage(0x0031, 0, 0, hwnd)
+        oldFont := hFont ? DllCall("SelectObject", "Ptr", hdc, "Ptr", hFont, "Ptr") : 0
+        DllCall("SetBkMode", "Ptr", hdc, "Int", 1)
+        DllCall("SetTextColor", "Ptr", hdc, "UInt", txtColor)
+
+        NumPut("Int", 6, rc, 0)
+        DllCall("DrawTextW", "Ptr", hdc, "WStr", dispTxt, "Int", -1, "Ptr", rc, "UInt", 0x24)
+
+        if (oldFont)
+            DllCall("SelectObject", "Ptr", hdc, "Ptr", oldFont, "Ptr")
+        DllCall("EndPaint", "Ptr", hwnd, "Ptr", ps)
+        return 0
+    }
+
+    res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+    if (uMsg == 0x0007 || uMsg == 0x0008 || uMsg == 0x000A || uMsg == 0x0100 || uMsg == 0x0101 || uMsg == 0x0104 || uMsg == 0x0105 || uMsg == 0x0401)
+        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 1)
+    return res
+}
+
+TabDarkSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+    if (uMsg == 0x0082) { ; WM_NCDESTROY
+        DllCall("comctl32\RemoveWindowSubclass", "Ptr", hwnd, "Ptr", uIdSubclass, "Ptr", dwRefData)
+        return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+    }
+    if (uMsg == 0x0014) ; WM_ERASEBKGND
+        return 1
+
+    if (uMsg == 0x000F) { ; WM_PAINT
+        ps := Buffer(72, 0)
+        hdc := DllCall("BeginPaint", "Ptr", hwnd, "Ptr", ps, "Ptr")
+        rc := Buffer(16, 0)
+        DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc)
+        w := NumGet(rc, 8, "Int"), h := NumGet(rc, 12, "Int")
+
+        hBrBg := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_BG_BGR, "Ptr")
+        DllCall("FillRect", "Ptr", hdc, "Ptr", rc, "Ptr", hBrBg)
+        DllCall("DeleteObject", "Ptr", hBrBg)
+
+        tabCount := SendMessage(0x1304, 0, 0, hwnd)
+        curSel := SendMessage(0x130B, 0, 0, hwnd)
+
+        itemRc := Buffer(16, 0)
+        panelTop := 28
+        if (tabCount > 0) {
+            SendMessage(0x130A, 0, itemRc.Ptr, hwnd)
+            panelTop := NumGet(itemRc, 12, "Int")
+        }
+
+        bodyRc := Buffer(16, 0)
+        NumPut("Int", 0, bodyRc, 0), NumPut("Int", panelTop, bodyRc, 4), NumPut("Int", w, bodyRc, 8), NumPut("Int", h, bodyRc, 12)
+        hBrBody := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_SURFACE_BGR, "Ptr")
+        DllCall("FillRect", "Ptr", hdc, "Ptr", bodyRc, "Ptr", hBrBody)
+        DllCall("DeleteObject", "Ptr", hBrBody)
+
+        hBrBorder := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_BORDER_SUBTLE_BGR, "Ptr")
+        DllCall("FrameRect", "Ptr", hdc, "Ptr", bodyRc, "Ptr", hBrBorder)
+
+        hFont := SendMessage(0x0031, 0, 0, hwnd)
+        oldFont := hFont ? DllCall("SelectObject", "Ptr", hdc, "Ptr", hFont, "Ptr") : 0
+        DllCall("SetBkMode", "Ptr", hdc, "Int", 1)
+
+        ctrl := GuiCtrlFromHwnd(hwnd)
+        tabNames := (IsObject(ctrl) && ctrl.HasOwnProp("_tabNames")) ? ctrl._tabNames : []
+
+        Loop tabCount {
+            idx := A_Index - 1
+            SendMessage(0x130A, idx, itemRc.Ptr, hwnd)
+            isSel := (idx == curSel)
+            hBrTab := DllCall("CreateSolidBrush", "UInt", isSel ? UIConstants.DARK_TAB_ACTIVE_BGR : UIConstants.DARK_TAB_INACTIVE_BGR, "Ptr")
+            DllCall("FillRect", "Ptr", hdc, "Ptr", itemRc, "Ptr", hBrTab)
+            DllCall("DeleteObject", "Ptr", hBrTab)
+            DllCall("FrameRect", "Ptr", hdc, "Ptr", itemRc, "Ptr", hBrBorder)
+
+            if (isSel) {
+                accRc := Buffer(16, 0)
+                NumPut("Int", NumGet(itemRc, 0, "Int") + 1, accRc, 0)
+                NumPut("Int", NumGet(itemRc, 12, "Int") - 2, accRc, 4)
+                NumPut("Int", NumGet(itemRc, 8, "Int") - 1, accRc, 8)
+                NumPut("Int", NumGet(itemRc, 12, "Int"), accRc, 12)
+                hBrAcc := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_ACCENT_BGR, "Ptr")
+                DllCall("FillRect", "Ptr", hdc, "Ptr", accRc, "Ptr", hBrAcc)
+                DllCall("DeleteObject", "Ptr", hBrAcc)
+            }
+
+            lbl := (idx + 1 <= tabNames.Length) ? tabNames[idx + 1] : ("Tab " (idx + 1))
+            DllCall("SetTextColor", "Ptr", hdc, "UInt", isSel ? UIConstants.DARK_TEXT_BGR : UIConstants.DARK_TEXT_MUTED_BGR)
+            DllCall("DrawTextW", "Ptr", hdc, "WStr", lbl, "Int", -1, "Ptr", itemRc, "UInt", 0x25)
+        }
+
+        DllCall("DeleteObject", "Ptr", hBrBorder)
+        if (oldFont)
+            DllCall("SelectObject", "Ptr", hdc, "Ptr", oldFont, "Ptr")
+        DllCall("EndPaint", "Ptr", hwnd, "Ptr", ps)
+        return 0
+    }
+
+    res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+    if (uMsg == 0x0201 || uMsg == 0x130C)
+        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 1)
+    return res
+}
+
+StaticDarkSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+    if (uMsg == 0x0082) { ; WM_NCDESTROY
+        DllCall("comctl32\RemoveWindowSubclass", "Ptr", hwnd, "Ptr", uIdSubclass, "Ptr", dwRefData)
+        return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+    }
+    if (uMsg == 0x000F && !DllCall("IsWindowEnabled", "Ptr", hwnd)) {
+        ps := Buffer(72, 0)
+        hdc := DllCall("BeginPaint", "Ptr", hwnd, "Ptr", ps, "Ptr")
+        rc := Buffer(16, 0)
+        DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc)
+        hBrBg := DllCall("CreateSolidBrush", "UInt", UIConstants.DARK_BG_BGR, "Ptr")
+        DllCall("FillRect", "Ptr", hdc, "Ptr", rc, "Ptr", hBrBg)
+        DllCall("DeleteObject", "Ptr", hBrBg)
+        ctrl := GuiCtrlFromHwnd(hwnd)
+        txt := IsObject(ctrl) ? ctrl.Text : ""
+        hFont := SendMessage(0x0031, 0, 0, hwnd)
+        oldFont := hFont ? DllCall("SelectObject", "Ptr", hdc, "Ptr", hFont, "Ptr") : 0
+        DllCall("SetBkMode", "Ptr", hdc, "Int", 1)
+        DllCall("SetTextColor", "Ptr", hdc, "UInt", UIConstants.DARK_TEXT_DISABLED_BGR)
+        DllCall("DrawTextW", "Ptr", hdc, "WStr", txt, "Int", -1, "Ptr", rc, "UInt", 0x00)
+        if (oldFont)
+            DllCall("SelectObject", "Ptr", hdc, "Ptr", oldFont, "Ptr")
+        DllCall("EndPaint", "Ptr", hwnd, "Ptr", ps)
+        return 0
+    }
+    res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
+    if (uMsg == 0x000A) ; WM_ENABLE
+        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 1)
+    return res
 }
 
 class Config {
@@ -476,10 +878,11 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
         Suspend(True)
 
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", title)
+    Theme.ApplyToWindow(dlg)
     if (opts.HasOwnProp("onClose") && opts.onClose) {
-        dlg.OnEvent("Close", (*) => opts.onClose.Call(dlg))
+        dlg.OnEvent("Close", (*) => (Theme.OpenWindows.Has(dlg.Hwnd) ? Theme.OpenWindows.Delete(dlg.Hwnd) : 0, opts.onClose.Call(dlg)))
     } else {
-        dlg.OnEvent("Close", (*) => ((doSuspend && !wasSuspended) ? Suspend(False) : 0, dlg.Destroy()))
+        dlg.OnEvent("Close", (*) => (Theme.OpenWindows.Has(dlg.Hwnd) ? Theme.OpenWindows.Delete(dlg.Hwnd) : 0, (doSuspend && !wasSuspended) ? Suspend(False) : 0, dlg.Destroy()))
     }
 
     ctrls := Map()
@@ -509,6 +912,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
         cOpts := el.HasOwnProp("opts") ? el.opts : ""
         val := el.HasOwnProp("value") ? el.value : ""
         txt := el.HasOwnProp("text") ? el.text : ""
+        role := el.HasOwnProp("role") ? el.role : ""
 
         if (t = "DropDownList") {
             ctrl := dlg.Add("DropDownList", cOpts, el.items)
@@ -520,6 +924,8 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
         } else {
             ctrl := dlg.Add(t, cOpts, val)
         }
+
+        Theme.RegisterControl(dlg, ctrl, t, role)
 
         if (el.HasOwnProp("id") && el.id != "") {
             ctrls[el.id] := ctrl
@@ -535,6 +941,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
     if (opts.HasOwnProp("saveBtnText") && opts.saveBtnText != "") {
         saveBtnOpts := opts.HasOwnProp("saveBtnOpts") ? opts.saveBtnOpts : "w280 Default y+15"
         saveBtn := dlg.Add("Button", saveBtnOpts, opts.saveBtnText)
+        Theme.RegisterControl(dlg, saveBtn, "Button")
         saveBtn.OnEvent("Click", HandleSave)
     }
 
@@ -655,52 +1062,64 @@ FormatHK(hk) {
 
 ShowHelpWindow(cfg, *) {
     helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Help & Guide")
-    helpGui.SetFont("s10 w400", "Segoe UI")
+    Theme.ApplyToWindow(helpGui)
 
-    tabs := helpGui.Add("Tab3", "w420 h290", ["Shortcuts", "Pointer Modes", "OBS & Zoom Sync", "Pro Tips"])
+    tabNames := ["Shortcuts", "Pointer Modes", "OBS & Zoom Sync", "Pro Tips"]
+    tabs := helpGui.Add("Tab2", "w420 h290", tabNames)
+    tabs._tabNames := tabNames
+    Theme.RegisterControl(helpGui, tabs, "Tab")
 
     tabs.UseTab(1)
     helpGui.SetFont("s12 w700")
-    helpGui.Add("Text", "x25 y45", "Global Keyboard Shortcuts")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y45", "Global Keyboard Shortcuts"), "Text", "tabText")
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "x25 y+15", FormatHK(cfg.PptHotkey) " :  Cycle Pointer Modes")
-    helpGui.Add("Text", "x25 y+10", FormatHK(cfg.WsHotkey) " :  Toggle OBS WebSocket Sync")
-    helpGui.Add("Text", "x25 y+10", FormatHK(cfg.ZoomHotkey) " :  Toggle Zoom Monitoring")
-    helpGui.Add("Text", "x25 y+10", FormatHK(cfg.IndHotkey) " :  Hide/Unhide Indicator")
-    helpGui.Add("Text", "x25 y+10", FormatHK(cfg.SuspendHotkey) " :  Suspend All Hotkeys")
-    helpGui.Add("Text", "x25 y+10", FormatHK(cfg.ExitHotkey) " :  Exit PresenterSync")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+15", FormatHK(cfg.PptHotkey) " :  Cycle Pointer Modes"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.WsHotkey) " :  Toggle OBS WebSocket Sync"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.ZoomHotkey) " :  Toggle Zoom Monitoring"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.IndHotkey) " :  Hide/Unhide Indicator"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.SuspendHotkey) " :  Suspend All Hotkeys"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10", FormatHK(cfg.ExitHotkey) " :  Exit PresenterSync"), "Text", "tabText")
 
-    helpGui.SetFont("s9 italic cGray")
-    helpGui.Add("Text", "x25 y+15 w370", "Note: You can rebind these shortcuts in the Settings menu.")
+    helpGui.SetFont("s9 italic")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+15 w370", "Note: You can rebind these shortcuts in the Settings menu."), "Text", "tabMuted")
 
     tabs.UseTab(2)
     helpGui.SetFont("s12 w700")
-    helpGui.Add("Text", "x25 y45", "Hardware Pointer Controls")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y45", "Hardware Pointer Controls"), "Text", "tabText")
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "x25 y+10 w370", "1. Full PPT + Mute:`nRoutes your clicker to PowerPoint while still allowing the hardware mute button to trigger OBS.`n`n2. Pointer Mute Only:`nBypasses PowerPoint completely. Your clicker only controls the mute overlay.`n`n* If you need to type normally while presenting, go to Settings > 'Configure Pointer Intercepts' to disable specific keys (like Space or Enter).")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10 w370", "1. Full PPT + Mute:`nRoutes your clicker to PowerPoint while still allowing the hardware mute button to trigger OBS.`n`n2. Pointer Mute Only:`nBypasses PowerPoint completely. Your clicker only controls the mute overlay.`n`n* If you need to type normally while presenting, go to Settings > 'Configure Pointer Intercepts' to disable specific keys (like Space or Enter)."), "Text", "tabText")
 
     tabs.UseTab(3)
     helpGui.SetFont("s12 w700")
-    helpGui.Add("Text", "x25 y45", "OBS WebSocket & Zoom UIA Sync")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y45", "OBS WebSocket & Zoom UIA Sync"), "Text", "tabText")
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "x25 y+10 w370", "• OBS WebSocket v5: Enable in OBS (Tools > WebSocket Server Settings) for instant 2-way mic sync.`n`n• Zoom UIA Monitoring: Provides 2-way background sync with Zoom even if a host mutes you or you click Mute in Zoom.`n`n• Zoom Requirement: In Zoom Settings > Accessibility (or General), check 'Always show meeting controls' so PresenterSync can read Zoom's toolbar reliably in the background.")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10 w370", "• OBS WebSocket v5: Enable in OBS (Tools > WebSocket Server Settings) for instant 2-way mic sync.`n`n• Zoom UIA Monitoring: Provides 2-way background sync with Zoom even if a host mutes you or you click Mute in Zoom.`n`n• Zoom Requirement: In Zoom Settings > Accessibility (or General), check 'Always show meeting controls' so PresenterSync can read Zoom's toolbar reliably in the background."), "Text", "tabText")
 
     tabs.UseTab(4)
     helpGui.SetFont("s12 w700")
-    helpGui.Add("Text", "x25 y45", "Customizing & Smooth Animations")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y45", "Customizing & Smooth Animations"), "Text", "tabText")
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "x25 y+10 w370", "• Repositioning HUD: Hold Left Click on the indicator to drag it anywhere. Coordinates save automatically.`n`n• Extra HUDs & Appearance: Toggle 'Show Extra HUDs' in the tray menu to show/hide the top telemetry rows, or use 'Indicator Appearance' to customize labels, opacity, scale, or pulse.`n`n• Smooth PPT Animations: To prevent Windows from throttling background animations, capture the Slideshow in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings.")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10 w370", "• Repositioning HUD: Hold Left Click on the indicator to drag it anywhere. Coordinates save automatically.`n`n• Extra HUDs & Appearance: Toggle 'Show Extra HUDs' in the tray menu to show/hide the top telemetry rows, or use 'Indicator Appearance' to customize labels, opacity, scale, or pulse.`n`n• Smooth PPT Animations: To prevent Windows from throttling background animations, capture the Slideshow in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings."), "Text", "tabText")
 
     tabs.UseTab()
 
     btn := helpGui.Add("Button", "w100 x160 y310 Default", "Got it!")
-    btn.OnEvent("Click", (*) => helpGui.Destroy())
+    Theme.RegisterControl(helpGui, btn, "Button")
+    CloseHelp(*) {
+        if Theme.OpenWindows.Has(helpGui.Hwnd)
+            Theme.OpenWindows.Delete(helpGui.Hwnd)
+        helpGui.Destroy()
+    }
+    btn.OnEvent("Click", CloseHelp)
+    helpGui.OnEvent("Close", CloseHelp)
 
     helpGui.Show("AutoSize")
+    return helpGui
 }
 
 ShowAboutWindow(*) {
     aboutGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "About PresenterSync")
+    Theme.ApplyToWindow(aboutGui)
 
     iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSync.ico"
 
@@ -709,19 +1128,28 @@ ShowAboutWindow(*) {
     }
 
     aboutGui.SetFont("s16 w700", "Segoe UI")
-    aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w330 Center y+15", "PresenterSync"), "Text")
 
     aboutGui.SetFont("s10 w400")
-    aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.3.0")
-    aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w330 Center y+5", "Version 1.3.0"), "Text", "muted")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w330 Center y+15", "Created by Saabith Jiffry"), "Text")
 
     gitBtn := aboutGui.Add("Button", "w110 x60 y+25", "GitHub Repo")
+    Theme.RegisterControl(aboutGui, gitBtn, "Button")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
     closeBtn := aboutGui.Add("Button", "w110 x+10 Default", "Close")
-    closeBtn.OnEvent("Click", (*) => aboutGui.Destroy())
+    Theme.RegisterControl(aboutGui, closeBtn, "Button")
+    CloseAbout(*) {
+        if Theme.OpenWindows.Has(aboutGui.Hwnd)
+            Theme.OpenWindows.Delete(aboutGui.Hwnd)
+        aboutGui.Destroy()
+    }
+    closeBtn.OnEvent("Click", CloseAbout)
+    aboutGui.OnEvent("Close", CloseAbout)
 
     aboutGui.Show("AutoSize")
+    return aboutGui
 }
 
 ChangeAppHotkeysUI(cfg, *) {
@@ -861,14 +1289,17 @@ ShowPointerTester(*) {
     Suspend(True)
 
     testerGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Pointer Tester")
+    Theme.ApplyToWindow(testerGui)
 
     testerGui.SetFont("s10", "Segoe UI")
-    testerGui.Add("Text", "w250 Center", "Press any button on your clicker.")
+    Theme.RegisterControl(testerGui, testerGui.Add("Text", "w250 Center", "Press any button on your clicker."), "Text")
 
     keyDisplay := testerGui.Add("Text", "w250 Center y+15", "Listening...")
-    keyDisplay.SetFont("s14 w700 c0055CC")
+    keyDisplay.SetFont("s14 w700")
+    Theme.RegisterControl(testerGui, keyDisplay, "Text", "accent")
 
     btn := testerGui.Add("Button", "w100 x75 y+20 Default", "Close")
+    Theme.RegisterControl(testerGui, btn, "Button")
 
     ih := InputHook("L0 V")
     ih.KeyOpt("{All}", "N")
@@ -883,6 +1314,8 @@ ShowPointerTester(*) {
 
     Cleanup(*) {
         ih.Stop()
+        if Theme.OpenWindows.Has(testerGui.Hwnd)
+            Theme.OpenWindows.Delete(testerGui.Hwnd)
         if (!wasSuspended)
             Suspend(False)
         testerGui.Destroy()
@@ -893,6 +1326,7 @@ ShowPointerTester(*) {
 
     testerGui.Show("AutoSize")
     ih.Start()
+    return testerGui
 }
 
 ; --- HUD STATE SYNCHRONIZATION & APPEARANCE ---
