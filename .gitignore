@@ -4,6 +4,7 @@
 
 # PresenterSync Configuration & Memory Files
 MicOverlay_Config.ini
+PresenterSync_Remote.ini
 
 # AutoHotkey Backup/Temporary Files
 *.bak
