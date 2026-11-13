@@ -943,7 +943,7 @@ SendToPPT(Key) {
     if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
         ; Attempt native COM navigation first to avoid synthetic ControlSend key-hold fast-forwarding
         comHandled := false
-        if (Key = "{Down}" || Key = "{Right}" || Key = "{PgDn}" || Key = "{Space}" || Key = "{Enter}") {
+        if (Key = "{Down}" || Key = "{Right}" || Key = "{PgDn}" || Key = "{Space}") {
             try {
                 ComObjActive("PowerPoint.Application").SlideShowWindows(1).View.Next()
                 comHandled := true
