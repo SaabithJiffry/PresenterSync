@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.1.1
+; Version: 2.2.2
 ; Author: Saabith Jiffry
 ; License: MIT 
 ; ==============================================================================
