@@ -900,11 +900,19 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
 
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", title)
     Theme.ApplyToWindow(dlg)
-    if (opts.HasOwnProp("onClose") && opts.onClose) {
-        dlg.OnEvent("Close", (*) => (Theme.OpenWindows.Has(dlg.Hwnd) ? Theme.OpenWindows.Delete(dlg.Hwnd) : 0, opts.onClose.Call(dlg)))
-    } else {
-        dlg.OnEvent("Close", (*) => (Theme.OpenWindows.Has(dlg.Hwnd) ? Theme.OpenWindows.Delete(dlg.Hwnd) : 0, (doSuspend && !wasSuspended) ? Suspend(False) : 0, dlg.Destroy()))
+    CloseHandler(*) {
+        if Theme.OpenWindows.Has(dlg.Hwnd)
+            Theme.OpenWindows.Delete(dlg.Hwnd)
+        if (opts.HasOwnProp("onClose") && opts.onClose) {
+            opts.onClose.Call(dlg)
+        } else {
+            if (doSuspend && !wasSuspended)
+                Suspend(False)
+            dlg.Destroy()
+        }
     }
+    dlg.OnEvent("Close", CloseHandler)
+    dlg.OnEvent("Escape", CloseHandler)
 
     ctrls := Map()
     trackedElements := []
@@ -1120,7 +1128,7 @@ ShowHelpWindow(cfg, *) {
     helpGui.SetFont("s12 w700")
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y45", "Customizing & Smooth Animations"), "Text", "tabText")
     helpGui.SetFont("s10 w400")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10 w370", "• Repositioning HUD: Hold Left Click on the indicator to drag it anywhere. Coordinates save automatically.`n`n• Extra HUDs & Appearance: Toggle 'Show Extra HUDs' in the tray menu to show/hide the top telemetry rows, or use 'Indicator Appearance' to customize labels, opacity, scale, or pulse.`n`n• Smooth PPT Animations: To prevent Windows from throttling background animations, capture the Slideshow in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings."), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x25 y+10 w370", "• HUD Controls: Left-drag any HUD pill to reposition it (saves automatically), or Right-Click any HUD pill to open the PresenterSync menu directly at your cursor.`n`n• Live Appearance & Theme: Toggle 'Show Extra HUDs' or use 'Indicator Appearance' to customize labels, opacity, scale, pulse, and App Theme (Follow System / Dark / Light) live without interrupting OBS sync.`n`n• Smooth PPT Animations: Capture the Slideshow in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings."), "Text", "tabText")
 
     tabs.UseTab()
 
@@ -1133,6 +1141,7 @@ ShowHelpWindow(cfg, *) {
     }
     btn.OnEvent("Click", CloseHelp)
     helpGui.OnEvent("Close", CloseHelp)
+    helpGui.OnEvent("Escape", CloseHelp)
 
     helpGui.Show("AutoSize")
     return helpGui
@@ -1168,6 +1177,7 @@ ShowAboutWindow(*) {
     }
     closeBtn.OnEvent("Click", CloseAbout)
     aboutGui.OnEvent("Close", CloseAbout)
+    aboutGui.OnEvent("Escape", CloseAbout)
 
     aboutGui.Show("AutoSize")
     return aboutGui
@@ -1241,6 +1251,8 @@ ChangeObsSettingsUI(cfg, *) {
         cfg.Write("Settings", "ObsRecHotkey", values["rec"] != "" ? values["rec"] : "^F9")
         cfg.Write("Settings", "ObsPauseHotkey", values["pause"] != "" ? values["pause"] : "^F10")
         cfg.Write("Settings", "TargetMicName", values["mic"])
+        if (values.Has("pw"))
+            cfg.Write("Settings", "ObsPassword", values["pw"])
         Reload()
     }
 
@@ -1252,7 +1264,9 @@ ChangeObsSettingsUI(cfg, *) {
         {type: "Text", opts: "w280 y+10", text: "Pause/Resume Recording Shortcut:"},
         {type: "Hotkey", id: "pause", opts: "w280", value: cfg.ObsPauseHotkey},
         {type: "Text", opts: "w280 y+10", text: "Exact OBS Audio Source Name (e.g., Mic/Aux):"},
-        {type: "Edit", id: "mic", opts: "w280", value: cfg.targetMicName, required: true, errorMsg: "OBS Mute shortcut and Audio Source Name cannot be empty."}
+        {type: "Edit", id: "mic", opts: "w280", value: cfg.targetMicName, required: true, errorMsg: "OBS Mute shortcut and Audio Source Name cannot be empty."},
+        {type: "Text", opts: "w280 y+10", text: "OBS WebSocket Password (Optional):"},
+        {type: "Edit", id: "pw", opts: "w280 Password", value: cfg.obsPassword}
     ]
 
     BuildSettingsWindow("OBS Settings", elements, SaveObsSettings, {
@@ -1343,6 +1357,7 @@ ShowPointerTester(*) {
     }
 
     testerGui.OnEvent("Close", Cleanup)
+    testerGui.OnEvent("Escape", Cleanup)
     btn.OnEvent("Click", Cleanup)
 
     testerGui.Show("AutoSize")
@@ -1542,29 +1557,47 @@ SyncUIState(cfg, state, obsIsMuted) {
 }
 
 ; --- HUD APPEARANCE & CONFIG HELPERS ---
+RefreshHudAppearance(cfg, state) {
+    state.baseAlpha := cfg.OpacityLevel
+    state.currentAlpha := cfg.OpacityLevel
+    state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
+    state.ComputeDimensions(cfg)
+    UpdateHudLayout(state, state.savedX, state.savedY)
+    UpdateHudVisibility(cfg, state)
+    if (cfg.ShowIndicator && state.isMuted)
+        SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+    else
+        SetTimer state.breathTimerFn, 0
+}
+
 SetThemeMode(cfg, themeMenu, mode, *) {
     cfg.ThemeMode := mode
     cfg.Write("Settings", "ThemeMode", mode)
-    themeMenu.Uncheck("Follow System")
-    themeMenu.Uncheck("Dark Mode")
-    themeMenu.Uncheck("Light Mode")
-    if (mode = "Dark")
-        themeMenu.Check("Dark Mode")
-    else if (mode = "Light")
-        themeMenu.Check("Light Mode")
-    else
-        themeMenu.Check("Follow System")
+    if IsObject(themeMenu) {
+        themeMenu.Uncheck("Follow System")
+        themeMenu.Uncheck("Dark Mode")
+        themeMenu.Uncheck("Light Mode")
+        if (mode = "Dark")
+            themeMenu.Check("Dark Mode")
+        else if (mode = "Light")
+            themeMenu.Check("Light Mode")
+        else
+            themeMenu.Check("Follow System")
+    }
     Theme.SetMode(mode)
 }
 
-SetScale(cfg, val, *) {
+SetScale(cfg, state, val, *) {
+    cfg.IndicatorScale := val
     cfg.Write("Settings", "IndicatorScale", val)
-    Reload()
+    if IsObject(state)
+        RefreshHudAppearance(cfg, state)
 }
 
-ResetAppearance(cfg, *) {
+ResetAppearance(cfg, state := "", *) {
     cfg.ResetAppearance()
-    Reload()
+    if IsObject(state)
+        RefreshHudAppearance(cfg, state)
 }
 
 ResetSettings(cfg, *) {
@@ -1572,9 +1605,10 @@ ResetSettings(cfg, *) {
     Reload()
 }
 
-ResetTrayPosition(cfg, *) {
+ResetTrayPosition(cfg, state := "", *) {
     cfg.ResetPosition()
-    Reload()
+    if IsObject(state)
+        RefreshHudAppearance(cfg, state)
 }
 
 ; --- HUD CREATION, LAYOUT & STYLING ---
@@ -1603,6 +1637,7 @@ InitHUD(cfg, state, showWindows := true) {
 
     OnMessage(0x0003, WM_HUD_MOVE.Bind(state))
     OnMessage(0x0201, WM_LBUTTONDOWN.Bind(cfg, state))
+    OnMessage(0x0205, WM_RBUTTONUP.Bind(state))
     OnMessage(0x02E0, WM_DPICHANGED.Bind(state))
 }
 
@@ -1830,6 +1865,16 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     cfg.Write("Position", "X", anchor.x)
     cfg.Write("Position", "Y", anchor.y)
     UpdateHudLayout(state, anchor.x, anchor.y)
+}
+
+WM_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
+    isHudHwnd := (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
+        || (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd)
+        || (IsObject(state.ChatGui) && hwnd == state.ChatGui.Hwnd)
+        || (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd)
+        || (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd)
+    if (isHudHwnd)
+        A_TrayMenu.Show()
 }
 
 WM_DPICHANGED(state, wParam, lParam, msg, hwnd) {

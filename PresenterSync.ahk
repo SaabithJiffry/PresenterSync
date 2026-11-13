@@ -65,7 +65,7 @@ BuildTrayMenu(cfg, state) {
     Theme.ApplyMenuTheme()
     A_TrayMenu.Delete()
 
-    ; MODULE CONTROLS
+    ; 1. POINTER CONTROLS (LIVE PRESENTATION)
     A_TrayMenu.Add("Enable Full Pointer Controls (PPT + Mute)", TogglePPT.Bind(cfg))
     if (cfg.EnablePPT)
         A_TrayMenu.Check("Enable Full Pointer Controls (PPT + Mute)")
@@ -76,6 +76,7 @@ BuildTrayMenu(cfg, state) {
 
     A_TrayMenu.Add()
 
+    ; 2. LIVE SYNC & MONITORING MODES
     A_TrayMenu.Add("Enable OBS WebSocket Sync", ToggleWS.Bind(cfg, state))
     if (cfg.EnableWS)
         A_TrayMenu.Check("Enable OBS WebSocket Sync")
@@ -84,7 +85,9 @@ BuildTrayMenu(cfg, state) {
     if (cfg.EnableZoom)
         A_TrayMenu.Check("Enable Zoom Monitoring")
 
-    ; MAIN UI TOGGLES
+    A_TrayMenu.Add()
+
+    ; 3. HUD OVERLAY & APPEARANCE
     A_TrayMenu.Add("Show Mute Indicator", ToggleIndicator.Bind(cfg, state))
     if (cfg.ShowIndicator)
         A_TrayMenu.Check("Show Mute Indicator")
@@ -93,17 +96,16 @@ BuildTrayMenu(cfg, state) {
     if (cfg.ShowExtraHuds)
         A_TrayMenu.Check("Show Extra HUDs")
 
-    ; APPEARANCE SUBMENU
     AppearanceMenu := Menu()
-    AppearanceMenu.Add("Show Text Label", ToggleText.Bind(cfg))
+    AppearanceMenu.Add("Show Text Label", ToggleText.Bind(cfg, state))
     if (cfg.ShowText)
         AppearanceMenu.Check("Show Text Label")
 
-    AppearanceMenu.Add("Use Monochromatic Icon", ToggleMono.Bind(cfg))
+    AppearanceMenu.Add("Use Monochromatic Icon", ToggleMono.Bind(cfg, state))
     if (cfg.MonoIcon)
         AppearanceMenu.Check("Use Monochromatic Icon")
 
-    AppearanceMenu.Add("Use Sleek Corners", ToggleCorners.Bind(cfg))
+    AppearanceMenu.Add("Use Sleek Corners", ToggleCorners.Bind(cfg, state))
     if (cfg.SleekCorners)
         AppearanceMenu.Check("Use Sleek Corners")
 
@@ -111,10 +113,12 @@ BuildTrayMenu(cfg, state) {
     if (cfg.AggressivePulse)
         AppearanceMenu.Check("Aggressive Mute Pulse")
 
+    AppearanceMenu.Add()
+
     OpacityMenu := Menu()
-    OpacityMenu.Add("Solid (100%)", SetSolid.Bind(cfg))
-    OpacityMenu.Add("Frosted (85%)", SetFrosted.Bind(cfg))
-    OpacityMenu.Add("Ghost (50%)", SetGhost.Bind(cfg))
+    OpacityMenu.Add("Solid (100%)", SetSolid.Bind(cfg, state))
+    OpacityMenu.Add("Frosted (85%)", SetFrosted.Bind(cfg, state))
+    OpacityMenu.Add("Ghost (50%)", SetGhost.Bind(cfg, state))
     if (cfg.OpacityLevel == UIConstants.OPACITY_SOLID)
         OpacityMenu.Check("Solid (100%)")
     else if (cfg.OpacityLevel == UIConstants.OPACITY_FROSTED)
@@ -136,7 +140,7 @@ BuildTrayMenu(cfg, state) {
         {label: "Gigantic (x5.0)", val: 5.0}
     ]
     for opt in ScaleOptions {
-        ScaleMenu.Add(opt.label, SetScale.Bind(cfg, opt.val))
+        ScaleMenu.Add(opt.label, ApplyScaleLive.Bind(cfg, state, opt.val))
         if (Abs(cfg.IndicatorScale - opt.val) < 0.001)
             ScaleMenu.Check(opt.label)
     }
@@ -157,13 +161,14 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("App Theme", ThemeMenu)
 
     AppearanceMenu.Add()
-    AppearanceMenu.Add("Restore Default Appearance", ResetAppearance.Bind(cfg))
+    AppearanceMenu.Add("Reset Indicator Position", ApplyResetPositionLive.Bind(cfg, state))
+    AppearanceMenu.Add("Restore Default Appearance", ApplyResetAppearanceLive.Bind(cfg, state))
 
     A_TrayMenu.Add("Indicator Appearance", AppearanceMenu)
 
     A_TrayMenu.Add()
 
-    ; SETTINGS SUBMENU
+    ; 4. SETTINGS & CONFIGURATION SUBMENU
     SettingsMenu := Menu()
     RoutingMenu := Menu()
     RoutingModes := [
@@ -177,20 +182,26 @@ BuildTrayMenu(cfg, state) {
             RoutingMenu.Check(rm.label)
     }
     SettingsMenu.Add("Audio Routing Mode", RoutingMenu)
-    SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
-    SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI.Bind(cfg))
-    SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI.Bind(cfg))
-    SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI.Bind(cfg))
+    SettingsMenu.Add("Run Audio Setup Wizard...", (*) => (PromptForSetup(cfg), BuildTrayMenu(cfg, state)))
+    SettingsMenu.Add()
     SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI.Bind(cfg))
     SettingsMenu.Add("Change Zoom Shortcuts", ChangeZoomShortcutsUI.Bind(cfg))
-    SettingsMenu.Add("Reset Indicator Position", ResetTrayPosition.Bind(cfg))
+    SettingsMenu.Add()
+    SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI.Bind(cfg))
+    SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI.Bind(cfg))
+    SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
+    SettingsMenu.Add()
+    SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI.Bind(cfg))
 
     A_TrayMenu.Add("Settings", SettingsMenu)
+
+    ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg))
     A_TrayMenu.Add("About PresenterSync", ShowAboutWindow)
-
-    A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
     A_TrayMenu.Add()
+    A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
+    if A_IsSuspended
+        A_TrayMenu.Check("Suspend All Hotkeys")
     A_TrayMenu.Add("Exit PresenterSync", ExitTrayApp)
 }
 BuildTrayMenu(AppConfig, AppState)
@@ -392,45 +403,68 @@ ToggleExtraHuds(cfg, state, *) {
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
-ToggleText(cfg, *) {
-    cfg.WriteBool("Settings", "ShowText", !cfg.ShowText)
-    Reload()
+ToggleText(cfg, state, *) {
+    cfg.ShowText := !cfg.ShowText
+    cfg.WriteBool("Settings", "ShowText", cfg.ShowText)
+    RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
 }
 
-ToggleMono(cfg, *) {
-    cfg.WriteBool("Settings", "MonoIcon", !cfg.MonoIcon)
-    Reload()
+ToggleMono(cfg, state, *) {
+    cfg.MonoIcon := !cfg.MonoIcon
+    cfg.WriteBool("Settings", "MonoIcon", cfg.MonoIcon)
+    RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
 }
 
-ToggleCorners(cfg, *) {
-    cfg.WriteBool("Settings", "SleekCorners", !cfg.SleekCorners)
-    Reload()
+ToggleCorners(cfg, state, *) {
+    cfg.SleekCorners := !cfg.SleekCorners
+    cfg.WriteBool("Settings", "SleekCorners", cfg.SleekCorners)
+    RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
 }
 
 TogglePulse(cfg, state, *) {
     cfg.AggressivePulse := !cfg.AggressivePulse
     cfg.WriteBool("Settings", "AggressivePulse", cfg.AggressivePulse)
-    SetTrayCheck("Aggressive Mute Pulse", cfg.AggressivePulse)
-
-    if (state.isMuted) {
-        state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
-        SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
-    }
+    RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
 }
 
-SetSolid(cfg, *) {
+SetSolid(cfg, state, *) {
+    cfg.OpacityLevel := UIConstants.OPACITY_SOLID
     cfg.Write("Settings", "OpacityLevel", UIConstants.OPACITY_SOLID)
-    Reload()
+    RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
 }
 
-SetFrosted(cfg, *) {
+SetFrosted(cfg, state, *) {
+    cfg.OpacityLevel := UIConstants.OPACITY_FROSTED
     cfg.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
-    Reload()
+    RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
 }
 
-SetGhost(cfg, *) {
+SetGhost(cfg, state, *) {
+    cfg.OpacityLevel := UIConstants.OPACITY_GHOST
     cfg.Write("Settings", "OpacityLevel", UIConstants.OPACITY_GHOST)
-    Reload()
+    RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
+}
+
+ApplyScaleLive(cfg, state, val, *) {
+    SetScale(cfg, state, val)
+    BuildTrayMenu(cfg, state)
+}
+
+ApplyResetPositionLive(cfg, state, *) {
+    ResetTrayPosition(cfg, state)
+    BuildTrayMenu(cfg, state)
+}
+
+ApplyResetAppearanceLive(cfg, state, *) {
+    ResetAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
 }
 
 ExitTrayApp(*) {
