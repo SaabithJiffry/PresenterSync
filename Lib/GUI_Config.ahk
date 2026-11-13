@@ -15,7 +15,7 @@ class UIConstants {
     static MIN_HUD_GAP := 2
     static REC_HEIGHT := 34
     static ROW3_HEIGHT := 30
-    static REC_WIDTH_RATIO := 0.54
+    static REC_WIDTH_RATIO := 0.53
     static STUDIO_WIDTH_RATIO := 0.38
     static SCREEN_MARGIN_X := 20
     static SCREEN_MARGIN_Y := 20
@@ -26,7 +26,7 @@ class UIConstants {
     static MIC_ICON_SIZE := 18
     static MIC_TEXT_SIZE := 13
     static SUB_ICON_SIZE := 12
-    static SUB_TEXT_SIZE := 9
+    static SUB_TEXT_SIZE := 8
     static STUDIO_ICON_SIZE_TEXT := 11
     static STUDIO_ICON_SIZE_ONLY := 12
     static STUDIO_TEXT_SIZE := 8
@@ -36,11 +36,11 @@ class UIConstants {
     static ICON_OFFSET_X := 15
     static MIC_TEXT_W := 80
     static TEXT_OFFSET_X := 50
-    static REC_ICON_W := 18
-    static REC_ICON_X := 6
-    static CHAT_ICON_W := 16
-    static CHAT_ICON_X := 5
-    static STUDIO_ICON_W := 16
+    static REC_ICON_W := 14
+    static REC_ICON_X := 4
+    static CHAT_ICON_W := 14
+    static CHAT_ICON_X := 4
+    static STUDIO_ICON_W := 14
     static STUDIO_ICON_X := 4
     static SCENE_PAD_X := 4
     static LABEL_GAP_X := 2
@@ -127,6 +127,7 @@ class Config {
     EnableZoom := false
 
     ShowIndicator := true
+    ShowExtraHuds := true
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -239,6 +240,7 @@ class Config {
         }
 
         this.ShowIndicator := this.ReadBool("Settings", "ShowIndicator", true)
+        this.ShowExtraHuds := this.ReadBool("Settings", "ShowExtraHuds", true)
         this.ShowText := this.ReadBool("Settings", "ShowText")
         this.MonoIcon := this.ReadBool("Settings", "MonoIcon")
         this.SleekCorners := this.ReadBool("Settings", "SleekCorners")
@@ -272,12 +274,14 @@ class Config {
     }
 
     ResetAppearance() {
+        this.ShowExtraHuds := true
         this.ShowText := false
         this.MonoIcon := false
         this.SleekCorners := false
         this.AggressivePulse := false
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
+        this.Write("Settings", "ShowExtraHuds", 1)
         this.Write("Settings", "ShowText", 0)
         this.Write("Settings", "MonoIcon", 0)
         this.Write("Settings", "SleekCorners", 0)
@@ -410,20 +414,36 @@ class OverlayState {
         this.recW := Round((this.baseWidth - this.hudGap) * UIConstants.REC_WIDTH_RATIO)
         this.chatW := this.baseWidth - this.hudGap - this.recW
         this.row3Height := Round(UIConstants.ROW3_HEIGHT * cfg.IndicatorScale)
-        this.studioW := Round((this.baseWidth - this.hudGap) * UIConstants.STUDIO_WIDTH_RATIO)
-        this.sceneW := this.baseWidth - this.hudGap - this.studioW
+
         this.iconSize := Max(1, Round(UIConstants.MIC_ICON_SIZE * cfg.IndicatorScale))
         this.textSize := Max(1, Round(UIConstants.MIC_TEXT_SIZE * cfg.IndicatorScale))
         this.subIconSize := Max(1, Round(UIConstants.SUB_ICON_SIZE * cfg.IndicatorScale))
         this.subTextSize := Max(1, Round(UIConstants.SUB_TEXT_SIZE * cfg.IndicatorScale))
         this.miniTextSize := Max(1, Round(UIConstants.MINI_TEXT_SIZE * cfg.IndicatorScale))
 
+        minStudioW := Round((this.baseWidth - this.hudGap) * UIConstants.STUDIO_WIDTH_RATIO)
+        if (cfg.ShowText) {
+            stIconW := Round(UIConstants.STUDIO_ICON_W * cfg.IndicatorScale)
+            stIconX := Round(UIConstants.STUDIO_ICON_X * cfg.IndicatorScale)
+            stTextSize := Max(1, Round(UIConstants.STUDIO_TEXT_SIZE * cfg.IndicatorScale))
+            reqStudioW := stIconX + stIconW + Gdip.MeasureTextWidth("STUDIO", "Segoe UI", stTextSize, 1) + Round(2 * UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
+            this.studioW := Max(minStudioW, reqStudioW)
+        } else {
+            this.studioW := minStudioW
+        }
+
+        minSceneW := Max(UIConstants.MIN_TEXT_WIDTH, this.baseWidth - this.hudGap - this.studioW)
+        scPad := Round(UIConstants.SCENE_PAD_X * cfg.IndicatorScale)
+        reqSceneW := Gdip.MeasureTextWidth(this.currentSceneName, "Segoe UI", this.miniTextSize, 1) + (2 * scPad) + Round(4 * cfg.IndicatorScale)
+        this.sceneW := Max(minSceneW, reqSceneW)
+
+        maxRowW := Max(this.baseWidth, this.studioW + this.hudGap + this.sceneW, this.recW + this.hudGap + this.chatW)
         rawX := cfg.savedX
         rawY := cfg.savedY
         if (rawX = "Default" || rawY = "Default" || !IsInteger(rawX) || !IsInteger(rawY)) {
             MonitorGetWorkArea(1, &Left, &Top, &Right, &Bottom)
             stackTopPad := UIConstants.SCREEN_MIN_PAD + this.recHeight + this.row3Height + (2 * this.hudGap)
-            this.savedX := Max(Left + UIConstants.SCREEN_MIN_PAD, Right - this.baseWidth - UIConstants.SCREEN_MARGIN_X)
+            this.savedX := Max(Left + UIConstants.SCREEN_MIN_PAD, Right - maxRowW - UIConstants.SCREEN_MARGIN_X)
             this.savedY := Max(Top + stackTopPad, Bottom - this.baseHeight - UIConstants.SCREEN_MARGIN_Y)
         } else {
             sx := Integer(rawX)
@@ -431,7 +451,7 @@ class OverlayState {
             vLeft := SysGet(76), vTop := SysGet(77)
             vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
             stackTopPad := this.recHeight + this.row3Height + (2 * this.hudGap)
-            this.savedX := Max(vLeft, Min(sx, vRight - this.baseWidth))
+            this.savedX := Max(vLeft, Min(sx, vRight - maxRowW))
             this.savedY := Max(vTop + stackTopPad, Min(sy, vBottom - this.baseHeight))
         }
     }
@@ -669,7 +689,7 @@ ShowHelpWindow(cfg, *) {
     helpGui.SetFont("s12 w700")
     helpGui.Add("Text", "x25 y45", "Customizing & Smooth Animations")
     helpGui.SetFont("s10 w400")
-    helpGui.Add("Text", "x25 y+10 w370", "• Repositioning HUD: Hold Left Click on the indicator to drag it anywhere. Coordinates save automatically.`n`n• Appearance: Right-click the tray icon > 'Indicator Appearance' to customize labels, opacity, scale, or pulse.`n`n• Smooth PPT Animations: To prevent Windows from throttling background animations, capture the Slideshow in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings.")
+    helpGui.Add("Text", "x25 y+10 w370", "• Repositioning HUD: Hold Left Click on the indicator to drag it anywhere. Coordinates save automatically.`n`n• Extra HUDs & Appearance: Toggle 'Show Extra HUDs' in the tray menu to show/hide the top telemetry rows, or use 'Indicator Appearance' to customize labels, opacity, scale, or pulse.`n`n• Smooth PPT Animations: To prevent Windows from throttling background animations, capture the Slideshow in OBS using Window Capture ('Windows 10 1903+') and set POWERPNT.EXE to 'High performance' in Windows Graphics Settings.")
 
     tabs.UseTab()
 
@@ -990,6 +1010,12 @@ ApplyStudioAppearance(cfg, state) {
 SyncSceneState(cfg, state, sceneName) {
     if (sceneName != "" && state.currentSceneName != sceneName) {
         state.currentSceneName := sceneName
+        state.ComputeDimensions(cfg)
+        UpdateHudLayout(state, state.savedX, state.savedY)
+        ApplyMicAppearance(cfg, state)
+        ApplyRecAppearance(cfg, state)
+        ApplyChatAppearance(cfg, state)
+        ApplyStudioAppearance(cfg, state)
         ApplySceneAppearance(cfg, state)
     }
 }
@@ -1178,7 +1204,7 @@ UpdateHudVisibility(cfg, state) {
     state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
     ApplyMicAppearance(cfg, state)
 
-    if (cfg.EnableWS || cfg.EnableZoom) {
+    if (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom)) {
         state.RecGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.recX, pos.recY, pos.recW, pos.recH))
         ApplyRecAppearance(cfg, state)
         state.ChatGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.chatX, pos.chatY, pos.chatW, pos.chatH))
@@ -1188,7 +1214,7 @@ UpdateHudVisibility(cfg, state) {
         state.ChatGui.Hide()
     }
 
-    if (cfg.EnableWS) {
+    if (cfg.ShowExtraHuds && cfg.EnableWS) {
         state.StudioGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.studioX, pos.studioY, pos.studioW, pos.studioH))
         ApplyStudioAppearance(cfg, state)
         state.SceneGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH))
@@ -1329,6 +1355,8 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     WinGetPos(&X, &Y,,, "ahk_id " hwnd)
     anchor := AnchorFromHwnd(state, hwnd, X, Y)
 
+    cfg.savedX := anchor.x
+    cfg.savedY := anchor.y
     cfg.Write("Position", "X", anchor.x)
     cfg.Write("Position", "Y", anchor.y)
     UpdateHudLayout(state, anchor.x, anchor.y)

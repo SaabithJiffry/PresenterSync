@@ -82,10 +82,14 @@ BuildTrayMenu(cfg, state) {
     if (cfg.EnableZoom)
         A_TrayMenu.Check("Enable Zoom Monitoring")
 
-    ; MAIN UI TOGGLE
+    ; MAIN UI TOGGLES
     A_TrayMenu.Add("Show Mute Indicator", ToggleIndicator.Bind(cfg, state))
     if (cfg.ShowIndicator)
         A_TrayMenu.Check("Show Mute Indicator")
+
+    A_TrayMenu.Add("Show Extra HUDs", ToggleExtraHuds.Bind(cfg, state))
+    if (cfg.ShowExtraHuds)
+        A_TrayMenu.Check("Show Extra HUDs")
 
     ; APPEARANCE SUBMENU
     AppearanceMenu := Menu()
@@ -360,6 +364,17 @@ ToggleIndicator(cfg, state, *) {
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     else if (!cfg.ShowIndicator)
         SetTimer state.breathTimerFn, 0
+}
+
+ToggleExtraHuds(cfg, state, *) {
+    ToolTip()
+    cfg.ShowExtraHuds := !cfg.ShowExtraHuds
+    cfg.WriteBool("Settings", "ShowExtraHuds", cfg.ShowExtraHuds)
+
+    SetTrayCheck("Show Extra HUDs", cfg.ShowExtraHuds)
+    UpdateHudVisibility(cfg, state)
+    ToolTip(cfg.ShowExtraHuds ? "Extra HUDs: ON" : "Extra HUDs: OFF")
+    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 ToggleText(cfg, *) {

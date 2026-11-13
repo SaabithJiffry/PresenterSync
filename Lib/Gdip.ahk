@@ -81,7 +81,72 @@ class Gdip {
         return pPath
     }
 
-    static DrawText(pGraphics, textStr, fontName, ptSize, fontStyle, argbColor, x, y, w, h, hAlign := 1, vAlign := 1, trimming := 3) {
+    static CreateTypographicFormat(hAlign := 1, vAlign := 1, trimming := 0) {
+        pGeneric := 0
+        pFormat := 0
+        DllCall("gdiplus\GdipStringFormatGetGenericTypographic", "Ptr*", &pGeneric)
+        if (pGeneric)
+            DllCall("gdiplus\GdipCloneStringFormat", "Ptr", pGeneric, "Ptr*", &pFormat)
+        if (!pFormat)
+            DllCall("gdiplus\GdipCreateStringFormat", "Int", 0x5000, "UShort", 0, "Ptr*", &pFormat)
+        if (pFormat) {
+            ; 0x1000 = StringFormatFlagsNoWrap, 0x4000 = StringFormatFlagsNoClip
+            DllCall("gdiplus\GdipSetStringFormatFlags", "Ptr", pFormat, "Int", 0x5000)
+            DllCall("gdiplus\GdipSetStringFormatAlign", "Ptr", pFormat, "Int", hAlign)
+            DllCall("gdiplus\GdipSetStringFormatLineAlign", "Ptr", pFormat, "Int", vAlign)
+            DllCall("gdiplus\GdipSetStringFormatTrimming", "Ptr", pFormat, "Int", trimming)
+        }
+        return pFormat
+    }
+
+    static MeasureTextWidth(textStr, fontName := "Segoe UI", ptSize := 9, fontStyle := 1) {
+        if (textStr = "")
+            return 0
+        if (!this._token)
+            this.Startup()
+
+        hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
+        if (!hdcScreen)
+            return 0
+        pGraphics := 0
+        DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcScreen, "Ptr*", &pGraphics)
+        if (!pGraphics) {
+            DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcScreen)
+            return 0
+        }
+
+        pFamily := 0
+        DllCall("gdiplus\GdipCreateFontFamilyFromName", "WStr", fontName, "Ptr", 0, "Ptr*", &pFamily)
+        if (!pFamily)
+            DllCall("gdiplus\GdipCreateFontFamilyFromName", "WStr", "Segoe UI", "Ptr", 0, "Ptr*", &pFamily)
+        if (!pFamily)
+            DllCall("gdiplus\GdipGetGenericFontFamilySansSerif", "Ptr*", &pFamily)
+
+        measuredW := 0
+        if (pFamily) {
+            pFont := 0
+            DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", Float(ptSize), "Int", fontStyle, "Int", 3, "Ptr*", &pFont)
+            if (pFont) {
+                pFormat := this.CreateTypographicFormat(0, 1, 0)
+                layoutRect := Buffer(16, 0)
+                NumPut("Float", 4000.0, layoutRect, 8)
+                NumPut("Float", 400.0, layoutRect, 12)
+                boundRect := Buffer(16, 0)
+                DllCall("gdiplus\GdipMeasureString", "Ptr", pGraphics, "WStr", textStr, "Int", -1, "Ptr", pFont, "Ptr", layoutRect, "Ptr", pFormat, "Ptr", boundRect, "Ptr", 0, "Ptr", 0)
+                measuredW := Ceil(NumGet(boundRect, 8, "Float"))
+                if (pFormat)
+                    DllCall("gdiplus\GdipDeleteStringFormat", "Ptr", pFormat)
+                DllCall("gdiplus\GdipDeleteFont", "Ptr", pFont)
+            }
+            DllCall("gdiplus\GdipDeleteFontFamily", "Ptr", pFamily)
+        }
+
+        DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
+        DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcScreen)
+        return measuredW
+    }
+
+    static DrawText(pGraphics, textStr, fontName, ptSize, fontStyle, argbColor, x, y, w, h, hAlign := 1, vAlign := 1, trimming := 0) {
         if (textStr = "" || w <= 0 || h <= 0)
             return
 
@@ -94,19 +159,34 @@ class Gdip {
         if (!pFamily)
             return
 
+        fitPtSize := Float(ptSize)
         pFont := 0
-        DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", Float(ptSize), "Int", fontStyle, "Int", 3, "Ptr*", &pFont)
+        DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", fitPtSize, "Int", fontStyle, "Int", 3, "Ptr*", &pFont)
         if (!pFont) {
             DllCall("gdiplus\GdipDeleteFontFamily", "Ptr", pFamily)
             return
         }
 
-        pFormat := 0
-        DllCall("gdiplus\GdipCreateStringFormat", "Int", 0x1000, "UShort", 0, "Ptr*", &pFormat)
-        if (pFormat) {
-            DllCall("gdiplus\GdipSetStringFormatAlign", "Ptr", pFormat, "Int", hAlign)
-            DllCall("gdiplus\GdipSetStringFormatLineAlign", "Ptr", pFormat, "Int", vAlign)
-            DllCall("gdiplus\GdipSetStringFormatTrimming", "Ptr", pFormat, "Int", trimming)
+        pFormat := this.CreateTypographicFormat(hAlign, vAlign, trimming)
+
+        ; Auto-fit font size if measured text width exceeds available box width w
+        layoutRect := Buffer(16, 0)
+        NumPut("Float", 4000.0, layoutRect, 8)
+        NumPut("Float", Float(h * 2), layoutRect, 12)
+        boundRect := Buffer(16, 0)
+        DllCall("gdiplus\GdipMeasureString", "Ptr", pGraphics, "WStr", textStr, "Int", -1, "Ptr", pFont, "Ptr", layoutRect, "Ptr", pFormat, "Ptr", boundRect, "Ptr", 0, "Ptr", 0)
+        measuredW := NumGet(boundRect, 8, "Float")
+        if (measuredW > Float(w) && measuredW > 0.0) {
+            fitPtSize := Max(1.0, fitPtSize * (Float(w) / measuredW) * 0.96)
+            DllCall("gdiplus\GdipDeleteFont", "Ptr", pFont)
+            pFont := 0
+            DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", fitPtSize, "Int", fontStyle, "Int", 3, "Ptr*", &pFont)
+            if (!pFont) {
+                if (pFormat)
+                    DllCall("gdiplus\GdipDeleteStringFormat", "Ptr", pFormat)
+                DllCall("gdiplus\GdipDeleteFontFamily", "Ptr", pFamily)
+                return
+            }
         }
 
         rectF := Buffer(16, 0)
