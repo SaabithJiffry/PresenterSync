@@ -1,19 +1,27 @@
 # PresenterSync 🎙️📊
 
-PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It seamlessly bridges OBS Studio and Microsoft PowerPoint, allowing you to control your slides and manage your microphone without ever losing window focus or broadcasting a hot mic.
+PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It bridges OBS Studio, Zoom, and Microsoft PowerPoint, allowing you to control your slides, track recording/studio/scene/chat telemetry, and manage your microphone without ever losing window focus or broadcasting a hot mic.
 
 ## 🚀 Features
 
-*   **OBS WebSocket v5 Integration:** Real-time two-way synchronization with OBS. If you mute in OBS, the on-screen indicator updates instantly.
-*   **Smart PowerPoint Controls:** Safely route your arrow keys and presentation shortcuts directly to PowerPoint while keeping OBS or other apps in the background.
-*   **Dynamic Visual Mute Indicator:** A customizable, floating UI overlay that sits on your screen so you always know your live audio status.
-*   **Extensive Appearance Customization:** Toggle text labels, switch to monochromatic icons, adjust transparency (Ghost/Frosted/Solid), enable aggressive pulsing animations, and choose between standard, sleek, or circular/pill-shaped indicator styles.
-*   **Self-Healing Setup:** Automatically detects network failures or changed OBS passwords and prompts you with a clean, user-friendly UI to fix it.
-*   **One-Click Reset:** Instantly restore the factory default appearance from the system tray without losing your custom screen position.
+*   **3 Audio Routing Profiles:**
+    1. **Pro OBS Setup (VB-Cable):** Controls OBS mic directly.
+    2. **Standard Direct Mic (Zoom-Only):** Controls Zoom mic directly without OBS.
+    3. **Dual App Sync (OBS + Zoom Direct):** Keeps OBS and Zoom mic states synchronized 2-way (`ObsMuteHotkey` + `ZoomMuteHotkey`).
+*   **OBS WebSocket v5 Integration:** Real-time 2-way synchronization with OBS for Mic Mute, 3-state Recording (`NOT REC` / `REC` / `PAUSED`), Studio Mode indicator, and Active Program Scene pill.
+*   **Native Windows UIA Zoom Monitoring (`Lib\UIA.ahk`):** Real-time background inspection of Zoom meeting controls for 2-way Mic sync, 3-state Zoom Recording, and a universal **Unread Chat Counter** (`CHAT` / `X NEW`) active in both OBS and Zoom modes.
+*   **Adaptive Multi-Tier HUD Overlay:**
+    *   **Basic Mode:** 1-tier live/muted Mic pill.
+    *   **Zoom Mode:** 2-tier stack adding Recording Status + Zoom Chat Unread badge.
+    *   **Pro OBS Mode:** 3-tier stack adding OBS Studio Mode + Active Program Scene display.
+*   **Smart PowerPoint Controls:** Safely route your arrow keys and presentation shortcuts directly to PowerPoint while keeping OBS or Zoom in the background.
+*   **Extensive Appearance & Scale Customization:** Toggle text labels, switch to monochromatic icons, adjust transparency (`Ghost 50%` / `Frosted 85%` / `Solid 100%`), enable aggressive pulsing animations, choose corner styles, and scale the HUD across 8 presets (`0.25x`, `0.5x`, `1.0x`, `1.5x`, `2.0x`, `2.5x`, `3.0x`, `5.0x`).
+*   **Self-Healing Setup & Reset:** Automatically prompts for missing routing profiles/shortcuts or changed OBS passwords, and supports one-click factory appearance reset without losing custom screen position.
 
-## ⚙️ Prerequisites: OBS WebSocket Setup
+## ⚙️ Prerequisites: OBS WebSocket & Zoom Setup
 
-Before connecting PresenterSync, you must enable the WebSocket server inside OBS Studio (Requires OBS Studio v28.0 or newer):
+### OBS Studio (WebSocket v5)
+Before connecting PresenterSync to OBS, enable the WebSocket server inside OBS Studio (OBS Studio v28.0+):
 
 1. Open OBS Studio.
 2. Navigate to the top menu bar and click **Tools** > **WebSocket Server Settings**.
@@ -21,7 +29,13 @@ Before connecting PresenterSync, you must enable the WebSocket server inside OBS
 4. Ensure the **Server Port** is set to `4455` (the default).
 5. Check the box for **Enable Authentication**.
 6. Click **Generate Password** (or type a custom password). Click **Apply** and **OK**. 
-*Keep this password handy—PresenterSync will ask for it the first time you enable Sync.*
+*Keep this password handy—PresenterSync will ask for it the first time you enable OBS WebSocket Sync.*
+
+### Zoom (UIA Background Monitoring)
+To let PresenterSync read Zoom's Mute, Recording, and Unread Chat controls reliably in the background:
+
+1. Open Zoom Settings > **Accessibility** (or **General**).
+2. Enable **Always show meeting controls**.
 
 ## 🛠️ Installation & Usage
 
@@ -35,20 +49,21 @@ The ready-to-run `.exe` version (no AutoHotkey installation required) is current
 If you prefer to run the raw script or compile it yourself:
 1. Download and install [AutoHotkey v2](https://www.autohotkey.com/).
 2. Clone or download this repository.
-3. Ensure `WebSocket.ahk` is located inside the `lib` folder.
+3. Ensure `WebSocket.ahk` and `UIA.ahk` are located inside the `Lib` folder.
 4. Run `PresenterSync.ahk`.
 
 ## 🎮 How It Works
 
-1. **Initial Setup:** On your first launch, the app will prompt you for a fallback OBS Mute keyboard shortcut (e.g., the hotkey you normally press to mute your mic in OBS).
-2. **Connect to OBS:** Right-click the PresenterSync icon in your Windows system tray to access the **Module Controls**. Click **Enable OBS WebSocket Sync**.
-3. **Enter Password:** Paste the OBS WebSocket password you generated earlier. The app will securely hash and store this for future sessions.
-4. **Customize:** Use the system tray menu to drag the indicator to your preferred spot on the screen, tweak the visual settings, or manage your hotkeys.
+1. **Initial Setup:** On your first launch, choose your Audio Routing Mode (`1`, `2`, or `3`) and configure your OBS / Zoom fallback shortcuts.
+2. **Choose Monitoring Engine:** Right-click the PresenterSync tray icon to enable **OBS WebSocket Sync** or **Zoom Monitoring** (mutually exclusive).
+3. **Customize:** Left-drag any HUD pill to reposition the whole stack (coordinates save automatically), or use **Indicator Appearance** in the tray menu to change scale, labels, opacity, and corner style.
 
 **Default System Shortcuts:**
-*   `Ctrl + F12` : Toggle PowerPoint Controls ON/OFF
+*   `Ctrl + F12` : Cycle Pointer Modes (Full PPT + Mute / Mute Only / OFF)
 *   `Alt + F12` : Toggle OBS WebSocket Sync ON/OFF
-*   `Ctrl + Shift + F12` : Hide/Unhide the Visual Indicator
+*   `Ctrl + Alt + F12` : Toggle Zoom Monitoring ON/OFF
+*   `Ctrl + Shift + F12` : Hide/Unhide the HUD Indicator
+*   `Ctrl + Alt + Shift + F12` : Suspend All Hotkeys
 *   `Alt + Shift + F12` : Exit Application
 
 ## 📄 License
