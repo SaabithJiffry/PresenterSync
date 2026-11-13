@@ -1,4 +1,4 @@
-# PresenterSync v2.1.1 🎙️📊
+# PresenterSync v2.2.2 🎙️📊
 
 PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It bridges OBS Studio, Zoom, and Microsoft PowerPoint, allowing you to control your slides, track recording/studio/scene/chat telemetry, and manage your microphone without ever losing window focus or broadcasting a hot mic.
 
@@ -69,17 +69,18 @@ You can build standalone, zero-dependency `.exe` binaries for both the primary a
 4. Copy `PresenterSync_Remote.exe` to a USB drive or smart board OPS module and run it portably without any installation!
 
 ## 📡 Smart Board Remote Companion Setup
-1. On the primary laptop, right-click the PresenterSync tray icon > **Settings** > **Remote Companion Info...**
-2. Click **Copy Universal String to Clipboard** (contains your computer name `.local` and all active Ethernet/Wi-Fi IPs).
-3. On the smart board, launch `PresenterSync_Remote` (script or `.exe`).
-4. Paste the connection string into the **Host Address** field, enter your OBS WebSocket password (if enabled), and click **Connect & Start**.
-5. Plug your presentation clicker into the smart board: pressing the mute button (default `b`) will immediately toggle OBS mute on the host laptop!
+1. **Host Firewall & OBS WebSocket:** Enable OBS Studio WebSocket v5 (`Tools` > `WebSocket Server Settings`, port `4455`), and allow **TCP port `4455`** in Windows Firewall on the host laptop.
+2. **Copy Host Endpoints:** On the primary laptop, right-click the PresenterSync tray icon > **Settings** > **Remote Companion Info...** (or open the **Remote Setup** tab in **Help & Shortcuts**) and click **Copy Universal String to Clipboard** (contains your computer name `.local` and all active Ethernet/Wi-Fi IPs).
+3. **Connect Smart Board:** On the smart board, launch `PresenterSync_Remote` (script or `.exe`). Paste the connection string into **Host Address**, verify **Port** (`4455`), enter your OBS WebSocket password, match the exact **Audio Source Name** (default `Mic/Aux`), and click **Test Connection** before clicking **Connect & Start**.
+4. **In-App Help on Smart Board:** Right-click the Remote pill (or tray icon) and choose **Help & Setup Guide...**, or click **Setup Guide** directly in the connection dialog.
+5. **Present:** Plug your clicker into the smart board—pressing the mute button (default `b`) immediately toggles OBS mute on the host laptop, while the HUD dims automatically when disconnected.
 
 ## 🎮 How It Works
 
 1. **Initial Setup:** On your first launch, choose your Audio Routing Mode (`1`, `2`, or `3`) and configure your OBS / Zoom fallback shortcuts.
 2. **Choose Monitoring Engine:** Right-click the PresenterSync tray icon (or right-click directly on any HUD pill) to enable **OBS WebSocket Sync** or **Zoom Monitoring** (mutually exclusive).
-3. **Customize Live:** Left-drag any HUD pill to reposition the whole stack (coordinates save automatically), or use **Indicator Appearance** to change scale, labels, opacity, corner style, and **App Theme** (**Follow System**, **Dark Mode**, or **Light Mode**) live without interrupting your active session.
+3. **Interactive Help & Remote Guide:** Open **Help & Shortcuts** in the tray menu for step-by-step setup instructions across **Shortcuts**, **Pointer & PPT**, **Audio & Sync**, **Remote Setup**, **HUD & Theme**, and **Live Status**.
+4. **Customize Live:** Left-drag any HUD pill to reposition the whole stack (coordinates save automatically), or use **Indicator Appearance** to change scale, labels, opacity, corner style, and **App Theme** (**Follow System**, **Dark Mode**, or **Light Mode**) live without interrupting your active session.
 
 **Default System Shortcuts:**
 *   `Ctrl + F12` : Cycle Pointer Modes (Full PPT + Mute / Mute Only / OFF)

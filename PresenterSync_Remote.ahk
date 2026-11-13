@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.1.1
+; Version: 2.2.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -700,7 +700,8 @@ BuildRemoteTrayMenu(cfg, state) {
     A_TrayMenu.Add("Change OBS Connection...", (*) => ShowRemoteConnectionUI(cfg, state, false))
     A_TrayMenu.Add()
 
-    ; 5. SAFETY & EXIT
+    ; 5. HELP, SAFETY & EXIT
+    A_TrayMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
     A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI())
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
     if A_IsSuspended
@@ -813,6 +814,48 @@ ChangeRemotePointerKeyUI(cfg, state, *) {
     ))
 }
 
+ShowRemoteHelpUI(cfg, state, *) {
+    existing := Theme.FocusExistingWindow("RemoteHelpWindow")
+    if IsObject(existing)
+        return existing
+
+    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Remote v" UIConstants.APP_VERSION " - Setup & Help Guide")
+    Theme.ApplyToWindow(helpGui)
+    Theme.NamedWindows["RemoteHelpWindow"] := helpGui
+
+    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x18 y16 w580", "Smart Board & Remote Companion Setup Guide"), "Text")
+
+    connState := (state.connStatus = "auth_failed") ? "Auth Failed (Check Password)"
+        : ((state.obsConnected && state.connStatus = "mic_error") ? ("Connected - Mic '" cfg.TargetMicName "' Not Found")
+        : (state.obsConnected ? ("Connected to " state.activeHost) : "Searching / Disconnected"))
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x18 y40 w580", "Current Status: " connState "  |  Clicker Key: " FormatHK(cfg.HwMuteHotkey) "  |  Host: " (cfg.HostAddress != "" ? cfg.HostAddress : "(Not Set)") ":" cfg.HostPort), "Text", "muted")
+
+    ed := AddHelpGuideEdit(helpGui, 18, 66, 580, 340, GetRemoteSetupGuideText())
+
+    btnConn := helpGui.Add("Button", "x18 y418 w186 h32", "Change OBS Connection...")
+    btnKey := helpGui.Add("Button", "x215 y418 w186 h32", "Change Mute Button...")
+    btnClose := helpGui.Add("Button", "x412 y418 w186 h32 Default", "Close")
+    Theme.RegisterControl(helpGui, btnConn, "Button", "accent")
+    Theme.RegisterControl(helpGui, btnKey, "Button")
+    Theme.RegisterControl(helpGui, btnClose, "Button")
+
+    CloseRemoteHelp(*) {
+        Theme.UnregisterWindow(helpGui, "RemoteHelpWindow")
+        helpGui.Destroy()
+    }
+    btnConn.OnEvent("Click", (*) => ShowRemoteConnectionUI(cfg, state, false))
+    btnKey.OnEvent("Click", (*) => ChangeRemotePointerKeyUI(cfg, state))
+    btnClose.OnEvent("Click", CloseRemoteHelp)
+    helpGui.OnEvent("Close", CloseRemoteHelp)
+    helpGui.OnEvent("Escape", CloseRemoteHelp)
+
+    helpGui.Show("w616 h466 Center")
+    btnClose.Focus()
+    return helpGui
+}
+
 ShowRemoteAboutUI(*) {
     existing := Theme.FocusExistingWindow("AboutRemoteWindow")
     if IsObject(existing)
@@ -894,12 +937,15 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     statusTxt := dlg.Add("Text", "w360 y+10 Center", "Status: Ready to test or connect")
     Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
 
-    btnTest := dlg.Add("Button", "w360 h30 y+8", "Test Connection")
+    btnTest := dlg.Add("Button", "w230 h30 y+8", "Test Connection")
+    btnGuide := dlg.Add("Button", "x+10 w120 h30", "Setup Guide")
     Theme.RegisterControl(dlg, btnTest, "Button")
+    Theme.RegisterControl(dlg, btnGuide, "Button")
 
     btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt))
+    btnGuide.OnEvent("Click", (*) => ShowRemoteHelpUI(cfg, state))
 
-    btnSave := dlg.Add("Button", "w360 h32 y+12 Default", isInitialBoot ? "Connect & Start" : "Save & Reconnect")
+    btnSave := dlg.Add("Button", "x16 w360 h32 y+12 Default", isInitialBoot ? "Connect & Start" : "Save & Reconnect")
     Theme.RegisterControl(dlg, btnSave, "Button", "accent")
 
     CleanupDialog(exitIfInitial := false, *) {
