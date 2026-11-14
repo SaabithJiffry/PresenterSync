@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.2.9
+; Version: 2.3.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.2.9.0
+;@Ahk2Exe-SetVersion 2.3.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -126,6 +126,10 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("Show Recording Elapsed Timer", ToggleRecTimer.Bind(cfg, state))
     if (cfg.ShowRecTimer)
         AppearanceMenu.Check("Show Recording Elapsed Timer")
+
+    AppearanceMenu.Add("Show Stream && VCam HUD", ToggleStreamHud.Bind(cfg, state))
+    if (cfg.ShowStreamHud)
+        AppearanceMenu.Check("Show Stream && VCam HUD")
 
     AppearanceMenu.Add()
 
@@ -361,6 +365,8 @@ ToggleWS(cfg, state, *) {
         SyncChatState(cfg, state, 0)
         SyncStudioState(cfg, state, false)
         SyncSceneState(cfg, state, "Scene")
+        SyncStreamState(cfg, state, 0)
+        SyncVCamState(cfg, state, false)
     }
 
     UpdateZoomMonitorTimer(cfg, state)
@@ -388,6 +394,8 @@ ToggleZoom(cfg, state, *) {
             SyncRecState(cfg, state, 0)
             SyncStudioState(cfg, state, false)
             SyncSceneState(cfg, state, "Scene")
+            SyncStreamState(cfg, state, 0)
+            SyncVCamState(cfg, state, false)
         }
 
         state.zoomRecGraceUntil := 0

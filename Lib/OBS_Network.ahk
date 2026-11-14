@@ -497,11 +497,22 @@ HandleObsClose(cfg, state, ws, status, reason) {
 
     state.obsConnected := false
     SyncRecState(cfg, state, 0)
+    SyncStreamState(cfg, state, 0)
+    SyncVCamState(cfg, state, false)
     SyncStudioState(cfg, state, false)
     SyncSceneState(cfg, state, "Scene")
     if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
         try state.refreshHelpFn.Call()
     SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
+}
+
+PollStreamStatus(cfg, state) {
+    if (!cfg.EnableWS || !state.obsConnected || !IsObject(state.obsWs) || state.streamState == 0) {
+        if (state.HasOwnProp("streamTimerFn") && state.streamTimerFn)
+            SetTimer(state.streamTimerFn, 0)
+        return
+    }
+    SendObsRequest(state.obsWs, "GetStreamStatus", "PollStreamStatus")
 }
 
 HandleObsMessage(cfg, state, ws, rawMsg) {
@@ -536,6 +547,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         SendObsRequest(ws, "GetRecordStatus", "InitRecState")
         SendObsRequest(ws, "GetStudioModeEnabled", "InitStudioState")
         SendObsRequest(ws, "GetCurrentProgramScene", "InitSceneState")
+        SendObsRequest(ws, "GetStreamStatus", "InitStreamState")
+        SendObsRequest(ws, "GetVirtualCamStatus", "InitVCamState")
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
             try state.refreshHelpFn.Call()
     }
@@ -558,6 +571,18 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                     SyncRecState(cfg, state, 2)
                 else if (outState = "OBS_WEBSOCKET_OUTPUT_STOPPED")
                     SyncRecState(cfg, state, 0)
+            }
+        }
+        else if (InStr(msg, '"eventType":"StreamStateChanged"') || InStr(msg, '"eventType": "StreamStateChanged"')) {
+            if (RegExMatch(msg, '"outputActive"\s*:\s*(true|false)', &matchStrmAct)) {
+                active := (matchStrmAct[1] == "true")
+                reconn := InStr(msg, "OBS_WEBSOCKET_OUTPUT_RECONNECTING") != 0
+                SyncStreamState(cfg, state, reconn ? 2 : (active ? 1 : 0), 0.0, state.HasOwnProp("streamSkippedFrames") ? state.streamSkippedFrames : 0, reconn)
+            }
+        }
+        else if (InStr(msg, '"eventType":"VirtualcamStateChanged"') || InStr(msg, '"eventType": "VirtualcamStateChanged"')) {
+            if (RegExMatch(msg, '"outputActive"\s*:\s*(true|false)', &matchVcAct)) {
+                SyncVCamState(cfg, state, matchVcAct[1] == "true")
             }
         }
         else if (InStr(msg, '"eventType":"StudioModeStateChanged"') || InStr(msg, '"eventType": "StudioModeStateChanged"')) {
@@ -598,6 +623,27 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                 if (RegExMatch(msg, '"outputDuration"\s*:\s*(\d+)', &matchDur))
                     durMs := Integer(matchDur[1])
                 SyncRecState(cfg, state, active ? (paused ? 2 : 1) : 0, durMs)
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitStreamState"') || InStr(msg, '"requestId": "InitStreamState"')
+            || InStr(msg, '"requestId":"PollStreamStatus"') || InStr(msg, '"requestId": "PollStreamStatus"')) {
+            if (RegExMatch(msg, '"outputActive"\s*:\s*(true|false)', &matchStrmAct)) {
+                active := (matchStrmAct[1] == "true")
+                reconn := false
+                if (RegExMatch(msg, '"outputReconnecting"\s*:\s*(true|false)', &matchReconn))
+                    reconn := (matchReconn[1] == "true")
+                cong := 0.0
+                if (RegExMatch(msg, '"outputCongestion"\s*:\s*([0-9.]+)', &matchCong))
+                    cong := Float(matchCong[1])
+                skipped := 0
+                if (RegExMatch(msg, '"outputSkippedFrames"\s*:\s*(\d+)', &matchSkip))
+                    skipped := Integer(matchSkip[1])
+                SyncStreamState(cfg, state, reconn ? 2 : (active ? 1 : 0), cong, skipped, reconn)
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitVCamState"') || InStr(msg, '"requestId": "InitVCamState"')) {
+            if (RegExMatch(msg, '"outputActive"\s*:\s*(true|false)', &matchVcAct)) {
+                SyncVCamState(cfg, state, matchVcAct[1] == "true")
             }
         }
         else if (InStr(msg, '"requestId":"InitStudioState"') || InStr(msg, '"requestId": "InitStudioState"')) {

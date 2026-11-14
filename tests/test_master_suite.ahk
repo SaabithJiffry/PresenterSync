@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.2.9
-;              and PresenterSync Remote v2.2.9 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.3.0
+;              and PresenterSync Remote v2.3.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.2.9", UIConstants.APP_VERSION == "2.2.9")
+Assert("APP_VERSION updated to 2.3.0", UIConstants.APP_VERSION == "2.3.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.2.9 and Remote Host",
-    InStr(summaryTxt, "v2.2.9") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.3.0 and Remote Host",
+    InStr(summaryTxt, "v2.3.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -361,7 +361,7 @@ Assert("OverlayState.ComputeDimensions skips extra HUD headroom when ShowExtraHu
 
 cfgDim.ShowExtraHuds := true
 stDimExtra := OverlayState(cfgDim)
-expectedTopPad := stDimExtra.recHeight + stDimExtra.row3Height + (2 * stDimExtra.hudGap)
+expectedTopPad := stDimExtra.recHeight + stDimExtra.row3Height + stDimExtra.row4Height + (3 * stDimExtra.hudGap)
 Assert("OverlayState.ComputeDimensions reserves extra HUD headroom when ShowExtraHuds=true", stDimExtra.savedY == vTop + expectedTopPad)
 
 Assert("PromptForPassword accepts optional promptText", PromptForPassword.MinParams == 0 && PromptForPassword.MaxParams == 1)
@@ -558,13 +558,16 @@ for sc in [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 5.0] {
         lay := ComputeHudLayout(stScene, 400, 400)
         row2TotalW := lay.recW + stScene.hudGap + lay.chatW
         row3TotalW := lay.studioW + stScene.hudGap + lay.sceneW
-        if (row2TotalW != lay.micW || row3TotalW != lay.micW
+        row4TotalW := lay.streamW + stScene.hudGap + lay.vcamW
+        if (row2TotalW != lay.micW || row3TotalW != lay.micW || row4TotalW != lay.micW
             || (lay.recX + lay.recW + stScene.hudGap) != lay.chatX
             || (lay.studioX + lay.studioW + stScene.hudGap) != lay.sceneX
+            || (lay.streamX + lay.streamW + stScene.hudGap) != lay.vcamX
+            || (lay.streamY + lay.streamH + stScene.hudGap) != lay.studioY
             || (lay.sceneY + lay.sceneH + stScene.hudGap) != lay.recY
             || (lay.recY + lay.recH + stScene.hudGap) != lay.micY) {
             allScalesOk := false
-            scaleDetail := Format("Mismatch at scale={} showText={}: micW={} row2W={} row3W={}", sc, showTxt, lay.micW, row2TotalW, row3TotalW)
+            scaleDetail := Format("Mismatch at scale={} showText={}: micW={} row2W={} row3W={} row4W={}", sc, showTxt, lay.micW, row2TotalW, row3TotalW, row4TotalW)
             break 2
         }
         if (showTxt) {
@@ -577,7 +580,11 @@ for sc in [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 5.0] {
             cTextStart := cIconEnd + gapPx
             sIconEnd := Round(UIConstants.STUDIO_ICON_X * sc) + Round(UIConstants.STUDIO_ICON_W * sc)
             sTextStart := sIconEnd + gapPx
-            if (mIconEnd > mTextStart || rIconEnd > rTextStart || cIconEnd > cTextStart || sIconEnd > sTextStart) {
+            stIconEnd := Round(UIConstants.STREAM_ICON_X * sc) + Round(UIConstants.STREAM_ICON_W * sc)
+            stTextStart := stIconEnd + gapPx
+            vcIconEnd := Round(UIConstants.VCAM_ICON_X * sc) + Round(UIConstants.VCAM_ICON_W * sc)
+            vcTextStart := vcIconEnd + gapPx
+            if (mIconEnd > mTextStart || rIconEnd > rTextStart || cIconEnd > cTextStart || sIconEnd > sTextStart || stIconEnd > stTextStart || vcIconEnd > vcTextStart) {
                 allScalesOk := false
                 scaleDetail := Format("Icon/text overlap at scale={}", sc)
                 break 2
@@ -824,6 +831,77 @@ SyncRecState(cfgRec, stRec, 0)
 
 stRec.MicGui.Destroy(), stRec.RecGui.Destroy(), stRec.ChatGui.Destroy()
 
+; ==============================================================================
+; SECTION 13: STAGE 6 (v2.3.0) - 4TH-TIER LIVE STREAM & VIRTUAL CAMERA HUD
+; ==============================================================================
+cfgStrm := Config(testIni)
+Assert("ShowStreamHud defaults to true", cfgStrm.ShowStreamHud == true)
+
+stStrm := OverlayState(cfgStrm)
+InitHUD(cfgStrm, stStrm, false)
+strmCb := { tray: 0, hud: 0 }
+stStrm.rebuildTrayFn := (*) => (strmCb.tray += 1)
+stStrm.refreshHudFn := (*) => (strmCb.hud += 1)
+
+ToggleStreamHud(cfgStrm, stStrm)
+cfgStrmReload := Config(testIni)
+Assert("ToggleStreamHud persists false to INI and triggers tray/HUD refresh",
+    cfgStrm.ShowStreamHud == false && cfgStrmReload.ShowStreamHud == false && strmCb.tray == 1 && strmCb.hud == 1)
+
+cfgStrm.ResetAppearance()
+Assert("ResetAppearance restores ShowStreamHud back to true", cfgStrm.ShowStreamHud == true)
+
+mockWs6 := MockWebSocket()
+cfgStrm.EnableWS := true
+stStrm.obsWs := mockWs6
+HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":2,"d":{"negotiatedRpcVersion":1}}')
+hasAll6 := (mockWs6.sent.Length == 6)
+    && InStr(mockWs6.sent[1], '"InitState"')
+    && InStr(mockWs6.sent[2], '"InitRecState"')
+    && InStr(mockWs6.sent[3], '"InitStudioState"')
+    && InStr(mockWs6.sent[4], '"InitSceneState"')
+    && InStr(mockWs6.sent[5], '"InitStreamState"')
+    && InStr(mockWs6.sent[6], '"InitVCamState"')
+Assert("OpCode 2 dispatches all 6 initial OBS state queries (incl. Stream & VCam)", hasAll6)
+
+HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":5,"d":{"eventType":"StreamStateChanged","eventData":{"outputActive":true,"outputState":"OBS_WEBSOCKET_OUTPUT_STARTED"}}}')
+Assert("StreamStateChanged outputActive=true sets streamState=1", stStrm.streamState == 1)
+
+HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":7,"d":{"requestType":"GetStreamStatus","requestId":"PollStreamStatus","requestStatus":{"result":true},"responseData":{"outputActive":true,"outputReconnecting":false,"outputCongestion":0.42,"outputSkippedFrames":0}}}')
+Assert("GetStreamStatus high congestion (>=0.35) escalates streamState=2 (WARN)", stStrm.streamState == 2 && Abs(stStrm.streamCongestion - 0.42) < 0.001)
+
+HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":7,"d":{"requestType":"GetStreamStatus","requestId":"PollStreamStatus","requestStatus":{"result":true},"responseData":{"outputActive":true,"outputReconnecting":false,"outputCongestion":0.05,"outputSkippedFrames":8}}}')
+Assert("GetStreamStatus frame drop delta (>0 skipped frames) keeps streamState=2 (WARN)", stStrm.streamState == 2 && stStrm.streamSkippedFrames == 8)
+
+HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":7,"d":{"requestType":"GetStreamStatus","requestId":"PollStreamStatus","requestStatus":{"result":true},"responseData":{"outputActive":true,"outputReconnecting":false,"outputCongestion":0.05,"outputSkippedFrames":8}}}')
+Assert("GetStreamStatus steady metrics clear streamState back to 1 (LIVE)", stStrm.streamState == 1)
+
+HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":5,"d":{"eventType":"StreamStateChanged","eventData":{"outputActive":false,"outputState":"OBS_WEBSOCKET_OUTPUT_RECONNECTING"}}}')
+Assert("StreamStateChanged RECONNECTING sets streamState=2 (WARN)", stStrm.streamState == 2 && stStrm.streamReconnecting == true)
+
+HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":5,"d":{"eventType":"VirtualcamStateChanged","eventData":{"outputActive":true}}}')
+Assert("VirtualcamStateChanged outputActive=true sets vcamActive=true", stStrm.vcamActive == true)
+
+HandleObsClose(cfgStrm, stStrm, mockWs6, 1006, "")
+SetTimer(stStrm.obsTimerFn, 0)
+Assert("HandleObsClose resets streamState=0 and vcamActive=false", stStrm.streamState == 0 && stStrm.vcamActive == false)
+
+cfgStrm.ShowText := true
+stStrm.ComputeDimensions(cfgStrm)
+lay6 := ComputeHudLayout(stStrm, 500, 500)
+ancStrm := AnchorFromHwnd(stStrm, stStrm.StreamGui.Hwnd, lay6.streamX, lay6.streamY)
+ancVCam := AnchorFromHwnd(stStrm, stStrm.VCamGui.Hwnd, lay6.vcamX, lay6.vcamY)
+Assert("AnchorFromHwnd resolves Row 4 StreamGui & VCamGui back to anchor (500,500)",
+    ancStrm.x == 500 && ancStrm.y == 500 && ancVCam.x == 500 && ancVCam.y == 500)
+Assert("IsHudHwnd recognizes Row 4 StreamGui and VCamGui plus invalidates 0",
+    IsHudHwnd(stStrm, stStrm.StreamGui.Hwnd) && IsHudHwnd(stStrm, stStrm.VCamGui.Hwnd) && !IsHudHwnd(stStrm, 0))
+Assert("ApplyStreamAppearance and ApplyVCamAppearance render cleanly in Label Mode",
+    ApplyStreamAppearance(cfgStrm, stStrm) && ApplyVCamAppearance(cfgStrm, stStrm))
+
+SyncStreamState(cfgStrm, stStrm, 0)
+stStrm.MicGui.Destroy(), stStrm.RecGui.Destroy(), stStrm.ChatGui.Destroy()
+stStrm.StudioGui.Destroy(), stStrm.SceneGui.Destroy(), stStrm.StreamGui.Destroy(), stStrm.VCamGui.Destroy()
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -831,7 +909,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.9) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

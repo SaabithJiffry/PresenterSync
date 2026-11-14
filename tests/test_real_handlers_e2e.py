@@ -1,5 +1,5 @@
 """
-End-to-End Live WebSocket Integration Test for PresenterSync v2.2.9
+End-to-End Live WebSocket Integration Test for PresenterSync v2.3.0
 Tests the real production handlers from Lib/OBS_Network.ahk, PresenterSync.ahk,
 and PresenterSync_Remote.ahk over live localhost RFC 6455 WebSocket v5 servers.
 """
@@ -551,16 +551,19 @@ hudState := OverlayState(hudCfg)
 InitHUD(hudCfg, hudState, false)
 hudCfg.ShowExtraHuds := true
 RefreshHudAppearance(hudCfg, hudState)
-expectedHudY := vTopHud + hudState.recHeight + hudState.row3Height + (2 * hudState.hudGap)
+expectedHudY := vTopHud + hudState.recHeight + hudState.row3Height + hudState.row4Height + (3 * hudState.hudGap)
 recVis := DllCall("IsWindowVisible", "Ptr", hudState.RecGui.Hwnd)
 studioVis := DllCall("IsWindowVisible", "Ptr", hudState.StudioGui.Hwnd)
+streamVis := DllCall("IsWindowVisible", "Ptr", hudState.StreamGui.Hwnd)
 hudState.MicGui.Destroy()
 hudState.RecGui.Destroy()
 hudState.ChatGui.Destroy()
 hudState.StudioGui.Destroy()
 hudState.SceneGui.Destroy()
+hudState.StreamGui.Destroy()
+hudState.VCamGui.Destroy()
 Assert("RefreshHudAppearance updates savedY headroom & reveals Extra HUD windows",
-    hudState.savedY == expectedHudY && recVis != 0 && studioVis != 0)
+    hudState.savedY == expectedHudY && recVis != 0 && studioVis != 0 && streamVis != 0)
 
 ; =====================================================================
 ; TEST 6: Dual-Client Live Integration (Host + Remote Multi-Candidate Failover & 2-Way Sync)
