@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.3.6"
+    static APP_VERSION := "2.4.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1447,8 +1447,10 @@ class Config {
         clean := this.NormalizeProfileName(profileName)
         if (clean = "")
             return false
-        if (StrLower(clean) != "default" && this.Read("Profile:Default", "__Exists", "") != "1")
-            this.WriteSnapshotToSection("Profile:Default")
+        if (StrLower(clean) != "default" && this.Read("Profile:Default", "__Exists", "") != "1") {
+            baseCfg := Config(this.ConfigFile)
+            baseCfg.WriteSnapshotToSection("Profile:Default")
+        }
 
         names := this.GetProfileNames()
         canonical := clean
@@ -1512,6 +1514,8 @@ class Config {
             }
             if (state.HasOwnProp("autoDodgeTimerFn") && state.autoDodgeTimerFn)
                 UpdateAutoDodgeTimer(this, state)
+            if (state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+                try state.rebindHotkeysFn.Call()
             if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
                 try state.rebuildTrayFn.Call()
             if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
@@ -1604,6 +1608,7 @@ class OverlayState {
     rebuildTrayFn := ""
     refreshHelpFn := ""
     refreshHudFn := ""
+    rebindHotkeysFn := ""
     triggerMuteFn := ""
 
     MicGui := ""
@@ -3080,7 +3085,7 @@ GetCornerRadius(cfg, h) {
 }
 
 ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", customH := "", customAlpha := "", overrideMuted := "") {
-    if (!IsObject(state.MicGui))
+    if (!IsObject(state) || !state.HasOwnProp("MicGui") || !IsGuiValid(state.MicGui))
         return false
 
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
@@ -3124,7 +3129,7 @@ SyncChatState(cfg, state, newCount) {
 }
 
 ApplyChatAppearance(cfg, state) {
-    if (!IsObject(state.ChatGui))
+    if (!IsObject(state) || !state.HasOwnProp("ChatGui") || !IsGuiValid(state.ChatGui))
         return false
 
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
@@ -3162,7 +3167,7 @@ SyncStudioState(cfg, state, isEnabled) {
 }
 
 ApplyStudioAppearance(cfg, state) {
-    if (!IsObject(state.StudioGui))
+    if (!IsObject(state) || !state.HasOwnProp("StudioGui") || !IsGuiValid(state.StudioGui))
         return false
 
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
@@ -3337,7 +3342,7 @@ SyncSceneState(cfg, state, sceneName) {
 }
 
 ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
-    if (!IsObject(state.SceneGui))
+    if (!IsObject(state) || !state.HasOwnProp("SceneGui") || !IsGuiValid(state.SceneGui))
         return false
 
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
@@ -3762,7 +3767,7 @@ GetCandidateSnapWindowRects(state := "") {
     static targetProcs := Map(
         "obs64.exe", true, "obs32.exe", true, "powerpnt.exe", true,
         "zoom.exe", true, "ms-teams.exe", true, "teams.exe", true,
-        "chrome.exe", true, "msedge.exe", true, "firefox.exe", true
+        "chrome.exe", true, "msedge.exe", true, "firefox.exe", true, "brave.exe", true
     )
     for hwnd in WinGetList() {
         if (hudHwnds.Has(hwnd) || !DllCall("IsWindowVisible", "Ptr", hwnd))
@@ -3846,8 +3851,13 @@ ApplyHudClickThroughStyle(cfg, state, forceClickThrough := -1) {
         ? !!forceClickThrough
         : (((cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough) || (state.HasOwnProp("isAutoDodged") && state.isAutoDodged)) && !altHeld)
     styleFlag := wantPassThrough ? "+0x20" : "-0x20"
-    for g in GetHudGuiList(state) {
-        try WinSetExStyle(styleFlag, "ahk_id " g.Hwnd)
+    prevDhw := DetectHiddenWindows(true)
+    try {
+        for g in GetHudGuiList(state) {
+            try WinSetExStyle(styleFlag, "ahk_id " g.Hwnd)
+        }
+    } finally {
+        DetectHiddenWindows(prevDhw)
     }
     return wantPassThrough
 }
@@ -3908,6 +3918,8 @@ ToggleHudClickThrough(cfg, state := "", *) {
     if (IsObject(state)) {
         ApplyHudClickThroughStyle(cfg, state)
         UpdateAutoDodgeTimer(cfg, state)
+        if (state.HasOwnProp("refreshHudFn") && state.refreshHudFn)
+            try state.refreshHudFn.Call()
     }
 }
 
@@ -4100,7 +4112,7 @@ UpdateHudVisibility(cfg, state) {
 
 ; --- HUD ANIMATIONS ---
 PlayMuteAnimation(cfg, state) {
-    if (!IsObject(state.MicGui))
+    if (!IsObject(state) || !state.HasOwnProp("MicGui") || !IsGuiValid(state.MicGui))
         return
 
     state.animSeq += 1
@@ -4295,8 +4307,9 @@ HandleHudPillClick(cfg, state, hwnd) {
         if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
             SendObsRequest(state.obsWs, "ToggleRecord", "ClickToggleRec")
         } else if (cfg.EnableZoom && state.zoomConnected && cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") {
+            confSpec := GetConferencingWindowSpec(cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom")
             SetKeyDelay -1, 30
-            try ControlSend(FormatSendKey(cfg.ZoomRecHotkey), , "ahk_exe Zoom.exe")
+            try ControlSend(FormatSendKey(cfg.ZoomRecHotkey), , confSpec)
             SetKeyDelay 50, 50
             state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
             SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
@@ -4336,8 +4349,9 @@ HandleHudPillClick(cfg, state, hwnd) {
     }
     if (IsObject(state.ChatGui) && hwnd == state.ChatGui.Hwnd) {
         SyncChatState(cfg, state, 0)
-        if WinExist("ahk_exe Zoom.exe")
-            try WinActivate("ahk_exe Zoom.exe")
+        confSpec := GetConferencingWindowSpec(cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom")
+        if WinExist(confSpec)
+            try WinActivate(confSpec)
         return "chat"
     }
     return false
@@ -4689,3 +4703,752 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true) {
 }
 
 CheckForUpdatesUI(currentVer := "", *) => CheckForUpdates(currentVer, "", false)
+
+ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true) {
+    if (!IsObject(cfg))
+        return false
+
+    if IsObject(vals) {
+        if vals.HasOwnProp("AudioRoutingMode") {
+            rm := Integer(vals.AudioRoutingMode)
+            if (rm >= 1 && rm <= 3) {
+                cfg.AudioRoutingMode := rm
+                cfg.Write("Settings", "AudioRoutingMode", rm)
+            }
+        }
+        if vals.HasOwnProp("ConferencingApp") {
+            cApp := NormalizeConferencingApp(vals.ConferencingApp)
+            cfg.ConferencingApp := cApp
+            cfg.Write("Settings", "ConferencingApp", cApp)
+        }
+        if vals.HasOwnProp("targetMicName") {
+            mic := Trim(vals.targetMicName) != "" ? Trim(vals.targetMicName) : "Mic/Aux"
+            cfg.targetMicName := mic
+            cfg.Write("Settings", "TargetMicName", mic)
+        }
+        if vals.HasOwnProp("ZoomMuteHotkey") {
+            cfg.ZoomMuteHotkey := Trim(vals.ZoomMuteHotkey) != "" ? Trim(vals.ZoomMuteHotkey) : "None"
+            cfg.Write("Settings", "ZoomMuteHotkey", cfg.ZoomMuteHotkey)
+        }
+        if vals.HasOwnProp("TeamsMuteHotkey") {
+            cfg.TeamsMuteHotkey := Trim(vals.TeamsMuteHotkey) != "" ? Trim(vals.TeamsMuteHotkey) : "None"
+            cfg.Write("Settings", "TeamsMuteHotkey", cfg.TeamsMuteHotkey)
+        }
+        if vals.HasOwnProp("MeetMuteHotkey") {
+            cfg.MeetMuteHotkey := Trim(vals.MeetMuteHotkey) != "" ? Trim(vals.MeetMuteHotkey) : "None"
+            cfg.Write("Settings", "MeetMuteHotkey", cfg.MeetMuteHotkey)
+        }
+        if vals.HasOwnProp("ZoomRecHotkey") {
+            cfg.ZoomRecHotkey := Trim(vals.ZoomRecHotkey) != "" ? Trim(vals.ZoomRecHotkey) : "None"
+            cfg.Write("Settings", "ZoomRecHotkey", cfg.ZoomRecHotkey)
+        }
+        if vals.HasOwnProp("ZoomPauseHotkey") {
+            cfg.ZoomPauseHotkey := Trim(vals.ZoomPauseHotkey) != "" ? Trim(vals.ZoomPauseHotkey) : "None"
+            cfg.Write("Settings", "ZoomPauseHotkey", cfg.ZoomPauseHotkey)
+        }
+        if vals.HasOwnProp("ShowVoiceMeter") {
+            cfg.ShowVoiceMeter := !!vals.ShowVoiceMeter
+            cfg.WriteBool("Settings", "ShowVoiceMeter", cfg.ShowVoiceMeter)
+            if (!cfg.ShowVoiceMeter && IsObject(state))
+                state.voicePeak := 0.0
+        }
+        if vals.HasOwnProp("EnableAudioCue") {
+            cfg.EnableAudioCue := !!vals.EnableAudioCue
+            cfg.WriteBool("Settings", "EnableAudioCue", cfg.EnableAudioCue)
+        }
+        if vals.HasOwnProp("EnableMuteToast") {
+            cfg.EnableMuteToast := !!vals.EnableMuteToast
+            cfg.WriteBool("Settings", "EnableMuteToast", cfg.EnableMuteToast)
+        }
+
+        ; Tab 2: OBS & Stream
+        if vals.HasOwnProp("EnableWS") {
+            cfg.EnableWS := !!vals.EnableWS
+            cfg.WriteBool("Settings", "EnableWS", cfg.EnableWS)
+        }
+        if vals.HasOwnProp("EnableZoom") {
+            cfg.EnableZoom := cfg.EnableWS ? false : !!vals.EnableZoom
+            cfg.WriteBool("Settings", "EnableZoom", cfg.EnableZoom)
+        }
+        if vals.HasOwnProp("obsPassword") {
+            cfg.obsPassword := vals.obsPassword
+            cfg.Write("Settings", "ObsPassword", cfg.obsPassword)
+        }
+        if vals.HasOwnProp("ShowStreamHud") {
+            cfg.ShowStreamHud := !!vals.ShowStreamHud
+            cfg.WriteBool("Settings", "ShowStreamHud", cfg.ShowStreamHud)
+        }
+        if vals.HasOwnProp("ShowRecTimer") {
+            cfg.ShowRecTimer := !!vals.ShowRecTimer
+            cfg.WriteBool("Settings", "ShowRecTimer", cfg.ShowRecTimer)
+        }
+        if vals.HasOwnProp("ObsMuteHotkey") {
+            cfg.ObsMuteHotkey := Trim(vals.ObsMuteHotkey) != "" ? Trim(vals.ObsMuteHotkey) : "None"
+            cfg.Write("Settings", "ObsHotkey", cfg.ObsMuteHotkey)
+        }
+        if vals.HasOwnProp("ObsRecHotkey") {
+            cfg.ObsRecHotkey := Trim(vals.ObsRecHotkey) != "" ? Trim(vals.ObsRecHotkey) : "None"
+            cfg.Write("Settings", "ObsRecHotkey", cfg.ObsRecHotkey)
+        }
+        if vals.HasOwnProp("ObsPauseHotkey") {
+            cfg.ObsPauseHotkey := Trim(vals.ObsPauseHotkey) != "" ? Trim(vals.ObsPauseHotkey) : "None"
+            cfg.Write("Settings", "ObsPauseHotkey", cfg.ObsPauseHotkey)
+        }
+
+        ; Tab 3: Pointer & Clicker
+        if vals.HasOwnProp("PointerMode") {
+            pm := vals.PointerMode
+            if (pm = "Full PPT + Mute" || pm = 1) {
+                cfg.EnablePPT := true
+                cfg.EnableMicOnly := false
+            } else if (pm = "Pointer Mute Only" || pm = "Mute Only" || pm = 2) {
+                cfg.EnablePPT := false
+                cfg.EnableMicOnly := true
+            } else {
+                cfg.EnablePPT := false
+                cfg.EnableMicOnly := false
+            }
+            cfg.WriteBool("Settings", "EnablePPT", cfg.EnablePPT)
+            cfg.WriteBool("Settings", "EnableMicOnly", cfg.EnableMicOnly)
+        }
+        if vals.HasOwnProp("HwMuteHotkey") {
+            cfg.HwMuteHotkey := Trim(vals.HwMuteHotkey) != "" ? Trim(vals.HwMuteHotkey) : "None"
+            cfg.Write("Settings", "HwMuteHotkey", cfg.HwMuteHotkey)
+        }
+        if vals.HasOwnProp("EnablePushToMute") {
+            cfg.EnablePushToMute := !!vals.EnablePushToMute
+            cfg.WriteBool("Pointer", "EnablePushToMute", cfg.EnablePushToMute)
+        }
+        for pKey in ["CatchArrows", "CatchPg", "CatchSpace", "CatchEnter", "CatchTab", "CatchEsc"] {
+            if vals.HasOwnProp(pKey) {
+                cfg.%pKey% := !!vals.%pKey%
+                cfg.WriteBool("Pointer", pKey, cfg.%pKey%)
+            }
+        }
+
+        ; Tab 4: HUD & Appearance
+        if vals.HasOwnProp("IndicatorScale") {
+            sc := Float(vals.IndicatorScale)
+            if (sc >= 0.25 && sc <= 5.0) {
+                cfg.IndicatorScale := sc
+                cfg.Write("Settings", "IndicatorScale", sc)
+            }
+        }
+        if vals.HasOwnProp("OpacityLevel") {
+            op := Integer(vals.OpacityLevel)
+            if (op >= 50 && op <= 255) {
+                cfg.OpacityLevel := op
+                cfg.Write("Settings", "OpacityLevel", op)
+            }
+        }
+        if vals.HasOwnProp("HudColorPreset") {
+            pName := NormalizeHudColorPreset(vals.HudColorPreset)
+            cfg.HudColorPreset := pName
+            cfg.Write("Settings", "HudColorPreset", pName)
+        }
+        if vals.HasOwnProp("ThemeMode") {
+            tm := (vals.ThemeMode = "Dark" || vals.ThemeMode = "Light") ? vals.ThemeMode : "System"
+            cfg.ThemeMode := tm
+            cfg.Write("Settings", "ThemeMode", tm)
+            Theme.SetMode(tm)
+        }
+        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough"] {
+            if vals.HasOwnProp(bProp) {
+                cfg.%bProp% := !!vals.%bProp%
+                cfg.WriteBool("Settings", bProp, cfg.%bProp%)
+            }
+        }
+
+        ; Tab 5: Remote Companion
+        if vals.HasOwnProp("RemoteNetworkMode") {
+            rMode := (vals.RemoteNetworkMode = "Internet" || InStr(vals.RemoteNetworkMode, "Internet")) ? "Internet" : "LAN"
+            cfg.RemoteNetworkMode := rMode
+            cfg.Write("Settings", "RemoteNetworkMode", rMode)
+        }
+
+        ; Tab 6: Global Shortcuts & System
+        for hkSpec in [
+            { prop: "PptHotkey", key: "PptHotkey" },
+            { prop: "WsHotkey", key: "WsHotkey" },
+            { prop: "ZoomHotkey", key: "ZoomHotkey" },
+            { prop: "IndHotkey", key: "IndHotkey" },
+            { prop: "SuspendHotkey", key: "SuspendHotkey" },
+            { prop: "ExitHotkey", key: "ExitHotkey" }
+        ] {
+            if vals.HasOwnProp(hkSpec.prop) {
+                v := Trim(vals.%hkSpec.prop%)
+                cfg.%hkSpec.prop% := (v != "") ? v : "None"
+                cfg.Write("Settings", hkSpec.key, cfg.%hkSpec.prop%)
+            }
+        }
+        if vals.HasOwnProp("StartWithWindows") {
+            SetStartWithWindows(cfg, "", !!vals.StartWithWindows, writeRegistry)
+        }
+    }
+
+    if IsObject(state) {
+        if (state.HasOwnProp("colors"))
+            state.colors := UIConstants.GetColorPalette(cfg.HudColorPreset)
+        if (state.HasOwnProp("obsTimerFn") && state.obsTimerFn) {
+            if (cfg.EnableWS) {
+                SetTimer state.obsTimerFn, -50
+            } else {
+                SetTimer state.obsTimerFn, 0
+                state.obsConnected := false
+                if (state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+                    try state.obsWs.shutdown()
+                    state.obsWs := ""
+                }
+            }
+        }
+        if (state.HasOwnProp("zoomTimerFn") && state.zoomTimerFn)
+            UpdateZoomMonitorTimer(cfg, state)
+        if (state.HasOwnProp("relayTimerFn"))
+            UpdateHostInternetRelay(cfg, state)
+        if (state.HasOwnProp("MicGui") && IsObject(state.MicGui)) {
+            RefreshHudAppearance(cfg, state)
+            UpdateHudVisibility(cfg, state)
+            ApplyHudClickThroughStyle(cfg, state)
+        }
+        if (state.HasOwnProp("autoDodgeTimerFn") && state.autoDodgeTimerFn)
+            UpdateAutoDodgeTimer(cfg, state)
+        if (state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+            try state.rebindHotkeysFn.Call()
+        if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+    }
+    return true
+}
+
+ShowControlCenterWindow(cfg, state := "", *) {
+    existing := Theme.FocusExistingWindow("PresenterSync - Control Center")
+    if IsObject(existing)
+        return existing
+
+    Theme.AcquireSuspend()
+
+    ccGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync - Control Center")
+    ccGui._closed := false
+    ccGui.MarginX := 16
+    ccGui.MarginY := 14
+    Theme.ApplyToWindow(ccGui)
+    Theme.NamedWindows["PresenterSync - Control Center"] := ccGui
+
+    tabNames := ["Audio & Conf", "OBS & Stream", "Pointer", "HUD & Theme", "Remote", "Profiles & Sys"]
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    tabs := ccGui.Add("Tab2", "x14 y12 w692 h486 +0x0400", tabNames)
+    tabs._tabNames := tabNames
+    Theme.RegisterControl(ccGui, tabs, "Tab")
+
+    ; ==========================================================================
+    ; TAB 1: AUDIO & CONFERENCING
+    ; ==========================================================================
+    tabs.UseTab(1)
+    ccGui.SetFont("s11 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y60 w650", "Audio Routing Mode, Conferencing Platform & Acoustic Feedback"), "Text", "tabText")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y96 w210", "Audio Routing Profile:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    routingLabels := [
+        "1: Pro OBS Setup (VB-Cable)",
+        "2: Standard Direct Mic (Conferencing-Only)",
+        "3: Dual App Sync (OBS + Conferencing)"
+    ]
+    ddlRouting := ccGui.Add("DropDownList", "x250 y92 w430 Choose" (cfg.AudioRoutingMode >= 1 && cfg.AudioRoutingMode <= 3 ? cfg.AudioRoutingMode : 1), routingLabels)
+    Theme.RegisterControl(ccGui, ddlRouting, "Edit")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y134 w210", "Conferencing Application:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    confApps := GetConferencingAppNames()
+    confIdx := 1
+    for i, cName in confApps {
+        if (NormalizeConferencingApp(cfg.ConferencingApp) = cName)
+            confIdx := i
+    }
+    ddlConfApp := ccGui.Add("DropDownList", "x250 y130 w210 Choose" confIdx, confApps)
+    Theme.RegisterControl(ccGui, ddlConfApp, "Edit")
+
+    btnWizard := ccGui.Add("Button", "x472 y128 w208 h28", "Run Audio Setup Wizard...")
+    Theme.RegisterControl(ccGui, btnWizard, "Button", "tabButton")
+    btnWizard.OnEvent("Click", (*) => PromptForSetup(cfg, false))
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y172 w210", "Target OBS Audio Source:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edTargetMic := ccGui.Add("Edit", "x250 y168 w430 h26", cfg.targetMicName)
+    Theme.RegisterControl(ccGui, edTargetMic, "Edit")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y212 w210", "Zoom / Teams / Meet Mute Keys:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edZoomMute := ccGui.Add("Edit", "x250 y208 w136 h26", cfg.ZoomMuteHotkey)
+    edTeamsMute := ccGui.Add("Edit", "x397 y208 w136 h26", cfg.TeamsMuteHotkey)
+    edMeetMute := ccGui.Add("Edit", "x544 y208 w136 h26", cfg.MeetMuteHotkey)
+    Theme.RegisterControl(ccGui, edZoomMute, "Edit")
+    Theme.RegisterControl(ccGui, edTeamsMute, "Edit")
+    Theme.RegisterControl(ccGui, edMeetMute, "Edit")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x250 y236 w136", "Zoom (e.g. !a)"), "Text", "tabMuted")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x397 y236 w136", "Teams (e.g. ^+m)"), "Text", "tabMuted")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x544 y236 w136", "Meet (e.g. ^d)"), "Text", "tabMuted")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y268 w210", "Conferencing Rec / Pause Keys:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edZoomRec := ccGui.Add("Edit", "x250 y264 w210 h26", cfg.ZoomRecHotkey)
+    edZoomPause := ccGui.Add("Edit", "x470 y264 w210 h26", cfg.ZoomPauseHotkey)
+    Theme.RegisterControl(ccGui, edZoomRec, "Edit")
+    Theme.RegisterControl(ccGui, edZoomPause, "Edit")
+
+    chkVoiceMeter := ccGui.Add("Checkbox", "x32 y314 w310 h24" (cfg.ShowVoiceMeter ? " Checked" : ""), "Show Live CoreAudio Voice Activity Bar on LIVE Pill")
+    chkAudioCue := ccGui.Add("Checkbox", "x360 y314 w320 h24" (cfg.EnableAudioCue ? " Checked" : ""), "Play Two-Tone Acoustic Chime on Mute / Unmute")
+    chkMuteToast := ccGui.Add("Checkbox", "x32 y346 w310 h24" (cfg.EnableMuteToast ? " Checked" : ""), "Show Brief Cursor Tooltip Toast on Mute Change")
+    Theme.RegisterControl(ccGui, chkVoiceMeter, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkAudioCue, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkMuteToast, "Checkbox", "tabText")
+
+    ; ==========================================================================
+    ; TAB 2: OBS & LIVE STREAM
+    ; ==========================================================================
+    tabs.UseTab(2)
+    ccGui.SetFont("s11 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y60 w650", "OBS Studio WebSocket v5, Live Stream HUD & Fallback Shortcuts"), "Text", "tabText")
+
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    chkEnableWS := ccGui.Add("Checkbox", "x32 y98 w310 h24" (cfg.EnableWS ? " Checked" : ""), "Enable OBS WebSocket v5 Live Sync (Port 4455)")
+    chkEnableZoom := ccGui.Add("Checkbox", "x360 y98 w320 h24" (cfg.EnableZoom ? " Checked" : ""), "Enable Conferencing UIA Background Monitoring")
+    Theme.RegisterControl(ccGui, chkEnableWS, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkEnableZoom, "Checkbox", "tabText")
+    chkEnableWS.OnEvent("Click", (*) => (chkEnableWS.Value ? (chkEnableZoom.Value := 0) : 0))
+    chkEnableZoom.OnEvent("Click", (*) => (chkEnableZoom.Value ? (chkEnableWS.Value := 0) : 0))
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y140 w210", "OBS WebSocket Password:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edObsPass := ccGui.Add("Edit", "x250 y136 w430 h26 Password", cfg.obsPassword)
+    Theme.RegisterControl(ccGui, edObsPass, "Edit")
+
+    chkStreamHud := ccGui.Add("Checkbox", "x32 y182 w320 h24" (cfg.ShowStreamHud ? " Checked" : ""), "Show 4th-Row Live Stream & Virtual Camera HUD")
+    chkRecTimer := ccGui.Add("Checkbox", "x360 y182 w320 h24" (cfg.ShowRecTimer ? " Checked" : ""), "Show Live Elapsed Recording / Stream Timer")
+    Theme.RegisterControl(ccGui, chkStreamHud, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkRecTimer, "Checkbox", "tabText")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y228 w210", "OBS Mute Fallback Shortcut:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edObsMute := ccGui.Add("Edit", "x250 y224 w430 h26", cfg.ObsMuteHotkey)
+    Theme.RegisterControl(ccGui, edObsMute, "Edit")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y268 w210", "OBS Start/Stop Rec Shortcut:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edObsRec := ccGui.Add("Edit", "x250 y264 w430 h26", cfg.ObsRecHotkey)
+    Theme.RegisterControl(ccGui, edObsRec, "Edit")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y308 w210", "OBS Pause Rec Shortcut:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edObsPause := ccGui.Add("Edit", "x250 y304 w430 h26", cfg.ObsPauseHotkey)
+    Theme.RegisterControl(ccGui, edObsPause, "Edit")
+
+    ; ==========================================================================
+    ; TAB 3: POINTER & CLICKER
+    ; ==========================================================================
+    tabs.UseTab(3)
+    ccGui.SetFont("s11 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y60 w650", "Hardware Presentation Clicker, Cough Hold-to-Mute & Slide Routing"), "Text", "tabText")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y98 w210", "Active Pointer Mode:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    ptrIdx := cfg.EnablePPT ? 1 : (cfg.EnableMicOnly ? 2 : 3)
+    ddlPointerMode := ccGui.Add("DropDownList", "x250 y94 w430 Choose" ptrIdx, ["Full PPT + Mute", "Pointer Mute Only", "OFF"])
+    Theme.RegisterControl(ccGui, ddlPointerMode, "Edit")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y138 w210", "Clicker Mute Button Key:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edHwMute := ccGui.Add("Edit", "x250 y134 w200 h26", cfg.HwMuteHotkey)
+    Theme.RegisterControl(ccGui, edHwMute, "Edit")
+
+    btnCapMute := ccGui.Add("Button", "x460 y132 w105 h28", "Capture Key")
+    btnPtrTester := ccGui.Add("Button", "x575 y132 w105 h28", "Clicker Tester")
+    Theme.RegisterControl(ccGui, btnCapMute, "Button", "tabButton")
+    Theme.RegisterControl(ccGui, btnPtrTester, "Button", "tabButton")
+    btnCapMute.OnEvent("Click", (*) => OpenPointerKeyCaptureDialog(edHwMute.Value, "Use Key", (newKey) => (edHwMute.Value := newKey)))
+    btnPtrTester.OnEvent("Click", (*) => ShowPointerTester())
+
+    chkPushToMute := ccGui.Add("Checkbox", "x32 y178 w648 h24" (cfg.EnablePushToMute ? " Checked" : ""), "Enable Cough / Push-to-Mute Gesture (Holding mute button >= 350ms unmutes automatically on release)")
+    Theme.RegisterControl(ccGui, chkPushToMute, "Checkbox", "tabText")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y218 w648", "PowerPoint Background Slide Intercept Keys (Active in Full PPT + Mute Mode):"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    chkArrows := ccGui.Add("Checkbox", "x32 y248 w310 h24" (cfg.CatchArrows ? " Checked" : ""), "Arrow Keys (Up / Down / Left / Right)")
+    chkPg := ccGui.Add("Checkbox", "x360 y248 w320 h24" (cfg.CatchPg ? " Checked" : ""), "PageUp / PageDown (Standard Clickers)")
+    chkSpace := ccGui.Add("Checkbox", "x32 y280 w310 h24" (cfg.CatchSpace ? " Checked" : ""), "Spacebar (Advance Slide)")
+    chkEnter := ccGui.Add("Checkbox", "x360 y280 w320 h24" (cfg.CatchEnter ? " Checked" : ""), "Enter Key (Advance / Activate Link)")
+    chkTab := ccGui.Add("Checkbox", "x32 y312 w310 h24" (cfg.CatchTab ? " Checked" : ""), "Tab Key (Cycle Slide Hyperlinks)")
+    chkEsc := ccGui.Add("Checkbox", "x360 y312 w320 h24" (cfg.CatchEsc ? " Checked" : ""), "Escape Key (End Slide Show)")
+    for cCtrl in [chkArrows, chkPg, chkSpace, chkEnter, chkTab, chkEsc]
+        Theme.RegisterControl(ccGui, cCtrl, "Checkbox", "tabText")
+
+    ; ==========================================================================
+    ; TAB 4: HUD & APPEARANCE
+    ; ==========================================================================
+    tabs.UseTab(4)
+    ccGui.SetFont("s11 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y60 w650", "HUD Scale, Color Palettes, Magnetic Snapping & Smart Visibility"), "Text", "tabText")
+
+    scaleValues := [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 5.0]
+    scaleLabels := ["Tiny (0.25x)", "Small (0.5x)", "Normal (1.0x)", "Large (1.5x)", "Huge (2.0x)", "Massive (2.5x)", "Colossal (3.0x)", "Gigantic (5.0x)"]
+    scIdx := 3
+    for idx, sv in scaleValues {
+        if (Abs(cfg.IndicatorScale - sv) < 0.01)
+            scIdx := idx
+    }
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y96 w130", "Indicator Scale:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    ddlScale := ccGui.Add("DropDownList", "x165 y92 w175 Choose" scIdx, scaleLabels)
+    Theme.RegisterControl(ccGui, ddlScale, "Edit")
+
+    opIdx := (cfg.OpacityLevel == UIConstants.OPACITY_SOLID) ? 1 : ((cfg.OpacityLevel == UIConstants.OPACITY_GHOST) ? 3 : 2)
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x360 y96 w130", "Transparency:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    ddlOpacity := ccGui.Add("DropDownList", "x495 y92 w185 Choose" opIdx, ["Solid (100%)", "Frosted (85%)", "Ghost (50%)"])
+    Theme.RegisterControl(ccGui, ddlOpacity, "Edit")
+
+    palNames := GetHudColorPresetNames()
+    palIdx := 1
+    for idx, pName in palNames {
+        if (StrLower(cfg.HudColorPreset) = StrLower(pName))
+            palIdx := idx
+    }
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y134 w130", "Color Palette:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    ddlPalette := ccGui.Add("DropDownList", "x165 y130 w175 Choose" palIdx, palNames)
+    Theme.RegisterControl(ccGui, ddlPalette, "Edit")
+
+    themeModes := ["System", "Dark", "Light"]
+    tmIdx := (cfg.ThemeMode = "Dark") ? 2 : ((cfg.ThemeMode = "Light") ? 3 : 1)
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x360 y134 w130", "Window Theme:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    ddlTheme := ccGui.Add("DropDownList", "x495 y130 w185 Choose" tmIdx, themeModes)
+    Theme.RegisterControl(ccGui, ddlTheme, "Edit")
+
+    chkShowInd := ccGui.Add("Checkbox", "x32 y174 w310 h24" (cfg.ShowIndicator ? " Checked" : ""), "Show Primary Mute HUD Indicator")
+    chkShowExtra := ccGui.Add("Checkbox", "x360 y174 w320 h24" (cfg.ShowExtraHuds ? " Checked" : ""), "Show Extra Telemetry HUDs (Rows 2-4)")
+    chkShowText := ccGui.Add("Checkbox", "x32 y204 w310 h24" (cfg.ShowText ? " Checked" : ""), "Show Text Labels Next to Icons")
+    chkMonoIcon := ccGui.Add("Checkbox", "x360 y204 w320 h24" (cfg.MonoIcon ? " Checked" : ""), "Use Monochromatic White Icons")
+    chkSleek := ccGui.Add("Checkbox", "x32 y234 w310 h24" (cfg.SleekCorners ? " Checked" : ""), "Use Sleek Rounded-Square Corners")
+    chkPulse := ccGui.Add("Checkbox", "x360 y234 w320 h24" (cfg.AggressivePulse ? " Checked" : ""), "Aggressive Breathing Pulse When Muted")
+    chkClickPills := ccGui.Add("Checkbox", "x32 y264 w310 h24" (cfg.EnableHudClickActions ? " Checked" : ""), "Interactive Clickable HUD Pills (Quick Actions)")
+    chkMagSnap := ccGui.Add("Checkbox", "x360 y264 w320 h24" (cfg.EnableMagneticSnap ? " Checked" : ""), "Magnetic Screen-Edge & App Window Snapping")
+    chkAutoDodge := ccGui.Add("Checkbox", "x32 y294 w310 h24" (cfg.HudAutoDodge ? " Checked" : ""), "Auto-Dodge HUD on Mouse Hover (15% Ghost)")
+    chkClickThru := ccGui.Add("Checkbox", "x360 y294 w320 h24" (cfg.HudClickThrough ? " Checked" : ""), "Click-Through HUD Mode (Hold Alt to Drag)")
+    for hCtrl in [chkShowInd, chkShowExtra, chkShowText, chkMonoIcon, chkSleek, chkPulse, chkClickPills, chkMagSnap, chkAutoDodge, chkClickThru]
+        Theme.RegisterControl(ccGui, hCtrl, "Checkbox", "tabText")
+
+    btnResetPos := ccGui.Add("Button", "x32 y340 w310 h30", "Reset HUD Position to Default")
+    btnResetApp := ccGui.Add("Button", "x360 y340 w320 h30", "Restore Default HUD Appearance")
+    Theme.RegisterControl(ccGui, btnResetPos, "Button", "tabButton")
+    Theme.RegisterControl(ccGui, btnResetApp, "Button", "tabButton")
+    btnResetPos.OnEvent("Click", (*) => ResetTrayPosition(cfg, state))
+
+    ; ==========================================================================
+    ; TAB 5: REMOTE COMPANION
+    ; ==========================================================================
+    tabs.UseTab(5)
+    ccGui.SetFont("s11 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y60 w650", "Smart Board & Secondary Laptop Companion (1-Tier Mic HUD + Clicker Sync)"), "Text", "tabText")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y98 w210", "Remote Network Mode:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    rNetIdx := (cfg.RemoteNetworkMode = "Internet") ? 2 : 1
+    ddlRemoteNet := ccGui.Add("DropDownList", "x250 y94 w430 Choose" rNetIdx, ["Same Router (LAN)", "Different Networks (Internet)"])
+    Theme.RegisterControl(ccGui, ddlRemoteNet, "Edit")
+
+    if (cfg.InternetPairingCode = "") {
+        cfg.InternetPairingCode := GenerateInternetPairingCode()
+        cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode)
+    }
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y138 w210", "Internet Pairing Code:"), "Text", "tabText")
+    ccGui.SetFont("s10 w700 norm", Theme.UiFont)
+    edPairCode := ccGui.Add("Edit", "x250 y134 w210 h26 ReadOnly", cfg.InternetPairingCode)
+    Theme.RegisterControl(ccGui, edPairCode, "Edit")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    btnCopyPair := ccGui.Add("Button", "x470 y132 w100 h28", "Copy Code")
+    btnNewPair := ccGui.Add("Button", "x580 y132 w100 h28", "New Code")
+    Theme.RegisterControl(ccGui, btnCopyPair, "Button", "tabButton")
+    Theme.RegisterControl(ccGui, btnNewPair, "Button", "tabButton")
+    btnCopyPair.OnEvent("Click", (*) => (A_Clipboard := edPairCode.Value, TrayTip("Copied Pairing Code: " edPairCode.Value, "PresenterSync", 1)))
+    btnNewPair.OnEvent("Click", (*) => (
+        cfg.InternetPairingCode := GenerateInternetPairingCode(),
+        cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode),
+        edPairCode.Value := cfg.InternetPairingCode,
+        IsObject(state) ? UpdateHostInternetRelay(cfg, state) : 0
+    ))
+    endpoints := GetLocalNetworkEndpoints()
+    universalLanStr := A_ComputerName ".local"
+    for ep in endpoints.ips
+        universalLanStr .= ", " ep
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y178 w210", "Universal LAN String:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edLanStr := ccGui.Add("Edit", "x250 y174 w320 h26 ReadOnly", universalLanStr)
+    Theme.RegisterControl(ccGui, edLanStr, "Edit")
+    btnCopyLan := ccGui.Add("Button", "x580 y172 w100 h28", "Copy LAN")
+    Theme.RegisterControl(ccGui, btnCopyLan, "Button", "tabButton")
+    btnCopyLan.OnEvent("Click", (*) => (A_Clipboard := edLanStr.Value, TrayTip("Copied LAN String: " edLanStr.Value, "PresenterSync", 1)))
+
+    remNote := "Note: PresenterSync Remote stays a dedicated 1-tier Mic HUD on your secondary device. It works both with OBS Studio (LAN/Internet) and in Conferencing-Only Mode (Zoom/Teams/Meet) via the Companion Relay Bridge."
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y218 w648 h42", remNote), "Text", "tabMuted")
+
+    btnRemDetails := ccGui.Add("Button", "x32 y272 w310 h32", "Open Full Remote Connection Dialog...")
+    btnCloseRem := ccGui.Add("Button", "x360 y272 w320 h32", "Close Remote Companion on Secondary PC...")
+    Theme.RegisterControl(ccGui, btnRemDetails, "Button", "tabButton")
+    Theme.RegisterControl(ccGui, btnCloseRem, "Button", "tabButton")
+    btnRemDetails.OnEvent("Click", (*) => ShowRemoteCompanionInfo(cfg, state))
+    btnCloseRem.OnEvent("Click", (*) => PromptCloseRemoteCompanion(cfg, state))
+
+    ; ==========================================================================
+    ; TAB 6: PROFILES, SHORTCUTS & SYSTEM
+    ; ==========================================================================
+    tabs.UseTab(6)
+    ccGui.SetFont("s11 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y60 w650", "Named Configuration Profiles, Global Hotkeys & System Startup"), "Text", "tabText")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y96 w140", "Active Profile:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    profList := cfg.GetProfileNames()
+    pChoose := 1
+    for idx, pN in profList {
+        if (StrLower(pN) = StrLower(cfg.ActiveProfile))
+            pChoose := idx
+    }
+    ddlProfile := ccGui.Add("DropDownList", "x175 y92 w195 Choose" pChoose, profList)
+    Theme.RegisterControl(ccGui, ddlProfile, "Edit")
+    btnProfLoad := ccGui.Add("Button", "x380 y90 w94 h28", "Load")
+    btnProfSave := ccGui.Add("Button", "x482 y90 w94 h28", "Save")
+    btnProfMgr := ccGui.Add("Button", "x584 y90 w96 h28", "Manage...")
+    Theme.RegisterControl(ccGui, btnProfLoad, "Button", "tabButton")
+    Theme.RegisterControl(ccGui, btnProfSave, "Button", "tabButton")
+    Theme.RegisterControl(ccGui, btnProfMgr, "Button", "tabButton")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y138 w180", "Cycle Pointer Mode:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y138 w160", "Toggle OBS Sync:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y174 w180", "Toggle Conf Monitor:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y174 w160", "Show / Hide HUD:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y210 w180", "Suspend All Hotkeys:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y210 w160", "Exit Application:"), "Text", "tabText")
+
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edHkPpt := ccGui.Add("Edit", "x214 y134 w134 h26", cfg.PptHotkey)
+    edHkWs := ccGui.Add("Edit", "x534 y134 w146 h26", cfg.WsHotkey)
+    edHkZoom := ccGui.Add("Edit", "x214 y170 w134 h26", cfg.ZoomHotkey)
+    edHkInd := ccGui.Add("Edit", "x534 y170 w146 h26", cfg.IndHotkey)
+    edHkSusp := ccGui.Add("Edit", "x214 y206 w134 h26", cfg.SuspendHotkey)
+    edHkExit := ccGui.Add("Edit", "x534 y206 w146 h26", cfg.ExitHotkey)
+    for hkEd in [edHkPpt, edHkWs, edHkZoom, edHkInd, edHkSusp, edHkExit]
+        Theme.RegisterControl(ccGui, hkEd, "Edit")
+
+    chkStartup := ccGui.Add("Checkbox", "x32 y256 w380 h24" (cfg.StartWithWindows ? " Checked" : ""), "Start PresenterSync Automatically with Windows (Default: OFF)")
+    Theme.RegisterControl(ccGui, chkStartup, "Checkbox", "tabText")
+
+    btnCheckUpd := ccGui.Add("Button", "x430 y252 w250 h30", "Check for GitHub Updates...")
+    Theme.RegisterControl(ccGui, btnCheckUpd, "Button", "tabButton")
+    btnCheckUpd.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
+
+    tabs.UseTab()
+
+    ; ==========================================================================
+    ; BOTTOM BAR: STATUS + APPLY & SAVE + CLOSE
+    ; ==========================================================================
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    lblStatus := ccGui.Add("Text", "x20 y514 w380 h24", "Active Profile: " cfg.ActiveProfile "  |  PresenterSync v" UIConstants.APP_VERSION)
+    Theme.RegisterControl(ccGui, lblStatus, "Text", "muted")
+
+    ccGui.SetFont("s10 w600 norm", Theme.UiFont)
+    btnApply := ccGui.Add("Button", "x416 y508 w140 h34 Default", "Apply && Save")
+    btnClose := ccGui.Add("Button", "x566 y508 w140 h34", "Close")
+    Theme.RegisterControl(ccGui, btnApply, "Button", "accent")
+    Theme.RegisterControl(ccGui, btnClose, "Button")
+
+    SyncControlsFromConfig() {
+        ddlRouting.Choose(cfg.AudioRoutingMode >= 1 && cfg.AudioRoutingMode <= 3 ? cfg.AudioRoutingMode : 1)
+        for i, cName in confApps {
+            if (NormalizeConferencingApp(cfg.ConferencingApp) = cName)
+                ddlConfApp.Choose(i)
+        }
+        edTargetMic.Value := cfg.targetMicName
+        edZoomMute.Value := cfg.ZoomMuteHotkey
+        edTeamsMute.Value := cfg.TeamsMuteHotkey
+        edMeetMute.Value := cfg.MeetMuteHotkey
+        edZoomRec.Value := cfg.ZoomRecHotkey
+        edZoomPause.Value := cfg.ZoomPauseHotkey
+        chkVoiceMeter.Value := cfg.ShowVoiceMeter ? 1 : 0
+        chkAudioCue.Value := cfg.EnableAudioCue ? 1 : 0
+        chkMuteToast.Value := cfg.EnableMuteToast ? 1 : 0
+        chkEnableWS.Value := cfg.EnableWS ? 1 : 0
+        chkEnableZoom.Value := cfg.EnableZoom ? 1 : 0
+        edObsPass.Value := cfg.obsPassword
+        chkStreamHud.Value := cfg.ShowStreamHud ? 1 : 0
+        chkRecTimer.Value := cfg.ShowRecTimer ? 1 : 0
+        edObsMute.Value := cfg.ObsMuteHotkey
+        edObsRec.Value := cfg.ObsRecHotkey
+        edObsPause.Value := cfg.ObsPauseHotkey
+        ddlPointerMode.Choose(cfg.EnablePPT ? 1 : (cfg.EnableMicOnly ? 2 : 3))
+        edHwMute.Value := cfg.HwMuteHotkey
+        chkPushToMute.Value := cfg.EnablePushToMute ? 1 : 0
+        chkArrows.Value := cfg.CatchArrows ? 1 : 0
+        chkPg.Value := cfg.CatchPg ? 1 : 0
+        chkSpace.Value := cfg.CatchSpace ? 1 : 0
+        chkEnter.Value := cfg.CatchEnter ? 1 : 0
+        chkTab.Value := cfg.CatchTab ? 1 : 0
+        chkEsc.Value := cfg.CatchEsc ? 1 : 0
+        for idx, sv in scaleValues {
+            if (Abs(cfg.IndicatorScale - sv) < 0.01)
+                ddlScale.Choose(idx)
+        }
+        ddlOpacity.Choose((cfg.OpacityLevel == UIConstants.OPACITY_SOLID) ? 1 : ((cfg.OpacityLevel == UIConstants.OPACITY_GHOST) ? 3 : 2))
+        for idx, pName in palNames {
+            if (StrLower(cfg.HudColorPreset) = StrLower(pName))
+                ddlPalette.Choose(idx)
+        }
+        ddlTheme.Choose((cfg.ThemeMode = "Dark") ? 2 : ((cfg.ThemeMode = "Light") ? 3 : 1))
+        chkShowInd.Value := cfg.ShowIndicator ? 1 : 0
+        chkShowExtra.Value := cfg.ShowExtraHuds ? 1 : 0
+        chkShowText.Value := cfg.ShowText ? 1 : 0
+        chkMonoIcon.Value := cfg.MonoIcon ? 1 : 0
+        chkSleek.Value := cfg.SleekCorners ? 1 : 0
+        chkPulse.Value := cfg.AggressivePulse ? 1 : 0
+        chkClickPills.Value := cfg.EnableHudClickActions ? 1 : 0
+        chkMagSnap.Value := cfg.EnableMagneticSnap ? 1 : 0
+        chkAutoDodge.Value := cfg.HudAutoDodge ? 1 : 0
+        chkClickThru.Value := cfg.HudClickThrough ? 1 : 0
+        ddlRemoteNet.Choose((cfg.RemoteNetworkMode = "Internet") ? 2 : 1)
+        edPairCode.Value := cfg.InternetPairingCode
+        edHkPpt.Value := cfg.PptHotkey
+        edHkWs.Value := cfg.WsHotkey
+        edHkZoom.Value := cfg.ZoomHotkey
+        edHkInd.Value := cfg.IndHotkey
+        edHkSusp.Value := cfg.SuspendHotkey
+        edHkExit.Value := cfg.ExitHotkey
+        chkStartup.Value := cfg.StartWithWindows ? 1 : 0
+        profList := cfg.GetProfileNames()
+        ddlProfile.Delete()
+        ddlProfile.Add(profList)
+        pChoose := 1
+        for idx, pN in profList {
+            if (StrLower(pN) = StrLower(cfg.ActiveProfile))
+                pChoose := idx
+        }
+        ddlProfile.Choose(pChoose)
+        lblStatus.Value := "Active Profile: " cfg.ActiveProfile "  |  PresenterSync v" UIConstants.APP_VERSION
+    }
+
+    btnResetApp.OnEvent("Click", (*) => (
+        ResetAppearance(cfg, state),
+        SyncControlsFromConfig(),
+        lblStatus.Value := "Restored default HUD appearance."
+    ))
+
+    btnProfLoad.OnEvent("Click", (*) => (
+        cfg.ApplyProfile(ddlProfile.Text, state) ? (SyncControlsFromConfig(), lblStatus.Value := "Loaded profile: " cfg.ActiveProfile) : (lblStatus.Value := "Save snapshot to '" ddlProfile.Text "' first.")
+    ))
+    btnProfSave.OnEvent("Click", (*) => (
+        OnApplyClick(),
+        cfg.SaveProfile(ddlProfile.Text),
+        SyncControlsFromConfig(),
+        lblStatus.Value := "Saved settings to profile: " cfg.ActiveProfile
+    ))
+    btnProfMgr.OnEvent("Click", (*) => ShowProfileManagerUI(cfg, state))
+
+    OnApplyClick(*) {
+        selOpacity := (ddlOpacity.Value == 1) ? UIConstants.OPACITY_SOLID : ((ddlOpacity.Value == 3) ? UIConstants.OPACITY_GHOST : UIConstants.OPACITY_FROSTED)
+        vals := {
+            AudioRoutingMode: ddlRouting.Value,
+            ConferencingApp: ddlConfApp.Text,
+            targetMicName: edTargetMic.Value,
+            ZoomMuteHotkey: edZoomMute.Value,
+            TeamsMuteHotkey: edTeamsMute.Value,
+            MeetMuteHotkey: edMeetMute.Value,
+            ZoomRecHotkey: edZoomRec.Value,
+            ZoomPauseHotkey: edZoomPause.Value,
+            ShowVoiceMeter: chkVoiceMeter.Value,
+            EnableAudioCue: chkAudioCue.Value,
+            EnableMuteToast: chkMuteToast.Value,
+            EnableWS: chkEnableWS.Value,
+            EnableZoom: chkEnableZoom.Value,
+            obsPassword: edObsPass.Value,
+            ShowStreamHud: chkStreamHud.Value,
+            ShowRecTimer: chkRecTimer.Value,
+            ObsMuteHotkey: edObsMute.Value,
+            ObsRecHotkey: edObsRec.Value,
+            ObsPauseHotkey: edObsPause.Value,
+            PointerMode: ddlPointerMode.Text,
+            HwMuteHotkey: edHwMute.Value,
+            EnablePushToMute: chkPushToMute.Value,
+            CatchArrows: chkArrows.Value,
+            CatchPg: chkPg.Value,
+            CatchSpace: chkSpace.Value,
+            CatchEnter: chkEnter.Value,
+            CatchTab: chkTab.Value,
+            CatchEsc: chkEsc.Value,
+            IndicatorScale: scaleValues[ddlScale.Value],
+            OpacityLevel: selOpacity,
+            HudColorPreset: ddlPalette.Text,
+            ThemeMode: ddlTheme.Text,
+            ShowIndicator: chkShowInd.Value,
+            ShowExtraHuds: chkShowExtra.Value,
+            ShowText: chkShowText.Value,
+            MonoIcon: chkMonoIcon.Value,
+            SleekCorners: chkSleek.Value,
+            AggressivePulse: chkPulse.Value,
+            EnableHudClickActions: chkClickPills.Value,
+            EnableMagneticSnap: chkMagSnap.Value,
+            HudAutoDodge: chkAutoDodge.Value,
+            HudClickThrough: chkClickThru.Value,
+            RemoteNetworkMode: (ddlRemoteNet.Value == 2) ? "Internet" : "LAN",
+            PptHotkey: edHkPpt.Value,
+            WsHotkey: edHkWs.Value,
+            ZoomHotkey: edHkZoom.Value,
+            IndHotkey: edHkInd.Value,
+            SuspendHotkey: edHkSusp.Value,
+            ExitHotkey: edHkExit.Value,
+            StartWithWindows: chkStartup.Value
+        }
+        ApplyControlCenterSettings(cfg, state, vals, true)
+        lblStatus.Value := "All settings applied and saved live (" FormatTime(, "HH:mm:ss") ")."
+    }
+
+    CloseControlCenter(*) {
+        if (ccGui._closed)
+            return
+        ccGui._closed := true
+        Theme.UnregisterWindow(ccGui, "PresenterSync - Control Center")
+        Theme.ReleaseSuspend()
+        ccGui.Destroy()
+    }
+
+    btnApply.OnEvent("Click", OnApplyClick)
+    btnClose.OnEvent("Click", CloseControlCenter)
+    ccGui.OnEvent("Close", CloseControlCenter)
+    ccGui.OnEvent("Escape", CloseControlCenter)
+
+    ccGui.Show("w720 h556")
+    return ccGui
+}
+
