@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.3.4"
+    static APP_VERSION := "2.3.5"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1144,6 +1144,7 @@ class Config {
 
     RemoteNetworkMode := "LAN"
     InternetPairingCode := ""
+    ActiveProfile := "Default"
 
     savedX := "Default"
     savedY := "Default"
@@ -1292,6 +1293,8 @@ class Config {
             this.InternetPairingCode := GenerateInternetPairingCode()
             this.Write("Settings", "InternetPairingCode", this.InternetPairingCode)
         }
+        profName := this.NormalizeProfileName(this.Read("Settings", "ActiveProfile", "Default"))
+        this.ActiveProfile := (profName != "") ? profName : "Default"
 
         this.savedX := this.Read("Position", "X", "Default")
         this.savedY := this.Read("Position", "Y", "Default")
@@ -1347,6 +1350,199 @@ class Config {
     DeleteFile() {
         if FileExist(this.ConfigFile)
             FileDelete(this.ConfigFile)
+    }
+
+    NormalizeProfileName(name) {
+        clean := Trim(String(name))
+        clean := RegExReplace(clean, '[\|\[\]=`r`n`t]', "")
+        return SubStr(Trim(clean), 1, 48)
+    }
+
+    GetProfileFieldSpecs() {
+        return [
+            { sec: "Settings", key: "AudioRoutingMode", prop: "AudioRoutingMode", kind: "int" },
+            { sec: "Settings", key: "ObsHotkey", prop: "ObsMuteHotkey", kind: "str" },
+            { sec: "Settings", key: "ObsRecHotkey", prop: "ObsRecHotkey", kind: "str" },
+            { sec: "Settings", key: "ObsPauseHotkey", prop: "ObsPauseHotkey", kind: "str" },
+            { sec: "Settings", key: "ZoomMuteHotkey", prop: "ZoomMuteHotkey", kind: "str" },
+            { sec: "Settings", key: "TeamsMuteHotkey", prop: "TeamsMuteHotkey", kind: "str" },
+            { sec: "Settings", key: "MeetMuteHotkey", prop: "MeetMuteHotkey", kind: "str" },
+            { sec: "Settings", key: "ConferencingApp", prop: "ConferencingApp", kind: "str" },
+            { sec: "Settings", key: "ZoomRecHotkey", prop: "ZoomRecHotkey", kind: "str" },
+            { sec: "Settings", key: "ZoomPauseHotkey", prop: "ZoomPauseHotkey", kind: "str" },
+            { sec: "Settings", key: "TargetMicName", prop: "targetMicName", kind: "str" },
+            { sec: "Settings", key: "EnablePPT", prop: "EnablePPT", kind: "bool" },
+            { sec: "Settings", key: "EnableMicOnly", prop: "EnableMicOnly", kind: "bool" },
+            { sec: "Settings", key: "EnableWS", prop: "EnableWS", kind: "bool" },
+            { sec: "Settings", key: "EnableZoom", prop: "EnableZoom", kind: "bool" },
+            { sec: "Settings", key: "ShowIndicator", prop: "ShowIndicator", kind: "bool" },
+            { sec: "Settings", key: "ShowExtraHuds", prop: "ShowExtraHuds", kind: "bool" },
+            { sec: "Settings", key: "ThemeMode", prop: "ThemeMode", kind: "str" },
+            { sec: "Settings", key: "HudColorPreset", prop: "HudColorPreset", kind: "str" },
+            { sec: "Settings", key: "ShowText", prop: "ShowText", kind: "bool" },
+            { sec: "Settings", key: "MonoIcon", prop: "MonoIcon", kind: "bool" },
+            { sec: "Settings", key: "SleekCorners", prop: "SleekCorners", kind: "bool" },
+            { sec: "Settings", key: "AggressivePulse", prop: "AggressivePulse", kind: "bool" },
+            { sec: "Settings", key: "EnableAudioCue", prop: "EnableAudioCue", kind: "bool" },
+            { sec: "Settings", key: "EnableMuteToast", prop: "EnableMuteToast", kind: "bool" },
+            { sec: "Settings", key: "ShowVoiceMeter", prop: "ShowVoiceMeter", kind: "bool" },
+            { sec: "Settings", key: "ShowRecTimer", prop: "ShowRecTimer", kind: "bool" },
+            { sec: "Settings", key: "ShowStreamHud", prop: "ShowStreamHud", kind: "bool" },
+            { sec: "Settings", key: "EnableHudClickActions", prop: "EnableHudClickActions", kind: "bool" },
+            { sec: "Settings", key: "EnableMagneticSnap", prop: "EnableMagneticSnap", kind: "bool" },
+            { sec: "Settings", key: "HudClickThrough", prop: "HudClickThrough", kind: "bool" },
+            { sec: "Settings", key: "HudAutoDodge", prop: "HudAutoDodge", kind: "bool" },
+            { sec: "Settings", key: "OpacityLevel", prop: "OpacityLevel", kind: "int" },
+            { sec: "Settings", key: "IndicatorScale", prop: "IndicatorScale", kind: "float" },
+            { sec: "Settings", key: "RemoteNetworkMode", prop: "RemoteNetworkMode", kind: "str" },
+            { sec: "Settings", key: "HwMuteHotkey", prop: "HwMuteHotkey", kind: "str" },
+            { sec: "Pointer", key: "CatchArrows", prop: "CatchArrows", kind: "bool" },
+            { sec: "Pointer", key: "CatchPg", prop: "CatchPg", kind: "bool" },
+            { sec: "Pointer", key: "CatchSpace", prop: "CatchSpace", kind: "bool" },
+            { sec: "Pointer", key: "CatchEnter", prop: "CatchEnter", kind: "bool" },
+            { sec: "Pointer", key: "CatchTab", prop: "CatchTab", kind: "bool" },
+            { sec: "Pointer", key: "CatchEsc", prop: "CatchEsc", kind: "bool" },
+            { sec: "Pointer", key: "EnablePushToMute", prop: "EnablePushToMute", kind: "bool" },
+            { sec: "Position", key: "X", prop: "savedX", kind: "str" },
+            { sec: "Position", key: "Y", prop: "savedY", kind: "str" }
+        ]
+    }
+
+    GetProfileNames() {
+        raw := Trim(this.Read("Profiles", "Names", "Default"))
+        names := []
+        seen := Map()
+        for part in StrSplit(raw, "|") {
+            clean := this.NormalizeProfileName(part)
+            if (clean != "" && !seen.Has(StrLower(clean))) {
+                seen[StrLower(clean)] := true
+                names.Push(clean)
+            }
+        }
+        if (!seen.Has("default"))
+            names.InsertAt(1, "Default")
+        return names
+    }
+
+    WriteProfileList(names) {
+        joined := ""
+        for idx, n in names
+            joined .= (idx > 1 ? "|" : "") n
+        this.Write("Profiles", "Names", joined)
+    }
+
+    WriteSnapshotToSection(sectionName) {
+        this.Write(sectionName, "__Exists", "1")
+        for spec in this.GetProfileFieldSpecs() {
+            val := this.%spec.prop%
+            if (spec.kind = "bool")
+                val := val ? "1" : "0"
+            this.Write(sectionName, spec.sec "_" spec.key, val)
+        }
+    }
+
+    SaveProfile(profileName) {
+        clean := this.NormalizeProfileName(profileName)
+        if (clean = "")
+            return false
+        if (StrLower(clean) != "default" && this.Read("Profile:Default", "__Exists", "") != "1")
+            this.WriteSnapshotToSection("Profile:Default")
+
+        names := this.GetProfileNames()
+        canonical := clean
+        found := false
+        for idx, n in names {
+            if (StrLower(n) = StrLower(clean)) {
+                canonical := n
+                found := true
+                break
+            }
+        }
+        if (!found)
+            names.Push(canonical)
+        this.WriteProfileList(names)
+        this.WriteSnapshotToSection("Profile:" canonical)
+        this.ActiveProfile := canonical
+        this.Write("Settings", "ActiveProfile", canonical)
+        return true
+    }
+
+    ApplyProfile(profileName, state := "") {
+        clean := this.NormalizeProfileName(profileName)
+        if (clean = "")
+            return false
+        canonical := ""
+        for n in this.GetProfileNames() {
+            if (StrLower(n) = StrLower(clean)) {
+                canonical := n
+                break
+            }
+        }
+        if (canonical = "")
+            return false
+
+        secName := "Profile:" canonical
+        hasSnapshot := (this.Read(secName, "__Exists", "") = "1")
+        if (!hasSnapshot && StrLower(canonical) != "default")
+            return false
+
+        if (hasSnapshot) {
+            for spec in this.GetProfileFieldSpecs() {
+                v := this.Read(secName, spec.sec "_" spec.key, "__MISSING__")
+                if (v != "__MISSING__")
+                    this.Write(spec.sec, spec.key, v)
+            }
+        }
+
+        this.Write("Settings", "ActiveProfile", canonical)
+        this.Load()
+
+        if IsObject(state) {
+            if (state.HasOwnProp("obsTimerFn") && state.obsTimerFn)
+                SetTimer state.obsTimerFn, (this.EnableWS ? -50 : 0)
+            if (state.HasOwnProp("zoomTimerFn") && state.zoomTimerFn)
+                UpdateZoomMonitorTimer(this, state)
+            if (state.HasOwnProp("relayTimerFn"))
+                UpdateHostInternetRelay(this, state)
+            if (state.HasOwnProp("MicGui") && IsObject(state.MicGui)) {
+                RefreshHudAppearance(this, state)
+                ApplyHudClickThroughStyle(this, state)
+            }
+            if (state.HasOwnProp("autoDodgeTimerFn") && state.autoDodgeTimerFn)
+                UpdateAutoDodgeTimer(this, state)
+            if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+                try state.rebuildTrayFn.Call()
+            if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+                try state.refreshHelpFn.Call()
+        }
+        return true
+    }
+
+    DeleteProfile(profileName) {
+        clean := this.NormalizeProfileName(profileName)
+        if (clean = "" || StrLower(clean) = "default")
+            return false
+        names := this.GetProfileNames()
+        kept := []
+        removed := false
+        targetName := ""
+        for n in names {
+            if (StrLower(n) = StrLower(clean)) {
+                removed := true
+                targetName := n
+            } else {
+                kept.Push(n)
+            }
+        }
+        if (!removed)
+            return false
+        try IniDelete(this.ConfigFile, "Profile:" targetName)
+        this.WriteProfileList(kept)
+        if (StrLower(this.ActiveProfile) = StrLower(targetName)) {
+            this.ActiveProfile := "Default"
+            this.Write("Settings", "ActiveProfile", "Default")
+        }
+        return true
     }
 }
 
@@ -4211,4 +4407,148 @@ WM_DPICHANGED(state, wParam, lParam, msg, hwnd) {
     newLeft := NumGet(lParam, 0, "Int")
     newTop := NumGet(lParam, 4, "Int")
     UpdateHudLayout(state, newLeft, newTop)
+}
+
+SwitchProfileAction(cfg, state, profileName, *) {
+    if (cfg.ApplyProfile(profileName, state)) {
+        TrayTip("Switched to Profile: " cfg.ActiveProfile, "PresenterSync Profiles", 1)
+    }
+}
+
+ShowProfileManagerUI(cfg, state := "") {
+    existing := Theme.FocusExistingWindow("PresenterSync - Profile Manager")
+    if IsObject(existing)
+        return existing
+
+    Theme.AcquireSuspend()
+
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync - Profile Manager")
+    dlg._closed := false
+    dlg.MarginX := 20
+    dlg.MarginY := 16
+    Theme.ApplyToWindow(dlg)
+    Theme.NamedWindows["PresenterSync - Profile Manager"] := dlg
+
+    dlg.SetFont("s10 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360", "Configuration Profiles"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    lblActive := dlg.Add("Text", "xm w360 y+4", "Active Profile: " cfg.ActiveProfile)
+    Theme.RegisterControl(dlg, lblActive, "Text", "accent")
+
+    lb := dlg.Add("ListBox", "xm w220 h136 y+10", cfg.GetProfileNames())
+    Theme.RegisterControl(dlg, lb, "Edit")
+
+    btnLoad := dlg.Add("Button", "x+12 yp w128 h30 Default", "Load Profile")
+    btnSave := dlg.Add("Button", "xp y+8 w128 h30", "Save Current")
+    btnDel := dlg.Add("Button", "xp y+8 w128 h30", "Delete Profile")
+    Theme.RegisterControl(dlg, btnLoad, "Button", "accent")
+    Theme.RegisterControl(dlg, btnSave, "Button")
+    Theme.RegisterControl(dlg, btnDel, "Button")
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Save Current Settings As New Profile:"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    editNew := dlg.Add("Edit", "xm w220")
+    Theme.RegisterControl(dlg, editNew, "Edit")
+    btnNew := dlg.Add("Button", "x+12 yp-2 w128 h28", "Save As New")
+    Theme.RegisterControl(dlg, btnNew, "Button", "accent")
+
+    lblMsg := dlg.Add("Text", "xm w220 y+10", "Save presets for OBS, Zoom, Teams, or Meet.")
+    Theme.RegisterControl(dlg, lblMsg, "Text", "muted")
+    btnClose := dlg.Add("Button", "x+12 yp-4 w128 h30", "Close")
+    Theme.RegisterControl(dlg, btnClose, "Button")
+
+    RefreshList(selectName := "") {
+        names := cfg.GetProfileNames()
+        lb.Delete()
+        lb.Add(names)
+        target := (selectName != "") ? selectName : cfg.ActiveProfile
+        chooseIdx := 1
+        for idx, n in names {
+            if (StrLower(n) = StrLower(target)) {
+                chooseIdx := idx
+                break
+            }
+        }
+        lb.Choose(chooseIdx)
+        lblActive.Value := "Active Profile: " cfg.ActiveProfile
+        btnDel.Enabled := (StrLower(lb.Text) != "default")
+    }
+    RefreshList(cfg.ActiveProfile)
+
+    OnLoadClick(*) {
+        if (lb.Text = "") {
+            lblMsg.Value := "Select a profile first."
+            return
+        }
+        if (cfg.ApplyProfile(lb.Text, state)) {
+            RefreshList(cfg.ActiveProfile)
+            lblMsg.Value := "Loaded profile: " cfg.ActiveProfile
+        } else {
+            lblMsg.Value := "Save snapshot to '" lb.Text "' first."
+        }
+    }
+
+    OnSaveClick(*) {
+        if (lb.Text = "") {
+            lblMsg.Value := "Select a profile first."
+            return
+        }
+        cfg.SaveProfile(lb.Text)
+        RefreshList(cfg.ActiveProfile)
+        if (IsObject(state) && state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        lblMsg.Value := "Updated snapshot: " cfg.ActiveProfile
+    }
+
+    OnNewClick(*) {
+        newName := cfg.NormalizeProfileName(editNew.Value)
+        if (newName = "") {
+            lblMsg.Value := "Enter a valid profile name."
+            return
+        }
+        cfg.SaveProfile(newName)
+        editNew.Value := ""
+        RefreshList(cfg.ActiveProfile)
+        if (IsObject(state) && state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        lblMsg.Value := "Created profile: " cfg.ActiveProfile
+    }
+
+    OnDeleteClick(*) {
+        if (StrLower(lb.Text) = "default") {
+            lblMsg.Value := "Default profile is protected."
+            return
+        }
+        if (cfg.DeleteProfile(lb.Text)) {
+            RefreshList(cfg.ActiveProfile)
+            if (IsObject(state) && state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+                try state.rebuildTrayFn.Call()
+            lblMsg.Value := "Profile deleted."
+        } else {
+            lblMsg.Value := "Could not delete profile."
+        }
+    }
+
+    lb.OnEvent("Change", (*) => (btnDel.Enabled := (StrLower(lb.Text) != "default")))
+    lb.OnEvent("DoubleClick", OnLoadClick)
+    btnLoad.OnEvent("Click", OnLoadClick)
+    btnSave.OnEvent("Click", OnSaveClick)
+    btnNew.OnEvent("Click", OnNewClick)
+    btnDel.OnEvent("Click", OnDeleteClick)
+
+    CloseProfileMgr(*) {
+        if (dlg._closed)
+            return
+        dlg._closed := true
+        Theme.UnregisterWindow(dlg, "PresenterSync - Profile Manager")
+        Theme.ReleaseSuspend()
+        dlg.Destroy()
+    }
+    btnClose.OnEvent("Click", CloseProfileMgr)
+    dlg.OnEvent("Close", CloseProfileMgr)
+    dlg.OnEvent("Escape", CloseProfileMgr)
+
+    dlg.Show()
+    return dlg
 }

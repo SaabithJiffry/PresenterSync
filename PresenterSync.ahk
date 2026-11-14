@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.3.4
+; Version: 2.3.5
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.3.4.0
+;@Ahk2Exe-SetVersion 2.3.5.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -223,6 +223,16 @@ BuildTrayMenu(cfg, state) {
             ConfMenu.Check(cApp)
     }
     SettingsMenu.Add("Conferencing Platform", ConfMenu)
+
+    ProfileMenu := Menu()
+    for pName in cfg.GetProfileNames() {
+        ProfileMenu.Add(pName, SwitchProfileAction.Bind(cfg, state, pName))
+        if (StrLower(cfg.ActiveProfile) = StrLower(pName))
+            ProfileMenu.Check(pName)
+    }
+    ProfileMenu.Add()
+    ProfileMenu.Add("Manage Profiles...", (*) => ShowProfileManagerUI(cfg, state))
+    SettingsMenu.Add("Configuration Profiles", ProfileMenu)
 
     SettingsMenu.Add()
     SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI.Bind(cfg))
