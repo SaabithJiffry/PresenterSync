@@ -46,9 +46,58 @@ WaitPushToMuteRelease(cfg, hk, keyWaitFn := "") {
     return true
 }
 
+GetConferencingAppNames() {
+    return ["Zoom", "Microsoft Teams", "Google Meet"]
+}
+
+NormalizeConferencingApp(name) {
+    cleaned := StrLower(Trim(String(name)))
+    if (InStr(cleaned, "teams"))
+        return "Microsoft Teams"
+    if (InStr(cleaned, "meet"))
+        return "Google Meet"
+    return "Zoom"
+}
+
+GetConferencingWindowSpec(appType := "Zoom") {
+    switch NormalizeConferencingApp(appType) {
+        case "Microsoft Teams":
+            if WinExist("ahk_exe ms-teams.exe")
+                return "ahk_exe ms-teams.exe"
+            if WinExist("ahk_exe Teams.exe")
+                return "ahk_exe Teams.exe"
+            return "ahk_exe ms-teams.exe"
+        case "Google Meet":
+            for spec in ["Meet ahk_exe chrome.exe", "Meet ahk_exe msedge.exe", "Meet ahk_exe firefox.exe"] {
+                if WinExist(spec)
+                    return spec
+            }
+            return "Meet ahk_exe chrome.exe"
+        default:
+            return "ahk_exe Zoom.exe"
+    }
+}
+
+GetActiveConferencingMuteHotkey(cfg) {
+    if (!IsObject(cfg))
+        return "!a"
+    appType := cfg.HasOwnProp("ConferencingApp") ? NormalizeConferencingApp(cfg.ConferencingApp) : "Zoom"
+    switch appType {
+        case "Microsoft Teams":
+            return (cfg.HasOwnProp("TeamsMuteHotkey") && cfg.TeamsMuteHotkey != "") ? cfg.TeamsMuteHotkey : "^+m"
+        case "Google Meet":
+            return (cfg.HasOwnProp("MeetMuteHotkey") && cfg.MeetMuteHotkey != "") ? cfg.MeetMuteHotkey : "^d"
+        default:
+            return (cfg.HasOwnProp("ZoomMuteHotkey") && cfg.ZoomMuteHotkey != "") ? cfg.ZoomMuteHotkey : "!a"
+    }
+}
+
 DispatchHostMuteToggle(cfg, state) {
     obsOpen := WinExist("ahk_exe obs64.exe")
-    zoomOpen := WinExist("ahk_exe Zoom.exe")
+    appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
+    confSpec := GetConferencingWindowSpec(appType)
+    confHk := GetActiveConferencingMuteHotkey(cfg)
+    zoomOpen := WinExist(confSpec)
 
     if (cfg.AudioRoutingMode == 1) {
         if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
@@ -66,7 +115,7 @@ DispatchHostMuteToggle(cfg, state) {
             return false
         }
         SetKeyDelay -1, 30
-        try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
+        try ControlSend FormatSendKey(confHk), , confSpec
         SetKeyDelay 50, 50
     } else if (cfg.AudioRoutingMode == 3) {
         if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
@@ -79,8 +128,8 @@ DispatchHostMuteToggle(cfg, state) {
         SetKeyDelay -1, 30
         if (obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
             try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
-        if (zoomOpen && cfg.ZoomMuteHotkey != "")
-            try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
+        if (zoomOpen && confHk != "" && confHk != "None")
+            try ControlSend FormatSendKey(confHk), , confSpec
         SetKeyDelay 50, 50
         SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
     }
@@ -351,7 +400,10 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
         if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
             return
         obsOpen := WinExist("ahk_exe obs64.exe")
-        zoomOpen := WinExist("ahk_exe Zoom.exe")
+        appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
+        confSpec := GetConferencingWindowSpec(appType)
+        confHk := GetActiveConferencingMuteHotkey(cfg)
+        zoomOpen := WinExist(confSpec)
         if (cfg.AudioRoutingMode == 3 && (obsOpen || zoomOpen)) {
             state.IsSyncing := true
             if (state.HasOwnProp("releaseSyncTimerFn") && state.releaseSyncTimerFn)
@@ -362,9 +414,9 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
             try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
             SetKeyDelay 50, 50
         }
-        if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && zoomOpen && cfg.ZoomMuteHotkey != "") {
+        if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && zoomOpen && confHk != "" && confHk != "None") {
             SetKeyDelay -1, 30
-            try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
+            try ControlSend FormatSendKey(confHk), , confSpec
             SetKeyDelay 50, 50
         }
         if (!state.obsConnected && !state.zoomConnected) {
@@ -699,25 +751,80 @@ ReleaseSyncLock(state) {
 }
 
 PushObsMuteToZoom(cfg, state, obsIsMuted) {
-    if (cfg.AudioRoutingMode != 3 || state.IsSyncing || cfg.ZoomMuteHotkey = "")
+    confHk := GetActiveConferencingMuteHotkey(cfg)
+    if (cfg.AudioRoutingMode != 3 || state.IsSyncing || confHk = "" || confHk = "None")
         return
-    if !WinExist("ahk_exe Zoom.exe")
+    appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
+    confSpec := GetConferencingWindowSpec(appType)
+    if !WinExist(confSpec)
         return
 
-    zoomState := DetectZoomStates()
+    zoomState := DetectZoomStates(confSpec, appType)
     if (!zoomState.hasMic || zoomState.muted == obsIsMuted)
         return
 
     state.IsSyncing := true
-    targetWin := zoomState.micHwnd ? ("ahk_id " zoomState.micHwnd) : "ahk_exe Zoom.exe"
+    targetWin := zoomState.micHwnd ? ("ahk_id " zoomState.micHwnd) : confSpec
     SetKeyDelay -1, 30
-    try ControlSend FormatSendKey(cfg.ZoomMuteHotkey),, targetWin
+    try ControlSend FormatSendKey(confHk),, targetWin
     SetKeyDelay 50, 50
     SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
 }
 
-DetectZoomStates(targetSpec := "ahk_exe Zoom.exe") {
+ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "") {
+    if (!IsObject(result))
+        result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
+    normApp := NormalizeConferencingApp(appType)
+    for n in names {
+        if (!result.hasMic && !RegExMatch(n, "i)\b(when joining|on entry|all|participants|everyone|settings)\b")) {
+            if (normApp = "Microsoft Teams") {
+                if RegExMatch(n, "i)\bunmute(\b.*\bmic|\b)|^turn on microphone") {
+                    result.hasMic := true, result.muted := true, result.micHwnd := hwnd
+                } else if RegExMatch(n, "i)\bmute(\b.*\bmic|\b)|^turn off microphone") {
+                    result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+                }
+            } else if (normApp = "Google Meet") {
+                if RegExMatch(n, "i)turn on microphone|unmute microphone") {
+                    result.hasMic := true, result.muted := true, result.micHwnd := hwnd
+                } else if RegExMatch(n, "i)turn off microphone|mute microphone") {
+                    result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+                }
+            } else {
+                if RegExMatch(n, "i)\bunmute\b.*\baudio\b|^unmute(\b|,|$)") {
+                    result.hasMic := true, result.muted := true, result.micHwnd := hwnd
+                } else if RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute(\b|,|$)") {
+                    result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+                }
+            }
+        }
+        if (result.recState == 0) {
+            if RegExMatch(n, "i)\bresume\b.*\brecording\b") {
+                result.hasRec := true, result.recState := 2
+            } else if RegExMatch(n, "i)\b(pause|stop)\b.*\brecording\b") {
+                result.hasRec := true, result.recState := 1
+            } else if (!result.hasRec && RegExMatch(n, "i)^record(\b|,|$)|^record (on this computer|to the cloud)|^start recording\b")) {
+                result.hasRec := true, result.recState := 0
+            }
+        }
+        if RegExMatch(n, "i)\bchat\b.*?(\d+)\s*unread|(\d+)\s*unread.*\bchat\b", &mChat) {
+            result.hasChat := true
+            cnt := Integer(mChat[1] != "" ? mChat[1] : mChat[2])
+            if (cnt > result.unreadChat)
+                result.unreadChat := cnt
+        } else if (!result.hasChat && RegExMatch(n, "i)^chat(\b|,|$)|open chat|show chat|chat panel|chat with everyone")) {
+            result.hasChat := true
+        }
+    }
+    return result
+}
+
+DetectZoomStates(targetSpec := "ahk_exe Zoom.exe", appType := "Zoom", mockElementNames := "") {
     result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
+    if IsObject(mockElementNames) {
+        result.foundWindow := true
+        return ParseConferencingElementNames(mockElementNames, appType, 1, result)
+    }
+
     hwndList := WinGetList(targetSpec)
     if (hwndList.Length == 0)
         return result
@@ -731,39 +838,7 @@ DetectZoomStates(targetSpec := "ahk_exe Zoom.exe") {
         if (ww < 50 || wh < 50)
             continue
         names := UIA.GetWindowElementNames(hwnd, false)
-        for n in names {
-            if (!result.hasMic && !RegExMatch(n, "i)\b(when joining|on entry|all|participants)\b")) {
-                if RegExMatch(n, "i)\bunmute\b.*\baudio\b|^unmute(\b|,|$)") {
-                    result.hasMic := true
-                    result.muted := true
-                    result.micHwnd := hwnd
-                } else if RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute(\b|,|$)") {
-                    result.hasMic := true
-                    result.muted := false
-                    result.micHwnd := hwnd
-                }
-            }
-            if (result.recState == 0) {
-                if RegExMatch(n, "i)\bresume\b.*\brecording\b") {
-                    result.hasRec := true
-                    result.recState := 2
-                } else if RegExMatch(n, "i)\b(pause|stop)\b.*\brecording\b") {
-                    result.hasRec := true
-                    result.recState := 1
-                } else if (!result.hasRec && RegExMatch(n, "i)^record(\b|,|$)|^record (on this computer|to the cloud)")) {
-                    result.hasRec := true
-                    result.recState := 0
-                }
-            }
-            if RegExMatch(n, "i)\bchat\b.*?(\d+)\s*unread|(\d+)\s*unread.*\bchat\b", &mChat) {
-                result.hasChat := true
-                cnt := Integer(mChat[1] != "" ? mChat[1] : mChat[2])
-                if (cnt > result.unreadChat)
-                    result.unreadChat := cnt
-            } else if (!result.hasChat && RegExMatch(n, "i)^chat(\b|,|$)|open chat|show chat|chat panel")) {
-                result.hasChat := true
-            }
-        }
+        ParseConferencingElementNames(names, appType, hwnd, result)
         if (result.hasMic && result.hasRec && result.recState > 0 && result.hasChat && result.unreadChat > 0)
             break
     }
@@ -774,7 +849,9 @@ ZoomStateMonitor(cfg, state) {
     if (!cfg.EnableZoom && !cfg.EnableWS)
         return
 
-    zoomInfo := DetectZoomStates()
+    appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
+    confSpec := GetConferencingWindowSpec(appType)
+    zoomInfo := DetectZoomStates(confSpec, appType)
     if (zoomInfo.hasChat)
         SyncChatState(cfg, state, zoomInfo.unreadChat)
     else
