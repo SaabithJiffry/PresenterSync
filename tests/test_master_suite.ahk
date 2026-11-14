@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.2.7
-;              and PresenterSync Remote v2.2.7 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.2.8
+;              and PresenterSync Remote v2.2.8 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.2.7", UIConstants.APP_VERSION == "2.2.7")
+Assert("APP_VERSION updated to 2.2.8", UIConstants.APP_VERSION == "2.2.8")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.2.7 and Remote Host",
-    InStr(summaryTxt, "v2.2.7") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.2.8 and Remote Host",
+    InStr(summaryTxt, "v2.2.8") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -711,6 +711,59 @@ Assert("ResetAppearance resets HudColorPreset back to Standard",
 
 presetState.MicGui.Destroy(), presetState.RecGui.Destroy(), presetState.ChatGui.Destroy(), presetState.StudioGui.Destroy(), presetState.SceneGui.Destroy()
 
+; ==============================================================================
+; SECTION 11: STAGE 4 (v2.2.8) - LIVE COREAUDIO VOICE ACTIVITY METER
+; ==============================================================================
+Assert("AudioMeter.NormalizePeak clamps bounds and applies perceptual curve",
+    AudioMeter.NormalizePeak(-0.5) == 0.0
+    && AudioMeter.NormalizePeak(0.002) == 0.0
+    && Abs(AudioMeter.NormalizePeak(0.25) - 0.5) < 0.001
+    && AudioMeter.NormalizePeak(2.5) == 1.0)
+
+livePeak := AudioMeter.GetPeak()
+Assert("AudioMeter.GetPeak returns safe scalar in [0.0, 1.0] without throwing",
+    livePeak >= 0.0 && livePeak <= 1.0)
+
+cfgMeter := Config(testIni)
+Assert("ShowVoiceMeter defaults to true", cfgMeter.ShowVoiceMeter == true)
+
+meterCb := { tray: 0 }
+meterState := OverlayState(cfgMeter)
+meterState.rebuildTrayFn := (*) => (meterCb.tray += 1)
+meterState.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+meterState.isMuted := false
+meterState.voicePeak := 0.72
+Assert("ApplyMicAppearance renders LIVE pill cleanly with voicePeak=0.72",
+    ApplyMicAppearance(cfgMeter, meterState) != false)
+
+cfgMeter.ShowText := true
+meterState.ComputeDimensions(cfgMeter)
+Assert("ApplyMicAppearance renders Label-Mode LIVE pill with voicePeak=0.72",
+    ApplyMicAppearance(cfgMeter, meterState) != false)
+
+ToggleVoiceMeter(cfgMeter, meterState)
+cfgMeterReload := Config(testIni)
+Assert("ToggleVoiceMeter persists false to INI & clears voicePeak",
+    cfgMeter.ShowVoiceMeter == false && cfgMeterReload.ShowVoiceMeter == false
+    && meterState.voicePeak == 0.0 && meterCb.tray == 1)
+
+cfgMeter.ResetAppearance()
+cfgMeterResetReload := Config(testIni)
+Assert("ResetAppearance restores ShowVoiceMeter back to true",
+    cfgMeter.ShowVoiceMeter == true && cfgMeterResetReload.ShowVoiceMeter == true)
+
+meterState.voicePeak := 0.1
+VoiceMeterTick(cfgMeter, meterState, () => 0.64)
+Assert("VoiceMeterTick updates voicePeak from reader when unmuted",
+    Abs(meterState.voicePeak - 0.64) < 0.001)
+
+meterState.isMuted := true
+VoiceMeterTick(cfgMeter, meterState, () => 0.90)
+Assert("VoiceMeterTick stops & zeroes voicePeak when muted",
+    meterState.voicePeak == 0.0)
+
+meterState.MicGui.Destroy()
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -718,7 +771,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.7) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.8) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

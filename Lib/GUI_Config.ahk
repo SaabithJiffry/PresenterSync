@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.2.7"
+    static APP_VERSION := "2.2.8"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -62,6 +62,7 @@ class UIConstants {
     static DRAG_SYNC_INTERVAL_MS := 16
     static PPT_DEBOUNCE_MS := 150
     static PUSH_TO_MUTE_HOLD_MS := 350
+    static VOICE_METER_INTERVAL_MS := 65
     static ZOOM_POLL_INTERVAL_MS := 500
     static ZOOM_REC_GRACE_MS := 1500
     static SYNC_LOCK_TIMEOUT_MS := 1000
@@ -238,6 +239,59 @@ NormalizeHudColorPreset(name) {
             return pName
     }
     return "Standard"
+}
+
+class AudioMeter {
+    static _enum := ""
+    static _meter := ""
+    static _nextRetryTick := 0
+
+    static NormalizePeak(rawPeak) {
+        p := Min(1.0, Max(0.0, Float(rawPeak)))
+        return (p > 0.005) ? Min(1.0, Sqrt(p)) : 0.0
+    }
+
+    static Reset() {
+        this._meter := ""
+        this._enum := ""
+        this._nextRetryTick := 0
+    }
+
+    static GetPeak() {
+        try {
+            if (!IsObject(this._meter)) {
+                if (A_TickCount < this._nextRetryTick)
+                    return 0.0
+                if (!IsObject(this._enum))
+                    this._enum := ComObject("{BCDE0395-E52F-467C-8E3D-C4579291692E}", "{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+                pDev := 0
+                try ComCall(4, this._enum, "Int", 1, "Int", 2, "Ptr*", &pDev)
+                if (!pDev)
+                    try ComCall(4, this._enum, "Int", 1, "Int", 0, "Ptr*", &pDev)
+                if (!pDev) {
+                    this._nextRetryTick := A_TickCount + 5000
+                    return 0.0
+                }
+                dev := ComValue(13, pDev)
+                iidBuf := Buffer(16, 0)
+                DllCall("ole32\CLSIDFromString", "WStr", "{C02216F6-8C67-4B5B-9D00-D008E73E0064}", "Ptr", iidBuf)
+                pMeter := 0
+                ComCall(3, dev, "Ptr", iidBuf, "UInt", 23, "Ptr", 0, "Ptr*", &pMeter)
+                if (!pMeter) {
+                    this._nextRetryTick := A_TickCount + 5000
+                    return 0.0
+                }
+                this._meter := ComValue(13, pMeter)
+            }
+            peak := 0.0
+            ComCall(3, this._meter, "Float*", &peak)
+            return AudioMeter.NormalizePeak(peak)
+        } catch {
+            this._meter := ""
+            this._nextRetryTick := A_TickCount + 3000
+            return 0.0
+        }
+    }
 }
 
 class Theme {
@@ -1016,6 +1070,7 @@ class Config {
     AggressivePulse := false
     EnableAudioCue := false
     EnableMuteToast := false
+    ShowVoiceMeter := true
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -1145,6 +1200,7 @@ class Config {
         this.AggressivePulse := this.ReadBool("Settings", "AggressivePulse")
         this.EnableAudioCue := this.ReadBool("Settings", "EnableAudioCue", false)
         this.EnableMuteToast := this.ReadBool("Settings", "EnableMuteToast", false)
+        this.ShowVoiceMeter := this.ReadBool("Settings", "ShowVoiceMeter", true)
         this.OpacityLevel := this.ReadInt("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -1192,6 +1248,7 @@ class Config {
         this.AggressivePulse := false
         this.EnableAudioCue := false
         this.EnableMuteToast := false
+        this.ShowVoiceMeter := true
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
@@ -1203,6 +1260,7 @@ class Config {
         this.Write("Settings", "AggressivePulse", 0)
         this.Write("Settings", "EnableAudioCue", 0)
         this.Write("Settings", "EnableMuteToast", 0)
+        this.Write("Settings", "ShowVoiceMeter", 1)
         this.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         this.Write("Settings", "IndicatorScale", 1.0)
         Theme.SetMode("System")
@@ -1250,18 +1308,21 @@ class OverlayState {
     currentAlpha := 220
     breathDir := -5
     animSeq := 0
+    voicePeak := 0.0
 
     isDraggingHud := false
     activeDragHwnd := 0
 
     dragTimerFn := ""
     breathTimerFn := ""
+    voiceMeterTimerFn := ""
     obsTimerFn := ""
     relayTimerFn := ""
     zoomTimerFn := ""
     releaseSyncTimerFn := ""
     rebuildTrayFn := ""
     refreshHelpFn := ""
+    refreshHudFn := ""
 
     MicGui := ""
     RecGui := ""
@@ -1331,6 +1392,7 @@ class OverlayState {
 
         this.dragTimerFn := DragSyncTick.Bind(this)
         this.breathTimerFn := BreathingAnimation.Bind(cfg, this)
+        this.voiceMeterTimerFn := VoiceMeterTick.Bind(cfg, this)
         this.obsTimerFn := ConnectToOBS.Bind(cfg, this)
         this.relayTimerFn := ConnectHostInternetRelay.Bind(cfg, this)
         this.sceneMarqueeTimerFn := SceneMarqueeTick.Bind(cfg, this)
@@ -2675,7 +2737,8 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
         labelCfg := ""
     }
 
-    return Gdip.RenderPill(state.MicGui.Hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg)
+    meterLevel := (!mutedState && cfg.HasOwnProp("ShowVoiceMeter") && cfg.ShowVoiceMeter && state.HasOwnProp("voicePeak")) ? state.voicePeak : 0.0
+    return Gdip.RenderPill(state.MicGui.Hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg, meterLevel)
 }
 
 SyncChatState(cfg, state, newCount) {
@@ -2983,12 +3046,61 @@ SetHudColorPreset(cfg, state, presetName, *) {
     }
 }
 
+IsGuiValid(guiObj) {
+    if (!IsObject(guiObj))
+        return false
+    try return (guiObj.Hwnd != 0 && DllCall("IsWindow", "Ptr", guiObj.Hwnd) != 0)
+    catch
+        return false
+}
+
+UpdateVoiceMeterTimer(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("voiceMeterTimerFn") || !state.voiceMeterTimerFn)
+        return
+    shouldRun := cfg.ShowIndicator && (!cfg.HasOwnProp("ShowVoiceMeter") || cfg.ShowVoiceMeter) && !state.isMuted && IsGuiValid(state.MicGui)
+    if (shouldRun) {
+        SetTimer(state.voiceMeterTimerFn, UIConstants.VOICE_METER_INTERVAL_MS)
+    } else {
+        SetTimer(state.voiceMeterTimerFn, 0)
+        state.voicePeak := 0.0
+    }
+}
+
+VoiceMeterTick(cfg, state, readerFn := "") {
+    if (!IsGuiValid(state.MicGui) || !cfg.ShowIndicator || (cfg.HasOwnProp("ShowVoiceMeter") && !cfg.ShowVoiceMeter) || state.isMuted) {
+        state.voicePeak := 0.0
+        if (state.HasOwnProp("voiceMeterTimerFn") && state.voiceMeterTimerFn)
+            SetTimer(state.voiceMeterTimerFn, 0)
+        return
+    }
+    if (state.isDraggingHud)
+        return
+    newPeak := IsObject(readerFn) ? Float(readerFn.Call()) : AudioMeter.GetPeak()
+    newPeak := Min(1.0, Max(0.0, newPeak))
+    if (Abs(newPeak - state.voicePeak) >= 0.02 || (newPeak == 0.0 && state.voicePeak > 0.0)) {
+        state.voicePeak := newPeak
+        ApplyMicAppearance(cfg, state)
+    }
+}
+
+ToggleVoiceMeter(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "ShowVoiceMeter")
+    if (IsObject(state)) {
+        if (!cfg.ShowVoiceMeter)
+            state.voicePeak := 0.0
+        UpdateVoiceMeterTimer(cfg, state)
+        if (state.HasOwnProp("refreshHudFn") && state.refreshHudFn)
+            try state.refreshHudFn.Call()
+    }
+}
+
 SyncUIState(cfg, state, obsIsMuted) {
     if (state.isMuted != obsIsMuted) {
         state.isMuted := obsIsMuted
         cfg.IsMuted := obsIsMuted
         cfg.WriteBool("Settings", "IsMuted", state.isMuted)
         PlayMuteAnimation(cfg, state)
+        UpdateVoiceMeterTimer(cfg, state)
         if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
             PlayMuteAudioCue(obsIsMuted)
         if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
@@ -3139,6 +3251,7 @@ UpdateHudVisibility(cfg, state) {
     if (!cfg.ShowIndicator) {
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
+        UpdateVoiceMeterTimer(cfg, state)
         if IsObject(state.MicGui)
             state.MicGui.Hide()
         if IsObject(state.RecGui)
@@ -3158,6 +3271,7 @@ UpdateHudVisibility(cfg, state) {
         ApplyMicAppearance(cfg, state)
         state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
     }
+    UpdateVoiceMeterTimer(cfg, state)
 
     if (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom)) {
         ApplyRecAppearance(cfg, state)
