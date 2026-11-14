@@ -139,8 +139,44 @@ DispatchHostMuteToggle(cfg, state) {
     return true
 }
 
+ShouldEnableHostInternetRelay(cfg) {
+    if (!IsObject(cfg))
+        return false
+    pairCode := cfg.HasOwnProp("InternetPairingCode") ? Trim(cfg.InternetPairingCode) : ""
+    if (pairCode = "")
+        return false
+    if (cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet")
+        return true
+    if (cfg.HasOwnProp("AudioRoutingMode") && cfg.AudioRoutingMode == 2)
+        return true
+    return false
+}
+
+IsRemoteUsingInternetChannel(cfg, state := "") {
+    if (IsObject(cfg) && cfg.HasOwnProp("NetworkMode") && cfg.NetworkMode = "Internet")
+        return true
+    if (IsObject(state) && state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback)
+        return true
+    return false
+}
+
+ShouldRemoteFallbackToRelay(cfg, state := "") {
+    if (!IsObject(cfg))
+        return false
+    if (cfg.HasOwnProp("NetworkMode") && cfg.NetworkMode = "Internet")
+        return false
+    if (cfg.HasOwnProp("EnableRelayFallback") && !cfg.EnableRelayFallback)
+        return false
+    pairCode := cfg.HasOwnProp("InternetPairingCode") ? Trim(cfg.InternetPairingCode) : ""
+    if (pairCode = "")
+        return false
+    if (IsObject(state) && state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback)
+        return false
+    return true
+}
+
 DispatchRemoteMuteToggle(cfg, state) {
-    if (cfg.NetworkMode = "Internet") {
+    if (IsRemoteUsingInternetChannel(cfg, state)) {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
         authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
@@ -304,7 +340,7 @@ PublishInternetRelayPacket(topic, packetStr, relayBaseUrl := "https://ntfy.sh", 
 BroadcastHostRelayMuteState(cfg, state) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
-    if (!cfg.HasOwnProp("RemoteNetworkMode") || cfg.RemoteNetworkMode != "Internet")
+    if (!ShouldEnableHostInternetRelay(cfg))
         return false
     topic := GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : "")
     if (topic = "")
@@ -320,7 +356,7 @@ UpdateHostInternetRelay(cfg, state) {
         return
     if (state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
         SetTimer state.relayTimerFn, 0
-    if (cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet" && cfg.InternetPairingCode != "") {
+    if (ShouldEnableHostInternetRelay(cfg)) {
         if (!state.relayConnected)
             SetTimer state.relayTimerFn, -80
     } else {
@@ -335,7 +371,7 @@ UpdateHostInternetRelay(cfg, state) {
 ConnectHostInternetRelay(cfg, state) {
     if (state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
         SetTimer state.relayTimerFn, 0
-    if (!cfg.HasOwnProp("RemoteNetworkMode") || cfg.RemoteNetworkMode != "Internet" || state.relayConnected)
+    if (!ShouldEnableHostInternetRelay(cfg) || state.relayConnected)
         return
     topic := GetInternetRelayTopic(cfg.InternetPairingCode)
     if (topic = "")
@@ -352,7 +388,7 @@ ConnectHostInternetRelay(cfg, state) {
         }, true, "", 4000)
     } catch {
         state.relayWs := ""
-        if (cfg.RemoteNetworkMode = "Internet" && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
+        if (ShouldEnableHostInternetRelay(cfg) && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
             SetTimer state.relayTimerFn, -3000
     }
 }
@@ -367,7 +403,7 @@ HandleHostRelayClose(cfg, state, ws, status, reason) {
     state.relayConnected := false
     if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
         try state.refreshHelpFn.Call()
-    if (cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet" && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
+    if (ShouldEnableHostInternetRelay(cfg) && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
         SetTimer state.relayTimerFn, -3000
 }
 
@@ -397,7 +433,7 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
     if (pkt.cmd = "sync_req") {
         BroadcastHostRelayMuteState(cfg, state)
     } else if (pkt.cmd = "toggle_mute") {
-        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+        if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
             return
         obsOpen := WinExist("ahk_exe obs64.exe")
         appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
@@ -419,7 +455,7 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
             try ControlSend FormatSendKey(confHk), , confSpec
             SetKeyDelay 50, 50
         }
-        if (!state.obsConnected && !state.zoomConnected) {
+        if ((cfg.AudioRoutingMode == 2 && !state.zoomConnected) || (!state.obsConnected && !state.zoomConnected)) {
             SyncUIState(cfg, state, !state.isMuted)
         }
         BroadcastHostRelayMuteState(cfg, state)

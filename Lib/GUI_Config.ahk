@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.3.3"
+    static APP_VERSION := "2.3.4"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1880,9 +1880,10 @@ BuildLiveStatusInfo(cfg, state := "") {
         . "  |  Labels: " (cfg.ShowText ? "ON" : "OFF")
         . "  |  Scale: " Round(cfg.IndicatorScale, 2) "x"
     themeStatus := cfg.ThemeMode " (Active: " (Theme.IsDarkMode() ? "Dark Mode" : "Light Mode") ")"
-    if (cfg.RemoteNetworkMode = "Internet") {
+    if (ShouldEnableHostInternetRelay(cfg)) {
         relayStat := (IsObject(state) && state.HasOwnProp("relayConnected") && state.relayConnected) ? "Relay Connected" : "Relay Standby"
-        remoteHost := "Internet Mode (" cfg.InternetPairingCode " - " relayStat ")"
+        modeTag := (cfg.RemoteNetworkMode = "Internet") ? "Internet Mode" : "Smart Mode 2 Relay Bridge"
+        remoteHost := modeTag " (" cfg.InternetPairingCode " - " relayStat ")"
     } else {
         remoteHost := A_ComputerName ".local:4455 (LAN)  |  WS Auth: " (cfg.obsPassword != "" ? "Configured" : "None")
     }
@@ -2318,6 +2319,10 @@ SetRoutingMode(cfg, mode, *) {
     cfg.Write("Settings", "AudioRoutingMode", mode)
     if ((mode == 2 || mode == 3) && cfg.ZoomMuteHotkey = "")
         cfg.Write("Settings", "ZoomMuteHotkey", "!a")
+    if (mode == 2 && (!cfg.HasOwnProp("InternetPairingCode") || cfg.InternetPairingCode = "")) {
+        cfg.InternetPairingCode := GenerateInternetPairingCode()
+        cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode)
+    }
     Reload()
 }
 

@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.3.3
-;              and PresenterSync Remote v2.3.3 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.3.4
+;              and PresenterSync Remote v2.3.4 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.3.3", UIConstants.APP_VERSION == "2.3.3")
+Assert("APP_VERSION updated to 2.3.4", UIConstants.APP_VERSION == "2.3.4")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.3.3 and Remote Host",
-    InStr(summaryTxt, "v2.3.3") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.3.4 and Remote Host",
+    InStr(summaryTxt, "v2.3.4") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1065,6 +1065,57 @@ Assert("DetectZoomStates parses Zoom, Microsoft Teams, and Google Meet UIA state
     && meetLive.hasMic && meetLive.muted == false
     && zoom1Arg.hasMic && zoom1Arg.muted == true && zoom1Arg.recState == 2 && zoom1Arg.unreadChat == 4)
 
+; ==============================================================================
+; SECTION 17: STAGE 10 (v2.3.4) - SMART MODE 2 REMOTE COMPANION BRIDGE
+; ==============================================================================
+cfgMode2Host := Config(testIni)
+cfgMode2Host.AudioRoutingMode := 2
+cfgMode2Host.RemoteNetworkMode := "LAN"
+cfgMode2Host.InternetPairingCode := "PS-MODE2-234"
+Assert("ShouldEnableHostInternetRelay auto-enables relay in Mode 2 even on LAN",
+    ShouldEnableHostInternetRelay(cfgMode2Host) == true)
+
+cfgMode1Lan := Config(testIni)
+cfgMode1Lan.AudioRoutingMode := 1
+cfgMode1Lan.RemoteNetworkMode := "LAN"
+cfgMode1Lan.InternetPairingCode := "PS-MODE1-234"
+Assert("ShouldEnableHostInternetRelay stays off for Mode 1 LAN",
+    ShouldEnableHostInternetRelay(cfgMode1Lan) == false)
+
+mode2Packets := []
+stMode2Host := {
+    isMuted: false,
+    obsConnected: true, ; Even if OBS WS is connected, Mode 2 must not route through OBS
+    obsWs: "",
+    zoomConnected: false,
+    EnableWS: false,
+    relayConnected: true,
+    relayWs: { tag: "mockRelay" },
+    relayMockWs: { sendText: (this, pkt) => mode2Packets.Push(pkt) }
+}
+authMode2 := GetInternetRelayAuthToken(cfgMode2Host.InternetPairingCode, cfgMode2Host.obsPassword)
+pktMode2Toggle := FormatRelayPacket("remote", "toggle_mute", "1", authMode2)
+HandleHostRelayMessage(cfgMode2Host, stMode2Host, stMode2Host.relayWs, pktMode2Toggle)
+Assert("Mode 2 HandleHostRelayMessage toggles muted state without OBS and broadcasts host packet",
+    stMode2Host.isMuted == true && mode2Packets.Length >= 1 && InStr(mode2Packets[mode2Packets.Length], '"data":"1"'))
+
+pktMode2Sync := FormatRelayPacket("remote", "sync_req", "0", authMode2)
+mode2Packets := []
+HandleHostRelayMessage(cfgMode2Host, stMode2Host, stMode2Host.relayWs, pktMode2Sync)
+Assert("Mode 2 sync_req responds even when RemoteNetworkMode=LAN",
+    mode2Packets.Length == 1 && InStr(mode2Packets[1], '"cmd":"state"') && InStr(mode2Packets[1], '"data":"1"'))
+
+remCfgLan := { NetworkMode: "LAN", EnableRelayFallback: true, InternetPairingCode: "PS-MODE2-234" }
+remStateLan := { usingRelayFallback: false }
+Assert("ShouldRemoteFallbackToRelay returns true when LAN has pairing code",
+    ShouldRemoteFallbackToRelay(remCfgLan, remStateLan) == true)
+remCfgNoCode := { NetworkMode: "LAN", EnableRelayFallback: true, InternetPairingCode: "" }
+Assert("ShouldRemoteFallbackToRelay returns false when pairing code is empty",
+    ShouldRemoteFallbackToRelay(remCfgNoCode, remStateLan) == false)
+remStateFallbackActive := { usingRelayFallback: true }
+Assert("IsRemoteUsingInternetChannel honors active relay fallback even in LAN mode",
+    IsRemoteUsingInternetChannel(remCfgLan, remStateFallbackActive) == true)
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1072,7 +1123,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.3) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.4) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
