@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v3.1.0
-;              and PresenterSync Remote v3.1.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v3.1.1
+;              and PresenterSync Remote v3.1.1 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 3.1.0", UIConstants.APP_VERSION == "3.1.0")
+Assert("APP_VERSION updated to 3.1.1", UIConstants.APP_VERSION == "3.1.1")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v3.1.0 and Remote Host",
-    InStr(summaryTxt, "v3.1.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v3.1.1 and Remote Host",
+    InStr(summaryTxt, "v3.1.1") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1204,7 +1204,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v3.1.0", "3.0.1") == 1
+    CompareSemVer("v3.1.1", "3.1.0") == 1
+    && CompareSemVer("v3.1.0", "3.0.1") == 1
     && CompareSemVer("v3.0.1", "3.0.0") == 1
     && CompareSemVer("v3.0.0", "2.4.0") == 1
     && CompareSemVer("v2.4.0", "2.3.6") == 1
@@ -1599,15 +1600,41 @@ kbDodge := SearchHelpEntries("dodge alt", "Tray", false)
 kbObsErr := SearchHelpEntries("4009 password", "All", false)
 kbRemSafe := SearchHelpEntries("", "All", true)
 remHasHostOnlyHud := false
+remHasRtrayAbout := false
+remHasRtrayText := false
+remHasRscRemote := false
+remHasHostLeakText := ""
 for rEnt in kbRemSafe {
-    if (SubStr(rEnt.id, 1, 4) = "hud-" || rEnt.id = "tray-app-vu" || rEnt.id = "tray-app-rectimer" || rEnt.id = "tray-app-stream") {
+    if (SubStr(rEnt.id, 1, 4) = "hud-" || rEnt.id = "tray-app-vu" || rEnt.id = "tray-app-rectimer" || rEnt.id = "tray-app-stream"
+        || rEnt.id = "tray-app-text" || rEnt.id = "tray-app-clicks" || rEnt.id = "tray-app-theme" || rEnt.id = "tray-app-resetapp"
+        || rEnt.id = "feat-cough" || rEnt.id = "feat-snapping" || rEnt.id = "feat-themes" || rEnt.id = "feat-audio-toast"
+        || rEnt.id = "tray-set-startup" || rEnt.id = "tray-set-updates" || rEnt.id = "sc-global") {
         remHasHostOnlyHud := true
         break
+    }
+    if (rEnt.id = "rtray-about")
+        remHasRtrayAbout := true
+    else if (rEnt.id = "rtray-text")
+        remHasRtrayText := true
+    else if (rEnt.id = "rsc-remote")
+        remHasRscRemote := true
+
+    if (rEnt.id != "rtray-about") {
+        if (InStr(rEnt.body, "Control Center") || InStr(rEnt.body, "Voice Activity") || InStr(rEnt.body, "Virtual Camera")
+            || InStr(rEnt.body, "Studio Mode") || InStr(rEnt.body, "Live Status") || InStr(rEnt.body, "RecTimer"))
+            remHasHostLeakText := rEnt.id
     }
 }
 Assert("Help Search matches Tray menus, multi-word queries & enforces Remote 1-tier isolation",
     kbAll.Length >= 50 && kbTray.Length >= 28 && kbDodge.Length >= 1 && kbDodge[1].id == "tray-app-dodge" && kbObsErr.Length >= 1 && kbRemSafe.Length >= 18 && !remHasHostOnlyHud,
     Format("all={} tray={} dodge={} obsErr={} rem={} hostLeak={}", kbAll.Length, kbTray.Length, kbDodge.Length, kbObsErr.Length, kbRemSafe.Length, remHasHostOnlyHud))
+
+; ==============================================================================
+; SECTION 23: v3.1.1 CURATED REMOTE ABOUT & HELP CAPABILITY ISOLATION
+; ==============================================================================
+Assert("v3.1.1 Remote Search includes Remote-specific Tray/Shortcuts and leaks zero host UI text",
+    remHasRtrayAbout && remHasRtrayText && remHasRscRemote && remHasHostLeakText == "",
+    Format("about={} text={} sc={} leak={}", remHasRtrayAbout, remHasRtrayText, remHasRscRemote, remHasHostLeakText))
 
 Theme.SetMode("Light")
 uiHelpLight := ShowHelpWindow(cfgAudit, stAudit)
@@ -1616,7 +1643,7 @@ helpLightClip := (DllCall("GetWindowLong", "Ptr", uiHelpLight.Hwnd, "Int", -16, 
 PostMessage(0x0010, 0, 0, uiHelpLight.Hwnd)
 Sleep(40)
 Theme.SetMode("System")
-Assert("v3.1.0 ShowHelpWindow passes 7-tab single-row & zero-overlap audit in Light mode too",
+Assert("v3.1.1 ShowHelpWindow passes 7-tab single-row & zero-overlap audit in Light mode too",
     helpLightRes.ok && helpLightClip,
     Format("ok={}, reason={}", helpLightRes.ok, helpLightRes.reason))
 
@@ -1627,7 +1654,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.1.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.1.1) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

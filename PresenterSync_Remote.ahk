@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 3.1.0
+; Version: 3.1.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 3.1.0.0
+;@Ahk2Exe-SetVersion 3.1.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -1076,7 +1076,7 @@ BuildRemoteTrayMenu(cfg, state) {
 
     ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
-    A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI())
+    A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI(cfg, state))
     A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
     if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
@@ -1428,7 +1428,7 @@ ShowRemoteHelpUI(cfg, state, *) {
     return helpGui
 }
 
-ShowRemoteAboutUI(*) {
+ShowRemoteAboutUI(cfg := "", state := "", *) {
     existing := Theme.FocusExistingWindow("AboutRemoteWindow")
     if IsObject(existing)
         return existing
@@ -1441,39 +1441,63 @@ ShowRemoteAboutUI(*) {
 
     iconSource := A_IsCompiled ? A_ScriptFullPath : (FileExist(A_ScriptDir "\PresenterSyncRemote.ico") ? A_ScriptDir "\PresenterSyncRemote.ico" : A_ScriptDir "\..\PresenterSyncRemote.ico")
     if FileExist(iconSource)
-        aboutGui.Add("Picture", "x158 y15 w64 h64", iconSource)
+        aboutGui.Add("Picture", "x203 y16 w64 h64", iconSource)
 
     aboutGui.SetFont("s16 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "PresenterSync Remote"), "Text")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y88 w430 h30 Center", "PresenterSync Remote"), "Text")
 
     aboutGui.SetFont("s10 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+4", "Version " UIConstants.APP_VERSION), "Text", "accent")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y120 w430 h20 Center", "Version " UIConstants.APP_VERSION "  -  Remote Companion Edition"), "Text", "accent")
 
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 w340 Center y+8", "Smart Board & Secondary Presenter Mute Companion for OBS Studio"), "Text", "muted")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y142 w430 h20 Center", "Lightweight 1-Tier Mic Companion for Smart Boards & Secondary PCs"), "Text", "muted")
 
-    aboutGui.SetFont("s10 w400 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "Created by Saabith Jiffry"), "Text")
+    aboutGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y164 w430 h18 Center", "Created by Saabith Jiffry"), "Text")
 
-    gitBtn := aboutGui.Add("Button", "w110 x18 y+20 h32", "GitHub Repo")
+    aboutGui.SetFont("s9 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y192 w430 h18", "Included Remote Companion Capabilities & Scope:"), "Text")
+
+    aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
+    remCapsText := "Streamlined companion engineered strictly for Smart Boards & secondary PCs.`r`n`r`n"
+        . "WHAT REMOTE INCLUDES:`r`n"
+        . "• Dedicated 1-Tier LIVE / MUTED Mic HUD: Syncs via OBS WebSocket v5 (Port 4455) OR Mode 2 Host Relay Bridge (Conferencing-Only setup).`r`n"
+        . "• Dual Network Failover: Same Router (LAN mDNS + multi-IP failover) or Different Networks (Internet Pairing Code PS-XXXX-XXXX) with safe heartbeat.`r`n"
+        . "• Secondary Clicker Control: Assign mute button, Cough Hold (>= 350ms), local Clicker Tester & Ctrl+F12 arming toggle.`r`n"
+        . "• Large-Board Visuals: 0.25x-5.0x scale, Dark/Light/System theme, 5 color palettes, text label, monochrome icons, pulse, cue & toast.`r`n"
+        . "• Smart Ergonomics & System: 14px Magnetic Snap, Auto-Dodge hover ghost, Click-Through (hold Alt), Startup (OFF by default) & Updates.`r`n`r`n"
+        . "STREAMLINED BY DESIGN (HOST-ONLY MODULES OMITTED):`r`n"
+        . "• Omits multi-tier overlay panels, CoreAudio voice bar, UIA meeting monitoring, Control Center, Setup Wizard, and PowerPoint forwarding."
+    AddHelpGuideEdit(aboutGui, 20, 214, 430, 214, remCapsText)
+
+    aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
+    gitBtn := aboutGui.Add("Button", "x20 y440 w208 h30", "GitHub Repo")
     Theme.RegisterControl(aboutGui, gitBtn, "Button")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    updBtn := aboutGui.Add("Button", "w110 x+12 yp h32", "Check Updates")
+    updBtn := aboutGui.Add("Button", "x242 y440 w208 h30", "Check for Updates")
     Theme.RegisterControl(aboutGui, updBtn, "Button")
     updBtn.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
 
-    closeBtn := aboutGui.Add("Button", "w110 x+12 yp h32 Default", "Close")
-    Theme.RegisterControl(aboutGui, closeBtn, "Button")
+    helpBtn := aboutGui.Add("Button", "x20 y478 w208 h30", "Open Help Guide")
+    Theme.RegisterControl(aboutGui, helpBtn, "Button")
     CloseAbout(*) {
         Theme.UnregisterWindow(aboutGui, "AboutRemoteWindow")
         aboutGui.Destroy()
     }
+    if IsObject(cfg)
+        helpBtn.OnEvent("Click", (*) => (CloseAbout(), ShowRemoteHelpUI(cfg, state)))
+    else
+        helpBtn.Enabled := false
+
+    closeBtn := aboutGui.Add("Button", "x242 y478 w208 h30 Default", "Close")
+    Theme.RegisterControl(aboutGui, closeBtn, "Button")
     closeBtn.OnEvent("Click", CloseAbout)
     aboutGui.OnEvent("Close", CloseAbout)
     aboutGui.OnEvent("Escape", CloseAbout)
 
-    aboutGui.Show("AutoSize Center")
+    aboutGui.Show("w470 h524 Center")
+    closeBtn.Focus()
     return aboutGui
 }
 

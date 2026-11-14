@@ -491,11 +491,84 @@ GetHelpKnowledgeBase() {
         "REMOTE TRAY ITEMS: HUD Visibility & Appearance`r`n• Show Mute Indicator: Shows or hides the 1-tier LIVE/MUTED Mic HUD on the secondary display.`r`n• Indicator Appearance submenu: Includes Show Text Label, Monochromatic Icon, Sleek Corners, Aggressive Mute Pulse, Mute Audio Cue, Mute Status Toast, Interactive Click Actions, Magnetic Snap, Click-Through (Hold Alt), Auto-Dodge, Transparency (100/85/50%), Scale (0.25x-5.0x), App Theme, Color Preset, Reset Position, and Restore Defaults.",
         "remote show mute indicator appearance scale preset theme snap click through dodge")
 
-    Add("rtray-util", "Tray", "Remote Companion Tray Menu", "Start with Windows, Updates, Setup Guide, About, Suspend & Exit",
-        "Remote Tray > Start with Windows / Check for Updates... / Setup & Help Guide... / About / Suspend / Exit", "Alt+Shift+F12 (Exit)", "Startup OFF",
+    Add("rtray-about", "Tray", "Remote Companion Tray Menu", "About PresenterSync Remote (Curated Scope)",
+        "Remote Tray > About PresenterSync Remote...", "None", "Remote Companion Edition",
+        "Shows PresenterSync Remote's version, stripped-down 1-tier capabilities, omitted host modules, GitHub link, updates, and Help launcher.",
+        "REMOTE TRAY ITEM: About PresenterSync Remote...`r`n`r`nWHAT IT SHOWS:`r`n• Curated strictly to PresenterSync Remote v" UIConstants.APP_VERSION " (Remote Companion Edition):`r`n  - Dedicated 1-Tier LIVE / MUTED Mic HUD (OBS WebSocket v5 or Mode 2 Conferencing Relay Bridge).`r`n  - Dual Network Transport: Same Router (LAN failover) and Different Networks (Internet Pairing Code).`r`n  - Secondary Clicker Mute Button, Cough Hold (>= 350ms), local Clicker Tester, and Ctrl+F12 arming toggle.`r`n  - Visual customization up to 5.0x scale, 5 color presets, snapping, Auto-Dodge, Click-Through (hold Alt), Start with Windows, and GitHub Updates.`r`n• Clearly notes that multi-tier overlay panels, live CoreAudio voice meter, Windows UIA meeting tracking, Control Center, Setup Wizard, and PowerPoint slide navigation live on the Primary Host PC.",
+        "remote tray about capabilities scope omitted host stripped down credits")
+
+    Add("rtray-util", "Tray", "Remote Companion Tray Menu", "Start with Windows, Updates, Help & Setup Guide, Suspend & Exit",
+        "Remote Tray > Start with Windows / Check for Updates... / Help & Setup Guide... / Suspend / Exit", "Alt+Shift+F12 (Exit)", "Startup OFF",
         "System utilities inside PresenterSync Remote's tray menu for auto-start, GitHub updates, help, hotkey suspension, and clean exit.",
-        "REMOTE TRAY UTILITIES`r`n• Start with Windows: Opt-in HKCU Run registry auto-start for PresenterSync Remote (default OFF).`r`n• Check for Updates...: Checks GitHub Releases against the running version.`r`n• Setup & Help Guide...: Opens Remote's 3-tab Mic HUD diagram, setup guide, and searchable Tray explorer.`r`n• About PresenterSync Remote...: Version & credits.`r`n• Suspend All Hotkeys / Exit PresenterSync Remote: Pauses hotkeys or closes Remote cleanly without affecting Primary Host.",
+        "REMOTE TRAY UTILITIES`r`n• Start with Windows: Opt-in HKCU Run registry auto-start for PresenterSync Remote (default OFF).`r`n• Check for Updates...: Checks GitHub Releases against the running version.`r`n• Help & Setup Guide...: Opens Remote's 3-tab Mic HUD diagram, setup guide, and searchable Tray explorer.`r`n• About PresenterSync Remote...: Curated Remote capabilities, version & credits.`r`n• Suspend All Hotkeys / Exit PresenterSync Remote: Pauses Remote hotkeys or closes Remote cleanly without affecting the Primary Host.",
         "remote tray start with windows updates help about suspend exit")
+
+    ; Remote-isolated overrides for entries whose Primary wording references multi-tier pills or Control Center
+    Add("rtray-text", "Tray", "Remote Companion Tray Menu", "Indicator Appearance > Show Text Label",
+        "Remote Tray > Indicator Appearance > Show Text Label", "None", "OFF (Compact Icon Mode)",
+        "Switches Remote's 1-tier Mic pill between compact Icon-Only width (80px base) and Icon + Label mode (168px base).",
+        "REMOTE TRAY ITEM: Indicator Appearance > Show Text Label`r`n`r`nWHAT IT DOES:`r`n• When OFF (Default): Compact 80px base microphone icon pill ideal for corners and whiteboards.`r`n• When ON: Widens the Remote pill (168px base) to show a bold readable label beside the mic icon: LIVE or MUTED.",
+        "remote show text label compact icon mode live muted words appearance")
+
+    Add("rtray-clicks", "Tray", "Remote Companion Tray Menu", "Indicator Appearance > Interactive HUD Click Actions",
+        "Remote Tray > Indicator Appearance > Interactive HUD Click Actions", "Short-Tap Pill", "ON",
+        "Lets a quick tap (<= 3px move, < 400ms) on Remote's Mic pill toggle host mute while longer drags move the pill.",
+        "REMOTE TRAY ITEM: Indicator Appearance > Interactive HUD Click Actions`r`n`r`nWHAT IT DOES:`r`n• When ON: Tapping the Remote Mic pill briefly (<= 3px movement, < 400ms hold) toggles mic Mute/Unmute on the Primary Host (requires Pointer Mute ON via Ctrl+F12).`r`n• Dragging (> 3px or longer hold) repositions the Remote pill cleanly across displays or touchscreens without misfiring a mute toggle.`r`n• Turn OFF for view-only wall display mode.",
+        "remote interactive hud click actions tap drag touch toggle mute appearance")
+
+    Add("rtray-theme", "Tray", "Remote Companion Tray Menu", "Indicator Appearance > App Theme",
+        "Remote Tray > Indicator Appearance > App Theme > Follow System / Dark Mode / Light Mode", "None", "Follow System",
+        "Themes PresenterSync Remote's Help, Connection, Shortcuts, About, and Tray dialogs across Dark, Light, or Windows System mode.",
+        "REMOTE TRAY ITEM: Indicator Appearance > App Theme`r`nOPTIONS:`r`n• Follow System (Default): Matches Windows 11/10 dark or light personalization live.`r`n• Dark Mode: Forces Windows 11 dark surfaces across Remote dialogs and popup menus.`r`n• Light Mode: Forces crisp Fluent light surfaces across Remote dialogs and menus.",
+        "remote app theme follow system dark mode light mode fluent win11 appearance")
+
+    Add("rtray-resetapp", "Tray", "Remote Companion Tray Menu", "Indicator Appearance > Restore Default Appearance",
+        "Remote Tray > Indicator Appearance > Restore Default Appearance", "None", "N/A (Action)",
+        "Resets Remote HUD scale, opacity, labels, corners, pulse, theme, palette, and smart hover flags back to clean defaults.",
+        "REMOTE TRAY ITEM: Indicator Appearance > Restore Default Appearance`r`n`r`nWHAT IT DOES:`r`n• Restores Scale=1.0x, Opacity=85%, Theme=System, Preset=Standard, Text=OFF, Mono=OFF, Sleek=OFF, Pulse=OFF, AudioCue=OFF, Toast=OFF, ClickActions=ON, MagneticSnap=ON, ClickThrough=OFF, AutoDodge=OFF.`r`n• Note: Preserves your OBS/Pairing connection settings, hotkeys, and saved screen position.",
+        "remote restore default appearance factory reset hud look")
+
+    Add("rtray-startup", "Tray", "Remote Companion Tray Menu", "Start with Windows",
+        "Remote Tray > Start with Windows", "None", "OFF (Explicit opt-in only)",
+        "Adds or removes PresenterSync Remote from your current Windows user Run startup registry key.",
+        "REMOTE TRAY ITEM: Start with Windows`r`n`r`nWHAT IT DOES:`r`n• Strictly OFF by default so Smart Boards or secondary PCs never add startup entries silently.`r`n• When checked ON, registers PresenterSync Remote under HKCU\Software\Microsoft\Windows\CurrentVersion\Run to launch automatically on sign-in.",
+        "remote start with windows autostart boot login registry run hkcu")
+
+    Add("rtray-updates", "Tray", "Remote Companion Tray Menu", "Check for Updates...",
+        "Remote Tray > Check for Updates...", "None", "Online GitHub check",
+        "Checks GitHub Releases/Tags and reports if a newer PresenterSync / Remote version is available.",
+        "REMOTE TRAY ITEM: Check for Updates...`r`n`r`nWHAT IT DOES:`r`n• Queries https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest (with /tags fallback) and compares semantic versions (SemVer).`r`n• Offers a 1-click prompt to open the GitHub Releases download page if an update exists.",
+        "remote check for updates github releases version upgrade semver")
+
+    Add("rfeat-cough", "Features", "Remote Clicker & Ergonomics", "Cough / Push-to-Mute Hold Gesture",
+        "Remote Tray > Pointer Controls > Enable Cough / Push-to-Mute (Hold)", "Hold Mute Button >= 350ms", "OFF (Standard Toggle)",
+        "Temporarily mute just by holding your Remote clicker mute button down—and automatically return to LIVE upon release.",
+        "COUGH / PUSH-TO-MUTE GESTURE (REMOTE)`r`n`r`n• Standard Mode (OFF): Every mute button tap flips Mute <-> Live.`r`n• Cough Mode (ON):`r`n  - Tap briefly (< 350ms): Toggles normally (stays Muted or Live).`r`n  - Hold down (>= 350ms): Mutes immediately while held, then transmits a second toggle automatically when released so you return straight to LIVE!`r`n• Configured in Remote Tray -> Pointer Controls -> Enable Cough / Push-to-Mute (Hold).",
+        "remote cough push to mute hold gesture 350ms tap release pointer")
+
+    Add("rfeat-snapping", "Features", "Remote Clicker & Ergonomics", "Magnetic Screen/Window Snapping, Click-Through & Auto-Dodge",
+        "Remote Tray > Indicator Appearance", "Hold Alt to grab", "Snap=ON, Dodge=OFF, Click-Through=OFF",
+        "Alignment and visibility tools so the Remote Mic pill stays clear of whiteboard buttons and lesson content.",
+        "MAGNETIC SNAPPING, DODGE & CLICK-THROUGH (REMOTE)`r`n`r`n• Magnetic Snap (Default ON): On drag drop, edges within 14px align cleanly with monitor work-area edges, screen centers, and visible windows.`r`n• Auto-Dodge on Hover (Default OFF): Stays visible while speaking—then ghosts to 15% opacity and click-through when your pointer hovers over it.`r`n• Click-Through Mode (Default OFF): Lets whiteboard taps and mouse clicks pass straight underneath the pill.`r`n• Alt Override: Whenever Click-Through or Auto-Dodge is ON, hold Alt to grab, tap, or right-click the Remote pill.",
+        "remote magnetic snap 14px auto dodge click through alt hold grab")
+
+    Add("rfeat-themes", "Features", "Remote Clicker & Ergonomics", "5 HUD Color Palettes, Dark/Light Themes, Opacity & 8 Scales",
+        "Remote Tray > Indicator Appearance", "Tray > App Theme / Color Preset", "System / Standard / 85% / 1.0x",
+        "Customize Remote's Mic pill palette (including Colorblind Safe), corner shape, transparency, and 0.25x-5.0x Smart Board scale.",
+        "REMOTE VISUAL CUSTOMIZATION SUITE`r`n`r`n• 5 HUD Color Palettes: Standard, Colorblind Safe (Okabe-Ito Blue/Orange), OLED Stealth, Broadcast Tally, and Cyber Ocean.`r`n• 3 App Window Themes: Follow System (live OS sync), Dark Mode, and Light Mode.`r`n• 3 Transparency Levels: Solid (100%), Frosted (85%), Ghost (50%).`r`n• 8 Pixel-Sharp Scales: 0.25x (Tiny) up to 5.0x (Gigantic) for massive 65`"-86`" 4K Smart Boards.`r`n• Breathing Mute Pulse, Monochromatic Icons, and Sleek Capsule Corners.",
+        "remote themes colorblind okabe ito oled stealth broadcast cyber ocean opacity scale 5.0x")
+
+    Add("rfeat-audio-toast", "Features", "Remote Clicker & Ergonomics", "Mute Audio Cue (2-Tone Beep) & Cursor Status Toast",
+        "Remote Tray > Indicator Appearance", "None", "Both OFF by default",
+        "Optional eyes-free 2-tone acoustic confirmation chime and brief cursor tooltip notifications when muting/unmuting.",
+        "EYES-FREE MUTE CONFIRMATION (REMOTE)`r`n`r`n• Mute Audio Cue (Beep): Plays a distinct 2-tone rising chime when LIVE and a soft falling chime when MUTED—non-blocking on the Remote device.`r`n• Mute Status Toast: Displays a crisp 1.5-second cursor tooltip ('MIC MUTED' / 'MIC LIVE') whenever state flips.`r`n• Both default to OFF and live under Remote Tray -> Indicator Appearance.",
+        "remote audio cue beep toast eyes free chime tooltip confirmation")
+
+    Add("rsc-remote", "Shortcuts", "Remote Companion Shortcuts", "PresenterSync Remote Hotkeys & Clicker Mute Key",
+        "Remote Tray > Change App Shortcuts... / Pointer Controls", "Ctrl+F12 / Alt+Shift+F12", "Editable to custom key or 'None'",
+        "Reference for all hotkeys inside PresenterSync Remote plus Secondary Clicker Mute & Cough Hold bindings.",
+        "DEFAULT PRESENTER SYNC REMOTE HOTKEYS:`r`n• Ctrl + F12 : Toggle Pointer Mute Control ON/OFF (when OFF, clicker presses won't toggle host mute while the Mic HUD stays live)`r`n• Alt + Shift + F12 : Exit PresenterSync Remote cleanly`r`n`r`nHARDWARE CLICKER & COUGH HOLD:`r`n• Clicker Mute Button (default 'b'): Customize anytime under Remote Tray -> Pointer Controls -> Change Pointer Mute Button... (test unknown keys via Launch Clicker Tester...).`r`n• Clear a hotkey box or enter 'None' inside Change App Shortcuts... to unbind it completely.",
+        "remote shortcuts hotkeys ctrl alt shift f12 pointer mute exit none clicker b")
 
     ; ==========================================================================
     ; 3. ALL FEATURES ENCYCLOPEDIA A-Z
@@ -655,20 +728,23 @@ SearchHelpEntries(query := "", category := "All", forRemote := false) {
     matches := []
     for idx, entry in kb {
         isRemoteHud := (SubStr(entry.id, 1, 5) = "rhud-")
-        if (!forRemote && isRemoteHud)
+        isRemoteAlt := (SubStr(entry.id, 1, 6) = "rfeat-") || (entry.id = "rsc-remote")
+            || (entry.id = "rtray-about" || entry.id = "rtray-text" || entry.id = "rtray-clicks"
+            || entry.id = "rtray-theme" || entry.id = "rtray-resetapp" || entry.id = "rtray-startup" || entry.id = "rtray-updates")
+        if (!forRemote && (isRemoteHud || isRemoteAlt))
             continue
 
         if (forRemote) {
             isPrimaryHud := (SubStr(entry.id, 1, 4) = "hud-")
-            isHostOnlyApp := (entry.id = "tray-app-vu" || entry.id = "tray-app-rectimer" || entry.id = "tray-app-stream")
-            if (isPrimaryHud || isHostOnlyApp)
+            isPrimaryAppOverride := (entry.id = "tray-app-vu" || entry.id = "tray-app-rectimer" || entry.id = "tray-app-stream"
+                || entry.id = "tray-app-text" || entry.id = "tray-app-clicks" || entry.id = "tray-app-theme" || entry.id = "tray-app-resetapp")
+            if (isPrimaryHud || isPrimaryAppOverride)
                 continue
             allowRemote := isRemoteHud
+                || isRemoteAlt
                 || (entry.cat = "Remote")
                 || (entry.group = "Remote Companion Tray Menu")
                 || (SubStr(entry.id, 1, 9) = "tray-app-")
-                || (entry.id = "tray-set-startup" || entry.id = "tray-set-updates")
-                || (entry.id = "feat-cough" || entry.id = "feat-snapping" || entry.id = "feat-themes" || entry.id = "feat-audio-toast" || entry.id = "sc-global")
             if (!allowRemote)
                 continue
         }

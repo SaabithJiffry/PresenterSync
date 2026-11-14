@@ -1,5 +1,5 @@
 """
-End-to-End Live WebSocket Integration Test for PresenterSync v3.1.0
+End-to-End Live WebSocket Integration Test for PresenterSync v3.1.1
 Tests the real production handlers from Lib/OBS_Network.ahk, PresenterSync.ahk,
 and PresenterSync_Remote.ahk over live localhost RFC 6455 WebSocket v5 servers.
 """
@@ -751,7 +751,48 @@ AuditRemoteDialog(name, dlgObj, minW := 260, minH := 120) {{
 AuditRemoteDialog("Remote OBS Connection UI", ShowRemoteConnectionUI(dualRemCfg, dualRemState, false), 360, 380)
 AuditRemoteDialog("Remote App Shortcuts UI", ChangeRemoteAppHotkeysUI(dualRemCfg, dualRemState), 300, 110)
 AuditRemoteDialog("Remote Help UI", ShowRemoteHelpUI(dualRemCfg, dualRemState), 580, 440)
-AuditRemoteDialog("Remote About UI", ShowRemoteAboutUI(), 340, 185)
+
+remAbout0 := ShowRemoteAboutUI()
+remAbout0Edit := "", remAbout0HelpDisabled := false, remAbout0NoOverlap := true
+remAboutRects := []
+for c in remAbout0 {{
+    if (c.Type = "Edit")
+        remAbout0Edit := c.Value
+    else if (c.Type = "Button" && InStr(c.Text, "Open Help"))
+        remAbout0HelpDisabled := !c.Enabled
+    c.GetPos(&ax, &ay, &aw, &ah)
+    remAboutRects.Push({{ x: ax, y: ay, r: ax + aw, b: ay + ah }})
+}}
+Loop remAboutRects.Length {{
+    ai := A_Index, ar := remAboutRects[ai], aj := ai + 1
+    while (aj <= remAboutRects.Length) {{
+        br := remAboutRects[aj]
+        if (Max(0, Min(ar.r, br.r) - Max(ar.x, br.x)) > 0 && Max(0, Min(ar.b, br.b) - Max(ar.y, br.y)) > 0)
+            remAbout0NoOverlap := false
+        aj += 1
+    }}
+}}
+remAbout0Hwnd := remAbout0.Hwnd
+AuditRemoteDialog("Remote About UI (0-arg)", remAbout0, 440, 440)
+try WinWaitClose("ahk_id " remAbout0Hwnd, , 1)
+Sleep(30)
+
+remAboutCfg := ShowRemoteAboutUI(dualRemCfg, dualRemState)
+remAboutCfgHelpEnabled := false
+for c in remAboutCfg {{
+    if (c.Type = "Button" && InStr(c.Text, "Open Help"))
+        remAboutCfgHelpEnabled := c.Enabled
+}}
+AuditRemoteDialog("Remote About UI (With Config)", remAboutCfg, 440, 440)
+remAboutInc := InStr(remAbout0Edit, "STREAMLINED BY DESIGN") ? StrSplit(remAbout0Edit, "STREAMLINED BY DESIGN")[1] : ""
+Assert("Remote About curates strictly Remote capabilities without host bloat",
+    remAbout0NoOverlap && remAbout0HelpDisabled && remAboutCfgHelpEnabled
+    && InStr(remAbout0Edit, "WHAT REMOTE INCLUDES:")
+    && InStr(remAboutInc, "1-Tier LIVE / MUTED Mic HUD")
+    && InStr(remAboutInc, "PS-XXXX-XXXX")
+    && !InStr(remAboutInc, "Control Center")
+    && !InStr(remAboutInc, "Virtual Camera")
+    && !InStr(remAboutInc, "Studio Mode"))
 
 SetTimer dualRemState.reconnectTimerFn, 0
 SetTimer dualRemState.heartbeatTimerFn, 0
