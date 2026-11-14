@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.3.2
-;              and PresenterSync Remote v2.3.2 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.3.3
+;              and PresenterSync Remote v2.3.3 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.3.2", UIConstants.APP_VERSION == "2.3.2")
+Assert("APP_VERSION updated to 2.3.3", UIConstants.APP_VERSION == "2.3.3")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.3.2 and Remote Host",
-    InStr(summaryTxt, "v2.3.2") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.3.3 and Remote Host",
+    InStr(summaryTxt, "v2.3.3") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1035,6 +1035,36 @@ Assert("ResetAppearance restores MagneticSnap=true, ClickThrough=false, AutoDodg
 stSnap.MicGui.Destroy(), stSnap.RecGui.Destroy(), stSnap.ChatGui.Destroy()
 stSnap.StudioGui.Destroy(), stSnap.SceneGui.Destroy(), stSnap.StreamGui.Destroy(), stSnap.VCamGui.Destroy()
 
+; ==============================================================================
+; SECTION 16: STAGE 9 (v2.3.3) - MULTI-PLATFORM CONFERENCING (ZOOM/TEAMS/MEET)
+; ==============================================================================
+cfgConf := Config(testIni)
+Assert("Conferencing defaults to Zoom with Teams/Meet hotkeys populated",
+    cfgConf.ConferencingApp == "Zoom" && cfgConf.TeamsMuteHotkey == "^+m" && cfgConf.MeetMuteHotkey == "^d")
+
+stConf := { zoomConnected: true, zoomLastMuted: 1, zoomSawRecControl: true, rebuildTrayFn: (*) => 0, refreshHelpFn: (*) => 0 }
+SetConferencingApp(cfgConf, stConf, "teams")
+cfgConfReload := Config(testIni)
+Assert("SetConferencingApp normalizes & persists Microsoft Teams and resets monitor state",
+    cfgConfReload.ConferencingApp == "Microsoft Teams" && stConf.zoomConnected == false && stConf.zoomLastMuted == -1
+    && GetActiveConferencingMuteHotkey(cfgConf) == "^+m")
+
+SetConferencingApp(cfgConf, stConf, "Google Meet")
+Assert("Google Meet resolves active hotkey ^d and target spec Meet ahk_exe chrome.exe",
+    GetActiveConferencingMuteHotkey(cfgConf) == "^d" && InStr(GetConferencingWindowSpec("Google Meet"), "chrome.exe"))
+
+teamsMuted := DetectZoomStates("", "Microsoft Teams", ["Unmute mic", "Chat", "Stop recording"])
+teamsLive := DetectZoomStates("", "Microsoft Teams", ["Mute mic", "Start recording"])
+meetMuted := DetectZoomStates("", "Google Meet", ["Turn on microphone (Ctrl+D)", "Chat with everyone"])
+meetLive := DetectZoomStates("", "Google Meet", ["Turn off microphone", "Leave call"])
+zoom1Arg := DetectZoomStates("", "Zoom", ["Unmute Audio", "Resume Recording", "Chat 4 unread"])
+Assert("DetectZoomStates parses Zoom, Microsoft Teams, and Google Meet UIA states cleanly",
+    teamsMuted.hasMic && teamsMuted.muted == true && teamsMuted.recState == 1
+    && teamsLive.hasMic && teamsLive.muted == false && teamsLive.recState == 0
+    && meetMuted.hasMic && meetMuted.muted == true && meetMuted.hasChat == true
+    && meetLive.hasMic && meetLive.muted == false
+    && zoom1Arg.hasMic && zoom1Arg.muted == true && zoom1Arg.recState == 2 && zoom1Arg.unreadChat == 4)
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1042,7 +1072,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.2) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.3) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.3.2"
+    static APP_VERSION := "2.3.3"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1091,6 +1091,9 @@ class Config {
     ObsRecHotkey := "^F9"
     ObsPauseHotkey := "^F10"
     ZoomMuteHotkey := "!a"
+    TeamsMuteHotkey := "^+m"
+    MeetMuteHotkey := "^d"
+    ConferencingApp := "Zoom"
     ZoomRecHotkey := "!r"
     ZoomPauseHotkey := "!p"
     obsPassword := ""
@@ -1206,6 +1209,9 @@ class Config {
             this.Write("Settings", "ObsPauseHotkey", this.ObsPauseHotkey)
         }
         this.ZoomMuteHotkey := this.Read("Settings", "ZoomMuteHotkey", "!a")
+        this.TeamsMuteHotkey := this.Read("Settings", "TeamsMuteHotkey", "^+m")
+        this.MeetMuteHotkey := this.Read("Settings", "MeetMuteHotkey", "^d")
+        this.ConferencingApp := NormalizeConferencingApp(this.Read("Settings", "ConferencingApp", "Zoom"))
         this.ZoomRecHotkey := this.Read("Settings", "ZoomRecHotkey", "")
         if (this.ZoomRecHotkey = "") {
             this.ZoomRecHotkey := "!r"
@@ -2261,9 +2267,29 @@ ChangeAppHotkeysUI(cfg, *) {
     })
 }
 
+SetConferencingApp(cfg, state, appName, *) {
+    norm := NormalizeConferencingApp(appName)
+    cfg.ConferencingApp := norm
+    cfg.Write("Settings", "ConferencingApp", norm)
+    if (IsObject(state)) {
+        state.zoomConnected := false
+        state.zoomLastMuted := -1
+        state.zoomSawRecControl := false
+        if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+    }
+    return norm
+}
+
 ChangeZoomShortcutsUI(cfg, *) {
     SaveZoomHk(values, ctrls, dlg) {
         cfg.Write("Settings", "ZoomMuteHotkey", values["mute"])
+        if (values.Has("teamsMute") && values["teamsMute"] != "")
+            cfg.Write("Settings", "TeamsMuteHotkey", values["teamsMute"])
+        if (values.Has("meetMute") && values["meetMute"] != "")
+            cfg.Write("Settings", "MeetMuteHotkey", values["meetMute"])
         cfg.Write("Settings", "ZoomRecHotkey", values["rec"] != "" ? values["rec"] : "!r")
         cfg.Write("Settings", "ZoomPauseHotkey", values["pause"] != "" ? values["pause"] : "!p")
         Reload()
@@ -2272,15 +2298,19 @@ ChangeZoomShortcutsUI(cfg, *) {
     elements := [
         {type: "Text", opts: "w300", text: "Zoom Mute Shortcut (Default Alt+A):"},
         {type: "Hotkey", id: "mute", opts: "w300", value: cfg.ZoomMuteHotkey, required: true, errorMsg: "Zoom Mute shortcut cannot be empty."},
-        {type: "Text", opts: "w300 y+10", text: "Start/Stop Recording Shortcut (Default Alt+R):"},
+        {type: "Text", opts: "w300 y+8", text: "Microsoft Teams Mute Shortcut (Default Ctrl+Shift+M):"},
+        {type: "Hotkey", id: "teamsMute", opts: "w300", value: cfg.TeamsMuteHotkey},
+        {type: "Text", opts: "w300 y+8", text: "Google Meet Mute Shortcut (Default Ctrl+D):"},
+        {type: "Hotkey", id: "meetMute", opts: "w300", value: cfg.MeetMuteHotkey},
+        {type: "Text", opts: "w300 y+8", text: "Zoom Start/Stop Recording (Default Alt+R):"},
         {type: "Hotkey", id: "rec", opts: "w300", value: cfg.ZoomRecHotkey},
-        {type: "Text", opts: "w300 y+10", text: "Pause/Resume Recording Shortcut (Default Alt+P):"},
+        {type: "Text", opts: "w300 y+8", text: "Zoom Pause/Resume Recording (Default Alt+P):"},
         {type: "Hotkey", id: "pause", opts: "w300", value: cfg.ZoomPauseHotkey}
     ]
 
-    return BuildSettingsWindow("Edit Zoom Shortcuts", elements, SaveZoomHk, {
+    return BuildSettingsWindow("Edit Conferencing Shortcuts", elements, SaveZoomHk, {
         saveBtnText: "Save & Restart",
-        saveBtnOpts: "w300 h32 Default y+15"
+        saveBtnOpts: "w300 h32 Default y+14"
     })
 }
 

@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.3.2
+; Version: 2.3.3
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.3.2.0
+;@Ahk2Exe-SetVersion 2.3.3.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -215,6 +215,15 @@ BuildTrayMenu(cfg, state) {
     }
     SettingsMenu.Add("Audio Routing Mode", RoutingMenu)
     SettingsMenu.Add("Run Audio Setup Wizard...", (*) => PromptForSetup(cfg, false))
+
+    ConfMenu := Menu()
+    for cApp in GetConferencingAppNames() {
+        ConfMenu.Add(cApp, SetConferencingApp.Bind(cfg, state, cApp))
+        if (NormalizeConferencingApp(cfg.ConferencingApp) = cApp)
+            ConfMenu.Check(cApp)
+    }
+    SettingsMenu.Add("Conferencing Platform", ConfMenu)
+
     SettingsMenu.Add()
     SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI.Bind(cfg))
     SettingsMenu.Add("Change Zoom Shortcuts", ChangeZoomShortcutsUI.Bind(cfg))
@@ -671,8 +680,11 @@ HotIf
 RegisterPassthroughHooks(cfg, state) {
     if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
         try Hotkey(FormatPassthroughHook(cfg.ObsMuteHotkey), LaptopKeyboardMute.Bind(cfg, state))
-    if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && cfg.ZoomMuteHotkey != "None" && cfg.ZoomMuteHotkey != "")
-        try Hotkey(FormatPassthroughHook(cfg.ZoomMuteHotkey), LaptopKeyboardMute.Bind(cfg, state))
+    if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3)) {
+        confMuteHk := GetActiveConferencingMuteHotkey(cfg)
+        if (confMuteHk != "None" && confMuteHk != "")
+            try Hotkey(FormatPassthroughHook(confMuteHk), LaptopKeyboardMute.Bind(cfg, state))
+    }
 
     obsRecHook := (cfg.ObsRecHotkey != "" && cfg.ObsRecHotkey != "None") ? FormatPassthroughHook(cfg.ObsRecHotkey) : ""
     zoomRecHook := (cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") ? FormatPassthroughHook(cfg.ZoomRecHotkey) : ""
