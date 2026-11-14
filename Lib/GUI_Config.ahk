@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.2.6"
+    static APP_VERSION := "2.2.7"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -152,6 +152,92 @@ class UIConstants {
 
     static FLUENT_CORNER_RADIUS := 6.0
     static FLUENT_CARD_RADIUS := 8.0
+
+    static RgbHexToBgrInt(rgbHex) {
+        h := RegExReplace(Trim(String(rgbHex)), "^(#|0x)", "")
+        if (StrLen(h) != 6)
+            return 0
+        return Integer("0x" SubStr(h, 5, 2) SubStr(h, 3, 2) SubStr(h, 1, 2))
+    }
+
+    static _MakePalette(liveBg, liveIc, muteBg, muteIc, recOffBg, recOffIc, recActBg, recActIc, recPauBg, recPauIc, stOffBg, stOffIc, stOnBg, stOnIc, scBg, scTxt, chClrBg, chClrIc, chAltBg, chAltIc) {
+        return {
+            live: liveBg, muted: muteBg,
+            borderLive: UIConstants.RgbHexToBgrInt(liveBg), borderMuted: UIConstants.RgbHexToBgrInt(muteBg),
+            iconLive: liveIc, iconMuted: muteIc,
+            recOff: recOffBg, recBorderOff: UIConstants.RgbHexToBgrInt(recOffBg), recIconOff: recOffIc,
+            recActive: recActBg, recBorderActive: UIConstants.RgbHexToBgrInt(recActBg), recIconActive: recActIc,
+            recPaused: recPauBg, recBorderPaused: UIConstants.RgbHexToBgrInt(recPauBg), recIconPaused: recPauIc,
+            studioOff: stOffBg, studioBorderOff: UIConstants.RgbHexToBgrInt(stOffBg), studioIconOff: stOffIc,
+            studioOn: stOnBg, studioBorderOn: UIConstants.RgbHexToBgrInt(stOnBg), studioIconOn: stOnIc,
+            scene: scBg, sceneBorder: UIConstants.RgbHexToBgrInt(scBg), sceneText: scTxt,
+            chatClear: chClrBg, chatBorderClear: UIConstants.RgbHexToBgrInt(chClrBg), chatIconClear: chClrIc,
+            chatAlert: chAltBg, chatBorderAlert: UIConstants.RgbHexToBgrInt(chAltBg), chatIconAlert: chAltIc
+        }
+    }
+
+    static GetColorPalette(presetName := "Standard") {
+        switch NormalizeHudColorPreset(presetName) {
+            case "Colorblind Safe":
+                return UIConstants._MakePalette(
+                    "0072B2", "002A45", "D55E00", "4A1E00",
+                    "374151", "9CA3AF", "D55E00", "4A1E00", "E69F00", "4A3200",
+                    "374151", "9CA3AF", "CC79A7", "4A1D38",
+                    "1E293B", "F8FAFC",
+                    "374151", "9CA3AF", "56B4E9", "0C3B54"
+                )
+            case "OLED Stealth":
+                return UIConstants._MakePalette(
+                    "0F2E22", "34D399", "3B0D14", "FB7185",
+                    "141417", "71717A", "3B0D14", "F87171", "2E1F05", "FBBF24",
+                    "141417", "71717A", "23163D", "C084FC",
+                    "09090B", "E4E4E7",
+                    "141417", "71717A", "13233A", "60A5FA"
+                )
+            case "Broadcast Tally":
+                return UIConstants._MakePalette(
+                    "16A34A", "052E16", "DC2626", "450A0A",
+                    "1F2937", "9CA3AF", "B91C1C", "450A0A", "EA580C", "431407",
+                    "1F2937", "9CA3AF", "6D28D9", "2E1065",
+                    "111827", "F9FAFB",
+                    "1F2937", "9CA3AF", "0284C7", "082F49"
+                )
+            case "Cyber Ocean":
+                return UIConstants._MakePalette(
+                    "06B6D4", "083344", "EC4899", "500724",
+                    "1E293B", "94A3B8", "F43F5E", "4C0519", "F59E0B", "451A03",
+                    "1E293B", "94A3B8", "6366F1", "1E1B4B",
+                    "0F172A", "E0F2FE",
+                    "1E293B", "94A3B8", "0EA5E9", "082F49"
+                )
+            default:
+                return UIConstants._MakePalette(
+                    UIConstants.COLOR_LIVE, UIConstants.ICON_LIVE,
+                    UIConstants.COLOR_MUTED, UIConstants.ICON_MUTED,
+                    UIConstants.COLOR_REC_OFF, UIConstants.ICON_REC_OFF,
+                    UIConstants.COLOR_REC_ACTIVE, UIConstants.ICON_REC_ACTIVE,
+                    UIConstants.COLOR_REC_PAUSED, UIConstants.ICON_REC_PAUSED,
+                    UIConstants.COLOR_STUDIO_OFF, UIConstants.ICON_STUDIO_OFF,
+                    UIConstants.COLOR_STUDIO_ON, UIConstants.ICON_STUDIO_ON,
+                    UIConstants.COLOR_SCENE, "FFFFFF",
+                    UIConstants.COLOR_CHAT_CLEAR, UIConstants.ICON_CHAT_CLEAR,
+                    UIConstants.COLOR_CHAT_ALERT, UIConstants.ICON_CHAT_ALERT
+                )
+        }
+    }
+}
+
+GetHudColorPresetNames() {
+    return ["Standard", "Colorblind Safe", "OLED Stealth", "Broadcast Tally", "Cyber Ocean"]
+}
+
+NormalizeHudColorPreset(name) {
+    cleaned := StrLower(Trim(String(name)))
+    for pName in GetHudColorPresetNames() {
+        if (StrLower(pName) = cleaned)
+            return pName
+    }
+    return "Standard"
 }
 
 class Theme {
@@ -923,6 +1009,7 @@ class Config {
     ShowIndicator := true
     ShowExtraHuds := true
     ThemeMode := "System"
+    HudColorPreset := "Standard"
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -1051,6 +1138,7 @@ class Config {
         rawTheme := StrLower(Trim(this.Read("Settings", "ThemeMode", "System")))
         this.ThemeMode := (rawTheme = "dark") ? "Dark" : ((rawTheme = "light") ? "Light" : "System")
         Theme.SetMode(this.ThemeMode)
+        this.HudColorPreset := NormalizeHudColorPreset(this.Read("Settings", "HudColorPreset", "Standard"))
         this.ShowText := this.ReadBool("Settings", "ShowText")
         this.MonoIcon := this.ReadBool("Settings", "MonoIcon")
         this.SleekCorners := this.ReadBool("Settings", "SleekCorners")
@@ -1097,6 +1185,7 @@ class Config {
     ResetAppearance() {
         this.ShowExtraHuds := true
         this.ThemeMode := "System"
+        this.HudColorPreset := "Standard"
         this.ShowText := false
         this.MonoIcon := false
         this.SleekCorners := false
@@ -1107,6 +1196,7 @@ class Config {
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
         this.Write("Settings", "ThemeMode", "System")
+        this.Write("Settings", "HudColorPreset", "Standard")
         this.Write("Settings", "ShowText", 0)
         this.Write("Settings", "MonoIcon", 0)
         this.Write("Settings", "SleekCorners", 0)
@@ -1246,11 +1336,13 @@ class OverlayState {
         this.sceneMarqueeTimerFn := SceneMarqueeTick.Bind(cfg, this)
         this.zoomTimerFn := ZoomStateMonitor.Bind(cfg, this)
         this.releaseSyncTimerFn := ReleaseSyncLock.Bind(this)
+        this.refreshHudFn := RefreshHudAppearance.Bind(cfg, this)
 
         this.ComputeDimensions(cfg)
     }
 
     ComputeDimensions(cfg) {
+        this.colors := UIConstants.GetColorPalette(cfg.HasOwnProp("HudColorPreset") ? cfg.HudColorPreset : "Standard")
         this.baseWidth := Round((cfg.ShowText ? UIConstants.BASE_WIDTH_TEXT : UIConstants.BASE_WIDTH_ICON) * cfg.IndicatorScale)
         this.baseHeight := Round(UIConstants.BASE_HEIGHT * cfg.IndicatorScale)
         this.hudGap := Max(UIConstants.MIN_HUD_GAP, Round(UIConstants.HUD_GAP * cfg.IndicatorScale))
@@ -2703,6 +2795,7 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
         fullW := Gdip.MeasureTextWidth(state.currentSceneName, "Segoe UI", fitFontPt, 1)
     }
 
+    sceneTextArgb := Gdip.HexToArgb(state.colors.HasOwnProp("sceneText") ? state.colors.sceneText : "FFFFFF")
     if (fullW <= availW) {
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
@@ -2712,7 +2805,7 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
             text: state.currentSceneName,
             size: fitFontPt,
             bold: true,
-            color: Gdip.HexToArgb("FFFFFF"),
+            color: sceneTextArgb,
             x: scPad,
             w: availW,
             align: 1,
@@ -2736,7 +2829,7 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
             text: state.currentSceneName,
             size: marqueeFontPt,
             bold: true,
-            color: Gdip.HexToArgb("FFFFFF"),
+            color: sceneTextArgb,
             x: drawX,
             w: textW + 12,
             align: 0,
@@ -2872,6 +2965,22 @@ ToggleMuteToast(cfg, state := "", *) {
 
 TogglePushToMute(cfg, state := "", *) {
     ToggleBoolSetting(cfg, state, "EnablePushToMute", "Pointer", "Pointer")
+}
+
+SetHudColorPreset(cfg, state, presetName, *) {
+    normalized := NormalizeHudColorPreset(presetName)
+    cfg.HudColorPreset := normalized
+    section := (cfg is Config) ? "Settings" : "Appearance"
+    cfg.Write(section, "HudColorPreset", normalized)
+    if (IsObject(state)) {
+        state.colors := UIConstants.GetColorPalette(normalized)
+        if (state.HasOwnProp("refreshHudFn") && state.refreshHudFn)
+            try state.refreshHudFn.Call()
+        if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+    }
 }
 
 SyncUIState(cfg, state, obsIsMuted) {

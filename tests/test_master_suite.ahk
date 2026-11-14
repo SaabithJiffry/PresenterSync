@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.2.6
-;              and PresenterSync Remote v2.2.6 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.2.7
+;              and PresenterSync Remote v2.2.7 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.2.6", UIConstants.APP_VERSION == "2.2.6")
+Assert("APP_VERSION updated to 2.2.7", UIConstants.APP_VERSION == "2.2.7")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.2.6 and Remote Host",
-    InStr(summaryTxt, "v2.2.6") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.2.7 and Remote Host",
+    InStr(summaryTxt, "v2.2.7") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -660,6 +660,57 @@ Assert("WaitPushToMuteRelease detects hold (>=350ms) and waits for release",
     && holdCalls[1].k == "PgDn" && holdCalls[1].o == "T0.350"
     && holdCalls[2].k == "PgDn" && holdCalls[2].o == "T15")
 
+; ==============================================================================
+; SECTION 10: STAGE 3 (v2.2.7) - CUSTOM HUD COLOR THEMES & TALLY PRESETS
+; ==============================================================================
+presets := GetHudColorPresetNames()
+Assert("GetHudColorPresetNames exposes 5 presets",
+    presets.Length == 5 && presets[1] == "Standard" && presets[2] == "Colorblind Safe" && presets[5] == "Cyber Ocean")
+
+palStd := UIConstants.GetColorPalette("Standard")
+Assert("Standard palette matches baseline UIConstants LIVE/MUTED colors",
+    palStd.live == UIConstants.COLOR_LIVE && palStd.muted == UIConstants.COLOR_MUTED && palStd.borderLive == UIConstants.BORDER_LIVE)
+
+palCb := UIConstants.GetColorPalette("Colorblind Safe")
+Assert("Colorblind Safe palette uses Okabe-Ito Blue LIVE (#0072B2) and Orange MUTED (#D55E00)",
+    palCb.live == "0072B2" && palCb.muted == "D55E00" && palCb.borderLive == 0xB27200)
+
+cfgPreset := Config(testIni)
+Assert("HudColorPreset defaults to Standard", cfgPreset.HudColorPreset == "Standard")
+
+presetState := OverlayState(cfgPreset)
+presetState.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+presetState.RecGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+presetState.ChatGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+presetState.StudioGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+presetState.SceneGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+presetCbTrack := { tray: 0, hud: 0 }
+presetState.rebuildTrayFn := (*) => (presetCbTrack.tray += 1)
+presetState.refreshHudFn := (*) => (presetCbTrack.hud += 1, presetState.ComputeDimensions(cfgPreset), RenderAllHudPills(cfgPreset, presetState))
+
+SetHudColorPreset(cfgPreset, presetState, "Cyber Ocean")
+cfgPresetReload := Config(testIni)
+Assert("SetHudColorPreset persists to INI, updates OverlayState.colors, and triggers callbacks",
+    cfgPreset.HudColorPreset == "Cyber Ocean" && cfgPresetReload.HudColorPreset == "Cyber Ocean"
+    && presetState.colors.live == "06B6D4" && presetCbTrack.tray == 1 && presetCbTrack.hud == 1)
+
+allPresetsRenderOk := true
+for pName in presets {
+    SetHudColorPreset(cfgPreset, presetState, pName)
+    if (!ApplyMicAppearance(cfgPreset, presetState) || !ApplySceneAppearance(cfgPreset, presetState)) {
+        allPresetsRenderOk := false
+        break
+    }
+}
+Assert("All 5 HUD color presets render Mic and Scene GDI+ pills cleanly", allPresetsRenderOk)
+
+cfgPreset.ResetAppearance()
+cfgPresetResetReload := Config(testIni)
+Assert("ResetAppearance resets HudColorPreset back to Standard",
+    cfgPreset.HudColorPreset == "Standard" && cfgPresetResetReload.HudColorPreset == "Standard")
+
+presetState.MicGui.Destroy(), presetState.RecGui.Destroy(), presetState.ChatGui.Destroy(), presetState.StudioGui.Destroy(), presetState.SceneGui.Destroy()
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -667,7 +718,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.6) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.7) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
