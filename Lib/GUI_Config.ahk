@@ -8,7 +8,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "3.1.1"
+    static APP_VERSION := "3.2.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -2508,8 +2508,11 @@ ShowHelpWindow(cfg, state := "", *) {
         Theme.RegisterControl(helpGui, bLive, "Button", "tabButton")
 
     RefreshHelpStatus(*) {
-        if WinExist("ahk_id " helpGui.Hwnd)
+        if WinExist("ahk_id " helpGui.Hwnd) {
             statusValCtrl.Value := BuildLiveStatusValues(cfg, state)
+            if (helpGui.HasOwnProp("_onThemeRefresh") && helpGui._onThemeRefresh)
+                try helpGui._onThemeRefresh.Call()
+        }
     }
     if IsObject(state)
         state.refreshHelpFn := RefreshHelpStatus
@@ -3178,8 +3181,9 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         candidates.Push(ep)
     }
     universalString := ""
-    for idx, c in candidates {
-        universalString .= (idx > 1 ? ", " : "") c
+    local idx, cand
+    for idx, cand in candidates {
+        universalString .= (idx > 1 ? ", " : "") cand
     }
 
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Remote Companion Connection Info")

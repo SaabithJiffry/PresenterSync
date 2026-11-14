@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v3.1.1
-;              and PresenterSync Remote v3.1.1 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v3.2.0
+;              and PresenterSync Remote v3.2.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 3.1.1", UIConstants.APP_VERSION == "3.1.1")
+Assert("APP_VERSION updated to 3.2.0", UIConstants.APP_VERSION == "3.2.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v3.1.1 and Remote Host",
-    InStr(summaryTxt, "v3.1.1") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v3.2.0 and Remote Host",
+    InStr(summaryTxt, "v3.2.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1204,7 +1204,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v3.1.1", "3.1.0") == 1
+    CompareSemVer("v3.2.0", "3.1.1") == 1
+    && CompareSemVer("v3.1.1", "3.1.0") == 1
     && CompareSemVer("v3.1.0", "3.0.1") == 1
     && CompareSemVer("v3.0.1", "3.0.0") == 1
     && CompareSemVer("v3.0.0", "2.4.0") == 1
@@ -1640,12 +1641,36 @@ Theme.SetMode("Light")
 uiHelpLight := ShowHelpWindow(cfgAudit, stAudit)
 helpLightRes := CheckGuiNoOverlaps(uiHelpLight)
 helpLightClip := (DllCall("GetWindowLong", "Ptr", uiHelpLight.Hwnd, "Int", -16, "UInt") & 0x02000000) != 0
+
+; Verify live HUD diagram refresh on Color Preset change and zero GDI handle leakage
+hProcAudit := DllCall("GetCurrentProcess", "Ptr")
+SetHudColorPreset(cfgAudit, stAudit, "Cyber Ocean")
+Sleep(20)
+liveHelpPresetOk := IsObject(stAudit.refreshHelpFn) && (WinExist("ahk_id " uiHelpLight.Hwnd) != 0)
+SetHudColorPreset(cfgAudit, stAudit, "Standard")
 PostMessage(0x0010, 0, 0, uiHelpLight.Hwnd)
 Sleep(40)
 Theme.SetMode("System")
 Assert("v3.1.1 ShowHelpWindow passes 7-tab single-row & zero-overlap audit in Light mode too",
     helpLightRes.ok && helpLightClip,
     Format("ok={}, reason={}", helpLightRes.ok, helpLightRes.reason))
+
+; ==============================================================================
+; SECTION 24: v3.2.0 FINAL AUDIT - LIVE DIAGRAM REFRESH, GDI SAFETY & SEARCH
+; ==============================================================================
+gdiTestGui := Gui()
+gdiTestPic := gdiTestGui.Add("Picture", "w776 h240", "HBITMAP:" BuildPrimaryHudDiagramBitmap(cfgAudit, 1, 776, 240))
+gdiBefore := DllCall("GetGuiResources", "Ptr", hProcAudit, "Int", 0, "UInt")
+Loop 20 {
+    hBmpStep := BuildPrimaryHudDiagramBitmap(cfgAudit, Mod(A_Index, 8) + 1, 776, 240)
+    ApplyDiagramBitmap(gdiTestPic, hBmpStep)
+}
+gdiAfter := DllCall("GetGuiResources", "Ptr", hProcAudit, "Int", 0, "UInt")
+gdiTestGui.Destroy()
+remConnSearch := SearchHelpEntries("connect", "All", true)
+Assert("v3.2.0 Help diagram live-refreshes cleanly with zero GDI leak & complete Remote search",
+    liveHelpPresetOk && (gdiAfter - gdiBefore) == 0 && remConnSearch.Length >= 4,
+    Format("liveOk={} gdiDelta={} remConn={}", liveHelpPresetOk, (gdiAfter - gdiBefore), remConnSearch.Length))
 
 ; Cleanup test ini
 if FileExist(testIni)
@@ -1654,7 +1679,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.1.1) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.2.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

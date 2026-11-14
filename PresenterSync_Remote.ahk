@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 3.1.1
+; Version: 3.2.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 3.1.1.0
+;@Ahk2Exe-SetVersion 3.2.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -1334,8 +1334,11 @@ ShowRemoteHelpUI(cfg, state, *) {
     Theme.RegisterControl(helpGui, statusCtrl, "Text", "tabMuted")
 
     RefreshRemoteHelp(*) {
-        if WinExist("ahk_id " helpGui.Hwnd)
+        if WinExist("ahk_id " helpGui.Hwnd) {
             statusCtrl.Value := BuildRemoteHelpStatusLine(cfg, state)
+            if (helpGui.HasOwnProp("_onThemeRefresh") && helpGui._onThemeRefresh)
+                try helpGui._onThemeRefresh.Call()
+        }
     }
     if IsObject(state)
         state.refreshHelpFn := RefreshRemoteHelp
@@ -1388,7 +1391,7 @@ ShowRemoteHelpUI(cfg, state, *) {
     ddlRemScope.OnEvent("Change", RunRemoteHelpSearch)
     lbRemItems.OnEvent("Change", ShowRemSearchSelection)
     btnRemClear.OnEvent("Click", (*) => (edRemSearch.Value := "", ddlRemScope.Choose(1), RunRemoteHelpSearch()))
-    btnQuickConn.OnEvent("Click", (*) => (edRemSearch.Value := "pairing", ddlRemScope.Choose(1), RunRemoteHelpSearch()))
+    btnQuickConn.OnEvent("Click", (*) => (edRemSearch.Value := "connect", ddlRemScope.Choose(1), RunRemoteHelpSearch()))
     btnQuickPtr.OnEvent("Click", (*) => (edRemSearch.Value := "cough", ddlRemScope.Choose(1), RunRemoteHelpSearch()))
     btnQuickHud.OnEvent("Click", (*) => (edRemSearch.Value := "appearance", ddlRemScope.Choose(1), RunRemoteHelpSearch()))
     RunRemoteHelpSearch()

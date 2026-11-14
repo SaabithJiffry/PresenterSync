@@ -690,7 +690,7 @@ GetHelpKnowledgeBase() {
     Add("rem-tray", "Remote", "PresenterSync Remote Companion", "Safe Manual Close & Remote Companion Troubleshooting",
         "Tray > Close Remote Companion...  |  OBS Code 4009 / Mic Not Found", "Confirmed Prompt", "Safe isolation",
         "How to safely shut down Remote from the Primary PC and fix authentication or mic name errors.",
-        "SAFE REMOTE SHUTDOWN & TROUBLESHOOTING`r`n`r`n• Safe Manual Shutdown: Closing or restarting Primary PresenterSync NEVER closes PresenterSync Remote unexpectedly. To turn off the secondary PC remotely, use Primary Tray -> 'Close Remote Companion...' and confirm.`r`n• Error 'Auth Failed (Code 4009)': Re-enter your OBS WebSocket password in Remote Tray -> Change OBS Connection...`r`n• Error 'Mic Not Found': Open OBS Audio Mixer on Primary Host and match exact capitalization (e.g., 'Mic/Aux' vs 'USB Mic') inside Change OBS Connection...",
+        "SAFE REMOTE SHUTDOWN & TROUBLESHOOTING`r`n`r`n• Safe Manual Shutdown: Closing or restarting Primary PresenterSync NEVER closes PresenterSync Remote unexpectedly. To shut down PresenterSync Remote on the secondary PC remotely, use Primary Tray -> 'Close Remote Companion...' and confirm.`r`n• Error 'Auth Failed (Code 4009)': Re-enter your OBS WebSocket password in Remote Tray -> Change OBS Connection...`r`n• Error 'Mic Not Found': Open OBS Audio Mixer on Primary Host and match exact capitalization (e.g., 'Mic/Aux' vs 'USB Mic') inside Change OBS Connection...",
         "close remote companion safe shutdown auth failed 4009 mic not found troubleshooting")
 
     cache := entries
@@ -1047,9 +1047,9 @@ BuildPrimaryHudDiagramBitmap(cfg, selectedIdx := 1, targetW := 776, targetH := 2
     Gdip.DrawText(pGraphics, "Live 4-Tier Overlay (" palName " Palette)", "Segoe UI", 7.6, 0, subMutedArgb, spec.frame.x + 6, spec.frame.y + spec.frame.h - 16, spec.frame.w - 12, 14, 1, 1)
 
     ; Draw leader arrows first so pills and cards sit crisply on top
-    for c in spec.cards {
-        isSel := (c.id == selectedIdx)
-        _GdipDrawArrow(pGraphics, c.ax, c.ay, c.tx, c.ty, isSel ? accentArgb : lineMutedArgb, isSel ? 2.2 : 1.5)
+    for cardItem in spec.cards {
+        isSel := (cardItem.id == selectedIdx)
+        _GdipDrawArrow(pGraphics, cardItem.ax, cardItem.ay, cardItem.tx, cardItem.ty, isSel ? accentArgb : lineMutedArgb, isSel ? 2.2 : 1.5)
     }
 
     ; Render Row 4 -> Row 1 live HUD pills inside the center frame
@@ -1074,8 +1074,8 @@ BuildPrimaryHudDiagramBitmap(cfg, selectedIdx := 1, targetW := 776, targetH := 2
     }
 
     ; Left & Right annotated callout cards
-    for c in spec.cards
-        _GdipDrawCalloutCard(pGraphics, c, c.id, c.id == selectedIdx, isDark, accentArgb)
+    for cardItem in spec.cards
+        _GdipDrawCalloutCard(pGraphics, cardItem, cardItem.id, cardItem.id == selectedIdx, isDark, accentArgb)
 
     ; Bottom alternate-state legend strip (y=198..234, inside height 240)
     _GdipDrawLine(pGraphics, 12, 194, targetW - 12, 194, canvasBrdArgb, 1.0)
@@ -1177,9 +1177,9 @@ BuildRemoteHudDiagramBitmap(cfg, selectedIdx := 1, targetW := 680, targetH := 19
     _GdipDrawRoundedBox(pGraphics, spec.frame.x, spec.frame.y, spec.frame.w, spec.frame.h, 8.0, frameBgArgb, frameBrdArgb, 1.1, true)
     Gdip.DrawText(pGraphics, "Strict 1-Tier Remote HUD States", "Segoe UI", 7.6, 0, subMutedArgb, spec.frame.x + 6, spec.frame.y + spec.frame.h - 15, spec.frame.w - 12, 13, 1, 1)
 
-    for c in spec.cards {
-        isSel := (c.id == selectedIdx)
-        _GdipDrawArrow(pGraphics, c.ax, c.ay, c.tx, c.ty, isSel ? accentArgb : lineMutedArgb, isSel ? 2.2 : 1.5)
+    for cardItem in spec.cards {
+        isSel := (cardItem.id == selectedIdx)
+        _GdipDrawArrow(pGraphics, cardItem.ax, cardItem.ay, cardItem.tx, cardItem.ty, isSel ? accentArgb : lineMutedArgb, isSel ? 2.2 : 1.5)
     }
 
     p := spec.pills[1]
@@ -1189,8 +1189,8 @@ BuildRemoteHudDiagramBitmap(cfg, selectedIdx := 1, targetW := 680, targetH := 19
     p := spec.pills[3]
     _GdipDrawMiniPill(pGraphics, p.x, p.y, p.w, p.h, pal.recOff, pal.recOff, iconFont, Chr(0xF781), "9CA3AF", "Dimmed (Offline)", 8.5, isDark, 0.0, selectedIdx == 3 || selectedIdx == 4, accentArgb)
 
-    for c in spec.cards
-        _GdipDrawCalloutCard(pGraphics, c, c.id, c.id == selectedIdx, isDark, accentArgb)
+    for cardItem in spec.cards
+        _GdipDrawCalloutCard(pGraphics, cardItem, cardItem.id, cardItem.id == selectedIdx, isDark, accentArgb)
 
     hBmp := 0
     DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", pBitmap, "Ptr*", &hBmp, "UInt", 0xFF000000 | ((outerBg & 0xFF) << 16) | (outerBg & 0xFF00) | ((outerBg >> 16) & 0xFF))
@@ -1205,7 +1205,7 @@ BuildRemoteHudDiagramBitmap(cfg, selectedIdx := 1, targetW := 680, targetH := 19
 ApplyDiagramBitmap(picCtrl, hBmp) {
     if (!IsObject(picCtrl) || !hBmp)
         return
-    picCtrl.Value := "HBITMAP:" hBmp
+    try picCtrl.Value := "HBITMAP:" hBmp
 }
 
 /**
