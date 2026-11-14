@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.3.1
+; Version: 2.3.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.3.1.0
+;@Ahk2Exe-SetVersion 2.3.2.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -135,6 +135,18 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"))
     if (cfg.EnableHudClickActions)
         AppearanceMenu.Check("Interactive HUD Click Actions")
+
+    AppearanceMenu.Add("Magnetic Edge/Window Snap", ToggleMagneticSnap.Bind(cfg, state))
+    if (cfg.EnableMagneticSnap)
+        AppearanceMenu.Check("Magnetic Edge/Window Snap")
+
+    AppearanceMenu.Add("Click-Through HUD (Hold Alt)", ToggleHudClickThrough.Bind(cfg, state))
+    if (cfg.HudClickThrough)
+        AppearanceMenu.Check("Click-Through HUD (Hold Alt)")
+
+    AppearanceMenu.Add("Auto-Dodge HUD on Hover", ToggleHudAutoDodge.Bind(cfg, state))
+    if (cfg.HudAutoDodge)
+        AppearanceMenu.Check("Auto-Dodge HUD on Hover")
 
     AppearanceMenu.Add()
 

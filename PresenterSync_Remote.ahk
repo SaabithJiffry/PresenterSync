@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.3.1
+; Version: 2.3.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 2.3.1.0
+;@Ahk2Exe-SetVersion 2.3.2.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -56,6 +56,9 @@ class RemoteConfig {
     EnableAudioCue := false
     EnableMuteToast := false
     EnableHudClickActions := true
+    EnableMagneticSnap := true
+    HudClickThrough := false
+    HudAutoDodge := false
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -148,6 +151,9 @@ class RemoteConfig {
         this.EnableAudioCue := this.ReadBool("Appearance", "EnableAudioCue", 0)
         this.EnableMuteToast := this.ReadBool("Appearance", "EnableMuteToast", 0)
         this.EnableHudClickActions := this.ReadBool("Appearance", "EnableHudClickActions", 1)
+        this.EnableMagneticSnap := this.ReadBool("Appearance", "EnableMagneticSnap", 1)
+        this.HudClickThrough := this.ReadBool("Appearance", "HudClickThrough", 0)
+        this.HudAutoDodge := this.ReadBool("Appearance", "HudAutoDodge", 0)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -178,6 +184,9 @@ class RemoteConfig {
         this.EnableAudioCue := false
         this.EnableMuteToast := false
         this.EnableHudClickActions := true
+        this.EnableMagneticSnap := true
+        this.HudClickThrough := false
+        this.HudAutoDodge := false
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.ThemeMode := "System"
@@ -191,6 +200,9 @@ class RemoteConfig {
         this.WriteBool("Appearance", "EnableAudioCue", false)
         this.WriteBool("Appearance", "EnableMuteToast", false)
         this.WriteBool("Appearance", "EnableHudClickActions", true)
+        this.WriteBool("Appearance", "EnableMagneticSnap", true)
+        this.WriteBool("Appearance", "HudClickThrough", false)
+        this.WriteBool("Appearance", "HudAutoDodge", false)
         this.Write("Appearance", "OpacityLevel", this.OpacityLevel)
         this.Write("Appearance", "IndicatorScale", this.IndicatorScale)
         this.Write("Appearance", "ThemeMode", this.ThemeMode)
@@ -212,9 +224,11 @@ class RemoteState {
     breathDir := -5
     animSeq := 0
     isDraggingHud := false
+    isAutoDodged := false
 
     dragTimerFn := ""
     breathTimerFn := ""
+    autoDodgeTimerFn := ""
     reconnectTimerFn := ""
     heartbeatTimerFn := ""
     rebuildTrayFn := ""
@@ -262,6 +276,7 @@ class RemoteState {
         this.IconFont := (osBuild >= 22000) ? "Segoe Fluent Icons" : "Segoe MDL2 Assets"
 
         this.breathTimerFn := BreathingAnimation.Bind(cfg, this)
+        this.autoDodgeTimerFn := AutoDodgeTick.Bind(cfg, this)
         this.reconnectTimerFn := ConnectToRemoteOBS.Bind(cfg, this)
         this.heartbeatTimerFn := RemoteHeartbeatTick.Bind(cfg, this)
         this.pointerHotIfFn := CheckRemotePointerEnable.Bind(cfg)
@@ -782,6 +797,8 @@ InitRemoteHUD(cfg, state) {
         if (state.isMuted && state.obsConnected)
             SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     }
+    ApplyHudClickThroughStyle(cfg, state)
+    UpdateAutoDodgeTimer(cfg, state)
 
     OnMessage(0x0201, WM_REMOTE_LBUTTONDOWN.Bind(cfg, state))
     OnMessage(0x0205, WM_REMOTE_RBUTTONUP.Bind(state))
@@ -816,9 +833,14 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         state.MicGui.Move(prevX, prevY, state.baseWidth, state.baseHeight)
     } else {
         WinGetPos(&X, &Y,,, "ahk_id " hwnd)
+        if (!cfg.HasOwnProp("EnableMagneticSnap") || cfg.EnableMagneticSnap) {
+            snap := ComputeMagneticSnap(X, Y, state.baseWidth, state.baseHeight, 0, UIConstants.SNAP_THRESHOLD_PX, GetCandidateSnapWindowRects(state))
+            X := snap.x, Y := snap.y
+        }
+        state.savedX := X
+        state.savedY := Y
+        state.MicGui.Move(X, Y, state.baseWidth, state.baseHeight)
         if (X != prevX || Y != prevY) {
-            state.savedX := X
-            state.savedY := Y
             cfg.savedX := X
             cfg.savedY := Y
             cfg.Write("Position", "X", X)
@@ -827,6 +849,7 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     }
     state.currentAlpha := GetRemoteEffectiveAlpha(state)
     ApplyMicAppearance(cfg, state)
+    ApplyHudClickThroughStyle(cfg, state)
     if (cfg.ShowIndicator && state.obsConnected && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 
@@ -883,6 +906,8 @@ RefreshRemoteHudAppearance(cfg, state) {
         state.MicGui.Hide()
         SetTimer state.breathTimerFn, 0
     }
+    ApplyHudClickThroughStyle(cfg, state)
+    UpdateAutoDodgeTimer(cfg, state)
 }
 
 ; --- TRAY MENU & COSMETIC ACTIONS ---
@@ -938,6 +963,18 @@ BuildRemoteTrayMenu(cfg, state) {
     AppearanceMenu.Add("Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"))
     if (cfg.EnableHudClickActions)
         AppearanceMenu.Check("Interactive HUD Click Actions")
+
+    AppearanceMenu.Add("Magnetic Edge/Window Snap", ToggleMagneticSnap.Bind(cfg, state))
+    if (cfg.EnableMagneticSnap)
+        AppearanceMenu.Check("Magnetic Edge/Window Snap")
+
+    AppearanceMenu.Add("Click-Through HUD (Hold Alt)", ToggleHudClickThrough.Bind(cfg, state))
+    if (cfg.HudClickThrough)
+        AppearanceMenu.Check("Click-Through HUD (Hold Alt)")
+
+    AppearanceMenu.Add("Auto-Dodge HUD on Hover", ToggleHudAutoDodge.Bind(cfg, state))
+    if (cfg.HudAutoDodge)
+        AppearanceMenu.Check("Auto-Dodge HUD on Hover")
 
     AppearanceMenu.Add()
 
