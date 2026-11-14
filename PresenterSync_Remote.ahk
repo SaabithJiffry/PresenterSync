@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.2.3
+; Version: 2.2.4
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 2.2.3.0
+;@Ahk2Exe-SetVersion 2.2.4.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -494,8 +494,15 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         }
         return
     }
-    if (cfg.NetworkMode = "Internet")
+    if (cfg.NetworkMode = "Internet") {
+        if RegExMatch(msg, '"event"\s*:\s*"open"') {
+            topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+            authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+            mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+            PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
+        }
         return
+    }
 
     if (!RegExMatch(msg, '"op"\s*:\s*(\d+)', &matchOp))
         return
@@ -1064,11 +1071,11 @@ ChangeRemoteAppHotkeysUI(cfg, state, *) {
         cfg.ExitHotkey := values["exit"]
         cfg.Write("Shortcuts", "PptHotkey", cfg.PptHotkey)
         cfg.Write("Shortcuts", "ExitHotkey", cfg.ExitHotkey)
-        RegisterRemoteAppHotkeys(cfg, state)
-        BuildRemoteTrayMenu(cfg, state)
         if dlg.HasOwnProp("_releaseState")
             dlg._releaseState.Call()
         dlg.Destroy()
+        RegisterRemoteAppHotkeys(cfg, state)
+        BuildRemoteTrayMenu(cfg, state)
         TrayTip("Remote app shortcuts updated (" FormatHK(cfg.PptHotkey) " / " FormatHK(cfg.ExitHotkey) ").", "PresenterSync Remote", 1)
     }
 
@@ -1158,10 +1165,12 @@ ShowRemoteAboutUI(*) {
         return existing
 
     aboutGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "About PresenterSync Remote")
+    aboutGui.MarginX := 18
+    aboutGui.MarginY := 16
     Theme.ApplyToWindow(aboutGui)
     Theme.NamedWindows["AboutRemoteWindow"] := aboutGui
 
-    iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSyncRemote.ico"
+    iconSource := A_IsCompiled ? A_ScriptFullPath : (FileExist(A_ScriptDir "\PresenterSyncRemote.ico") ? A_ScriptDir "\PresenterSyncRemote.ico" : A_ScriptDir "\..\PresenterSyncRemote.ico")
     if FileExist(iconSource)
         aboutGui.Add("Picture", "x158 y15 w64 h64", iconSource)
 

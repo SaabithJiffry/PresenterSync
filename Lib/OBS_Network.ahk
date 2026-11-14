@@ -222,6 +222,8 @@ HandleHostRelayClose(cfg, state, ws, status, reason) {
     if (state.relayWs == ws)
         state.relayWs := ""
     state.relayConnected := false
+    if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
     if (cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet" && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
         SetTimer state.relayTimerFn, -3000
 }
@@ -256,6 +258,11 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
             return
         obsOpen := WinExist("ahk_exe obs64.exe")
         zoomOpen := WinExist("ahk_exe Zoom.exe")
+        if (cfg.AudioRoutingMode == 3 && (obsOpen || zoomOpen)) {
+            state.IsSyncing := true
+            if (state.HasOwnProp("releaseSyncTimerFn") && state.releaseSyncTimerFn)
+                SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
+        }
         if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "") {
             SetKeyDelay -1, 30
             try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
@@ -285,6 +292,7 @@ SendCloseRemoteSignal(cfg, state) {
         try {
             tempBox := {ws: ""}
             CleanupTempWs() {
+                SetTimer CleanupTempWs, 0
                 if IsObject(tempBox.ws) {
                     try tempBox.ws.shutdown()
                     tempBox.ws := ""
@@ -305,7 +313,10 @@ SendCloseRemoteSignal(cfg, state) {
                     SetTimer CleanupTempWs, -250
                 }
             }
-            tempBox.ws := WebSocket("ws://127.0.0.1:4455", {message: OnTempMsg}, true, "", 1000)
+            tempBox.ws := WebSocket("ws://127.0.0.1:4455", {
+                message: OnTempMsg,
+                close: (wsObj, st, re) => CleanupTempWs()
+            }, true, "", 1000)
             SetTimer CleanupTempWs, -1200
             sentLan := true
         }
@@ -367,12 +378,16 @@ HandleObsClose(cfg, state, ws, status, reason) {
             if (newPw != "") {
                 cfg.obsPassword := newPw
                 cfg.Write("Settings", "ObsPassword", newPw)
+                BroadcastHostRelayMuteState(cfg, state)
+                if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
+                    try state.refreshHelpFn.Call()
                 SetTimer state.obsTimerFn, -100
             } else {
                 cfg.obsPassword := ""
                 cfg.Write("Settings", "ObsPassword", "")
                 cfg.EnableWS := false
                 cfg.WriteBool("Settings", "EnableWS", false)
+                BroadcastHostRelayMuteState(cfg, state)
                 if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
                     try state.rebuildTrayFn.Call()
                 UpdateZoomMonitorTimer(cfg, state)

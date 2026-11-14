@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.2.3"
+    static APP_VERSION := "2.2.4"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1320,6 +1320,8 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
 
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", title)
     dlg._closed := false
+    dlg.MarginX := 20
+    dlg.MarginY := 16
     Theme.ApplyToWindow(dlg)
     if (doShow)
         Theme.NamedWindows[title] := dlg
@@ -1876,10 +1878,12 @@ ShowAboutWindow(cfg := "", state := "", *) {
         return existing
 
     aboutGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "About PresenterSync")
+    aboutGui.MarginX := 18
+    aboutGui.MarginY := 16
     Theme.ApplyToWindow(aboutGui)
     Theme.NamedWindows["AboutWindow"] := aboutGui
 
-    iconSource := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\PresenterSync.ico"
+    iconSource := A_IsCompiled ? A_ScriptFullPath : (FileExist(A_ScriptDir "\PresenterSync.ico") ? A_ScriptDir "\PresenterSync.ico" : A_LineFile "\..\..\PresenterSync.ico")
 
     if FileExist(iconSource) {
         aboutGui.Add("Picture", "x158 y15 w64 h64", iconSource)
@@ -2656,6 +2660,8 @@ RenderAllHudPills(cfg, state) {
 
 SyncSceneState(cfg, state, sceneName) {
     if (sceneName != "" && state.currentSceneName != sceneName) {
+        if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
+            SetTimer(state.sceneMarqueeTimerFn, 0)
         state.currentSceneName := sceneName
         state.sceneMarqueeOffset := 0
         state.sceneMarqueePhase := "pause_start"
@@ -3159,6 +3165,8 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     UpdateHudLayout(state, anchor.x, anchor.y)
     state.currentAlpha := state.baseAlpha
     ApplyMicAppearance(cfg, state)
+    if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS)
+        ApplySceneAppearance(cfg, state)
     if (cfg.ShowIndicator && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 }

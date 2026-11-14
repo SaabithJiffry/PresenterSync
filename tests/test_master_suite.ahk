@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.2.3
-;              and PresenterSync Remote v2.2.3 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.2.4
+;              and PresenterSync Remote v2.2.4 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.2.3", UIConstants.APP_VERSION == "2.2.3")
+Assert("APP_VERSION updated to 2.2.4", UIConstants.APP_VERSION == "2.2.4")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.2.3 and Remote Host",
-    InStr(summaryTxt, "v2.2.3") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.2.4 and Remote Host",
+    InStr(summaryTxt, "v2.2.4") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -507,6 +507,87 @@ Assert("SendObsBroadcastCloseRemote formats BroadcastCustomEvent CloseRemote pay
     && InStr(mockCloseWs.sent[1], '"requestType":"BroadcastCustomEvent"')
     && InStr(mockCloseWs.sent[1], '"command":"CloseRemote"'))
 
+; ==============================================================================
+; SECTION 9: COMPLETE WINDOW LAYOUT & MULTI-SCALE HUD GEOMETRY AUDIT
+; ==============================================================================
+AuditDialogGeometry(dlgName, dlgObj, minClientW := 260, minClientH := 120) {
+    if (!IsObject(dlgObj) || !WinExist("ahk_id " dlgObj.Hwnd)) {
+        Assert(dlgName " window instantiated & visible", false, "Window failed to open")
+        return
+    }
+    dlgObj.GetClientPos(,, &cw, &ch)
+    allInside := true
+    maxRight := 0
+    maxBottom := 0
+    detailStr := ""
+    for ctrl in dlgObj {
+        ctrl.GetPos(&x, &y, &w, &h)
+        if (x < 0 || y < 0 || (x + w) > (cw + 2) || (y + h) > (ch + 2)) {
+            allInside := false
+            detailStr := Format("Ctrl '{}' out of bounds: x={} y={} w={} h={} vs client {}x{}", ctrl.Text, x, y, w, h, cw, ch)
+            break
+        }
+        if (x + w > maxRight)
+            maxRight := x + w
+        if (y + h > maxBottom)
+            maxBottom := y + h
+    }
+    WinClose("ahk_id " dlgObj.Hwnd)
+    Assert(dlgName " geometry & control bounds valid",
+        cw >= minClientW && ch >= minClientH && allInside && (ch - maxBottom) >= 8,
+        detailStr != "" ? detailStr : Format("Client={}x{}, maxRight={}, maxBottom={}", cw, ch, maxRight, maxBottom))
+}
+
+AuditDialogGeometry("HelpWindow", ShowHelpWindow(cfgScene, stScene), 650, 500)
+AuditDialogGeometry("AboutWindow", ShowAboutWindow(cfgScene, stScene), 340, 220)
+AuditDialogGeometry("ChangeAppHotkeysUI", ChangeAppHotkeysUI(cfgScene), 300, 220)
+AuditDialogGeometry("ChangeObsSettingsUI", ChangeObsSettingsUI(cfgScene), 280, 280)
+AuditDialogGeometry("ChangeZoomShortcutsUI", ChangeZoomShortcutsUI(cfgScene), 300, 180)
+AuditDialogGeometry("ConfigurePointerKeysUI", ConfigurePointerKeysUI(cfgScene), 260, 200)
+AuditDialogGeometry("RemoteCompanionInfo", ShowRemoteCompanionInfo(cfgScene, stScene), 360, 320)
+AuditDialogGeometry("CloseRemoteCompanion", PromptCloseRemoteCompanion(cfgScene, stScene), 340, 130)
+
+; Multi-Scale HUD Stack & Label Mode Non-Overlap Audit across all 8 scales
+allScalesOk := true
+scaleDetail := ""
+for sc in [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 5.0] {
+    for showTxt in [false, true] {
+        cfgScene.IndicatorScale := sc
+        cfgScene.ShowText := showTxt
+        stScene.ComputeDimensions(cfgScene)
+        lay := ComputeHudLayout(stScene, 400, 400)
+        row2TotalW := lay.recW + stScene.hudGap + lay.chatW
+        row3TotalW := lay.studioW + stScene.hudGap + lay.sceneW
+        if (row2TotalW != lay.micW || row3TotalW != lay.micW
+            || (lay.recX + lay.recW + stScene.hudGap) != lay.chatX
+            || (lay.studioX + lay.studioW + stScene.hudGap) != lay.sceneX
+            || (lay.sceneY + lay.sceneH + stScene.hudGap) != lay.recY
+            || (lay.recY + lay.recH + stScene.hudGap) != lay.micY) {
+            allScalesOk := false
+            scaleDetail := Format("Mismatch at scale={} showText={}: micW={} row2W={} row3W={}", sc, showTxt, lay.micW, row2TotalW, row3TotalW)
+            break 2
+        }
+        if (showTxt) {
+            gapPx := Round(UIConstants.LABEL_GAP_X * sc)
+            mIconEnd := Round(UIConstants.ICON_OFFSET_X * sc) + Round(UIConstants.MIC_ICON_W * sc)
+            mTextStart := Round(UIConstants.TEXT_OFFSET_X * sc)
+            rIconEnd := Round(UIConstants.REC_ICON_X * sc) + Round(UIConstants.REC_ICON_W * sc)
+            rTextStart := rIconEnd + gapPx
+            cIconEnd := Round(UIConstants.CHAT_ICON_X * sc) + Round(UIConstants.CHAT_ICON_W * sc)
+            cTextStart := cIconEnd + gapPx
+            sIconEnd := Round(UIConstants.STUDIO_ICON_X * sc) + Round(UIConstants.STUDIO_ICON_W * sc)
+            sTextStart := sIconEnd + gapPx
+            if (mIconEnd > mTextStart || rIconEnd > rTextStart || cIconEnd > cTextStart || sIconEnd > sTextStart) {
+                allScalesOk := false
+                scaleDetail := Format("Icon/text overlap at scale={}", sc)
+                break 2
+            }
+        }
+    }
+}
+Assert("All 8 HUD scales (0.25x-5.0x) maintain exact stack width & non-overlapping icon/label bounds",
+    allScalesOk, scaleDetail)
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -514,7 +595,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.3) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.4) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
