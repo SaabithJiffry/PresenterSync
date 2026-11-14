@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.3.5
-;              and PresenterSync Remote v2.3.5 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.3.6
+;              and PresenterSync Remote v2.3.6 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.3.5", UIConstants.APP_VERSION == "2.3.5")
+Assert("APP_VERSION updated to 2.3.6", UIConstants.APP_VERSION == "2.3.6")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.3.5 and Remote Host",
-    InStr(summaryTxt, "v2.3.5") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.3.6 and Remote Host",
+    InStr(summaryTxt, "v2.3.6") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1176,6 +1176,44 @@ Assert("DeleteProfile protects Default and deletes custom profiles cleanly",
 
 AuditDialogGeometry("ProfileManager", ShowProfileManagerUI(cfgProfCheck, stProf), 340, 220)
 
+; ==============================================================================
+; SECTION 19: STAGE 12 (v2.3.6) - START WITH WINDOWS & GITHUB UPDATE CHECKER
+; ==============================================================================
+if FileExist(testIni)
+    FileDelete(testIni)
+cfgSys := Config(testIni)
+Assert("StartWithWindows defaults strictly to false",
+    cfgSys.StartWithWindows == false && cfgSys.ReadBool("Settings", "StartWithWindows", 0) == false)
+
+stSys := { trayRebuilds: 0 }
+stSys.rebuildTrayFn := (*) => (stSys.trayRebuilds += 1)
+SetStartWithWindows(cfgSys, stSys, true, false) ; writeRegistry=false keeps HKCU clean during test
+cfgSysReload := Config(testIni)
+Assert("SetStartWithWindows persists ON to INI and notifies tray without registry mutation",
+    cfgSys.StartWithWindows == true && cfgSysReload.StartWithWindows == true && stSys.trayRebuilds >= 1)
+SetStartWithWindows(cfgSys, stSys, false, false)
+Assert("SetStartWithWindows toggles back OFF cleanly",
+    cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
+
+Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
+    CompareSemVer("v2.4.0", "2.3.6") == 1
+    && CompareSemVer("v2.3.6", "2.3.6") == 0
+    && CompareSemVer("2.3.5", "2.3.6") == -1
+    && CompareSemVer("2.10.0", "2.9.9") == 1)
+
+mockUpdJson := '{"tag_name":"v2.4.0","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v2.4.0"}'
+mockCurJson := '{"tag_name":"v2.3.6","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v2.3.6"}'
+updRes := CheckForUpdates("2.3.6", mockUpdJson, true)
+curRes := CheckForUpdates("2.3.6", mockCurJson, true)
+tagRes := CheckForUpdates("2.3.6", '[{"name":"v2.4.0"}]', true)
+errRes := CheckForUpdates("2.3.6", "{broken_json}", true)
+Assert("CheckForUpdates parses release JSON and /tags fallback for update_available, up_to_date, and errors",
+    updRes.ok == true && updRes.status == "update_available" && updRes.updateAvailable == true && updRes.latest == "2.4.0"
+    && InStr(updRes.url, "v2.4.0")
+    && tagRes.ok == true && tagRes.status == "update_available" && tagRes.updateAvailable == true && tagRes.latest == "2.4.0"
+    && curRes.ok == true && curRes.status == "up_to_date" && curRes.updateAvailable == false
+    && errRes.ok == false && errRes.status == "error")
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1183,7 +1221,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.5) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.6) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

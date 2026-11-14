@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.3.5"
+    static APP_VERSION := "2.3.6"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1145,6 +1145,7 @@ class Config {
     RemoteNetworkMode := "LAN"
     InternetPairingCode := ""
     ActiveProfile := "Default"
+    StartWithWindows := false
 
     savedX := "Default"
     savedY := "Default"
@@ -1295,6 +1296,7 @@ class Config {
         }
         profName := this.NormalizeProfileName(this.Read("Settings", "ActiveProfile", "Default"))
         this.ActiveProfile := (profName != "") ? profName : "Default"
+        this.StartWithWindows := this.ReadBool("Settings", "StartWithWindows", false)
 
         this.savedX := this.Read("Position", "X", "Default")
         this.savedY := this.Read("Position", "Y", "Default")
@@ -2407,11 +2409,15 @@ ShowAboutWindow(cfg := "", state := "", *) {
     Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "Created by Saabith Jiffry"), "Text")
 
     aboutGui.SetFont("s10 w400 norm", Theme.UiFont)
-    gitBtn := aboutGui.Add("Button", "w110 x18 y+20 h32", "GitHub Repo")
+    gitBtn := aboutGui.Add("Button", "w170 x18 y+16 h30", "GitHub Repo")
     Theme.RegisterControl(aboutGui, gitBtn, "Button")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    helpBtn := aboutGui.Add("Button", "w110 x+12 h32", "Help & Guide")
+    updBtn := aboutGui.Add("Button", "w170 x+14 yp h30", "Check for Updates")
+    Theme.RegisterControl(aboutGui, updBtn, "Button")
+    updBtn.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
+
+    helpBtn := aboutGui.Add("Button", "w170 x18 y+8 h30", "Help & Guide")
     Theme.RegisterControl(aboutGui, helpBtn, "Button")
     CloseAbout(*) {
         Theme.UnregisterWindow(aboutGui, "AboutWindow")
@@ -2422,7 +2428,7 @@ ShowAboutWindow(cfg := "", state := "", *) {
     else
         helpBtn.Enabled := false
 
-    closeBtn := aboutGui.Add("Button", "w110 x+12 h32 Default", "Close")
+    closeBtn := aboutGui.Add("Button", "w170 x+14 yp h30 Default", "Close")
     Theme.RegisterControl(aboutGui, closeBtn, "Button")
     closeBtn.OnEvent("Click", CloseAbout)
     aboutGui.OnEvent("Close", CloseAbout)
@@ -4552,3 +4558,134 @@ ShowProfileManagerUI(cfg, state := "") {
     dlg.Show()
     return dlg
 }
+
+GetStartupRegistryValueName(cfg) {
+    return (IsObject(cfg) && cfg.HasOwnProp("ConfigFile") && InStr(cfg.ConfigFile, "Remote")) ? "PresenterSyncRemote" : "PresenterSync"
+}
+
+GetStartupLaunchCommand(cfg) {
+    return A_IsCompiled ? ('"' A_ScriptFullPath '"') : ('"' A_AhkPath '" "' A_ScriptFullPath '"')
+}
+
+SetStartWithWindows(cfg, state := "", enable := "", writeRegistry := true) {
+    if (!IsObject(cfg))
+        return false
+    target := (enable = "") ? !cfg.StartWithWindows : !!enable
+    cfg.StartWithWindows := target
+    cfg.WriteBool("Settings", "StartWithWindows", target)
+    if (writeRegistry) {
+        regKey := "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run"
+        valName := GetStartupRegistryValueName(cfg)
+        if (target) {
+            try RegWrite(GetStartupLaunchCommand(cfg), "REG_SZ", regKey, valName)
+        } else {
+            try RegDelete(regKey, valName)
+        }
+    }
+    if (IsObject(state)) {
+        if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+    }
+    return target
+}
+
+ToggleStartWithWindows(cfg, state := "", *) {
+    enabled := SetStartWithWindows(cfg, state)
+    TrayTip("Start with Windows: " (enabled ? "ON" : "OFF"), "PresenterSync", 1)
+    return enabled
+}
+
+CompareSemVer(vA, vB) {
+    cleanA := RegExReplace(Trim(String(vA)), "^[vV]")
+    cleanB := RegExReplace(Trim(String(vB)), "^[vV]")
+    partsA := StrSplit(cleanA, ".")
+    partsB := StrSplit(cleanB, ".")
+    maxLen := Max(partsA.Length, partsB.Length, 3)
+    Loop maxLen {
+        nA := 0
+        nB := 0
+        if (A_Index <= partsA.Length && RegExMatch(partsA[A_Index], "^(\d+)", &mA))
+            nA := Integer(mA[1])
+        if (A_Index <= partsB.Length && RegExMatch(partsB[A_Index], "^(\d+)", &mB))
+            nB := Integer(mB[1])
+        if (nA > nB)
+            return 1
+        if (nA < nB)
+            return -1
+    }
+    return 0
+}
+
+ParseGitHubReleaseTag(jsonStr) {
+    s := String(jsonStr)
+    if (RegExMatch(s, '"tag_name"\s*:\s*"([^"]+)"', &mTag)) {
+        tag := UnescapeJsonStr(mTag[1])
+    } else if (RegExMatch(s, '"name"\s*:\s*"(v?\d+\.\d+\.\d+[^"]*)"', &mName)) {
+        tag := UnescapeJsonStr(mName[1])
+    } else {
+        return { ok: false, tag: "", version: "", url: "" }
+    }
+    ver := RegExReplace(Trim(tag), "^[vV]")
+    url := ""
+    if (RegExMatch(s, '"html_url"\s*:\s*"([^"]+)"', &mUrl))
+        url := UnescapeJsonStr(mUrl[1])
+    return { ok: (ver != ""), tag: tag, version: ver, url: url }
+}
+
+CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true) {
+    cur := (currentVer != "") ? RegExReplace(Trim(String(currentVer)), "^[vV]") : UIConstants.APP_VERSION
+    fallbackUrl := "https://github.com/SaabithJiffry/PresenterSync/releases"
+    rawJson := ""
+    httpOk := false
+
+    if (mockResponseJson != "") {
+        rawJson := mockResponseJson
+        httpOk := true
+    } else {
+        for apiUrl in [
+            "https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest",
+            "https://api.github.com/repos/SaabithJiffry/PresenterSync/tags"
+        ] {
+            try {
+                req := ComObject("WinHttp.WinHttpRequest.5.1")
+                req.SetTimeouts(3000, 3000, 4000, 4000)
+                req.Open("GET", apiUrl, false)
+                req.SetRequestHeader("User-Agent", "PresenterSync/" cur)
+                req.SetRequestHeader("Accept", "application/vnd.github+json")
+                req.Send()
+                if (req.Status == 200) {
+                    rawJson := req.ResponseText
+                    httpOk := true
+                    break
+                }
+            } catch {
+                httpOk := false
+            }
+        }
+    }
+
+    parsed := httpOk ? ParseGitHubReleaseTag(rawJson) : { ok: false, tag: "", version: "", url: "" }
+    if (!parsed.ok) {
+        if (!silent)
+            MsgBox("Unable to check GitHub for updates right now (offline or rate-limited).`n`nReleases page: " fallbackUrl, "Update Check", "Icon!")
+        return { ok: false, status: "error", current: cur, latest: "", updateAvailable: false, url: fallbackUrl }
+    }
+
+    relUrl := (parsed.url != "") ? parsed.url : fallbackUrl
+    if (CompareSemVer(parsed.version, cur) > 0) {
+        if (!silent) {
+            ans := MsgBox("A new version of PresenterSync is available!`n`nCurrent Version: v" cur "`nLatest Version:  v" parsed.version "`n`nOpen the GitHub Releases page to download?", "PresenterSync Update Available", "YesNo Iconi")
+            if (ans = "Yes")
+                try Run(relUrl)
+        }
+        return { ok: true, status: "update_available", current: cur, latest: parsed.version, updateAvailable: true, url: relUrl }
+    }
+
+    if (!silent)
+        MsgBox("You are running the latest version of PresenterSync (v" cur ").", "Up to Date", "Iconi")
+    return { ok: true, status: "up_to_date", current: cur, latest: parsed.version, updateAvailable: false, url: relUrl }
+}
+
+CheckForUpdatesUI(currentVer := "", *) => CheckForUpdates(currentVer, "", false)

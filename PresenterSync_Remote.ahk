@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.3.5
+; Version: 2.3.6
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 2.3.5.0
+;@Ahk2Exe-SetVersion 2.3.6.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -64,6 +64,7 @@ class RemoteConfig {
     IndicatorScale := 1.0
     FirstRun := true
     IsMuted := false
+    StartWithWindows := false
 
     savedX := "Default"
     savedY := "Default"
@@ -166,6 +167,7 @@ class RemoteConfig {
 
         this.FirstRun := this.ReadBool("Settings", "FirstRun", 1)
         this.IsMuted := this.ReadBool("Settings", "IsMuted", 0)
+        this.StartWithWindows := this.ReadBool("Settings", "StartWithWindows", 0)
 
         this.savedX := this.Read("Position", "X", "Default")
         this.savedY := this.Read("Position", "Y", "Default")
@@ -1067,11 +1069,15 @@ BuildRemoteTrayMenu(cfg, state) {
 
     A_TrayMenu.Add("Change OBS Connection...", (*) => ShowRemoteConnectionUI(cfg, state, false))
     A_TrayMenu.Add("Change App Shortcuts...", (*) => ChangeRemoteAppHotkeysUI(cfg, state))
+    A_TrayMenu.Add("Start with Windows", ToggleStartWithWindows.Bind(cfg, state))
+    if (cfg.StartWithWindows)
+        A_TrayMenu.Check("Start with Windows")
     A_TrayMenu.Add()
 
     ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
     A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI())
+    A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
     if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
         A_TrayMenu.Check("Suspend All Hotkeys")
@@ -1322,11 +1328,15 @@ ShowRemoteAboutUI(*) {
     aboutGui.SetFont("s10 w400 norm", Theme.UiFont)
     Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "Created by Saabith Jiffry"), "Text")
 
-    gitBtn := aboutGui.Add("Button", "w120 x60 y+20 h32", "GitHub Repo")
+    gitBtn := aboutGui.Add("Button", "w110 x18 y+20 h32", "GitHub Repo")
     Theme.RegisterControl(aboutGui, gitBtn, "Button")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    closeBtn := aboutGui.Add("Button", "w120 x+20 h32 Default", "Close")
+    updBtn := aboutGui.Add("Button", "w110 x+12 yp h32", "Check Updates")
+    Theme.RegisterControl(aboutGui, updBtn, "Button")
+    updBtn.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
+
+    closeBtn := aboutGui.Add("Button", "w110 x+12 yp h32 Default", "Close")
     Theme.RegisterControl(aboutGui, closeBtn, "Button")
     CloseAbout(*) {
         Theme.UnregisterWindow(aboutGui, "AboutRemoteWindow")
