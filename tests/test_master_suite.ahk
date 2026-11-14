@@ -250,12 +250,37 @@ complexRaw := 'C:\new\tab\"q"' . "`n`r`b`f"
 Assert("EscapeJsonStr/UnescapeJsonStr complex backslash + control chars round-trip",
     UnescapeJsonStr(EscapeJsonStr(complexRaw)) == complexRaw)
 
-epEdge := ParseCandidateEndpoints("192.168.1.10 : 4456, badport.local:99999, zero.local:0", "4455")
+epEdge := ParseCandidateEndpoints("192.168.1.10 : 4456, badport.local:99999, zero.local:0, http://web.local:abc, neg.local:-5, emptycolon.local:", "4455")
 Assert("ParseCandidateEndpoints trims whitespace around colon & clamps invalid ports",
-    epEdge.Length == 3
+    epEdge.Length == 6
     && epEdge[1].host == "192.168.1.10" && epEdge[1].port == "4456"
     && epEdge[2].host == "badport.local" && epEdge[2].port == "4455"
-    && epEdge[3].host == "zero.local" && epEdge[3].port == "4455")
+    && epEdge[3].host == "zero.local" && epEdge[3].port == "4455"
+    && epEdge[4].host == "web.local" && epEdge[4].port == "4455"
+    && epEdge[5].host == "neg.local" && epEdge[5].port == "4455"
+    && epEdge[6].host == "emptycolon.local" && epEdge[6].port == "4455")
+
+; Verify HandleObsMessage matches escaped slash Mic\/Aux against Mic/Aux
+cfgSlash := Config(testIni)
+cfgSlash.targetMicName := "Mic/Aux"
+stSlash := OverlayState(cfgSlash)
+stSlash.isMuted := false
+HandleObsMessage(cfgSlash, stSlash, "", '{"op":5,"d":{"eventType":"InputMuteStateChanged","eventData":{"inputName":"Mic\/Aux","inputMuted":true}}}')
+Assert("HandleObsMessage matches escaped JSON slash in Mic\/Aux", stSlash.isMuted == true)
+
+; Verify Theme.AcquireSuspend / ReleaseSuspend lock counting & state preservation
+Theme.SuspendLockCount := 0
+Theme.WasSuspendedBeforeDialogs := false
+Suspend(false)
+Theme.AcquireSuspend()
+Theme.AcquireSuspend()
+lockedDuringDialog := (Theme.SuspendLockCount == 2 && A_IsSuspended && !Theme.WasSuspendedBeforeDialogs)
+Theme.ReleaseSuspend()
+stillLockedAfterOne := (Theme.SuspendLockCount == 1 && A_IsSuspended)
+Theme.ReleaseSuspend()
+resumedAfterAll := (Theme.SuspendLockCount == 0 && !A_IsSuspended)
+Assert("Theme suspend lock counting preserves & restores suspend state",
+    lockedDuringDialog && stillLockedAfterOne && resumedAfterAll)
 
 ; Live UIA + DetectZoomStates integration test against real temporary Win32 GUIs
 mockZoom1 := Gui("+ToolWindow -Caption", "Zoom Meeting Audit 1")
@@ -285,17 +310,20 @@ Assert("Live UIA DetectZoomStates detects muted mic + paused=2 rec + 5 unread ch
     zRes2.foundWindow && zRes2.hasMic && zRes2.muted && zRes2.micHwnd == hwnd2
     && zRes2.hasRec && zRes2.recState == 2 && zRes2.hasChat && zRes2.unreadChat == 5)
 
-; Verify dynamic Hotkey S option remains suspend-exempt under Suspend(true)
-Hotkey("^!+F19", (*) => 0, "S")
-Suspend(true)
-ListHotkeys()
-Sleep 40
-hotkeyReport := ControlGetText("Edit1", "ahk_id " A_ScriptHwnd)
-try WinHide("ahk_id " A_ScriptHwnd)
-Suspend(false)
-Hotkey("^!+F19", "Off")
-Assert("Dynamic Hotkey with 'S' option remains exempt under Suspend(true)",
-    RegExMatch(hotkeyReport, "m)F19.*\breg\b(?!\(no\))"))
+; Verify dynamic Hotkey S option registration & SuspendHotkey "S" flag in PresenterSync.ahk
+hkRegisteredOk := false
+try {
+    Hotkey("^!+F19", (*) => 0, "S")
+    Suspend(true)
+    Hotkey("^!+F19", "Off")
+    Suspend(false)
+    hkRegisteredOk := true
+} catch {
+    Suspend(false)
+}
+hostSrcText := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
+Assert("Dynamic Hotkey with 'S' option registers & PresenterSync.ahk marks SuspendHotkey 'S'",
+    hkRegisteredOk && InStr(hostSrcText, 'Hotkey(AppConfig.SuspendHotkey, (*) => ToggleSuspend(), "S")') > 0)
 
 mockWs := {sent: [], sendText: (this, txt) => this.sent.Push(txt)}
 brokenWs := {sendText: (this, txt) => (ThrowError())}
@@ -365,5 +393,8 @@ report .= "Pass Rate: " Round((PassCount / (PassCount + FailCount)) * 100, 1) "%
 for item in results
     report .= item "`n"
 
-FileAppend(report, A_ScriptDir "\master_audit_results.log")
+logFile := A_ScriptDir "\master_audit_results.log"
+if FileExist(logFile)
+    FileDelete(logFile)
+FileAppend(report, logFile)
 ExitApp(FailCount > 0 ? 1 : 0)

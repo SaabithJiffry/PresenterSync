@@ -79,6 +79,8 @@ class MockObsServer:
         self.mic_muted = initial_muted
         self.mic_name = mic_name
         self.events = []
+        self.clients = []
+        self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind(("127.0.0.1", 0))
@@ -87,6 +89,15 @@ class MockObsServer:
         self.port = self.sock.getsockname()[1]
         self.thread = threading.Thread(target=self._serve, daemon=True)
         self.thread.start()
+
+    def broadcast(self, frame_bytes):
+        with self.lock:
+            targets = list(self.clients)
+        for c in targets:
+            try:
+                c.sendall(frame_bytes)
+            except Exception:
+                pass
 
     def expected_auth(self):
         h1 = hashlib.sha256((self.password + self.salt).encode("utf-8")).digest()
@@ -150,6 +161,9 @@ class MockObsServer:
                         self.events.append(("auth_rejected", d.get("authentication", "")))
                         conn.sendall(encode_frame(struct.pack("!H", 4009) + b"Authentication failed", opcode=8))
                         break
+                    with self.lock:
+                        if conn not in self.clients:
+                            self.clients.append(conn)
                     self.events.append(("identified", bool(self.password)))
                     conn.sendall(encode_frame(json.dumps({"op": 2, "d": {"negotiatedRpcVersion": 1}})))
                 elif op == 6:
@@ -196,19 +210,22 @@ class MockObsServer:
                             "op": 7,
                             "d": {"requestType": req_type, "requestId": req_id, "requestStatus": {"result": True, "code": 100}, "responseData": {"inputMuted": self.mic_muted}}
                         })))
-                        conn.sendall(encode_frame(json.dumps({
+                        self.broadcast(encode_frame(json.dumps({
                             "op": 5,
                             "d": {"eventType": "InputMuteStateChanged", "eventData": {"inputName": req_data.get("inputName"), "inputMuted": self.mic_muted}}
                         })))
                         # Also exercise CurrentProgramSceneChanged escaped JSON parsing on host TriggerMute #2
                         if req_id == "HostClickerMute" and not self.mic_muted:
-                            conn.sendall(encode_frame(json.dumps({
+                            self.broadcast(encode_frame(json.dumps({
                                 "op": 5,
                                 "d": {"eventType": "CurrentProgramSceneChanged", "eventData": {"sceneName": 'Cam / "2" \\ Live'}}
                             })))
         except Exception:
             pass
         finally:
+            with self.lock:
+                if conn in self.clients:
+                    self.clients.remove(conn)
             try:
                 conn.close()
             except Exception:
@@ -275,6 +292,7 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
         extract_ahk_block(remote_src, "SyncRemoteMuteState("),
         extract_ahk_block(remote_src, "RemoveToolTip("),
         extract_ahk_block(remote_src, "OnRemoteClickerMute("),
+        extract_ahk_block(remote_src, "BuildRemoteHelpStatusLine("),
     ]
 
     lib_dir = str(ROOT_DIR / "Lib")
@@ -523,6 +541,60 @@ hudState.SceneGui.Destroy()
 Assert("RefreshHudAppearance updates savedY headroom & reveals Extra HUD windows",
     hudState.savedY == expectedHudY && recVis != 0 && studioVis != 0)
 
+; =====================================================================
+; TEST 6: Dual-Client Live Integration (Host + Remote Multi-Candidate Failover & 2-Way Sync)
+; =====================================================================
+dualHostCfg := Config("{work_dir}\\dual_host.ini")
+dualHostCfg.EnableWS := true
+dualHostCfg.EnablePPT := true
+dualHostCfg.ShowIndicator := false
+dualHostCfg.AudioRoutingMode := 1
+dualHostCfg.ObsMuteHotkey := "None"
+dualHostCfg.obsPassword := "secretHost123"
+dualHostCfg.targetMicName := 'Mic "1"'
+dualHostState := OverlayState(dualHostCfg)
+
+dualHostWs := WebSocket("ws://127.0.0.1:{auth_port}", {{
+    message: HandleObsMessage.Bind(dualHostCfg, dualHostState),
+    close: HandleObsClose.Bind(dualHostCfg, dualHostState)
+}}, true, "", 2000)
+dualHostState.obsWs := dualHostWs
+
+dualRemCfg := RemoteConfig("{work_dir}\\dual_remote.ini")
+dualRemCfg.HostAddress := "127.0.0.1:1, 127.0.0.1:{auth_port}"
+dualRemCfg.HostPort := "{auth_port}"
+dualRemCfg.ObsPassword := "secretHost123"
+dualRemCfg.TargetMicName := 'Mic "1"'
+dualRemCfg.ShowIndicator := false
+dualRemState := RemoteState(dualRemCfg)
+dualRemState.MicGui := ""
+ConnectToRemoteOBS(dualRemCfg, dualRemState)
+
+Assert("Dual-client: Remote fails over from offline candidate 1 to live candidate 2 & both connect",
+    WaitUntil(() => dualHostState.obsConnected && dualRemState.obsConnected && dualRemState.activeHost == "127.0.0.1:{auth_port}", 4500))
+
+helpLine := BuildRemoteHelpStatusLine(dualRemCfg, dualRemState)
+Assert("Dual-client: BuildRemoteHelpStatusLine reflects connected activeHost",
+    InStr(helpLine, "Connected to 127.0.0.1:{auth_port}") > 0)
+
+Sleep 180
+OnRemoteClickerMute(dualRemCfg, dualRemState)
+Assert("Dual-client: Smart Board Remote clicker mutes OBS & syncs BOTH Remote and Primary Host HUD states",
+    WaitUntil(() => dualRemState.isMuted == true && dualHostState.isMuted == true))
+
+Sleep 180
+TriggerMute(dualHostCfg, dualHostState)
+Assert("Dual-client: Primary Host clicker unmutes OBS & syncs BOTH Primary Host and Smart Board Remote HUD states",
+    WaitUntil(() => dualHostState.isMuted == false && dualRemState.isMuted == false))
+
+SetTimer dualRemState.reconnectTimerFn, 0
+SetTimer dualRemState.heartbeatTimerFn, 0
+SetTimer dualRemState.breathTimerFn, 0
+if IsObject(dualRemState.obsWs)
+    try dualRemState.obsWs.shutdown()
+if IsObject(dualHostWs)
+    try dualHostWs.shutdown()
+
 summary := "PASS=" PassCount "`nFAIL=" FailCount "`n"
 FileAppend(summary, "{result_path}", "UTF-8")
 ExitApp(FailCount > 0 ? 1 : 0)
@@ -569,15 +641,16 @@ def main():
                 print("STDERR:", proc.stderr.strip(), file=sys.stderr)
 
             # Verify server-side telemetry matches expectations
-            remote_toggles = [e for e in auth_server.events if e[0] == "ToggleInputMute"]
-            host_toggles = [e for e in noauth_server.events if e[0] == "ToggleInputMute"]
+            remote_toggles = [e for e in auth_server.events if e[0] == "ToggleInputMute" and e[1] == "RemoteClickerMute"]
+            host_toggles = [e for e in noauth_server.events if e[0] == "ToggleInputMute" and e[1] == "HostClickerMute"]
+            dual_host_toggles = [e for e in auth_server.events if e[0] == "ToggleInputMute" and e[1] == "HostClickerMute"]
             keepalives = [e for e in auth_server.events if e[0] == "GetVersion" and e[1] == "KeepAlive"]
 
             server_checks = [
-                ("Server received 2 debounced ToggleInputMute from Remote", len(remote_toggles) == 2),
+                ("Server received 3 debounced ToggleInputMute from Remote", len(remote_toggles) == 3),
                 ("Server received Remote GetVersion KeepAlive", len(keepalives) == 1),
-                ("Server received 2 HostClickerMute ToggleInputMute requests",
-                 len(host_toggles) == 2 and all(e[1] == "HostClickerMute" for e in host_toggles)),
+                ("Server received 2 HostClickerMute ToggleInputMute requests on NoAuth & 1 on Auth",
+                 len(host_toggles) == 2 and len(dual_host_toggles) == 1),
             ]
             srv_fail = 0
             for label, ok in server_checks:
