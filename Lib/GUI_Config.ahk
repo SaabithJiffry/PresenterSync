@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.2.9"
+    static APP_VERSION := "2.3.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -17,8 +17,10 @@ class UIConstants {
     static MIN_HUD_GAP := 2
     static REC_HEIGHT := 34
     static ROW3_HEIGHT := 30
+    static ROW4_HEIGHT := 26
     static REC_WIDTH_RATIO := 0.54
     static STUDIO_WIDTH_RATIO := 0.38
+    static STREAM_WIDTH_RATIO := 0.54
     static SCREEN_MARGIN_X := 20
     static SCREEN_MARGIN_Y := 20
     static SCREEN_MIN_PAD := 10
@@ -44,6 +46,10 @@ class UIConstants {
     static CHAT_ICON_X := 8
     static STUDIO_ICON_W := 18
     static STUDIO_ICON_X := 8
+    static STREAM_ICON_W := 16
+    static STREAM_ICON_X := 7
+    static VCAM_ICON_W := 16
+    static VCAM_ICON_X := 7
     static SCENE_PAD_X := 6
     static LABEL_GAP_X := 6
 
@@ -63,6 +69,8 @@ class UIConstants {
     static PPT_DEBOUNCE_MS := 150
     static PUSH_TO_MUTE_HOLD_MS := 350
     static VOICE_METER_INTERVAL_MS := 65
+    static STREAM_POLL_INTERVAL_MS := 5000
+    static STREAM_CONGESTION_WARN := 0.35
     static ZOOM_POLL_INTERVAL_MS := 500
     static ZOOM_REC_GRACE_MS := 1500
     static SYNC_LOCK_TIMEOUT_MS := 1000
@@ -101,6 +109,18 @@ class UIConstants {
     static COLOR_STUDIO_ON := "7C3AED"
     static BORDER_STUDIO_ON := 0xED3A7C
     static ICON_STUDIO_ON := "4C1D95"
+
+    static COLOR_STREAM_OFF := "374151"
+    static ICON_STREAM_OFF := "9CA3AF"
+    static COLOR_STREAM_LIVE := "E11D48"
+    static ICON_STREAM_LIVE := "881337"
+    static COLOR_STREAM_WARN := "EA580C"
+    static ICON_STREAM_WARN := "7C2D12"
+
+    static COLOR_VCAM_OFF := "374151"
+    static ICON_VCAM_OFF := "9CA3AF"
+    static COLOR_VCAM_ON := "0D9488"
+    static ICON_VCAM_ON := "134E4A"
 
     static COLOR_SCENE := "1E293B"
     static BORDER_SCENE := 0x3B291E
@@ -161,7 +181,7 @@ class UIConstants {
         return Integer("0x" SubStr(h, 5, 2) SubStr(h, 3, 2) SubStr(h, 1, 2))
     }
 
-    static _MakePalette(liveBg, liveIc, muteBg, muteIc, recOffBg, recOffIc, recActBg, recActIc, recPauBg, recPauIc, stOffBg, stOffIc, stOnBg, stOnIc, scBg, scTxt, chClrBg, chClrIc, chAltBg, chAltIc) {
+    static _MakePalette(liveBg, liveIc, muteBg, muteIc, recOffBg, recOffIc, recActBg, recActIc, recPauBg, recPauIc, stOffBg, stOffIc, stOnBg, stOnIc, scBg, scTxt, chClrBg, chClrIc, chAltBg, chAltIc, strmOffBg := "374151", strmOffIc := "9CA3AF", strmLiveBg := "E11D48", strmLiveIc := "881337", strmWarnBg := "EA580C", strmWarnIc := "7C2D12", vcOffBg := "374151", vcOffIc := "9CA3AF", vcOnBg := "0D9488", vcOnIc := "134E4A") {
         return {
             live: liveBg, muted: muteBg,
             borderLive: UIConstants.RgbHexToBgrInt(liveBg), borderMuted: UIConstants.RgbHexToBgrInt(muteBg),
@@ -173,7 +193,12 @@ class UIConstants {
             studioOn: stOnBg, studioBorderOn: UIConstants.RgbHexToBgrInt(stOnBg), studioIconOn: stOnIc,
             scene: scBg, sceneBorder: UIConstants.RgbHexToBgrInt(scBg), sceneText: scTxt,
             chatClear: chClrBg, chatBorderClear: UIConstants.RgbHexToBgrInt(chClrBg), chatIconClear: chClrIc,
-            chatAlert: chAltBg, chatBorderAlert: UIConstants.RgbHexToBgrInt(chAltBg), chatIconAlert: chAltIc
+            chatAlert: chAltBg, chatBorderAlert: UIConstants.RgbHexToBgrInt(chAltBg), chatIconAlert: chAltIc,
+            streamOff: strmOffBg, streamBorderOff: UIConstants.RgbHexToBgrInt(strmOffBg), streamIconOff: strmOffIc,
+            streamLive: strmLiveBg, streamBorderLive: UIConstants.RgbHexToBgrInt(strmLiveBg), streamIconLive: strmLiveIc,
+            streamWarn: strmWarnBg, streamBorderWarn: UIConstants.RgbHexToBgrInt(strmWarnBg), streamIconWarn: strmWarnIc,
+            vcamOff: vcOffBg, vcamBorderOff: UIConstants.RgbHexToBgrInt(vcOffBg), vcamIconOff: vcOffIc,
+            vcamOn: vcOnBg, vcamBorderOn: UIConstants.RgbHexToBgrInt(vcOnBg), vcamIconOn: vcOnIc
         }
     }
 
@@ -185,7 +210,9 @@ class UIConstants {
                     "374151", "9CA3AF", "D55E00", "4A1E00", "E69F00", "4A3200",
                     "374151", "9CA3AF", "CC79A7", "4A1D38",
                     "1E293B", "F8FAFC",
-                    "374151", "9CA3AF", "56B4E9", "0C3B54"
+                    "374151", "9CA3AF", "56B4E9", "0C3B54",
+                    "374151", "9CA3AF", "D55E00", "4A1E00", "E69F00", "4A3200",
+                    "374151", "9CA3AF", "009E73", "003828"
                 )
             case "OLED Stealth":
                 return UIConstants._MakePalette(
@@ -193,7 +220,9 @@ class UIConstants {
                     "141417", "71717A", "3B0D14", "F87171", "2E1F05", "FBBF24",
                     "141417", "71717A", "23163D", "C084FC",
                     "09090B", "E4E4E7",
-                    "141417", "71717A", "13233A", "60A5FA"
+                    "141417", "71717A", "13233A", "60A5FA",
+                    "141417", "71717A", "3B0D14", "FB7185", "381F06", "FDBA74",
+                    "141417", "71717A", "0B2E2B", "2DD4BF"
                 )
             case "Broadcast Tally":
                 return UIConstants._MakePalette(
@@ -201,7 +230,9 @@ class UIConstants {
                     "1F2937", "9CA3AF", "B91C1C", "450A0A", "EA580C", "431407",
                     "1F2937", "9CA3AF", "6D28D9", "2E1065",
                     "111827", "F9FAFB",
-                    "1F2937", "9CA3AF", "0284C7", "082F49"
+                    "1F2937", "9CA3AF", "0284C7", "082F49",
+                    "1F2937", "9CA3AF", "E11D48", "4C0519", "D97706", "451A03",
+                    "1F2937", "9CA3AF", "0D9488", "042F2E"
                 )
             case "Cyber Ocean":
                 return UIConstants._MakePalette(
@@ -209,7 +240,9 @@ class UIConstants {
                     "1E293B", "94A3B8", "F43F5E", "4C0519", "F59E0B", "451A03",
                     "1E293B", "94A3B8", "6366F1", "1E1B4B",
                     "0F172A", "E0F2FE",
-                    "1E293B", "94A3B8", "0EA5E9", "082F49"
+                    "1E293B", "94A3B8", "0EA5E9", "082F49",
+                    "1E293B", "94A3B8", "EC4899", "500724", "F97316", "431407",
+                    "1E293B", "94A3B8", "14B8A6", "042F2E"
                 )
             default:
                 return UIConstants._MakePalette(
@@ -222,7 +255,12 @@ class UIConstants {
                     UIConstants.COLOR_STUDIO_ON, UIConstants.ICON_STUDIO_ON,
                     UIConstants.COLOR_SCENE, "FFFFFF",
                     UIConstants.COLOR_CHAT_CLEAR, UIConstants.ICON_CHAT_CLEAR,
-                    UIConstants.COLOR_CHAT_ALERT, UIConstants.ICON_CHAT_ALERT
+                    UIConstants.COLOR_CHAT_ALERT, UIConstants.ICON_CHAT_ALERT,
+                    UIConstants.COLOR_STREAM_OFF, UIConstants.ICON_STREAM_OFF,
+                    UIConstants.COLOR_STREAM_LIVE, UIConstants.ICON_STREAM_LIVE,
+                    UIConstants.COLOR_STREAM_WARN, UIConstants.ICON_STREAM_WARN,
+                    UIConstants.COLOR_VCAM_OFF, UIConstants.ICON_VCAM_OFF,
+                    UIConstants.COLOR_VCAM_ON, UIConstants.ICON_VCAM_ON
                 )
         }
     }
@@ -1072,6 +1110,7 @@ class Config {
     EnableMuteToast := false
     ShowVoiceMeter := true
     ShowRecTimer := true
+    ShowStreamHud := true
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -1203,6 +1242,7 @@ class Config {
         this.EnableMuteToast := this.ReadBool("Settings", "EnableMuteToast", false)
         this.ShowVoiceMeter := this.ReadBool("Settings", "ShowVoiceMeter", true)
         this.ShowRecTimer := this.ReadBool("Settings", "ShowRecTimer", true)
+        this.ShowStreamHud := this.ReadBool("Settings", "ShowStreamHud", true)
         this.OpacityLevel := this.ReadInt("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -1252,6 +1292,7 @@ class Config {
         this.EnableMuteToast := false
         this.ShowVoiceMeter := true
         this.ShowRecTimer := true
+        this.ShowStreamHud := true
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
@@ -1265,6 +1306,7 @@ class Config {
         this.Write("Settings", "EnableMuteToast", 0)
         this.Write("Settings", "ShowVoiceMeter", 1)
         this.Write("Settings", "ShowRecTimer", 1)
+        this.Write("Settings", "ShowStreamHud", 1)
         this.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         this.Write("Settings", "IndicatorScale", 1.0)
         Theme.SetMode("System")
@@ -1300,6 +1342,12 @@ class OverlayState {
     studioModeActive := false
     currentSceneName := "Scene"
     unreadChatCount := 0
+    streamState := 0
+    streamCongestion := 0.0
+    streamSkippedFrames := 0
+    streamPrevSkipped := 0
+    streamReconnecting := false
+    vcamActive := false
 
     sceneMarqueeOffset := 0
     sceneMarqueePhase := "pause_start"
@@ -1322,6 +1370,7 @@ class OverlayState {
     breathTimerFn := ""
     voiceMeterTimerFn := ""
     recTimerFn := ""
+    streamTimerFn := ""
     obsTimerFn := ""
     relayTimerFn := ""
     zoomTimerFn := ""
@@ -1335,6 +1384,8 @@ class OverlayState {
     ChatGui := ""
     StudioGui := ""
     SceneGui := ""
+    StreamGui := ""
+    VCamGui := ""
 
     IconFont := ""
 
@@ -1347,6 +1398,9 @@ class OverlayState {
     row3Height := 30
     studioW := 28
     sceneW := 46
+    row4Height := 26
+    streamW := 40
+    vcamW := 34
     iconSize := 18
     textSize := 13
     subIconSize := 12
@@ -1384,7 +1438,22 @@ class OverlayState {
         chatIconClear: UIConstants.ICON_CHAT_CLEAR,
         chatAlert: UIConstants.COLOR_CHAT_ALERT,
         chatBorderAlert: UIConstants.BORDER_CHAT_ALERT,
-        chatIconAlert: UIConstants.ICON_CHAT_ALERT
+        chatIconAlert: UIConstants.ICON_CHAT_ALERT,
+        streamOff: UIConstants.COLOR_STREAM_OFF,
+        streamBorderOff: UIConstants.RgbHexToBgrInt(UIConstants.COLOR_STREAM_OFF),
+        streamIconOff: UIConstants.ICON_STREAM_OFF,
+        streamLive: UIConstants.COLOR_STREAM_LIVE,
+        streamBorderLive: UIConstants.RgbHexToBgrInt(UIConstants.COLOR_STREAM_LIVE),
+        streamIconLive: UIConstants.ICON_STREAM_LIVE,
+        streamWarn: UIConstants.COLOR_STREAM_WARN,
+        streamBorderWarn: UIConstants.RgbHexToBgrInt(UIConstants.COLOR_STREAM_WARN),
+        streamIconWarn: UIConstants.ICON_STREAM_WARN,
+        vcamOff: UIConstants.COLOR_VCAM_OFF,
+        vcamBorderOff: UIConstants.RgbHexToBgrInt(UIConstants.COLOR_VCAM_OFF),
+        vcamIconOff: UIConstants.ICON_VCAM_OFF,
+        vcamOn: UIConstants.COLOR_VCAM_ON,
+        vcamBorderOn: UIConstants.RgbHexToBgrInt(UIConstants.COLOR_VCAM_ON),
+        vcamIconOn: UIConstants.ICON_VCAM_ON
     }
 
     __New(cfg) {
@@ -1400,6 +1469,7 @@ class OverlayState {
         this.breathTimerFn := BreathingAnimation.Bind(cfg, this)
         this.voiceMeterTimerFn := VoiceMeterTick.Bind(cfg, this)
         this.recTimerFn := RecTimerTick.Bind(cfg, this)
+        this.streamTimerFn := PollStreamStatus.Bind(cfg, this)
         this.obsTimerFn := ConnectToOBS.Bind(cfg, this)
         this.relayTimerFn := ConnectHostInternetRelay.Bind(cfg, this)
         this.sceneMarqueeTimerFn := SceneMarqueeTick.Bind(cfg, this)
@@ -1417,6 +1487,7 @@ class OverlayState {
         this.hudGap := Max(UIConstants.MIN_HUD_GAP, Round(UIConstants.HUD_GAP * cfg.IndicatorScale))
         this.recHeight := Round(UIConstants.REC_HEIGHT * cfg.IndicatorScale)
         this.row3Height := Round(UIConstants.ROW3_HEIGHT * cfg.IndicatorScale)
+        this.row4Height := Round(UIConstants.ROW4_HEIGHT * cfg.IndicatorScale)
 
         this.iconSize := Max(1, Round(UIConstants.MIC_ICON_SIZE * cfg.IndicatorScale))
         this.textSize := Max(1, Round(UIConstants.MIC_TEXT_SIZE * cfg.IndicatorScale))
@@ -1455,14 +1526,34 @@ class OverlayState {
 
         this.sceneW := Max(UIConstants.MIN_TEXT_WIDTH, this.baseWidth - this.hudGap - this.studioW)
 
+        minStreamW := Round((this.baseWidth - this.hudGap) * UIConstants.STREAM_WIDTH_RATIO)
+        if (cfg.ShowText) {
+            strmIconW := Round(UIConstants.STREAM_ICON_W * cfg.IndicatorScale)
+            strmIconX := Round(UIConstants.STREAM_ICON_X * cfg.IndicatorScale)
+            strmGap := Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
+            strmSampleTxt := (this.streamState == 2) ? "WARN" : ((this.streamState == 1) ? "LIVE" : "OFF")
+            reqStreamW := strmIconX + strmIconW + strmGap + Gdip.MeasureTextWidth(strmSampleTxt, "Segoe UI", this.subTextSize, 1) + strmIconX
+            vcIconW := Round(UIConstants.VCAM_ICON_W * cfg.IndicatorScale)
+            vcIconX := Round(UIConstants.VCAM_ICON_X * cfg.IndicatorScale)
+            minVCamW := vcIconX + vcIconW + strmGap + Gdip.MeasureTextWidth("VCAM", "Segoe UI", this.subTextSize, 1) + vcIconX
+            maxStreamW := Max(minStreamW, this.baseWidth - this.hudGap - minVCamW)
+            this.streamW := Min(maxStreamW, Max(minStreamW, reqStreamW))
+        } else {
+            this.streamW := minStreamW
+        }
+        this.vcamW := Max(UIConstants.MIN_TEXT_WIDTH, this.baseWidth - this.hudGap - this.streamW)
+
         extraRow2 := (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom))
         extraRow3 := (cfg.ShowExtraHuds && cfg.EnableWS)
+        extraRow4 := (extraRow3 && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud))
         maxRowW := this.baseWidth
         if (extraRow2)
             maxRowW := Max(maxRowW, this.recW + this.hudGap + this.chatW)
         if (extraRow3)
             maxRowW := Max(maxRowW, this.studioW + this.hudGap + this.sceneW)
-        extraTopPad := (extraRow2 ? (this.recHeight + this.hudGap) : 0) + (extraRow3 ? (this.row3Height + this.hudGap) : 0)
+        if (extraRow4)
+            maxRowW := Max(maxRowW, this.streamW + this.hudGap + this.vcamW)
+        extraTopPad := (extraRow2 ? (this.recHeight + this.hudGap) : 0) + (extraRow3 ? (this.row3Height + this.hudGap) : 0) + (extraRow4 ? (this.row4Height + this.hudGap) : 0)
 
         rawX := cfg.savedX
         rawY := cfg.savedY
@@ -2838,12 +2929,132 @@ ApplyStudioAppearance(cfg, state) {
     return Gdip.RenderPill(state.StudioGui.Hwnd, pos.studioX, pos.studioY, pos.studioW, pos.studioH, Gdip.HexToArgb(bg), Gdip.BgrToArgb(brd), state.baseAlpha, GetCornerRadius(cfg, pos.studioH), iconCfg, labelCfg)
 }
 
+ToggleStreamHud(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "ShowStreamHud")
+    if (IsObject(state) && state.HasOwnProp("refreshHudFn") && state.refreshHudFn)
+        try state.refreshHudFn.Call()
+}
+
+SyncStreamState(cfg, state, newState, congestion := 0.0, skippedFrames := -1, reconnecting := false) {
+    prevState := state.streamState
+    if (newState == 0) {
+        effectiveState := 0
+        state.streamCongestion := 0.0
+        state.streamSkippedFrames := 0
+        state.streamPrevSkipped := 0
+        state.streamReconnecting := false
+    } else {
+        state.streamCongestion := Max(0.0, Float(congestion))
+        deltaSkip := (prevState != 0 && skippedFrames >= 0) ? Max(0, Integer(skippedFrames) - state.streamPrevSkipped) : 0
+        if (skippedFrames >= 0) {
+            state.streamSkippedFrames := Integer(skippedFrames)
+            state.streamPrevSkipped := Integer(skippedFrames)
+        }
+        state.streamReconnecting := !!reconnecting
+        isWarn := (newState == 2) || state.streamReconnecting || (state.streamCongestion >= UIConstants.STREAM_CONGESTION_WARN) || (deltaSkip > 0)
+        effectiveState := isWarn ? 2 : 1
+    }
+
+    stateChanged := (prevState != effectiveState)
+    state.streamState := effectiveState
+    if (state.HasOwnProp("streamTimerFn") && state.streamTimerFn) {
+        if (effectiveState != 0 && cfg.EnableWS && state.obsConnected)
+            SetTimer(state.streamTimerFn, UIConstants.STREAM_POLL_INTERVAL_MS)
+        else
+            SetTimer(state.streamTimerFn, 0)
+    }
+
+    if (stateChanged) {
+        oldW := state.streamW
+        state.ComputeDimensions(cfg)
+        if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud)) {
+            if (state.streamW != oldW && !state.isDraggingHud) {
+                UpdateHudLayout(state, state.savedX, state.savedY)
+                ApplyVCamAppearance(cfg, state)
+            }
+            ApplyStreamAppearance(cfg, state)
+        }
+    }
+}
+
+ApplyStreamAppearance(cfg, state) {
+    if (!IsGuiValid(state.StreamGui))
+        return false
+
+    pos := ComputeHudLayout(state, state.savedX, state.savedY)
+    if (state.streamState == 2) {
+        bg := state.colors.streamWarn, brd := state.colors.streamBorderWarn, ic := cfg.MonoIcon ? state.colors.streamIconWarn : "FFFFFF"
+        glyph := Chr(0xE7BA), lbl := "WARN"
+    } else if (state.streamState == 1) {
+        bg := state.colors.streamLive, brd := state.colors.streamBorderLive, ic := cfg.MonoIcon ? state.colors.streamIconLive : "FFFFFF"
+        glyph := Chr(0xE93E), lbl := "LIVE"
+    } else {
+        bg := state.colors.streamOff, brd := state.colors.streamBorderOff, ic := cfg.MonoIcon ? state.colors.streamIconOff : "D1D5DB"
+        glyph := Chr(0xE93E), lbl := "OFF"
+    }
+    contentArgb := Gdip.HexToArgb(ic)
+
+    if (cfg.ShowText) {
+        sIconW := Round(UIConstants.STREAM_ICON_W * cfg.IndicatorScale)
+        sIconX := Round(UIConstants.STREAM_ICON_X * cfg.IndicatorScale)
+        sGap := Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
+        sTextX := sIconX + sIconW + sGap
+        sTextW := Max(UIConstants.MIN_TEXT_WIDTH, state.streamW - sTextX - sIconX)
+        iconCfg := {text: glyph, font: state.IconFont, size: state.subIconSize, color: contentArgb, x: sIconX, w: sIconW}
+        labelCfg := {text: lbl, size: state.subTextSize, bold: true, color: contentArgb, x: sTextX, w: sTextW, align: 0, autoFit: true}
+    } else {
+        iconCfg := {text: glyph, font: state.IconFont, size: state.subIconSize, color: contentArgb, x: 0, w: pos.streamW}
+        labelCfg := ""
+    }
+
+    return Gdip.RenderPill(state.StreamGui.Hwnd, pos.streamX, pos.streamY, pos.streamW, pos.streamH, Gdip.HexToArgb(bg), Gdip.BgrToArgb(brd), state.baseAlpha, GetCornerRadius(cfg, pos.streamH), iconCfg, labelCfg)
+}
+
+SyncVCamState(cfg, state, isActive) {
+    active := !!isActive
+    if (state.vcamActive != active) {
+        state.vcamActive := active
+        if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud))
+            ApplyVCamAppearance(cfg, state)
+    }
+}
+
+ApplyVCamAppearance(cfg, state) {
+    if (!IsGuiValid(state.VCamGui))
+        return false
+
+    pos := ComputeHudLayout(state, state.savedX, state.savedY)
+    if (state.vcamActive) {
+        bg := state.colors.vcamOn, brd := state.colors.vcamBorderOn, ic := cfg.MonoIcon ? state.colors.vcamIconOn : "FFFFFF"
+    } else {
+        bg := state.colors.vcamOff, brd := state.colors.vcamBorderOff, ic := cfg.MonoIcon ? state.colors.vcamIconOff : "D1D5DB"
+    }
+    contentArgb := Gdip.HexToArgb(ic)
+
+    if (cfg.ShowText) {
+        vIconW := Round(UIConstants.VCAM_ICON_W * cfg.IndicatorScale)
+        vIconX := Round(UIConstants.VCAM_ICON_X * cfg.IndicatorScale)
+        vGap := Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
+        vTextX := vIconX + vIconW + vGap
+        vTextW := Max(UIConstants.MIN_TEXT_WIDTH, state.vcamW - vTextX - vIconX)
+        iconCfg := {text: Chr(0xE714), font: state.IconFont, size: state.subIconSize, color: contentArgb, x: vIconX, w: vIconW}
+        labelCfg := {text: "VCAM", size: state.subTextSize, bold: true, color: contentArgb, x: vTextX, w: vTextW, align: 0, autoFit: true}
+    } else {
+        iconCfg := {text: Chr(0xE714), font: state.IconFont, size: state.subIconSize, color: contentArgb, x: 0, w: pos.vcamW}
+        labelCfg := ""
+    }
+
+    return Gdip.RenderPill(state.VCamGui.Hwnd, pos.vcamX, pos.vcamY, pos.vcamW, pos.vcamH, Gdip.HexToArgb(bg), Gdip.BgrToArgb(brd), state.baseAlpha, GetCornerRadius(cfg, pos.vcamH), iconCfg, labelCfg)
+}
+
 RenderAllHudPills(cfg, state) {
     ApplyMicAppearance(cfg, state)
     ApplyRecAppearance(cfg, state)
     ApplyChatAppearance(cfg, state)
     ApplyStudioAppearance(cfg, state)
     ApplySceneAppearance(cfg, state)
+    ApplyStreamAppearance(cfg, state)
+    ApplyVCamAppearance(cfg, state)
 }
 
 SyncSceneState(cfg, state, sceneName) {
@@ -3257,12 +3468,14 @@ InitHUD(cfg, state, showWindows := true) {
     Gdip.Startup()
     state.ComputeDimensions(cfg)
 
-    ; Create 5 GDI+ WS_EX_LAYERED (+E0x80000) HUD windows
+    ; Create 7 GDI+ WS_EX_LAYERED (+E0x80000) HUD windows
     state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.RecGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.ChatGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.StudioGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.SceneGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+    state.StreamGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+    state.VCamGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
 
     RenderAllHudPills(cfg, state)
 
@@ -3282,12 +3495,16 @@ ComputeHudLayout(state, anchorX, anchorY) {
     recH := state.HasProp("recHeight") ? state.recHeight : 34
     gap := state.HasProp("hudGap") ? state.hudGap : 6
     r3H := state.HasProp("row3Height") ? state.row3Height : 30
+    r4H := state.HasProp("row4Height") ? state.row4Height : 26
     recW := state.HasProp("recW") ? state.recW : 40
     chatW := state.HasProp("chatW") ? state.chatW : 34
     stuW := state.HasProp("studioW") ? state.studioW : 28
     scnW := state.HasProp("sceneW") ? state.sceneW : 46
+    strmW := state.HasProp("streamW") ? state.streamW : 40
+    vcW := state.HasProp("vcamW") ? state.vcamW : 34
     recY := anchorY - recH - gap
     row3Y := recY - r3H - gap
+    row4Y := row3Y - r4H - gap
     return {
         micX: anchorX,
         micY: anchorY,
@@ -3308,7 +3525,15 @@ ComputeHudLayout(state, anchorX, anchorY) {
         sceneX: anchorX + stuW + gap,
         sceneY: row3Y,
         sceneW: scnW,
-        sceneH: r3H
+        sceneH: r3H,
+        streamX: anchorX,
+        streamY: row4Y,
+        streamW: strmW,
+        streamH: r4H,
+        vcamX: anchorX + strmW + gap,
+        vcamY: row4Y,
+        vcamW: vcW,
+        vcamH: r4H
     }
 }
 
@@ -3331,6 +3556,10 @@ UpdateHudLayout(state, anchorX := "", anchorY := "", skipHwnd := 0) {
         state.StudioGui.Move(pos.studioX, pos.studioY, pos.studioW, pos.studioH)
     if (IsObject(state.SceneGui) && state.SceneGui.Hwnd != skipHwnd)
         state.SceneGui.Move(pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH)
+    if (IsObject(state.StreamGui) && state.StreamGui.Hwnd != skipHwnd)
+        state.StreamGui.Move(pos.streamX, pos.streamY, pos.streamW, pos.streamH)
+    if (IsObject(state.VCamGui) && state.VCamGui.Hwnd != skipHwnd)
+        state.VCamGui.Move(pos.vcamX, pos.vcamY, pos.vcamW, pos.vcamH)
 }
 
 UpdateHudVisibility(cfg, state) {
@@ -3349,6 +3578,10 @@ UpdateHudVisibility(cfg, state) {
             state.StudioGui.Hide()
         if IsObject(state.SceneGui)
             state.SceneGui.Hide()
+        if IsObject(state.StreamGui)
+            state.StreamGui.Hide()
+        if IsObject(state.VCamGui)
+            state.VCamGui.Hide()
         return
     }
 
@@ -3375,11 +3608,28 @@ UpdateHudVisibility(cfg, state) {
         state.StudioGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.studioX, pos.studioY, pos.studioW, pos.studioH))
         ApplySceneAppearance(cfg, state)
         state.SceneGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH))
+        if (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud) {
+            ApplyStreamAppearance(cfg, state)
+            if IsObject(state.StreamGui)
+                state.StreamGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.streamX, pos.streamY, pos.streamW, pos.streamH))
+            ApplyVCamAppearance(cfg, state)
+            if IsObject(state.VCamGui)
+                state.VCamGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.vcamX, pos.vcamY, pos.vcamW, pos.vcamH))
+        } else {
+            if IsObject(state.StreamGui)
+                state.StreamGui.Hide()
+            if IsObject(state.VCamGui)
+                state.VCamGui.Hide()
+        }
     } else {
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
         state.StudioGui.Hide()
         state.SceneGui.Hide()
+        if IsObject(state.StreamGui)
+            state.StreamGui.Hide()
+        if IsObject(state.VCamGui)
+            state.VCamGui.Hide()
     }
 }
 
@@ -3474,6 +3724,18 @@ BreathingAnimation(cfg, state) {
 }
 
 ; --- HUD DRAG & DPI HANDLERS ---
+IsHudHwnd(state, hwnd) {
+    if (!IsObject(state) || !hwnd)
+        return false
+    return (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
+        || (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd)
+        || (IsObject(state.ChatGui) && hwnd == state.ChatGui.Hwnd)
+        || (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd)
+        || (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd)
+        || (IsObject(state.StreamGui) && hwnd == state.StreamGui.Hwnd)
+        || (IsObject(state.VCamGui) && hwnd == state.VCamGui.Hwnd)
+}
+
 AnchorFromHwnd(state, hwnd, X, Y) {
     if (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd) {
         Y := Y + state.recHeight + state.hudGap
@@ -3485,6 +3747,11 @@ AnchorFromHwnd(state, hwnd, X, Y) {
     } else if (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd) {
         X := X - state.studioW - state.hudGap
         Y := Y + state.row3Height + state.hudGap + state.recHeight + state.hudGap
+    } else if (IsObject(state.StreamGui) && hwnd == state.StreamGui.Hwnd) {
+        Y := Y + state.row4Height + state.hudGap + state.row3Height + state.hudGap + state.recHeight + state.hudGap
+    } else if (IsObject(state.VCamGui) && hwnd == state.VCamGui.Hwnd) {
+        X := X - state.streamW - state.hudGap
+        Y := Y + state.row4Height + state.hudGap + state.row3Height + state.hudGap + state.recHeight + state.hudGap
     }
     return {x: X, y: Y}
 }
@@ -3505,12 +3772,7 @@ WM_HUD_MOVE(state, wParam, lParam, msg, hwnd) {
 }
 
 WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
-    isHudHwnd := (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
-        || (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd)
-        || (IsObject(state.ChatGui) && hwnd == state.ChatGui.Hwnd)
-        || (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd)
-        || (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd)
-    if (!isHudHwnd)
+    if (!IsHudHwnd(state, hwnd))
         return
 
     prevX := state.savedX
@@ -3538,19 +3800,17 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     UpdateHudLayout(state, anchor.x, anchor.y)
     state.currentAlpha := state.baseAlpha
     ApplyMicAppearance(cfg, state)
-    if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS)
+    if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS) {
         ApplySceneAppearance(cfg, state)
+        if (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud)
+            ApplyStreamAppearance(cfg, state)
+    }
     if (cfg.ShowIndicator && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 }
 
 WM_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
-    isHudHwnd := (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
-        || (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd)
-        || (IsObject(state.ChatGui) && hwnd == state.ChatGui.Hwnd)
-        || (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd)
-        || (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd)
-    if (isHudHwnd)
+    if (IsHudHwnd(state, hwnd))
         A_TrayMenu.Show()
 }
 
