@@ -378,6 +378,135 @@ Assert("Primary and Remote icon files exist with multi-resolution frames",
 if FileExist(dimIni)
     FileDelete(dimIni)
 
+; ==============================================================================
+; SECTION 8: LIVE ENVIRONMENT FIXES (CLICKER TESTER, MARQUEE SCENE, LABEL MODE,
+;            INTERNET RELAY, WSS CANDIDATES & SAFE MANUAL REMOTE CLOSE)
+; ==============================================================================
+; 1. Clicker Tester & Pointer Capture Dialog Geometry
+testerWin := ShowPointerTester()
+testerWin.GetClientPos(,, &tClientW, &tClientH)
+testerKeyH := 0, testerBtnW := 0, testerBtnBottomPad := 0
+for ctrl in testerWin {
+    ctrl.GetPos(&cx, &cy, &cw, &ch)
+    if (ctrl.Type = "Text" && InStr(ctrl.Text, "Listening"))
+        testerKeyH := ch
+    if (ctrl.Type = "Button" && InStr(ctrl.Text, "Close")) {
+        testerBtnW := cw
+        testerBtnBottomPad := tClientH - (cy + ch)
+    }
+}
+WinClose("ahk_id " testerWin.Hwnd)
+Assert("ShowPointerTester layout is spacious & non-clipped",
+    tClientW >= 300 && tClientH >= 135 && testerKeyH >= 34 && testerBtnW >= 250 && testerBtnBottomPad >= 14,
+    Format("Client={}x{}, keyH={}, btnW={}, bottomPad={}", tClientW, tClientH, testerKeyH, testerBtnW, testerBtnBottomPad))
+
+capWin := OpenPointerKeyCaptureDialog("b", "Save & Apply", (*) => 0)
+capWin.GetClientPos(,, &cClientW, &cClientH)
+capEditH := 0, capBtnW := 0, capBtnBottomPad := 0
+for ctrl in capWin {
+    ctrl.GetPos(&cx, &cy, &cw, &ch)
+    if (ctrl.Type = "Edit")
+        capEditH := ch
+    if (ctrl.Type = "Button") {
+        capBtnW := cw
+        capBtnBottomPad := cClientH - (cy + ch)
+    }
+}
+WinClose("ahk_id " capWin.Hwnd)
+Assert("OpenPointerKeyCaptureDialog layout is spacious & non-clipped",
+    cClientW >= 300 && cClientH >= 150 && capEditH >= 28 && capBtnW >= 250 && capBtnBottomPad >= 14,
+    Format("Client={}x{}, editH={}, btnW={}, bottomPad={}", cClientW, cClientH, capEditH, capBtnW, capBtnBottomPad))
+
+; 2. Top-Layer Scene Pill Boundary & Smooth Horizontal Marquee Scroll
+cfgScene := Config(testIni)
+cfgScene.IndicatorScale := 1.0
+cfgScene.ShowIndicator := true
+cfgScene.ShowExtraHuds := true
+cfgScene.EnableWS := true
+cfgScene.ShowText := false
+stScene := OverlayState(cfgScene)
+InitHUD(cfgScene, stScene, false)
+SyncSceneState(cfgScene, stScene, "Main Keynote Presentation - Dual Camera & Screen Share Layout 2026")
+Assert("SceneGui width locked within baseWidth in Icon-Only mode on long scene name",
+    (stScene.studioW + stScene.hudGap + stScene.sceneW) == stScene.baseWidth && stScene.baseWidth == 80)
+
+cfgScene.ShowText := true
+stScene.ComputeDimensions(cfgScene)
+ApplyStudioAppearance(cfgScene, stScene)
+ApplySceneAppearance(cfgScene, stScene)
+Assert("SceneGui width locked within baseWidth in Label Mode on long scene name",
+    (stScene.studioW + stScene.hudGap + stScene.sceneW) == stScene.baseWidth && stScene.baseWidth == 168)
+Assert("Long scene name activates horizontal marquee scroll state",
+    stScene.sceneMarqueeMaxOffset > 0 && stScene.sceneMarqueePhase == "pause_start")
+
+; Advance past initial pause_start (30 ticks) into scroll_left
+Loop 35
+    SceneMarqueeTick(cfgScene, stScene)
+Assert("SceneMarqueeTick smoothly advances sceneMarqueeOffset during scroll_left",
+    stScene.sceneMarqueePhase == "scroll_left" && stScene.sceneMarqueeOffset > 0)
+
+SyncSceneState(cfgScene, stScene, "Cam 1")
+ApplySceneAppearance(cfgScene, stScene)
+Assert("Short scene name stops marquee and renders centered statically",
+    stScene.sceneMarqueeMaxOffset == 0 && stScene.sceneMarqueeOffset == 0)
+
+if (stScene.sceneMarqueeTimerFn)
+    SetTimer(stScene.sceneMarqueeTimerFn, 0)
+stScene.MicGui.Destroy()
+stScene.RecGui.Destroy()
+stScene.ChatGui.Destroy()
+stScene.StudioGui.Destroy()
+stScene.SceneGui.Destroy()
+
+; 3. Label Mode (ShowText = true) Layer 2 & Layer 3 Non-Overlapping Geometry
+Assert("UIConstants Label Mode dimensions widened to prevent icon/text overlap",
+    UIConstants.BASE_WIDTH_TEXT == 168
+    && UIConstants.STUDIO_ICON_W == 18
+    && UIConstants.REC_ICON_W == 18
+    && UIConstants.CHAT_ICON_W == 18
+    && UIConstants.LABEL_GAP_X == 6)
+
+stIconX := Round(UIConstants.STUDIO_ICON_X * 1.0)
+stIconW := Round(UIConstants.STUDIO_ICON_W * 1.0)
+stGap := Round(UIConstants.LABEL_GAP_X * 1.0)
+stTextX := stIconX + stIconW + stGap
+stAvailW := stScene.studioW - stTextX - stIconX
+stMeasuredW := Gdip.MeasureTextWidth("STUDIO", "Segoe UI", UIConstants.STUDIO_TEXT_SIZE, 1)
+Assert("StudioGui Label Mode has explicit gap between icon and STUDIO text & fits cleanly",
+    stTextX == (stIconX + stIconW + 6) && stAvailW >= stMeasuredW)
+
+; 4. WSS & Path Candidate Parsing + Internet Relay Helpers
+wssCandidates := ParseCandidateEndpoints("wss://obs-tunnel.example.com/ws, STUDIO-PC.local, https://relay.example.org:8443/live")
+Assert("ParseCandidateEndpoints supports wss://, default 443 port, custom ports, and URL paths",
+    wssCandidates.Length == 3
+    && wssCandidates[1].scheme == "wss" && wssCandidates[1].host == "obs-tunnel.example.com" && wssCandidates[1].port == "443" && wssCandidates[1].path == "/ws" && wssCandidates[1].url == "wss://obs-tunnel.example.com:443/ws"
+    && wssCandidates[2].scheme == "ws" && wssCandidates[2].host == "STUDIO-PC.local" && wssCandidates[2].port == "4455" && wssCandidates[2].url == "ws://STUDIO-PC.local:4455/"
+    && wssCandidates[3].scheme == "wss" && wssCandidates[3].host == "relay.example.org" && wssCandidates[3].port == "8443" && wssCandidates[3].path == "/live")
+
+pairCode := GenerateInternetPairingCode()
+topic1 := GetInternetRelayTopic(pairCode)
+auth1 := GetInternetRelayAuthToken(pairCode, "myPass")
+pktStr := FormatRelayPacket("host", "state", "1", auth1)
+parsedPkt := ParseRelayPacket(pktStr)
+Assert("Internet Pairing Code & Relay Packet round-trip integrity",
+    RegExMatch(pairCode, "^PS-[2-9A-Z]{4}-[2-9A-Z]{4}$")
+    && SubStr(topic1, 1, 6) == "psync_"
+    && IsObject(parsedPkt) && parsedPkt.src == "host" && parsedPkt.cmd == "state" && parsedPkt.data == "1" && parsedPkt.auth == auth1)
+
+; 5. Safe Manual Close Remote Companion Confirmation Dialog & Signal
+closeDlg := PromptCloseRemoteCompanion(cfgScene, stScene)
+closeDlgExists := IsObject(closeDlg) && WinExist("ahk_id " closeDlg.Hwnd)
+if closeDlgExists
+    WinClose("ahk_id " closeDlg.Hwnd)
+Assert("PromptCloseRemoteCompanion opens safe manual confirmation dialog", closeDlgExists != 0)
+
+mockCloseWs := {sent: [], sendText: (this, txt) => this.sent.Push(txt)}
+Assert("SendObsBroadcastCloseRemote formats BroadcastCustomEvent CloseRemote payload",
+    SendObsBroadcastCloseRemote(mockCloseWs)
+    && mockCloseWs.sent.Length == 1
+    && InStr(mockCloseWs.sent[1], '"requestType":"BroadcastCustomEvent"')
+    && InStr(mockCloseWs.sent[1], '"command":"CloseRemote"'))
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)

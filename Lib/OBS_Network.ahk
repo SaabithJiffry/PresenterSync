@@ -96,6 +96,233 @@ SendObsSetInputMute(ws, micName, muted, requestId := "ZoomSyncObsMute") {
     return SendObsRequest(ws, "SetInputMute", requestId, '{"inputName":"' escMic '","inputMuted":' mutedStr '}')
 }
 
+SendObsBroadcastCloseRemote(ws, requestId := "ManualCloseRemote") {
+    return SendObsRequest(ws, "BroadcastCustomEvent", requestId, '{"eventData":{"source":"PresenterSync","command":"CloseRemote"}}')
+}
+
+GenerateInternetPairingCode() {
+    chars := "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    p1 := "", p2 := ""
+    Loop 4 {
+        p1 .= SubStr(chars, Random(1, StrLen(chars)), 1)
+        p2 .= SubStr(chars, Random(1, StrLen(chars)), 1)
+    }
+    return "PS-" p1 "-" p2
+}
+
+GetInternetRelayTopic(pairingCode) {
+    clean := StrUpper(Trim(pairingCode))
+    if (clean = "")
+        return ""
+    hash := HashSHA256_Base64("PresenterSync_RelayTopic_v1|" clean)
+    safe := RegExReplace(hash, "[^a-zA-Z0-9]", "")
+    return "psync_" SubStr(safe, 1, 28)
+}
+
+GetInternetRelayAuthToken(pairingCode, password := "") {
+    clean := StrUpper(Trim(pairingCode))
+    hash := HashSHA256_Base64("PresenterSync_RelayAuth_v1|" clean "|" password)
+    return RegExReplace(hash, "[^a-zA-Z0-9]", "")
+}
+
+FormatRelayPacket(src, cmd, data, authToken) {
+    return "PSRELAY|" src "|" cmd "|" data "|" authToken
+}
+
+ParseRelayPacket(rawMsg) {
+    msg := (Type(rawMsg) == "Buffer") ? StrGet(rawMsg, "UTF-8") : String(rawMsg)
+    if RegExMatch(msg, 'PSRELAY\|([^|"]*)\|([^|"]*)\|([^|"]*)\|([^|"\r\n\s}]*)', &m) {
+        return {src: m[1], cmd: m[2], data: m[3], auth: m[4]}
+    }
+    return ""
+}
+
+PublishInternetRelayPacket(topic, packetStr, relayBaseUrl := "https://ntfy.sh", mockTargetWs := "") {
+    static activeRequests := []
+    if (topic = "" || packetStr = "")
+        return false
+    if IsObject(mockTargetWs)
+        return TrySendWsText(mockTargetWs, packetStr)
+    try {
+        baseUrl := RTrim(relayBaseUrl != "" ? relayBaseUrl : "https://ntfy.sh", "/")
+        whr := ComObject("WinHttp.WinHttpRequest.5.1")
+        whr.Open("POST", baseUrl "/" topic, true)
+        whr.SetRequestHeader("Cache-Control", "no-cache")
+        whr.Send(packetStr)
+        activeRequests.Push(whr)
+        if (activeRequests.Length > 8)
+            activeRequests.RemoveAt(1)
+        return true
+    } catch {
+        return false
+    }
+}
+
+BroadcastHostRelayMuteState(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (!cfg.HasOwnProp("RemoteNetworkMode") || cfg.RemoteNetworkMode != "Internet")
+        return false
+    topic := GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : "")
+    if (topic = "")
+        return false
+    auth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
+    pkt := FormatRelayPacket("host", "state", state.isMuted ? "1" : "0", auth)
+    mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+    return PublishInternetRelayPacket(topic, pkt, "https://ntfy.sh", mockWs)
+}
+
+UpdateHostInternetRelay(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return
+    if (state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
+        SetTimer state.relayTimerFn, 0
+    if (cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet" && cfg.InternetPairingCode != "") {
+        if (!state.relayConnected)
+            SetTimer state.relayTimerFn, -80
+    } else {
+        state.relayConnected := false
+        if IsObject(state.relayWs) {
+            try state.relayWs.shutdown()
+            state.relayWs := ""
+        }
+    }
+}
+
+ConnectHostInternetRelay(cfg, state) {
+    if (state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
+        SetTimer state.relayTimerFn, 0
+    if (!cfg.HasOwnProp("RemoteNetworkMode") || cfg.RemoteNetworkMode != "Internet" || state.relayConnected)
+        return
+    topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+    if (topic = "")
+        return
+    if IsObject(state.relayWs) {
+        try state.relayWs.shutdown()
+        state.relayWs := ""
+    }
+    wsUrl := "wss://ntfy.sh/" topic "/ws"
+    try {
+        state.relayWs := WebSocket(wsUrl, {
+            message: HandleHostRelayMessage.Bind(cfg, state),
+            close: HandleHostRelayClose.Bind(cfg, state)
+        }, true, "", 4000)
+    } catch {
+        state.relayWs := ""
+        if (cfg.RemoteNetworkMode = "Internet" && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
+            SetTimer state.relayTimerFn, -3000
+    }
+}
+
+HandleHostRelayClose(cfg, state, ws, status, reason) {
+    if IsObject(ws)
+        try ws.shutdown()
+    if (IsObject(ws) && IsObject(state.relayWs) && state.relayWs != ws)
+        return
+    if (state.relayWs == ws)
+        state.relayWs := ""
+    state.relayConnected := false
+    if (cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet" && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
+        SetTimer state.relayTimerFn, -3000
+}
+
+HandleHostRelayMessage(cfg, state, ws, rawMsg) {
+    if (IsObject(ws) && IsObject(state.relayWs) && ws != state.relayWs)
+        return
+    msg := (Type(rawMsg) == "Buffer") ? StrGet(rawMsg, "UTF-8") : String(rawMsg)
+    if RegExMatch(msg, '"event"\s*:\s*"open"') {
+        state.relayConnected := true
+        BroadcastHostRelayMuteState(cfg, state)
+        if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+        return
+    }
+    pkt := ParseRelayPacket(msg)
+    if (!IsObject(pkt) || pkt.src != "remote")
+        return
+
+    topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+    expectedAuth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
+    mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+    if (pkt.auth != expectedAuth) {
+        PublishInternetRelayPacket(topic, FormatRelayPacket("host", "auth_error", "0", "none"), "https://ntfy.sh", mockWs)
+        return
+    }
+
+    if (pkt.cmd = "sync_req") {
+        BroadcastHostRelayMuteState(cfg, state)
+    } else if (pkt.cmd = "toggle_mute") {
+        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+            return
+        obsOpen := WinExist("ahk_exe obs64.exe")
+        zoomOpen := WinExist("ahk_exe Zoom.exe")
+        if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "") {
+            SetKeyDelay -1, 30
+            try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
+            SetKeyDelay 50, 50
+        }
+        if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && zoomOpen && cfg.ZoomMuteHotkey != "") {
+            SetKeyDelay -1, 30
+            try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
+            SetKeyDelay 50, 50
+        }
+        if (!state.obsConnected && !state.zoomConnected) {
+            SyncUIState(cfg, state, !state.isMuted)
+        }
+        BroadcastHostRelayMuteState(cfg, state)
+    }
+}
+
+SendCloseRemoteSignal(cfg, state) {
+    sentLan := false
+    sentWan := false
+
+    ; 1. Dispatch over active OBS WebSocket (LAN Mode)
+    if (IsObject(state) && state.obsConnected && IsObject(state.obsWs)) {
+        sentLan := SendObsBroadcastCloseRemote(state.obsWs)
+    } else {
+        ; One-shot loopback connect to local OBS 127.0.0.1:4455 in case Host WS Sync is currently off
+        try {
+            tempBox := {ws: ""}
+            CleanupTempWs() {
+                if IsObject(tempBox.ws) {
+                    try tempBox.ws.shutdown()
+                    tempBox.ws := ""
+                }
+            }
+            OnTempMsg(wsObj, raw) {
+                m := (Type(raw) == "Buffer") ? StrGet(raw, "UTF-8") : String(raw)
+                if RegExMatch(m, '"op"\s*:\s*0') {
+                    authStr := ""
+                    if (RegExMatch(m, '"salt"\s*:\s*"([^"]+)"', &mS) && RegExMatch(m, '"challenge"\s*:\s*"([^"]+)"', &mC)) {
+                        sec := HashSHA256_Base64(cfg.obsPassword . mS[1])
+                        resp := HashSHA256_Base64(sec . mC[1])
+                        authStr := ',"authentication":"' resp '"'
+                    }
+                    TrySendWsText(wsObj, '{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":0' authStr '}}')
+                } else if RegExMatch(m, '"op"\s*:\s*2') {
+                    SendObsBroadcastCloseRemote(wsObj)
+                    SetTimer CleanupTempWs, -250
+                }
+            }
+            tempBox.ws := WebSocket("ws://127.0.0.1:4455", {message: OnTempMsg}, true, "", 1000)
+            SetTimer CleanupTempWs, -1200
+            sentLan := true
+        }
+    }
+
+    ; 2. Also dispatch over Internet Relay if Internet Pairing Code is configured
+    if (IsObject(cfg) && cfg.HasOwnProp("InternetPairingCode") && cfg.InternetPairingCode != "") {
+        topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+        auth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
+        mockWs := (IsObject(state) && state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+        if (topic != "")
+            sentWan := PublishInternetRelayPacket(topic, FormatRelayPacket("host", "close_remote", "1", auth), "https://ntfy.sh", mockWs)
+    }
+
+    return (sentLan || sentWan)
+}
+
 FormatPassthroughHook(hk) {
     return "~$" RegExReplace(hk, "^[~*$]+")
 }
@@ -243,6 +470,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                 isMutedOBS := (matchMuted[1] == "true")
                 PushObsMuteToZoom(cfg, state, isMutedOBS)
                 SyncUIState(cfg, state, isMutedOBS)
+                BroadcastHostRelayMuteState(cfg, state)
             }
         }
         else if (InStr(msg, '"requestId":"HostClickerMute"') || InStr(msg, '"requestId": "HostClickerMute"')) {

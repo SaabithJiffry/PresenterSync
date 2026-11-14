@@ -13,15 +13,16 @@ PresenterSync is a lightweight, standalone Windows utility designed for live str
 *   **Adaptive Multi-Tier HUD Overlay:**
     *   **Basic Mode:** 1-tier live/muted Mic pill.
     *   **Zoom Mode:** 2-tier stack adding Recording Status + Zoom Chat Unread badge.
-    *   **Pro OBS Mode:** 3-tier stack adding OBS Studio Mode + dynamically expanding Active Program Scene display.
+    *   **Pro OBS Mode:** 3-tier stack adding OBS Studio Mode + fixed-boundary Active Program Scene display with **smooth horizontal marquee scrolling** for long scene names.
     *   **Toggleable Extra HUDs:** Use **Show Extra HUDs** in the tray menu to collapse Row 2 and Row 3 down to just the Mic pill at any time while keeping OBS WebSocket Sync or Zoom Monitoring active in the background.
 *   **Smart PowerPoint Controls:** Safely route your arrow keys and presentation shortcuts directly to PowerPoint while keeping OBS or Zoom in the background.
-*   **Extensive Appearance & Scale Customization:** Toggle text labels, switch to monochromatic icons, adjust transparency (`Ghost 50%` / `Frosted 85%` / `Solid 100%`), enable aggressive pulsing animations, choose corner styles, and scale the HUD across 8 presets (`0.25x`, `0.5x`, `1.0x`, `1.5x`, `2.0x`, `2.5x`, `3.0x`, `5.0x`).
+*   **Extensive Appearance & Scale Customization:** Toggle text labels (with DPI-normalized GDI+ pixel typography and icon auto-fit across all 3 tiers), switch to monochromatic icons, adjust transparency (`Ghost 50%` / `Frosted 85%` / `Solid 100%`), enable aggressive pulsing animations, choose corner styles, and scale the HUD across 8 presets (`0.25x`, `0.5x`, `1.0x`, `1.5x`, `2.0x`, `2.5x`, `3.0x`, `5.0x`).
 *   **Dynamic & Manual Dark / Light Theme:** Choose **Follow System**, **Dark Mode**, or **Light Mode** under **Indicator Appearance > App Theme** to dynamically style the system tray menu, submenus, and all settings/help/about/tester windows in real time.
 *   **Self-Healing Setup & Reset:** Automatically prompts for missing routing profiles/shortcuts or changed OBS passwords, and supports one-click factory appearance reset without losing custom screen position.
-*   **Smart Board Companion Client (`PresenterSync_Remote.ahk` / `.exe`):** Standalone, ultra-lean companion for Windows-based smart boards (OPS modules) and secondary laptops. Displays a floating single-pill mute HUD and transmits pointer clicker mute keystrokes back to OBS Studio over the local network (LAN) across any combination of Ethernet, 2.4 GHz, or 5 GHz Wi-Fi.
-    *   **Multi-Interface Failover Engine:** Accepts multi-candidate strings (`STUDIO-PC.local, 192.168.1.50, 192.168.1.125`) with fast 2-second failover and 30-second heartbeat keep-alives.
-    *   **Remote Clicker Mute:** Intercepts pointer keystrokes (default `b`) with a 150ms debounce shield and executes `ToggleInputMute` directly in OBS in < 5ms.
+*   **Smart Board Companion Client (`PresenterSync_Remote.ahk` / `.exe`):** Standalone, ultra-lean companion for Windows-based smart boards (OPS modules) and secondary laptops. Displays a floating single-pill mute HUD and transmits pointer clicker mute keystrokes back to OBS Studio over either the **Same Router (LAN)** (across Ethernet, 2.4 GHz, or 5 GHz Wi-Fi) or **Different Networks (Over the Internet)** via an encrypted pairing code relay.
+    *   **Same Router (LAN) & Different Networks (Internet) Modes:** Use the default multi-candidate LAN failover engine (`STUDIO-PC.local, 192.168.1.50, 192.168.1.125`) when on the same router, or switch to **Different Networks (Internet)** using your host's auto-generated **Internet Pairing Code** (`PS-XXXX-XXXX`) when devices are on separate networks or mobile hotspots.
+    *   **Remote Clicker Mute & Customizable Shortcuts:** Intercepts pointer keystrokes (default `b`) with a 150ms debounce shield. Toggle Pointer Mute Control ON/OFF anytime on the secondary device using `Ctrl + F12` (when OFF, clicking the pointer will not mute OBS while the HUD continues displaying live mic status from the primary device) and exit using `Alt + Shift + F12` (both customizable via **Change App Shortcuts...**).
+    *   **Safe Manual Remote Shutdown:** Use **Close Remote Companion...** in the Primary system tray (or **Remote Companion Info...**) to send a confirmed shutdown signal to turn off the secondary companion without ever closing it accidentally when restarting the primary app.
     *   **Touchscreen Drag & Scale:** Fully touch-friendly drag-and-drop repositioning with scales up to `5.0x` for large 65"–86" 4K interactive displays.
 
 ## ⚙️ Prerequisites: OBS WebSocket & Zoom Setup
@@ -82,13 +83,17 @@ You can build standalone, zero-dependency `.exe` binaries for both the primary a
 3. **Interactive Help & Remote Guide:** Open **Help & Shortcuts** in the tray menu for step-by-step setup instructions across **Shortcuts**, **Pointer & PPT**, **Audio & Sync**, **Remote Setup**, **HUD & Theme**, and **Live Status**.
 4. **Customize Live:** Left-drag any HUD pill to reposition the whole stack (coordinates save automatically), or use **Indicator Appearance** to change scale, labels, opacity, corner style, and **App Theme** (**Follow System**, **Dark Mode**, or **Light Mode**) live without interrupting your active session.
 
-**Default System Shortcuts:**
+**Default System Shortcuts (Primary Host):**
 *   `Ctrl + F12` : Cycle Pointer Modes (Full PPT + Mute / Mute Only / OFF)
 *   `Alt + F12` : Toggle OBS WebSocket Sync ON/OFF
 *   `Ctrl + Alt + F12` : Toggle Zoom Monitoring ON/OFF
 *   `Ctrl + Shift + F12` : Hide/Unhide the HUD Indicator
 *   `Ctrl + Alt + Shift + F12` : Suspend All Hotkeys
 *   `Alt + Shift + F12` : Exit Application
+
+**Default System Shortcuts (Remote Companion):**
+*   `Ctrl + F12` : Toggle Pointer Mute Control ON/OFF (HUD continues displaying live mic status when OFF)
+*   `Alt + Shift + F12` : Exit PresenterSync Remote
 
 ## 📄 License
 This project is licensed under the MIT License - see the LICENSE file for details.
