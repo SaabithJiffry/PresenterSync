@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.3.4
-;              and PresenterSync Remote v2.3.4 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.3.5
+;              and PresenterSync Remote v2.3.5 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.3.4", UIConstants.APP_VERSION == "2.3.4")
+Assert("APP_VERSION updated to 2.3.5", UIConstants.APP_VERSION == "2.3.5")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.3.4 and Remote Host",
-    InStr(summaryTxt, "v2.3.4") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.3.5 and Remote Host",
+    InStr(summaryTxt, "v2.3.5") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1116,6 +1116,66 @@ remStateFallbackActive := { usingRelayFallback: true }
 Assert("IsRemoteUsingInternetChannel honors active relay fallback even in LAN mode",
     IsRemoteUsingInternetChannel(remCfgLan, remStateFallbackActive) == true)
 
+; ==============================================================================
+; SECTION 18: STAGE 11 (v2.3.5) - PERSISTENT NAMED CONFIGURATION PROFILES
+; ==============================================================================
+if FileExist(testIni)
+    FileDelete(testIni)
+cfgProf := Config(testIni)
+cfgProf.AudioRoutingMode := 1
+cfgProf.ConferencingApp := "Zoom"
+cfgProf.HudColorPreset := "Standard"
+cfgProf.ShowText := false
+cfgProf.Write("Settings", "AudioRoutingMode", 1)
+cfgProf.Write("Settings", "ConferencingApp", "Zoom")
+cfgProf.Write("Settings", "HudColorPreset", "Standard")
+cfgProf.WriteBool("Settings", "ShowText", false)
+
+Assert("Initial profile list contains Default",
+    cfgProf.ActiveProfile == "Default" && cfgProf.GetProfileNames().Length == 1 && cfgProf.GetProfileNames()[1] == "Default")
+
+; Save a custom Teams Studio profile; saving a non-Default profile auto-snapshots Default first
+cfgProf.AudioRoutingMode := 2
+cfgProf.ConferencingApp := "Microsoft Teams"
+cfgProf.HudColorPreset := "Broadcast"
+cfgProf.ShowText := true
+cfgProf.CatchArrows := false
+cfgProf.SaveProfile("Teams Lecture")
+
+cfgProfCheck := Config(testIni)
+Assert("SaveProfile persists profile list, ActiveProfile, and auto-snapshots Default",
+    cfgProfCheck.ActiveProfile == "Teams Lecture" && cfgProfCheck.GetProfileNames().Length == 2
+    && cfgProfCheck.Read("Profile:Teams Lecture", "Settings_ConferencingApp", "") == "Microsoft Teams"
+    && cfgProfCheck.Read("Profile:Default", "__Exists", "") == "1")
+
+; Apply Default back with live state callbacks
+stProf := { rebuildCount: 0, helpCount: 0 }
+stProf.rebuildTrayFn := (*) => (stProf.rebuildCount += 1)
+stProf.refreshHelpFn := (*) => (stProf.helpCount += 1)
+Assert("ApplyProfile switches back to Default and restores RoutingMode=1, Zoom, Standard",
+    cfgProfCheck.ApplyProfile("Default", stProf)
+    && cfgProfCheck.ActiveProfile == "Default"
+    && cfgProfCheck.AudioRoutingMode == 1
+    && cfgProfCheck.ConferencingApp == "Zoom"
+    && cfgProfCheck.HudColorPreset == "Standard"
+    && stProf.rebuildCount >= 1)
+
+Assert("ApplyProfile switches to Teams Lecture and restores Teams + Broadcast + ShowText + CatchArrows",
+    cfgProfCheck.ApplyProfile("Teams Lecture", stProf)
+    && cfgProfCheck.AudioRoutingMode == 2
+    && cfgProfCheck.ConferencingApp == "Microsoft Teams"
+    && cfgProfCheck.HudColorPreset == "Broadcast"
+    && cfgProfCheck.ShowText == true
+    && cfgProfCheck.CatchArrows == false)
+
+Assert("DeleteProfile protects Default and deletes custom profiles cleanly",
+    cfgProfCheck.DeleteProfile("Default") == false
+    && cfgProfCheck.DeleteProfile("Teams Lecture") == true
+    && cfgProfCheck.ActiveProfile == "Default"
+    && cfgProfCheck.GetProfileNames().Length == 1)
+
+AuditDialogGeometry("ProfileManager", ShowProfileManagerUI(cfgProfCheck, stProf), 340, 220)
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1123,7 +1183,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.4) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.5) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
