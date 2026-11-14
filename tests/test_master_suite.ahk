@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.3.1
-;              and PresenterSync Remote v2.3.1 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.3.2
+;              and PresenterSync Remote v2.3.2 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.3.1", UIConstants.APP_VERSION == "2.3.1")
+Assert("APP_VERSION updated to 2.3.2", UIConstants.APP_VERSION == "2.3.2")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.3.1 and Remote Host",
-    InStr(summaryTxt, "v2.3.1") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.3.2 and Remote Host",
+    InStr(summaryTxt, "v2.3.2") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -968,6 +968,73 @@ SyncRecState(cfgClick, stClick, 0)
 stClick.MicGui.Destroy(), stClick.RecGui.Destroy(), stClick.ChatGui.Destroy()
 stClick.StudioGui.Destroy(), stClick.SceneGui.Destroy(), stClick.StreamGui.Destroy(), stClick.VCamGui.Destroy()
 
+; ==============================================================================
+; SECTION 15: STAGE 8 (v2.3.2) - MAGNETIC SNAP, CLICK-THROUGH & AUTO-DODGE
+; ==============================================================================
+cfgSnap := Config(testIni)
+Assert("MagneticSnap defaults to true; ClickThrough & AutoDodge default to false",
+    cfgSnap.EnableMagneticSnap == true && cfgSnap.HudClickThrough == false && cfgSnap.HudAutoDodge == false)
+
+stSnap := OverlayState(cfgSnap)
+InitHUD(cfgSnap, stSnap, false)
+snapCb := { tray: 0, hud: 0 }
+stSnap.rebuildTrayFn := (*) => (snapCb.tray += 1)
+stSnap.refreshHudFn := (*) => (snapCb.hud += 1)
+
+ToggleMagneticSnap(cfgSnap, stSnap)
+ToggleHudClickThrough(cfgSnap, stSnap)
+ToggleHudAutoDodge(cfgSnap, stSnap)
+cfgSnapReload := Config(testIni)
+Assert("Snap/ClickThrough/AutoDodge toggles persist to INI & trigger callbacks",
+    cfgSnapReload.EnableMagneticSnap == false && cfgSnapReload.HudClickThrough == true && cfgSnapReload.HudAutoDodge == true
+    && snapCb.tray == 3 && snapCb.hud >= 2)
+
+fakeWA := { left: 0, top: 0, right: 1920, bottom: 1040 }
+winRects := [{ left: 300, top: 200, right: 1100, bottom: 800 }]
+snapEdge := ComputeMagneticSnap(6, 500, 80, 40, 0, 14, winRects, fakeWA)
+Assert("ComputeMagneticSnap snaps anchor X within 14px of screen left margin (x=10)",
+    snapEdge.snappedX == true && snapEdge.x == 10 && snapEdge.y == 500)
+
+snapWin := ComputeMagneticSnap(1112, 244, 80, 40, 40, 14, winRects, fakeWA)
+Assert("ComputeMagneticSnap snaps HUD top-left beside/aligned to app window (x=1106, y=240)",
+    snapWin.snappedX == true && snapWin.x == 1106 && snapWin.snappedY == true && snapWin.y == 240)
+
+snapFar := ComputeMagneticSnap(500, 500, 80, 40, 0, 14, winRects, fakeWA)
+Assert("ComputeMagneticSnap leaves HUD unmoved when outside 14px threshold",
+    snapFar.snappedX == false && snapFar.snappedY == false && snapFar.x == 500 && snapFar.y == 500)
+
+Assert("ApplyHudClickThroughStyle sets +WS_EX_TRANSPARENT (0x20) when enabled & Alt not held",
+    ApplyHudClickThroughStyle(cfgSnap, stSnap, true) == true
+    && (WinGetExStyle("ahk_id " stSnap.MicGui.Hwnd) & 0x20) != 0)
+Assert("ApplyHudClickThroughStyle clears WS_EX_TRANSPARENT when disabled/Alt held",
+    ApplyHudClickThroughStyle(cfgSnap, stSnap, false) == false
+    && (WinGetExStyle("ahk_id " stSnap.MicGui.Hwnd) & 0x20) == 0)
+
+cfgSnap.HudClickThrough := false
+cfgSnap.HudAutoDodge := true
+cfgSnap.EnableWS := false
+cfgSnap.EnableZoom := false
+stSnap.savedX := 400
+stSnap.savedY := 400
+stSnap.ComputeDimensions(cfgSnap)
+AutoDodgeTick(cfgSnap, stSnap, { x: 420, y: 420 }, false)
+Assert("AutoDodgeTick engages ghost alpha + click-through when cursor enters HUD stack",
+    stSnap.isAutoDodged == true && stSnap.currentAlpha == UIConstants.DODGE_ALPHA
+    && (WinGetExStyle("ahk_id " stSnap.MicGui.Hwnd) & 0x20) != 0)
+
+AutoDodgeTick(cfgSnap, stSnap, { x: 100, y: 100 }, false)
+Assert("AutoDodgeTick restores baseAlpha & clickability when cursor leaves HUD stack",
+    stSnap.isAutoDodged == false && stSnap.currentAlpha == stSnap.baseAlpha
+    && (WinGetExStyle("ahk_id " stSnap.MicGui.Hwnd) & 0x20) == 0)
+
+cfgSnap.ResetAppearance()
+UpdateAutoDodgeTimer(cfgSnap, stSnap)
+Assert("ResetAppearance restores MagneticSnap=true, ClickThrough=false, AutoDodge=false",
+    cfgSnap.EnableMagneticSnap == true && cfgSnap.HudClickThrough == false && cfgSnap.HudAutoDodge == false)
+
+stSnap.MicGui.Destroy(), stSnap.RecGui.Destroy(), stSnap.ChatGui.Destroy()
+stSnap.StudioGui.Destroy(), stSnap.SceneGui.Destroy(), stSnap.StreamGui.Destroy(), stSnap.VCamGui.Destroy()
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -975,7 +1042,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.1) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.2) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

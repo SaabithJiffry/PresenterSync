@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.3.1"
+    static APP_VERSION := "2.3.2"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -24,6 +24,7 @@ class UIConstants {
     static SCREEN_MARGIN_X := 20
     static SCREEN_MARGIN_Y := 20
     static SCREEN_MIN_PAD := 10
+    static SNAP_THRESHOLD_PX := 14
     static MIN_TEXT_WIDTH := 8
 
     ; --- Typography & Control Offsets ---
@@ -71,6 +72,8 @@ class UIConstants {
     static VOICE_METER_INTERVAL_MS := 65
     static STREAM_POLL_INTERVAL_MS := 5000
     static STREAM_CONGESTION_WARN := 0.35
+    static DODGE_POLL_INTERVAL_MS := 80
+    static DODGE_ALPHA := 45
     static ZOOM_POLL_INTERVAL_MS := 500
     static ZOOM_REC_GRACE_MS := 1500
     static SYNC_LOCK_TIMEOUT_MS := 1000
@@ -1112,6 +1115,9 @@ class Config {
     ShowRecTimer := true
     ShowStreamHud := true
     EnableHudClickActions := true
+    EnableMagneticSnap := true
+    HudClickThrough := false
+    HudAutoDodge := false
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -1245,6 +1251,9 @@ class Config {
         this.ShowRecTimer := this.ReadBool("Settings", "ShowRecTimer", true)
         this.ShowStreamHud := this.ReadBool("Settings", "ShowStreamHud", true)
         this.EnableHudClickActions := this.ReadBool("Settings", "EnableHudClickActions", true)
+        this.EnableMagneticSnap := this.ReadBool("Settings", "EnableMagneticSnap", true)
+        this.HudClickThrough := this.ReadBool("Settings", "HudClickThrough", false)
+        this.HudAutoDodge := this.ReadBool("Settings", "HudAutoDodge", false)
         this.OpacityLevel := this.ReadInt("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -1296,6 +1305,9 @@ class Config {
         this.ShowRecTimer := true
         this.ShowStreamHud := true
         this.EnableHudClickActions := true
+        this.EnableMagneticSnap := true
+        this.HudClickThrough := false
+        this.HudAutoDodge := false
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
@@ -1311,6 +1323,9 @@ class Config {
         this.Write("Settings", "ShowRecTimer", 1)
         this.Write("Settings", "ShowStreamHud", 1)
         this.Write("Settings", "EnableHudClickActions", 1)
+        this.Write("Settings", "EnableMagneticSnap", 1)
+        this.Write("Settings", "HudClickThrough", 0)
+        this.Write("Settings", "HudAutoDodge", 0)
         this.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         this.Write("Settings", "IndicatorScale", 1.0)
         Theme.SetMode("System")
@@ -1370,9 +1385,11 @@ class OverlayState {
 
     isDraggingHud := false
     activeDragHwnd := 0
+    isAutoDodged := false
 
     dragTimerFn := ""
     breathTimerFn := ""
+    autoDodgeTimerFn := ""
     voiceMeterTimerFn := ""
     recTimerFn := ""
     streamTimerFn := ""
@@ -1476,6 +1493,7 @@ class OverlayState {
         this.voiceMeterTimerFn := VoiceMeterTick.Bind(cfg, this)
         this.recTimerFn := RecTimerTick.Bind(cfg, this)
         this.streamTimerFn := PollStreamStatus.Bind(cfg, this)
+        this.autoDodgeTimerFn := AutoDodgeTick.Bind(cfg, this)
         this.obsTimerFn := ConnectToOBS.Bind(cfg, this)
         this.relayTimerFn := ConnectHostInternetRelay.Bind(cfg, this)
         this.sceneMarqueeTimerFn := SceneMarqueeTick.Bind(cfg, this)
@@ -3469,6 +3487,207 @@ ResetTrayPosition(cfg, state := "", *) {
         RefreshHudAppearance(cfg, state)
 }
 
+; --- MAGNETIC SNAP, CLICK-THROUGH & AUTO-DODGE ---
+GetHudGuiList(state) {
+    guis := []
+    if (!IsObject(state))
+        return guis
+    for prop in ["MicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"] {
+        if (state.HasOwnProp(prop) && IsGuiValid(state.%prop%))
+            guis.Push(state.%prop%)
+    }
+    return guis
+}
+
+GetHudStackBounds(cfg, state) {
+    extraTopPad := 0
+    if (IsObject(cfg) && (cfg is Config)) {
+        extraRow2 := (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom))
+        extraRow3 := (cfg.ShowExtraHuds && cfg.EnableWS)
+        extraRow4 := (extraRow3 && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud))
+        extraTopPad := (extraRow2 ? (state.recHeight + state.hudGap) : 0) + (extraRow3 ? (state.row3Height + state.hudGap) : 0) + (extraRow4 ? (state.row4Height + state.hudGap) : 0)
+    }
+    return {
+        left: state.savedX,
+        top: state.savedY - extraTopPad,
+        right: state.savedX + state.baseWidth,
+        bottom: state.savedY + state.baseHeight,
+        extraTopPad: extraTopPad,
+        stackW: state.baseWidth
+    }
+}
+
+GetCandidateSnapWindowRects(state := "") {
+    rects := []
+    hudHwnds := Map()
+    for g in GetHudGuiList(state)
+        hudHwnds[g.Hwnd] := true
+    static targetProcs := Map(
+        "obs64.exe", true, "obs32.exe", true, "powerpnt.exe", true,
+        "zoom.exe", true, "ms-teams.exe", true, "teams.exe", true,
+        "chrome.exe", true, "msedge.exe", true, "firefox.exe", true
+    )
+    for hwnd in WinGetList() {
+        if (hudHwnds.Has(hwnd) || !DllCall("IsWindowVisible", "Ptr", hwnd))
+            continue
+        try {
+            if (WinGetMinMax("ahk_id " hwnd) == -1)
+                continue
+            proc := StrLower(WinGetProcessName("ahk_id " hwnd))
+            if (!targetProcs.Has(proc))
+                continue
+            buf := Buffer(16, 0)
+            if (DllCall("dwmapi\DwmGetWindowAttribute", "Ptr", hwnd, "UInt", 9, "Ptr", buf.Ptr, "UInt", 16, "Int") == 0) {
+                rl := NumGet(buf, 0, "Int"), rt := NumGet(buf, 4, "Int")
+                rr := NumGet(buf, 8, "Int"), rb := NumGet(buf, 12, "Int")
+            } else {
+                WinGetPos(&rl, &rt, &rw, &rh, "ahk_id " hwnd)
+                rr := rl + rw, rb := rt + rh
+            }
+            if ((rr - rl) >= 120 && (rb - rt) >= 80)
+                rects.Push({ left: rl, top: rt, right: rr, bottom: rb })
+        }
+    }
+    return rects
+}
+
+ComputeMagneticSnap(rawX, rawY, stackW, baseH, extraTopPad := 0, threshold := 14, candidateRects := "", workArea := "") {
+    if (!IsObject(workArea)) {
+        cx := rawX + (stackW // 2), cy := rawY + (baseH // 2)
+        waIdx := 1
+        monCount := MonitorGetCount()
+        Loop monCount {
+            MonitorGetWorkArea(A_Index, &mL, &mT, &mR, &mB)
+            if (cx >= mL && cx <= mR && cy >= mT && cy <= mB) {
+                waIdx := A_Index
+                break
+            }
+        }
+        MonitorGetWorkArea(waIdx, &waL, &waT, &waR, &waB)
+        workArea := { left: waL, top: waT, right: waR, bottom: waB }
+    }
+
+    pad := UIConstants.SCREEN_MIN_PAD
+    xTargets := [workArea.left + pad, workArea.right - pad - stackW]
+    yTargets := [workArea.top + extraTopPad + pad, workArea.bottom - pad - baseH]
+
+    if (IsObject(candidateRects)) {
+        for r in candidateRects {
+            xTargets.Push(r.left, r.left - stackW - 6, r.right - stackW - 6, r.right + 6)
+            yTargets.Push(r.top + extraTopPad, r.bottom - baseH)
+        }
+    }
+
+    bestX := rawX, bestDx := threshold + 1, didSnapX := false
+    for tx in xTargets {
+        dx := Abs(tx - rawX)
+        if (dx <= threshold && dx < bestDx) {
+            bestDx := dx
+            bestX := tx
+            didSnapX := true
+        }
+    }
+
+    bestY := rawY, bestDy := threshold + 1, didSnapY := false
+    for ty in yTargets {
+        dy := Abs(ty - rawY)
+        if (dy <= threshold && dy < bestDy) {
+            bestDy := dy
+            bestY := ty
+            didSnapY := true
+        }
+    }
+
+    bestX := Max(workArea.left, Min(bestX, workArea.right - stackW))
+    bestY := Max(workArea.top + extraTopPad, Min(bestY, workArea.bottom - baseH))
+    return { x: Round(bestX), y: Round(bestY), snappedX: didSnapX, snappedY: didSnapY }
+}
+
+ApplyHudClickThroughStyle(cfg, state, forceClickThrough := -1) {
+    altHeld := GetKeyState("Alt", "P")
+    wantPassThrough := (forceClickThrough != -1)
+        ? !!forceClickThrough
+        : (((cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough) || (state.HasOwnProp("isAutoDodged") && state.isAutoDodged)) && !altHeld)
+    styleFlag := wantPassThrough ? "+0x20" : "-0x20"
+    for g in GetHudGuiList(state) {
+        try WinSetExStyle(styleFlag, "ahk_id " g.Hwnd)
+    }
+    return wantPassThrough
+}
+
+UpdateAutoDodgeTimer(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("autoDodgeTimerFn") || !state.autoDodgeTimerFn)
+        return
+    needPoll := cfg.ShowIndicator && IsGuiValid(state.MicGui)
+        && ((cfg.HasOwnProp("HudAutoDodge") && cfg.HudAutoDodge) || (cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough))
+    SetTimer(state.autoDodgeTimerFn, needPoll ? UIConstants.DODGE_POLL_INTERVAL_MS : 0)
+    if (!needPoll && state.HasOwnProp("isAutoDodged") && state.isAutoDodged) {
+        state.isAutoDodged := false
+        state.currentAlpha := state.baseAlpha
+        ApplyHudClickThroughStyle(cfg, state)
+        for g in GetHudGuiList(state)
+            Gdip.SetLayeredAlpha(g.Hwnd, state.currentAlpha)
+    }
+}
+
+AutoDodgeTick(cfg, state, cursorPos := "", altHeldOverride := -1) {
+    if (!IsObject(state) || !IsGuiValid(state.MicGui) || !cfg.ShowIndicator || state.isDraggingHud)
+        return
+    altHeld := (altHeldOverride != -1) ? !!altHeldOverride : GetKeyState("Alt", "P")
+    dodgeEnabled := (cfg.HasOwnProp("HudAutoDodge") && cfg.HudAutoDodge)
+    clickThroughEnabled := (cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough)
+
+    if (dodgeEnabled) {
+        if (IsObject(cursorPos)) {
+            mx := cursorPos.x, my := cursorPos.y
+        } else {
+            prevMode := A_CoordModeMouse
+            CoordMode("Mouse", "Screen")
+            MouseGetPos(&mx, &my)
+            CoordMode("Mouse", prevMode)
+        }
+        bounds := GetHudStackBounds(cfg, state)
+        inside := (mx >= bounds.left && mx <= bounds.right && my >= bounds.top && my <= bounds.bottom)
+        wantDodged := inside && !altHeld
+        if (wantDodged != state.isAutoDodged) {
+            state.isAutoDodged := wantDodged
+            state.currentAlpha := wantDodged ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
+            ApplyHudClickThroughStyle(cfg, state, wantDodged ? true : (clickThroughEnabled && !altHeld))
+            for g in GetHudGuiList(state)
+                Gdip.SetLayeredAlpha(g.Hwnd, state.currentAlpha)
+            return
+        }
+    }
+    if (clickThroughEnabled && !state.isAutoDodged)
+        ApplyHudClickThroughStyle(cfg, state, !altHeld)
+}
+
+ToggleMagneticSnap(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "EnableMagneticSnap")
+}
+
+ToggleHudClickThrough(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "HudClickThrough")
+    if (IsObject(state)) {
+        ApplyHudClickThroughStyle(cfg, state)
+        UpdateAutoDodgeTimer(cfg, state)
+    }
+}
+
+ToggleHudAutoDodge(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "HudAutoDodge")
+    if (IsObject(state)) {
+        if (!cfg.HudAutoDodge && state.isAutoDodged) {
+            state.isAutoDodged := false
+            state.currentAlpha := state.baseAlpha
+        }
+        UpdateAutoDodgeTimer(cfg, state)
+        ApplyHudClickThroughStyle(cfg, state)
+        if (state.HasOwnProp("refreshHudFn") && state.refreshHudFn)
+            try state.refreshHudFn.Call()
+    }
+}
+
 ; --- HUD CREATION, LAYOUT & STYLING ---
 InitHUD(cfg, state, showWindows := true) {
     Gdip.Startup()
@@ -3588,6 +3807,7 @@ UpdateHudVisibility(cfg, state) {
             state.StreamGui.Hide()
         if IsObject(state.VCamGui)
             state.VCamGui.Hide()
+        UpdateAutoDodgeTimer(cfg, state)
         return
     }
 
@@ -3637,6 +3857,8 @@ UpdateHudVisibility(cfg, state) {
         if IsObject(state.VCamGui)
             state.VCamGui.Hide()
     }
+    ApplyHudClickThroughStyle(cfg, state)
+    UpdateAutoDodgeTimer(cfg, state)
 }
 
 ; --- HUD ANIMATIONS ---
@@ -3915,6 +4137,11 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     } else {
         WinGetPos(&X, &Y,,, "ahk_id " hwnd)
         anchor := AnchorFromHwnd(state, hwnd, X, Y)
+        if (!cfg.HasOwnProp("EnableMagneticSnap") || cfg.EnableMagneticSnap) {
+            b := GetHudStackBounds(cfg, state)
+            snap := ComputeMagneticSnap(anchor.x, anchor.y, b.stackW, state.baseHeight, b.extraTopPad, UIConstants.SNAP_THRESHOLD_PX, GetCandidateSnapWindowRects(state))
+            anchor.x := snap.x, anchor.y := snap.y
+        }
         if (anchor.x != prevX || anchor.y != prevY) {
             cfg.savedX := anchor.x
             cfg.savedY := anchor.y
@@ -3930,6 +4157,7 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         if (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud)
             ApplyStreamAppearance(cfg, state)
     }
+    ApplyHudClickThroughStyle(cfg, state)
     if (cfg.ShowIndicator && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 
