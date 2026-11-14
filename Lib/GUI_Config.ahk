@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.2.5"
+    static APP_VERSION := "2.2.6"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -61,6 +61,7 @@ class UIConstants {
     static PULSE_MIN_RATIO_NORMAL := 0.6
     static DRAG_SYNC_INTERVAL_MS := 16
     static PPT_DEBOUNCE_MS := 150
+    static PUSH_TO_MUTE_HOLD_MS := 350
     static ZOOM_POLL_INTERVAL_MS := 500
     static ZOOM_REC_GRACE_MS := 1500
     static SYNC_LOCK_TIMEOUT_MS := 1000
@@ -939,6 +940,7 @@ class Config {
     CatchEnter := true
     CatchTab := true
     CatchEsc := true
+    EnablePushToMute := false
 
     PptHotkey := "^F12"
     WsHotkey := "!F12"
@@ -1070,6 +1072,7 @@ class Config {
         this.CatchEnter := this.ReadBool("Pointer", "CatchEnter", true)
         this.CatchTab := this.ReadBool("Pointer", "CatchTab", true)
         this.CatchEsc := this.ReadBool("Pointer", "CatchEsc", true)
+        this.EnablePushToMute := this.ReadBool("Pointer", "EnablePushToMute", false)
 
         this.PptHotkey := this.Read("Settings", "PptHotkey", "^F12")
         this.WsHotkey := this.Read("Settings", "WsHotkey", "!F12")
@@ -2846,10 +2849,10 @@ ShowMuteToast(isMuted) {
     SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
 }
 
-ToggleBoolSetting(cfg, state, propName, remoteSection := "Appearance") {
+ToggleBoolSetting(cfg, state, propName, remoteSection := "Appearance", primarySection := "Settings") {
     val := !cfg.%propName%
     cfg.%propName% := val
-    section := (cfg is Config) ? "Settings" : remoteSection
+    section := (cfg is Config) ? primarySection : remoteSection
     cfg.WriteBool(section, propName, val)
     if (IsObject(state)) {
         if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
@@ -2865,6 +2868,10 @@ ToggleAudioCue(cfg, state := "", *) {
 
 ToggleMuteToast(cfg, state := "", *) {
     ToggleBoolSetting(cfg, state, "EnableMuteToast")
+}
+
+TogglePushToMute(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "EnablePushToMute", "Pointer", "Pointer")
 }
 
 SyncUIState(cfg, state, obsIsMuted) {

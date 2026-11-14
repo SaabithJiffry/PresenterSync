@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.2.5
+; Version: 2.2.6
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 2.2.5.0
+;@Ahk2Exe-SetVersion 2.2.6.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -42,6 +42,7 @@ class RemoteConfig {
 
     HwMuteHotkey := "b"
     EnablePointerMute := true
+    EnablePushToMute := false
     PptHotkey := "^F12"
     ExitHotkey := "!+F12"
 
@@ -123,6 +124,7 @@ class RemoteConfig {
 
         this.HwMuteHotkey := this.Read("Pointer", "HwMuteHotkey", "b")
         this.EnablePointerMute := this.ReadBool("Pointer", "EnablePointerMute", 1)
+        this.EnablePushToMute := this.ReadBool("Pointer", "EnablePushToMute", 0)
 
         this.PptHotkey := this.Read("Shortcuts", "PptHotkey", "^F12")
         if (this.PptHotkey = "")
@@ -661,6 +663,9 @@ OnRemoteClickerMute(cfg, state, *) {
         return
 
     static lastTick := 0
+    static inHold := false
+    if (inHold)
+        return
     now := A_TickCount
     if (now - lastTick < 150) ; 150ms hardware debounce shield
         return
@@ -672,20 +677,16 @@ OnRemoteClickerMute(cfg, state, *) {
         return
     }
 
-    if (cfg.NetworkMode = "Internet") {
-        topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
-        mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-        if (!PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "toggle_mute", "1", authTok), "https://ntfy.sh", mockWs)) {
-            ToolTip "PresenterSync Remote: Internet Relay unreachable"
-            SetTimer RemoveToolTip, -2000
+    inHold := true
+    try {
+        if (DispatchRemoteMuteToggle(cfg, state)) {
+            if (WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
+                DispatchRemoteMuteToggle(cfg, state)
+                lastTick := A_TickCount
+            }
         }
-        return
-    }
-
-    if (!SendObsToggleInputMute(state.obsWs, cfg.TargetMicName, "RemoteClickerMute")) {
-        ToolTip "PresenterSync Remote: Not connected to OBS host"
-        SetTimer RemoveToolTip, -2000
+    } finally {
+        inHold := false
     }
 }
 
@@ -945,6 +946,9 @@ BuildRemoteTrayMenu(cfg, state) {
     PointerMenu.Add("Enable Pointer Mute", ToggleRemotePointerMute.Bind(cfg, state))
     if (cfg.EnablePointerMute)
         PointerMenu.Check("Enable Pointer Mute")
+    PointerMenu.Add("Enable Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state))
+    if (cfg.EnablePushToMute)
+        PointerMenu.Check("Enable Cough / Push-to-Mute (Hold)")
     PointerMenu.Add("Change Pointer Mute Button...", (*) => ChangeRemotePointerKeyUI(cfg, state))
     PointerMenu.Add("Launch Clicker Tester...", (*) => ShowPointerTester())
     A_TrayMenu.Add("Pointer Controls", PointerMenu)

@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.2.5
-;              and PresenterSync Remote v2.2.5 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.2.6
+;              and PresenterSync Remote v2.2.6 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.2.5", UIConstants.APP_VERSION == "2.2.5")
+Assert("APP_VERSION updated to 2.2.6", UIConstants.APP_VERSION == "2.2.6")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.2.5 and Remote Host",
-    InStr(summaryTxt, "v2.2.5") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.2.6 and Remote Host",
+    InStr(summaryTxt, "v2.2.6") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -622,6 +622,44 @@ Assert("ResetAppearance clears EnableAudioCue and EnableMuteToast back to false"
     cfgAudioTest.EnableAudioCue == false && cfgAudioResetReload.EnableAudioCue == false
     && cfgAudioTest.EnableMuteToast == false && cfgAudioResetReload.EnableMuteToast == false)
 
+; ==============================================================================
+; SECTION 9: STAGE 2 (v2.2.6) - COUGH / PUSH-TO-MUTE HOLD GESTURE
+; ==============================================================================
+cfgPushTest := Config(testIni)
+Assert("EnablePushToMute defaults to false", cfgPushTest.EnablePushToMute == false)
+
+pushCb := { tray: 0 }
+TogglePushToMute(cfgPushTest, { rebuildTrayFn: (*) => (pushCb.tray += 1) })
+cfgPushReload := Config(testIni)
+Assert("TogglePushToMute persists to Pointer INI section & triggers tray refresh",
+    cfgPushTest.EnablePushToMute == true && cfgPushReload.EnablePushToMute == true && pushCb.tray == 1)
+
+Assert("ExtractBaseKeyName parses bare key, modifiers, up-suffix, and None",
+    ExtractBaseKeyName("b") == "b"
+    && ExtractBaseKeyName("^+b") == "b"
+    && ExtractBaseKeyName("~*PgDn") == "PgDn"
+    && ExtractBaseKeyName("Escape up") == "Escape"
+    && ExtractBaseKeyName("None") == ""
+    && ExtractBaseKeyName("") == "")
+
+kwCalls := []
+cfgPushOff := Config(testIni)
+cfgPushOff.EnablePushToMute := false
+Assert("WaitPushToMuteRelease bypasses wait when EnablePushToMute=false",
+    !WaitPushToMuteRelease(cfgPushOff, "b", (k, o) => (kwCalls.Push({ k: k, o: o }), 1)) && kwCalls.Length == 0)
+
+Assert("WaitPushToMuteRelease returns false on quick tap (<350ms)",
+    !WaitPushToMuteRelease(cfgPushTest, "PgDn", (k, o) => (kwCalls.Push({ k: k, o: o }), 1))
+    && kwCalls.Length == 1 && kwCalls[1].k == "PgDn" && kwCalls[1].o == "T0.350")
+
+holdSeq := [0, 1]
+holdCalls := []
+holdRes := WaitPushToMuteRelease(cfgPushTest, "~*PgDn", (k, o) => (holdCalls.Push({ k: k, o: o }), holdSeq[holdCalls.Length]))
+Assert("WaitPushToMuteRelease detects hold (>=350ms) and waits for release",
+    holdRes == true && holdCalls.Length == 2
+    && holdCalls[1].k == "PgDn" && holdCalls[1].o == "T0.350"
+    && holdCalls[2].k == "PgDn" && holdCalls[2].o == "T15")
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -629,7 +667,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.5) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.6) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
