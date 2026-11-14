@@ -594,7 +594,10 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                 paused := false
                 if (RegExMatch(msg, '"outputPaused"\s*:\s*(true|false)', &matchPaused))
                     paused := (matchPaused[1] == "true")
-                SyncRecState(cfg, state, active ? (paused ? 2 : 1) : 0)
+                durMs := -1
+                if (RegExMatch(msg, '"outputDuration"\s*:\s*(\d+)', &matchDur))
+                    durMs := Integer(matchDur[1])
+                SyncRecState(cfg, state, active ? (paused ? 2 : 1) : 0, durMs)
             }
         }
         else if (InStr(msg, '"requestId":"InitStudioState"') || InStr(msg, '"requestId": "InitStudioState"')) {

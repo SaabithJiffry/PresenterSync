@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.2.8"
+    static APP_VERSION := "2.2.9"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1071,6 +1071,7 @@ class Config {
     EnableAudioCue := false
     EnableMuteToast := false
     ShowVoiceMeter := true
+    ShowRecTimer := true
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -1201,6 +1202,7 @@ class Config {
         this.EnableAudioCue := this.ReadBool("Settings", "EnableAudioCue", false)
         this.EnableMuteToast := this.ReadBool("Settings", "EnableMuteToast", false)
         this.ShowVoiceMeter := this.ReadBool("Settings", "ShowVoiceMeter", true)
+        this.ShowRecTimer := this.ReadBool("Settings", "ShowRecTimer", true)
         this.OpacityLevel := this.ReadInt("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -1249,6 +1251,7 @@ class Config {
         this.EnableAudioCue := false
         this.EnableMuteToast := false
         this.ShowVoiceMeter := true
+        this.ShowRecTimer := true
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
@@ -1261,6 +1264,7 @@ class Config {
         this.Write("Settings", "EnableAudioCue", 0)
         this.Write("Settings", "EnableMuteToast", 0)
         this.Write("Settings", "ShowVoiceMeter", 1)
+        this.Write("Settings", "ShowRecTimer", 1)
         this.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         this.Write("Settings", "IndicatorScale", 1.0)
         Theme.SetMode("System")
@@ -1292,6 +1296,7 @@ class OverlayState {
 
     isMuted := false
     recState := 0
+    recElapsedSec := 0
     studioModeActive := false
     currentSceneName := "Scene"
     unreadChatCount := 0
@@ -1316,6 +1321,7 @@ class OverlayState {
     dragTimerFn := ""
     breathTimerFn := ""
     voiceMeterTimerFn := ""
+    recTimerFn := ""
     obsTimerFn := ""
     relayTimerFn := ""
     zoomTimerFn := ""
@@ -1393,6 +1399,7 @@ class OverlayState {
         this.dragTimerFn := DragSyncTick.Bind(this)
         this.breathTimerFn := BreathingAnimation.Bind(cfg, this)
         this.voiceMeterTimerFn := VoiceMeterTick.Bind(cfg, this)
+        this.recTimerFn := RecTimerTick.Bind(cfg, this)
         this.obsTimerFn := ConnectToOBS.Bind(cfg, this)
         this.relayTimerFn := ConnectHostInternetRelay.Bind(cfg, this)
         this.sceneMarqueeTimerFn := SceneMarqueeTick.Bind(cfg, this)
@@ -1409,8 +1416,6 @@ class OverlayState {
         this.baseHeight := Round(UIConstants.BASE_HEIGHT * cfg.IndicatorScale)
         this.hudGap := Max(UIConstants.MIN_HUD_GAP, Round(UIConstants.HUD_GAP * cfg.IndicatorScale))
         this.recHeight := Round(UIConstants.REC_HEIGHT * cfg.IndicatorScale)
-        this.recW := Round((this.baseWidth - this.hudGap) * UIConstants.REC_WIDTH_RATIO)
-        this.chatW := this.baseWidth - this.hudGap - this.recW
         this.row3Height := Round(UIConstants.ROW3_HEIGHT * cfg.IndicatorScale)
 
         this.iconSize := Max(1, Round(UIConstants.MIC_ICON_SIZE * cfg.IndicatorScale))
@@ -1418,6 +1423,23 @@ class OverlayState {
         this.subIconSize := Max(1, Round(UIConstants.SUB_ICON_SIZE * cfg.IndicatorScale))
         this.subTextSize := Max(1, Round(UIConstants.SUB_TEXT_SIZE * cfg.IndicatorScale))
         this.miniTextSize := Max(1, Round(UIConstants.MINI_TEXT_SIZE * cfg.IndicatorScale))
+
+        minRecW := Round((this.baseWidth - this.hudGap) * UIConstants.REC_WIDTH_RATIO)
+        if (cfg.ShowText && (!cfg.HasOwnProp("ShowRecTimer") || cfg.ShowRecTimer) && this.recState != 0) {
+            rIconW := Round(UIConstants.REC_ICON_W * cfg.IndicatorScale)
+            rIconX := Round(UIConstants.REC_ICON_X * cfg.IndicatorScale)
+            rGap := Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
+            rSampleTxt := ((this.recState == 2) ? "PAUSED " : "REC ") FormatElapsedShort(this.recElapsedSec)
+            reqRecW := rIconX + rIconW + rGap + Gdip.MeasureTextWidth(rSampleTxt, "Segoe UI", this.subTextSize, 1) + rIconX
+            cIconW := Round(UIConstants.CHAT_ICON_W * cfg.IndicatorScale)
+            cIconX := Round(UIConstants.CHAT_ICON_X * cfg.IndicatorScale)
+            minChatW := cIconX + cIconW + rGap + Gdip.MeasureTextWidth("CHAT", "Segoe UI", this.subTextSize, 1) + cIconX
+            maxRecW := Max(minRecW, this.baseWidth - this.hudGap - minChatW)
+            this.recW := Min(maxRecW, Max(minRecW, reqRecW))
+        } else {
+            this.recW := minRecW
+        }
+        this.chatW := this.baseWidth - this.hudGap - this.recW
 
         minStudioW := Round((this.baseWidth - this.hudGap) * UIConstants.STUDIO_WIDTH_RATIO)
         if (cfg.ShowText) {
@@ -2942,25 +2964,90 @@ SceneMarqueeTick(cfg, state) {
     ApplySceneAppearance(cfg, state, true)
 }
 
-SyncRecState(cfg, state, newState) {
-    if (state.recState != newState) {
-        state.recState := newState
-        if (cfg.ShowIndicator && cfg.ShowExtraHuds)
+FormatElapsedShort(sec) {
+    s := Max(0, Integer(sec))
+    hrs := s // 3600
+    mins := Mod(s, 3600) // 60
+    secs := Mod(s, 60)
+    if (hrs > 0)
+        return Format("{}:{:02}:{:02}", hrs, mins, secs)
+    return Format("{:02}:{:02}", mins, secs)
+}
+
+RecTimerTick(cfg, state) {
+    if (!IsObject(state) || state.recState != 1) {
+        if (IsObject(state) && state.HasOwnProp("recTimerFn") && state.recTimerFn)
+            SetTimer(state.recTimerFn, 0)
+        return
+    }
+    state.recElapsedSec += 1
+    if (cfg.ShowIndicator && cfg.ShowExtraHuds && (!cfg.HasOwnProp("ShowRecTimer") || cfg.ShowRecTimer) && !state.isDraggingHud && IsGuiValid(state.RecGui)) {
+        if (cfg.ShowText) {
+            oldW := state.recW
+            state.ComputeDimensions(cfg)
+            if (state.recW != oldW) {
+                UpdateHudLayout(state, state.savedX, state.savedY)
+                ApplyChatAppearance(cfg, state)
+            }
+        }
+        ApplyRecAppearance(cfg, state)
+    }
+}
+
+ToggleRecTimer(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "ShowRecTimer")
+    if (IsObject(state) && state.HasOwnProp("refreshHudFn") && state.refreshHudFn)
+        try state.refreshHudFn.Call()
+}
+
+SyncRecState(cfg, state, newState, initialDurationMs := -1) {
+    prevState := state.recState
+    stateChanged := (prevState != newState)
+    durProvided := (initialDurationMs >= 0)
+
+    if (durProvided) {
+        state.recElapsedSec := Max(0, Integer(initialDurationMs // 1000))
+    } else if (newState == 0) {
+        state.recElapsedSec := 0
+    } else if (prevState == 0 && newState == 1) {
+        state.recElapsedSec := 0
+    }
+
+    state.recState := newState
+    if (state.HasOwnProp("recTimerFn") && state.recTimerFn) {
+        if (newState == 1)
+            SetTimer(state.recTimerFn, 1000)
+        else
+            SetTimer(state.recTimerFn, 0)
+    }
+
+    if (stateChanged || durProvided) {
+        oldW := state.recW
+        state.ComputeDimensions(cfg)
+        if (cfg.ShowIndicator && cfg.ShowExtraHuds) {
+            if (state.recW != oldW && !state.isDraggingHud) {
+                UpdateHudLayout(state, state.savedX, state.savedY)
+                ApplyChatAppearance(cfg, state)
+            }
             ApplyRecAppearance(cfg, state)
+        }
     }
 }
 
 ApplyRecAppearance(cfg, state) {
-    if (!IsObject(state.RecGui))
+    if (!IsGuiValid(state.RecGui))
         return false
 
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
+    showTimer := (!cfg.HasOwnProp("ShowRecTimer") || cfg.ShowRecTimer) && state.HasOwnProp("recElapsedSec")
     if (state.recState == 1) {
         bg := state.colors.recActive, brd := state.colors.recBorderActive, ic := cfg.MonoIcon ? state.colors.recIconActive : "FFFFFF"
-        glyph := Chr(0xE7C8), lbl := "REC"
+        glyph := Chr(0xE7C8)
+        lbl := showTimer ? ("REC " FormatElapsedShort(state.recElapsedSec)) : "REC"
     } else if (state.recState == 2) {
         bg := state.colors.recPaused, brd := state.colors.recBorderPaused, ic := cfg.MonoIcon ? state.colors.recIconPaused : "FFFFFF"
-        glyph := Chr(0xE769), lbl := "PAUSED"
+        glyph := Chr(0xE769)
+        lbl := showTimer ? ("PAUSED " FormatElapsedShort(state.recElapsedSec)) : "PAUSED"
     } else {
         bg := state.colors.recOff, brd := state.colors.recBorderOff, ic := cfg.MonoIcon ? state.colors.recIconOff : "D1D5DB"
         glyph := Chr(0xE71A), lbl := "NOT REC"
@@ -2973,7 +3060,7 @@ ApplyRecAppearance(cfg, state) {
         rTextX := rIconX + rIconW + Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
         rTextW := Max(UIConstants.MIN_TEXT_WIDTH, state.recW - rTextX - rIconX)
         iconCfg := {text: glyph, font: state.IconFont, size: state.subIconSize, color: contentArgb, x: rIconX, w: rIconW}
-        labelCfg := {text: lbl, size: state.subTextSize, bold: true, color: contentArgb, x: rTextX, w: rTextW, align: 0}
+        labelCfg := {text: lbl, size: state.subTextSize, bold: true, color: contentArgb, x: rTextX, w: rTextW, align: 0, autoFit: true}
     } else {
         iconCfg := {text: glyph, font: state.IconFont, size: state.subIconSize, color: contentArgb, x: 0, w: pos.recW}
         labelCfg := ""
