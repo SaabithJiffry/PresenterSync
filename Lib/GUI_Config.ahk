@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "3.0.0"
+    static APP_VERSION := "3.0.1"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -513,6 +513,7 @@ class Theme {
             isDark := this.IsDarkMode()
         this.ApplyMenuTheme(isDark)
         this.ApplyTitleBarTheme(guiObj.Hwnd, isDark)
+        try guiObj.Opt("+0x02000000") ; WS_CLIPCHILDREN prevents parent redraw from erasing themed children
         guiObj.BackColor := isDark ? UIConstants.DARK_BG : UIConstants.LIGHT_BG
         guiObj.SetFont("s10 w400 " (isDark ? "c" UIConstants.DARK_TEXT : "c" UIConstants.LIGHT_TEXT), this.UiFont)
         guiObj._isDark := isDark
@@ -563,6 +564,7 @@ class Theme {
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.hkSubclassPtr, "Ptr", 1, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Tab") {
+            try ctrl.Opt("-0x0200") ; strip TCS_MULTILINE to keep a clean single row
             rc := Buffer(16, 0)
             DllCall("GetClientRect", "Ptr", ctrl.Hwnd, "Ptr", rc)
             tw := NumGet(rc, 8, "Int")
@@ -570,8 +572,14 @@ class Theme {
             if (tabCount > 0 && tw > 0) {
                 dpiScale := A_ScreenDPI / 96.0
                 itemH := Round(36 * dpiScale)
-                itemW := Floor((tw - 4) / tabCount)
+                itemW := Max(24, Floor((tw - 14) / tabCount))
                 SendMessage(0x1329, 0, (itemH << 16) | (itemW & 0xFFFF), ctrl.Hwnd) ; TCM_SETITEMSIZE
+                Loop 24 {
+                    if (SendMessage(0x132C, 0, 0, ctrl.Hwnd) <= 1 || itemW <= 24) ; TCM_GETROWCOUNT
+                        break
+                    itemW -= 2
+                    SendMessage(0x1329, 0, (itemH << 16) | (itemW & 0xFFFF), ctrl.Hwnd)
+                }
             }
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.tabSubclassPtr, "Ptr", 2, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
@@ -587,6 +595,7 @@ class Theme {
             } else {
                 ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_BG " c" UIConstants.LIGHT_TEXT))
             }
+            try WinSetStyle("+0x80", ctrl.Hwnd) ; SS_NOPREFIX so literal '&' renders cleanly
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.staticSubclassPtr, "Ptr", 3, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         }
@@ -1030,7 +1039,7 @@ TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
             th := (NumGet(itemRc, 12, "Int") - NumGet(itemRc, 4, "Int")) - 2
             isSel := (idx == curSel)
             lbl := (idx + 1 <= tabNames.Length) ? tabNames[idx + 1] : ("Tab " (idx + 1))
-            DrawFluentControlText(hdcMem, lbl, tx + 2, ty, tw - 4, th - 1, isSel ? hFontBold : hFontReg, isSel ? txtActiveBgr : txtMutedBgr, 0x0025)
+            DrawFluentControlText(hdcMem, lbl, tx + 2, ty, tw - 4, th - 1, isSel ? hFontBold : hFontReg, isSel ? txtActiveBgr : txtMutedBgr, 0x0825)
         }
 
         DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", w, "Int", h, "Ptr", hdcMem, "Int", 0, "Int", 0, "UInt", 0x00CC0020)
@@ -1042,7 +1051,7 @@ TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     }
 
     res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
-    if (uMsg == 0x0201 || uMsg == 0x130C) {
+    if (uMsg == 0x0201 || uMsg == 0x0202 || uMsg == 0x130C || uMsg == 0x1330 || ((uMsg == 0x0100 || uMsg == 0x0101) && (wParam == 0x25 || wParam == 0x27 || wParam == 0x09))) {
         parentHwnd := DllCall("GetParent", "Ptr", hwnd, "Ptr")
         DllCall("RedrawWindow", "Ptr", parentHwnd ? parentHwnd : hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0185)
     }
@@ -2129,7 +2138,8 @@ ShowHelpWindow(cfg, state := "", *) {
     Theme.NamedWindows["HelpWindow"] := helpGui
 
     tabNames := ["Shortcuts", "Pointer & PPT", "Audio & Sync", "Remote Setup", "HUD & Theme", "Live Status"]
-    tabs := helpGui.Add("Tab2", "x14 y12 w664 h468 +0x0400", tabNames)
+    helpGui.SetFont("s9 w600 norm", Theme.UiFont)
+    tabs := helpGui.Add("Tab2", "x14 y12 w664 h468 +0x0400 -0x0200", tabNames)
     tabs._tabNames := tabNames
     Theme.RegisterControl(helpGui, tabs, "Tab")
 
@@ -2140,13 +2150,14 @@ ShowHelpWindow(cfg, state := "", *) {
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
     scCol1 := "Cycle Pointer Modes:`n"
         . "Toggle OBS WebSocket:`n"
-        . "Toggle Zoom Monitor:`n"
+        . "Toggle Conf Monitor:`n"
         . "Show / Hide HUD:`n"
         . "Suspend All Hotkeys:`n"
         . "Exit PresenterSync:`n"
         . "Clicker Mute Button:`n"
         . "OBS Mute / Rec / Pause:`n"
-        . "Zoom Mute / Rec / Pause:"
+        . "Conf Mute / Rec / Pause:"
+    activeConfKey := (NormalizeConferencingApp(cfg.ConferencingApp) = "Teams") ? cfg.TeamsMuteHotkey : ((NormalizeConferencingApp(cfg.ConferencingApp) = "Meet") ? cfg.MeetMuteHotkey : cfg.ZoomMuteHotkey)
     scCol2 := FormatHK(cfg.PptHotkey) "`n"
         . FormatHK(cfg.WsHotkey) "`n"
         . FormatHK(cfg.ZoomHotkey) "`n"
@@ -2155,19 +2166,19 @@ ShowHelpWindow(cfg, state := "", *) {
         . FormatHK(cfg.ExitHotkey) "`n"
         . FormatHK(cfg.HwMuteHotkey) "`n"
         . FormatHK(cfg.ObsMuteHotkey) "  /  " FormatHK(cfg.ObsRecHotkey) "  /  " FormatHK(cfg.ObsPauseHotkey) "`n"
-        . FormatHK(cfg.ZoomMuteHotkey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey)
+        . FormatHK(activeConfKey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey) "  (" NormalizeConferencingApp(cfg.ConferencingApp) ")"
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w200 h195", scCol1), "Text", "tabMuted")
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x238 y94 w424 h195", scCol2), "Text", "tabText")
 
     shortcutNotes := "HOW SHORTCUTS WORK`r`n"
         . "- Clicker Mute Button: Works in Full PPT + Mute and Pointer Mute Only modes, and automatically pauses while PresenterSync settings windows are active so typing never toggles your mic.`r`n"
-        . "- Fallback Shortcuts (OBS / Zoom): Triggered when OBS WebSocket Sync is disabled (Mode 1 / 3) or when syncing Zoom mic in Mode 2 / Mode 3.`r`n"
+        . "- Fallback Shortcuts (OBS / Zoom / Teams / Meet): Triggered when OBS WebSocket Sync is disabled (Mode 1 / 3) or when syncing Conferencing mic in Mode 2 / Mode 3.`r`n"
         . "- Disable Any Key: Clear a shortcut or set it to 'None' in Settings to leave it unbound."
     AddHelpGuideEdit(helpGui, 30, 296, 632, 114, shortcutNotes)
 
     btnAppHk := helpGui.Add("Button", "x30 y424 w200 h34", "Edit App Shortcuts")
     btnObsHk := helpGui.Add("Button", "x246 y424 w200 h34", "Edit OBS Settings")
-    btnZoomHk := helpGui.Add("Button", "x462 y424 w200 h34", "Edit Zoom Shortcuts")
+    btnZoomHk := helpGui.Add("Button", "x462 y424 w200 h34", "Edit Conf Shortcuts")
     Theme.RegisterControl(helpGui, btnAppHk, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnObsHk, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnZoomHk, "Button", "tabButton")
@@ -2205,24 +2216,24 @@ ShowHelpWindow(cfg, state := "", *) {
     ; --- TAB 3: AUDIO & SYNC ---
     tabs.UseTab(3)
     helpGui.SetFont("s11 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Audio Routing Profiles, OBS WebSocket v5 & Zoom UIA"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Audio Routing Profiles, OBS WebSocket v5 & Conferencing UIA"), "Text", "tabText")
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
     syncGuide := "1. SELECT YOUR AUDIO ROUTING PROFILE (Settings -> Audio Setup Wizard...)`r`n"
-        . "- Mode 1 (Pro OBS Setup / VB-Cable): Ideal when OBS audio feeds Zoom. Toggles OBS mic directly via WebSocket ToggleInputMute (or your OBS shortcut fallback).`r`n"
-        . "- Mode 2 (Standard Direct Mic / Zoom-Only): Works without OBS by dispatching your Zoom Mute shortcut (default Alt+A) cleanly to Zoom.`r`n"
-        . "- Mode 3 (Dual App Sync / OBS + Zoom): Keeps OBS and Zoom microphones synchronized two-way so muting in either app mirrors cleanly.`r`n`r`n"
+        . "- Mode 1 (Pro OBS Setup / VB-Cable): Ideal when OBS audio feeds Zoom/Teams/Meet. Toggles OBS mic via WebSocket ToggleInputMute (or OBS shortcut fallback).`r`n"
+        . "- Mode 2 (Conferencing-Only): Works without OBS by dispatching your active app mute key (Zoom Alt+A, Teams Ctrl+Shift+M, Meet Ctrl+D) and bridging Remote Companion state.`r`n"
+        . "- Mode 3 (Dual App Sync): Keeps OBS and your chosen conferencing app synchronized two-way so muting in either app mirrors cleanly.`r`n`r`n"
         . "2. OBS STUDIO WEBSOCKET v5 SETUP (Recommended for Mode 1 & Mode 3)`r`n"
         . "- In OBS Studio: Tools -> WebSocket Server Settings -> Enable WebSocket server (Port 4455).`r`n"
         . "- Enable Authentication and set a password, then open 'OBS Settings' below to enter that password and your exact OBS mic source name (default: Mic/Aux).`r`n"
-        . "- Toggle with Tray -> OBS WebSocket Sync (or " FormatHK(cfg.WsHotkey) ") for live 3-tier telemetry.`r`n`r`n"
-        . "3. ZOOM BACKGROUND TELEMETRY (UIA MONITORING)`r`n"
-        . "- In Zoom Desktop Settings -> Accessibility, check 'Always show meeting controls'.`r`n"
-        . "- Toggle with Tray -> Zoom Monitoring (or " FormatHK(cfg.ZoomHotkey) "). OBS Sync and Zoom Monitoring are mutually exclusive; Unread Chat tracking detects Zoom windows automatically."
+        . "- Toggle with Tray -> OBS WebSocket Sync (or " FormatHK(cfg.WsHotkey) ") for live 4-tier telemetry.`r`n`r`n"
+        . "3. CONFERENCING MONITORING (Zoom, Microsoft Teams, Google Meet)`r`n"
+        . "- Choose your platform in Control Center -> Audio & Conf. For Zoom, enable 'Always show meeting controls' under Accessibility.`r`n"
+        . "- Toggle with Tray -> Conf Monitoring (or " FormatHK(cfg.ZoomHotkey) "). Acoustic Chime & Mute Toast can also be enabled in Control Center."
     AddHelpGuideEdit(helpGui, 30, 94, 632, 316, syncGuide)
 
     btnWizard := helpGui.Add("Button", "x30 y424 w200 h34", "Audio Setup Wizard")
     btnObsCfg := helpGui.Add("Button", "x246 y424 w200 h34", "OBS Settings")
-    btnZoomCfg := helpGui.Add("Button", "x462 y424 w200 h34", "Zoom Shortcuts")
+    btnZoomCfg := helpGui.Add("Button", "x462 y424 w200 h34", "Conf Shortcuts")
     Theme.RegisterControl(helpGui, btnWizard, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnObsCfg, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnZoomCfg, "Button", "tabButton")
@@ -2250,17 +2261,16 @@ ShowHelpWindow(cfg, state := "", *) {
     ; --- TAB 5: HUD & THEME ---
     tabs.UseTab(5)
     helpGui.SetFont("s11 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Adaptive 3-Tier HUD Overlay & Live Appearance Guide"), "Text", "tabText")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Adaptive 4-Tier HUD Overlay & Live Appearance Guide"), "Text", "tabText")
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    hudGuide := "1. ADAPTIVE 3-TIER HUD STACK`r`n"
-        . "- Row 1 (Bottom): Live (Green) / Muted (Red) Mic indicator with breathing pulse when muted.`r`n"
-        . "- Row 2 (Middle - OBS / Zoom): 3-state Recording (NOT REC / REC / PAUSED) + Unread Chat badge.`r`n"
-        . "- Row 3 (Top - OBS): Studio Mode badge + dynamically sized Active Program Scene pill.`r`n"
-        . "- Compact Mode: Uncheck 'Show Extra HUDs' in the tray menu to show only the Mic pill while keeping telemetry active in the background.`r`n`r`n"
-        . "2. MOUSE, TOUCH & SCALE CONTROLS`r`n"
-        . "- Move HUD: Left-drag any HUD pill anywhere on screen (position saves automatically).`r`n"
-        . "- Context Menu: Right-click any HUD pill to open the PresenterSync menu at your cursor.`r`n"
-        . "- Scaling & Opacity: Pick 8 scale presets (0.25x to 5.0x for 4K / 86-inch Smart Boards) and Ghost (50%), Frosted (85%), or Solid (100%) transparency under Indicator Appearance.`r`n`r`n"
+    hudGuide := "1. ADAPTIVE 4-TIER HUD STACK`r`n"
+        . "- Row 1 (Bottom): Live (Green) / Muted (Red) Mic indicator with local CoreAudio Voice Activity VU bar and breathing pulse when muted.`r`n"
+        . "- Row 2 (Middle - OBS / Conf): 3-state Recording (NOT REC / REC MM:SS / PAUSED) + Unread Chat badge.`r`n"
+        . "- Row 3 (Upper - OBS): Studio Mode badge + dynamically sized Active Program Scene pill (short-click to switch scenes).`r`n"
+        . "- Row 4 (Top - OBS): Live Stream status / dropped-frame warning (STREAM) + Virtual Camera toggle (VCAM).`r`n`r`n"
+        . "2. MOUSE, TOUCH, SNAPPING & SMART VISIBILITY`r`n"
+        . "- Move / Quick-Actions: Left-drag anywhere to reposition (with Magnetic Screen/Window Snapping), right-click for menu, or short-click pills to trigger actions.`r`n"
+        . "- Scaling & Palettes: 8 scales (0.25x-5.0x), Ghost/Frosted/Solid opacity, 5 color presets, Auto-Dodge ghost hover, and Click-Through (hold Alt to drag).`r`n`r`n"
         . "3. TRY LIVE ADJUSTMENTS BELOW (APPLIES IMMEDIATELY WITHOUT RESTART):"
     AddHelpGuideEdit(helpGui, 30, 94, 632, 268, hudGuide)
 
@@ -2442,22 +2452,22 @@ ChangeAppHotkeysUI(cfg, *) {
 
     elements := [
         {type: "Text", opts: "xm w160 h25 +0x200", text: "Cycle Pointer Mode:"},
-        {type: "Hotkey", id: "ppt", opts: "x+10 yp w130 h25", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Hotkey", id: "ppt", opts: "x+10 yp w165 h25", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle OBS WebSocket:"},
-        {type: "Hotkey", id: "ws", opts: "x+10 yp w130 h25", value: cfg.WsHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
-        {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle Zoom Monitor:"},
-        {type: "Hotkey", id: "zoom", opts: "x+10 yp w130 h25", value: cfg.ZoomHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Hotkey", id: "ws", opts: "x+10 yp w165 h25", value: cfg.WsHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle Conf Monitor:"},
+        {type: "Hotkey", id: "zoom", opts: "x+10 yp w165 h25", value: cfg.ZoomHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle Indicator:"},
-        {type: "Hotkey", id: "ind", opts: "x+10 yp w130 h25", value: cfg.IndHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Hotkey", id: "ind", opts: "x+10 yp w165 h25", value: cfg.IndHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Suspend Hotkeys:"},
-        {type: "Hotkey", id: "susp", opts: "x+10 yp w130 h25", value: cfg.SuspendHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Hotkey", id: "susp", opts: "x+10 yp w165 h25", value: cfg.SuspendHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Exit PresenterSync:"},
-        {type: "Hotkey", id: "exit", opts: "x+10 yp w130 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."}
+        {type: "Hotkey", id: "exit", opts: "x+10 yp w165 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."}
     ]
 
     return BuildSettingsWindow("Edit App Shortcuts", elements, SaveAppHk, {
         saveBtnText: "Save & Restart",
-        saveBtnOpts: "xm w300 h32 Default y+16"
+        saveBtnOpts: "xm w335 h32 Default y+16"
     })
 }
 
@@ -2608,8 +2618,12 @@ OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply) {
     editKey.OnEvent("LoseFocus", StartCapture)
 
     OnActivateMsg(wParam, lParam, msg, hwnd) {
-        if (dlg._closed || hwnd != dlg.Hwnd)
+        try {
+            if (dlg._closed || hwnd != dlg.Hwnd)
+                return
+        } catch {
             return
+        }
         if ((wParam & 0xFFFF) == 0) {
             try ih.Stop()
         } else {
@@ -4453,8 +4467,9 @@ ShowProfileManagerUI(cfg, state := "") {
     Theme.RegisterControl(dlg, btnSave, "Button")
     Theme.RegisterControl(dlg, btnDel, "Button")
 
+    lb.GetPos(, &lbY,, &lbH)
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Save Current Settings As New Profile:"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", Format("xm w360 y{}", lbY + lbH + 12), "Save Current Settings As New Profile:"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
     editNew := dlg.Add("Edit", "xm w220")
     Theme.RegisterControl(dlg, editNew, "Edit")
@@ -5060,7 +5075,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     edObsPass := ccGui.Add("Edit", "x250 y136 w430 h26 Password", cfg.obsPassword)
     Theme.RegisterControl(ccGui, edObsPass, "Edit")
 
-    chkStreamHud := ccGui.Add("Checkbox", "x32 y182 w320 h24" (cfg.ShowStreamHud ? " Checked" : ""), "Show 4th-Row Live Stream & Virtual Camera HUD")
+    chkStreamHud := ccGui.Add("Checkbox", "x32 y182 w320 h24" (cfg.ShowStreamHud ? " Checked" : ""), "Show 4th-Row Live Stream && Virtual Camera HUD")
     chkRecTimer := ccGui.Add("Checkbox", "x360 y182 w320 h24" (cfg.ShowRecTimer ? " Checked" : ""), "Show Live Elapsed Recording / Stream Timer")
     Theme.RegisterControl(ccGui, chkStreamHud, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkRecTimer, "Checkbox", "tabText")
@@ -5179,7 +5194,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     chkSleek := ccGui.Add("Checkbox", "x32 y234 w310 h24" (cfg.SleekCorners ? " Checked" : ""), "Use Sleek Rounded-Square Corners")
     chkPulse := ccGui.Add("Checkbox", "x360 y234 w320 h24" (cfg.AggressivePulse ? " Checked" : ""), "Aggressive Breathing Pulse When Muted")
     chkClickPills := ccGui.Add("Checkbox", "x32 y264 w310 h24" (cfg.EnableHudClickActions ? " Checked" : ""), "Interactive Clickable HUD Pills (Quick Actions)")
-    chkMagSnap := ccGui.Add("Checkbox", "x360 y264 w320 h24" (cfg.EnableMagneticSnap ? " Checked" : ""), "Magnetic Screen-Edge & App Window Snapping")
+    chkMagSnap := ccGui.Add("Checkbox", "x360 y264 w320 h24" (cfg.EnableMagneticSnap ? " Checked" : ""), "Magnetic Screen-Edge && App Window Snapping")
     chkAutoDodge := ccGui.Add("Checkbox", "x32 y294 w310 h24" (cfg.HudAutoDodge ? " Checked" : ""), "Auto-Dodge HUD on Mouse Hover (15% Ghost)")
     chkClickThru := ccGui.Add("Checkbox", "x360 y294 w320 h24" (cfg.HudClickThrough ? " Checked" : ""), "Click-Through HUD Mode (Hold Alt to Drag)")
     for hCtrl in [chkShowInd, chkShowExtra, chkShowText, chkMonoIcon, chkSleek, chkPulse, chkClickPills, chkMagSnap, chkAutoDodge, chkClickThru]

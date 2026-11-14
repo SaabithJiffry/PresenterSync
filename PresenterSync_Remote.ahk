@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 3.0.0
+; Version: 3.0.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 3.0.0.0
+;@Ahk2Exe-SetVersion 3.0.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -1262,7 +1262,7 @@ ShowRemoteHelpUI(cfg, state, *) {
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x18 y16 w580", "Smart Board & Remote Companion Setup Guide"), "Text")
 
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    statusCtrl := helpGui.Add("Text", "x18 y40 w580", BuildRemoteHelpStatusLine(cfg, state))
+    statusCtrl := helpGui.Add("Text", "x18 y40 w580 h34", BuildRemoteHelpStatusLine(cfg, state))
     Theme.RegisterControl(helpGui, statusCtrl, "Text", "muted")
 
     RefreshRemoteHelp(*) {
@@ -1272,7 +1272,7 @@ ShowRemoteHelpUI(cfg, state, *) {
     if IsObject(state)
         state.refreshHelpFn := RefreshRemoteHelp
 
-    ed := AddHelpGuideEdit(helpGui, 18, 66, 580, 340, GetRemoteSetupGuideText())
+    ed := AddHelpGuideEdit(helpGui, 18, 80, 580, 326, GetRemoteSetupGuideText())
 
     btnConn := helpGui.Add("Button", "x18 y418 w140 h32", "Change Connection...")
     btnKey := helpGui.Add("Button", "x166 y418 w140 h32", "Change Mute Key...")
