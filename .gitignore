@@ -1,5 +1,7 @@
-# Compiled AutoHotkey Executables
+# Compiled AutoHotkey Executables (track official portable release binaries)
 *.exe
+!PresenterSync.exe
+!PresenterSync_Remote.exe
 *.bin
 
 # PresenterSync Configuration & Memory Files

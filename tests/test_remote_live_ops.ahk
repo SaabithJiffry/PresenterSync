@@ -6,10 +6,10 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
-#Include "%A_ScriptDir%\..\Lib\WebSocket.ahk"
-#Include "%A_ScriptDir%\..\Lib\Crypto.ahk"
-#Include "%A_ScriptDir%\..\Lib\Gdip.ahk"
-#Include "%A_ScriptDir%\..\Lib\GUI_Config.ahk"
+#Include "..\Lib\WebSocket.ahk"
+#Include "..\Lib\Crypto.ahk"
+#Include "..\Lib\Gdip.ahk"
+#Include "..\Lib\GUI_Config.ahk"
 
 Gdip.Startup()
 OnExit((*) => (Theme.Shutdown(), Gdip.Shutdown()))
@@ -54,7 +54,7 @@ testConfig := {
     SleekCorners: false,
     OpacityLevel: 220,
     IsMuted: false,
-    WriteBool: (sec, k, v) => 0
+    WriteBool: (this, sec, k, v) => 0
 }
 
 testState := {
