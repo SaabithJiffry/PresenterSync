@@ -501,9 +501,31 @@ HandleObsClose(cfg, state, ws, status, reason) {
     SyncVCamState(cfg, state, false)
     SyncStudioState(cfg, state, false)
     SyncSceneState(cfg, state, "Scene")
+    state.sceneList := []
     if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
         try state.refreshHelpFn.Call()
     SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
+}
+
+ParseObsSceneList(rawMsg) {
+    scenes := []
+    seen := Map()
+    pos := 1
+    while (pos := RegExMatch(rawMsg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &m, pos)) {
+        name := UnescapeJsonStr(m[1])
+        if (name != "" && !seen.Has(name)) {
+            scenes.Push(name)
+            seen[name] := true
+        }
+        pos += m.Len
+    }
+    if (scenes.Length > 1) {
+        rev := []
+        Loop scenes.Length
+            rev.Push(scenes[scenes.Length - A_Index + 1])
+        return rev
+    }
+    return scenes
 }
 
 PollStreamStatus(cfg, state) {
@@ -547,6 +569,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         SendObsRequest(ws, "GetRecordStatus", "InitRecState")
         SendObsRequest(ws, "GetStudioModeEnabled", "InitStudioState")
         SendObsRequest(ws, "GetCurrentProgramScene", "InitSceneState")
+        SendObsRequest(ws, "GetSceneList", "InitSceneList")
         SendObsRequest(ws, "GetStreamStatus", "InitStreamState")
         SendObsRequest(ws, "GetVirtualCamStatus", "InitVCamState")
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
@@ -594,6 +617,13 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             if (RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchScene)) {
                 SyncSceneState(cfg, state, UnescapeJsonStr(matchScene[1]))
             }
+        }
+        else if (InStr(msg, '"eventType":"SceneListChanged"') || InStr(msg, '"eventType": "SceneListChanged"')) {
+            parsedScenes := ParseObsSceneList(msg)
+            if (parsedScenes.Length > 0)
+                state.sceneList := parsedScenes
+            else if IsObject(ws)
+                SendObsRequest(ws, "GetSceneList", "InitSceneList")
         }
     }
     else if (opCode == 7) {
@@ -655,6 +685,11 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             if (RegExMatch(msg, '"currentProgramSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchScene) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchScene)) {
                 SyncSceneState(cfg, state, UnescapeJsonStr(matchScene[1]))
             }
+        }
+        else if (InStr(msg, '"requestId":"InitSceneList"') || InStr(msg, '"requestId": "InitSceneList"')) {
+            parsedScenes := ParseObsSceneList(msg)
+            if (parsedScenes.Length > 0)
+                state.sceneList := parsedScenes
         }
     }
 }

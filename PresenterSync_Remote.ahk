@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.3.0
+; Version: 2.3.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 2.3.0.0
+;@Ahk2Exe-SetVersion 2.3.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -55,6 +55,7 @@ class RemoteConfig {
     AggressivePulse := false
     EnableAudioCue := false
     EnableMuteToast := false
+    EnableHudClickActions := true
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -146,6 +147,7 @@ class RemoteConfig {
         this.AggressivePulse := this.ReadBool("Appearance", "AggressivePulse", 0)
         this.EnableAudioCue := this.ReadBool("Appearance", "EnableAudioCue", 0)
         this.EnableMuteToast := this.ReadBool("Appearance", "EnableMuteToast", 0)
+        this.EnableHudClickActions := this.ReadBool("Appearance", "EnableHudClickActions", 1)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -175,6 +177,7 @@ class RemoteConfig {
         this.AggressivePulse := false
         this.EnableAudioCue := false
         this.EnableMuteToast := false
+        this.EnableHudClickActions := true
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.ThemeMode := "System"
@@ -187,6 +190,7 @@ class RemoteConfig {
         this.WriteBool("Appearance", "AggressivePulse", false)
         this.WriteBool("Appearance", "EnableAudioCue", false)
         this.WriteBool("Appearance", "EnableMuteToast", false)
+        this.WriteBool("Appearance", "EnableHudClickActions", true)
         this.Write("Appearance", "OpacityLevel", this.OpacityLevel)
         this.Write("Appearance", "IndicatorScale", this.IndicatorScale)
         this.Write("Appearance", "ThemeMode", this.ThemeMode)
@@ -788,6 +792,13 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     if (!IsObject(state.MicGui) || hwnd != state.MicGui.Hwnd)
         return
 
+    prevX := state.savedX
+    prevY := state.savedY
+    prevMouseMode := A_CoordModeMouse
+    CoordMode("Mouse", "Screen")
+    MouseGetPos(&startMX, &startMY)
+    downTick := A_TickCount
+
     state.animSeq += 1
     SetTimer state.breathTimerFn, 0
     state.isDraggingHud := true
@@ -795,19 +806,46 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     KeyWait "LButton"
     state.isDraggingHud := false
 
-    WinGetPos(&X, &Y,,, "ahk_id " hwnd)
-    if (X != state.savedX || Y != state.savedY) {
-        state.savedX := X
-        state.savedY := Y
-        cfg.savedX := X
-        cfg.savedY := Y
-        cfg.Write("Position", "X", X)
-        cfg.Write("Position", "Y", Y)
+    MouseGetPos(&endMX, &endMY)
+    CoordMode("Mouse", prevMouseMode)
+    isShortClick := (Abs(endMX - startMX) <= 3 && Abs(endMY - startMY) <= 3 && (A_TickCount - downTick) < 400)
+
+    if (isShortClick) {
+        state.savedX := prevX
+        state.savedY := prevY
+        state.MicGui.Move(prevX, prevY, state.baseWidth, state.baseHeight)
+    } else {
+        WinGetPos(&X, &Y,,, "ahk_id " hwnd)
+        if (X != prevX || Y != prevY) {
+            state.savedX := X
+            state.savedY := Y
+            cfg.savedX := X
+            cfg.savedY := Y
+            cfg.Write("Position", "X", X)
+            cfg.Write("Position", "Y", Y)
+        }
     }
     state.currentAlpha := GetRemoteEffectiveAlpha(state)
     ApplyMicAppearance(cfg, state)
     if (cfg.ShowIndicator && state.obsConnected && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+
+    if (isShortClick)
+        HandleRemoteHudClick(cfg, state)
+}
+
+HandleRemoteHudClick(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (cfg.HasOwnProp("EnableHudClickActions") && !cfg.EnableHudClickActions)
+        return false
+    if (!cfg.EnablePointerMute) {
+        ToolTip("PresenterSync Remote: Pointer mute control is OFF")
+        SetTimer(() => ToolTip(), -1500)
+        return false
+    }
+    OnRemoteClickerMute(cfg, state)
+    return true
 }
 
 WM_REMOTE_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
@@ -896,6 +934,10 @@ BuildRemoteTrayMenu(cfg, state) {
     AppearanceMenu.Add("Mute Status Toast", ToggleMuteToast.Bind(cfg, state))
     if (cfg.EnableMuteToast)
         AppearanceMenu.Check("Mute Status Toast")
+
+    AppearanceMenu.Add("Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"))
+    if (cfg.EnableHudClickActions)
+        AppearanceMenu.Check("Interactive HUD Click Actions")
 
     AppearanceMenu.Add()
 

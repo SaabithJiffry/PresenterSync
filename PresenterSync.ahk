@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.3.0
+; Version: 2.3.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.3.0.0
+;@Ahk2Exe-SetVersion 2.3.1.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -43,6 +43,7 @@ if (AppConfig.AudioRoutingMode == 0
 ; 2. Initialize State, HUD, Tray Menu & Background Services
 AppState := OverlayState(AppConfig)
 AppState.rebuildTrayFn := BuildTrayMenu.Bind(AppConfig, AppState)
+AppState.triggerMuteFn := (*) => TriggerMute(AppConfig, AppState)
 BuildTrayMenu(AppConfig, AppState)
 InitHUD(AppConfig, AppState)
 
@@ -130,6 +131,10 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("Show Stream && VCam HUD", ToggleStreamHud.Bind(cfg, state))
     if (cfg.ShowStreamHud)
         AppearanceMenu.Check("Show Stream && VCam HUD")
+
+    AppearanceMenu.Add("Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"))
+    if (cfg.EnableHudClickActions)
+        AppearanceMenu.Check("Interactive HUD Click Actions")
 
     AppearanceMenu.Add()
 

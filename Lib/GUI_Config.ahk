@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.3.0"
+    static APP_VERSION := "2.3.1"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1111,6 +1111,7 @@ class Config {
     ShowVoiceMeter := true
     ShowRecTimer := true
     ShowStreamHud := true
+    EnableHudClickActions := true
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -1243,6 +1244,7 @@ class Config {
         this.ShowVoiceMeter := this.ReadBool("Settings", "ShowVoiceMeter", true)
         this.ShowRecTimer := this.ReadBool("Settings", "ShowRecTimer", true)
         this.ShowStreamHud := this.ReadBool("Settings", "ShowStreamHud", true)
+        this.EnableHudClickActions := this.ReadBool("Settings", "EnableHudClickActions", true)
         this.OpacityLevel := this.ReadInt("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -1293,6 +1295,7 @@ class Config {
         this.ShowVoiceMeter := true
         this.ShowRecTimer := true
         this.ShowStreamHud := true
+        this.EnableHudClickActions := true
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
@@ -1307,6 +1310,7 @@ class Config {
         this.Write("Settings", "ShowVoiceMeter", 1)
         this.Write("Settings", "ShowRecTimer", 1)
         this.Write("Settings", "ShowStreamHud", 1)
+        this.Write("Settings", "EnableHudClickActions", 1)
         this.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         this.Write("Settings", "IndicatorScale", 1.0)
         Theme.SetMode("System")
@@ -1341,6 +1345,7 @@ class OverlayState {
     recElapsedSec := 0
     studioModeActive := false
     currentSceneName := "Scene"
+    sceneList := []
     unreadChatCount := 0
     streamState := 0
     streamCongestion := 0.0
@@ -1378,6 +1383,7 @@ class OverlayState {
     rebuildTrayFn := ""
     refreshHelpFn := ""
     refreshHudFn := ""
+    triggerMuteFn := ""
 
     MicGui := ""
     RecGui := ""
@@ -3771,12 +3777,124 @@ WM_HUD_MOVE(state, wParam, lParam, msg, hwnd) {
         DragSyncTick(state)
 }
 
+SwitchObsScene(cfg, state, sceneName, *) {
+    if (sceneName = "")
+        return false
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+        esc := EscapeJsonStr(sceneName)
+        return SendObsRequest(state.obsWs, "SetCurrentProgramScene", "ClickSetScene", '{"sceneName":"' esc '"}')
+    }
+    SyncSceneState(cfg, state, sceneName)
+    return true
+}
+
+BuildSceneSwitcherMenu(cfg, state, onSelectFn := "") {
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+        SendObsRequest(state.obsWs, "GetSceneList", "InitSceneList")
+    Theme.ApplyMenuTheme()
+    sceneMenu := Menu()
+    scenes := []
+    if (state.HasOwnProp("sceneList") && IsObject(state.sceneList) && state.sceneList.Length > 0) {
+        for sc in state.sceneList
+            scenes.Push(sc)
+    } else if (state.currentSceneName != "") {
+        scenes.Push(state.currentSceneName)
+    }
+    handler := IsObject(onSelectFn) ? onSelectFn : SwitchObsScene
+    for sc in scenes {
+        disp := StrReplace(sc, "&", "&&")
+        sceneMenu.Add(disp, handler.Bind(cfg, state, sc))
+        if (sc = state.currentSceneName)
+            sceneMenu.Check(disp)
+    }
+    return { menu: sceneMenu, scenes: scenes }
+}
+
+ShowSceneSwitcherPopup(cfg, state) {
+    built := BuildSceneSwitcherMenu(cfg, state)
+    built.menu.Show()
+    return built.scenes
+}
+
+HandleHudPillClick(cfg, state, hwnd) {
+    if (!IsObject(cfg) || !IsObject(state) || !hwnd)
+        return false
+    if (cfg.HasOwnProp("EnableHudClickActions") && !cfg.EnableHudClickActions)
+        return false
+
+    if (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd) {
+        if (state.HasOwnProp("triggerMuteFn") && IsObject(state.triggerMuteFn)) {
+            state.triggerMuteFn.Call()
+        } else {
+            DispatchHostMuteToggle(cfg, state)
+            if (!cfg.EnableWS || !state.obsConnected)
+                SyncUIState(cfg, state, !state.isMuted)
+        }
+        return "mic"
+    }
+    if (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd) {
+        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+            SendObsRequest(state.obsWs, "ToggleRecord", "ClickToggleRec")
+        } else if (cfg.EnableZoom && state.zoomConnected && cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") {
+            SetKeyDelay -1, 30
+            try ControlSend(FormatSendKey(cfg.ZoomRecHotkey), , "ahk_exe Zoom.exe")
+            SetKeyDelay 50, 50
+            state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
+            SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
+        } else {
+            SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
+        }
+        return "rec"
+    }
+    if (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd) {
+        nextStudio := !state.studioModeActive
+        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+            SendObsRequest(state.obsWs, "SetStudioModeEnabled", "ClickToggleStudio", '{"studioModeEnabled":' (nextStudio ? "true" : "false") '}')
+        else
+            SyncStudioState(cfg, state, nextStudio)
+        return "studio"
+    }
+    if (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd) {
+        ShowSceneSwitcherPopup(cfg, state)
+        return "scene"
+    }
+    if (IsObject(state.VCamGui) && hwnd == state.VCamGui.Hwnd) {
+        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+            SendObsRequest(state.obsWs, "ToggleVirtualCam", "ClickToggleVCam")
+        else
+            SyncVCamState(cfg, state, !state.vcamActive)
+        return "vcam"
+    }
+    if (IsObject(state.StreamGui) && hwnd == state.StreamGui.Hwnd) {
+        statusLbl := (state.streamState == 2) ? "WARN" : ((state.streamState == 1) ? "LIVE" : "OFF")
+        congPct := Round((state.HasOwnProp("streamCongestion") ? state.streamCongestion : 0.0) * 100, 1)
+        skp := state.HasOwnProp("streamSkippedFrames") ? state.streamSkippedFrames : 0
+        reconnStr := (state.HasOwnProp("streamReconnecting") && state.streamReconnecting) ? " (Reconnecting)" : ""
+        tip := Format("Stream: {}{} | Congestion: {}% | Skipped Frames: {}", statusLbl, reconnStr, congPct, skp)
+        ToolTip(tip)
+        SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+        return "stream"
+    }
+    if (IsObject(state.ChatGui) && hwnd == state.ChatGui.Hwnd) {
+        SyncChatState(cfg, state, 0)
+        if WinExist("ahk_exe Zoom.exe")
+            try WinActivate("ahk_exe Zoom.exe")
+        return "chat"
+    }
+    return false
+}
+
 WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     if (!IsHudHwnd(state, hwnd))
         return
 
     prevX := state.savedX
     prevY := state.savedY
+    prevMouseMode := A_CoordModeMouse
+    CoordMode("Mouse", "Screen")
+    MouseGetPos(&startMX, &startMY)
+    downTick := A_TickCount
+
     state.animSeq += 1
     SetTimer state.breathTimerFn, 0
     state.activeDragHwnd := hwnd
@@ -3788,14 +3906,21 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     state.activeDragHwnd := 0
     SetTimer state.dragTimerFn, 0
 
-    WinGetPos(&X, &Y,,, "ahk_id " hwnd)
-    anchor := AnchorFromHwnd(state, hwnd, X, Y)
+    MouseGetPos(&endMX, &endMY)
+    CoordMode("Mouse", prevMouseMode)
+    isShortClick := (Abs(endMX - startMX) <= 3 && Abs(endMY - startMY) <= 3 && (A_TickCount - downTick) < 400)
 
-    if (anchor.x != prevX || anchor.y != prevY) {
-        cfg.savedX := anchor.x
-        cfg.savedY := anchor.y
-        cfg.Write("Position", "X", anchor.x)
-        cfg.Write("Position", "Y", anchor.y)
+    if (isShortClick) {
+        anchor := {x: prevX, y: prevY}
+    } else {
+        WinGetPos(&X, &Y,,, "ahk_id " hwnd)
+        anchor := AnchorFromHwnd(state, hwnd, X, Y)
+        if (anchor.x != prevX || anchor.y != prevY) {
+            cfg.savedX := anchor.x
+            cfg.savedY := anchor.y
+            cfg.Write("Position", "X", anchor.x)
+            cfg.Write("Position", "Y", anchor.y)
+        }
     }
     UpdateHudLayout(state, anchor.x, anchor.y)
     state.currentAlpha := state.baseAlpha
@@ -3807,6 +3932,9 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     }
     if (cfg.ShowIndicator && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+
+    if (isShortClick)
+        HandleHudPillClick(cfg, state, hwnd)
 }
 
 WM_RBUTTONUP(state, wParam, lParam, msg, hwnd) {

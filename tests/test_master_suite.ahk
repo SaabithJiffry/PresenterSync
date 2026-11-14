@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.3.0
-;              and PresenterSync Remote v2.3.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.3.1
+;              and PresenterSync Remote v2.3.1 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.3.0", UIConstants.APP_VERSION == "2.3.0")
+Assert("APP_VERSION updated to 2.3.1", UIConstants.APP_VERSION == "2.3.1")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.3.0 and Remote Host",
-    InStr(summaryTxt, "v2.3.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.3.1 and Remote Host",
+    InStr(summaryTxt, "v2.3.1") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -855,14 +855,15 @@ mockWs6 := MockWebSocket()
 cfgStrm.EnableWS := true
 stStrm.obsWs := mockWs6
 HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":2,"d":{"negotiatedRpcVersion":1}}')
-hasAll6 := (mockWs6.sent.Length == 6)
+hasAll7 := (mockWs6.sent.Length == 7)
     && InStr(mockWs6.sent[1], '"InitState"')
     && InStr(mockWs6.sent[2], '"InitRecState"')
     && InStr(mockWs6.sent[3], '"InitStudioState"')
     && InStr(mockWs6.sent[4], '"InitSceneState"')
-    && InStr(mockWs6.sent[5], '"InitStreamState"')
-    && InStr(mockWs6.sent[6], '"InitVCamState"')
-Assert("OpCode 2 dispatches all 6 initial OBS state queries (incl. Stream & VCam)", hasAll6)
+    && InStr(mockWs6.sent[5], '"InitSceneList"')
+    && InStr(mockWs6.sent[6], '"InitStreamState"')
+    && InStr(mockWs6.sent[7], '"InitVCamState"')
+Assert("OpCode 2 dispatches all 7 initial OBS state queries (incl. SceneList, Stream & VCam)", hasAll7)
 
 HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":5,"d":{"eventType":"StreamStateChanged","eventData":{"outputActive":true,"outputState":"OBS_WEBSOCKET_OUTPUT_STARTED"}}}')
 Assert("StreamStateChanged outputActive=true sets streamState=1", stStrm.streamState == 1)
@@ -902,6 +903,71 @@ SyncStreamState(cfgStrm, stStrm, 0)
 stStrm.MicGui.Destroy(), stStrm.RecGui.Destroy(), stStrm.ChatGui.Destroy()
 stStrm.StudioGui.Destroy(), stStrm.SceneGui.Destroy(), stStrm.StreamGui.Destroy(), stStrm.VCamGui.Destroy()
 
+; ==============================================================================
+; SECTION 14: STAGE 7 (v2.3.1) - INTERACTIVE HUD PILLS & SCENE SWITCHER
+; ==============================================================================
+cfgClick := Config(testIni)
+Assert("EnableHudClickActions defaults to true", cfgClick.EnableHudClickActions == true)
+
+stClick := OverlayState(cfgClick)
+InitHUD(cfgClick, stClick, false)
+clickCb := { tray: 0, trig: 0 }
+stClick.rebuildTrayFn := (*) => (clickCb.tray += 1)
+stClick.triggerMuteFn := (*) => (clickCb.trig += 1)
+
+ToggleBoolSetting(cfgClick, stClick, "EnableHudClickActions")
+cfgClickReload := Config(testIni)
+Assert("Toggle EnableHudClickActions persists false & refreshes tray",
+    cfgClick.EnableHudClickActions == false && cfgClickReload.EnableHudClickActions == false && clickCb.tray == 1)
+Assert("HandleHudPillClick returns false when EnableHudClickActions=false",
+    HandleHudPillClick(cfgClick, stClick, stClick.MicGui.Hwnd) == false && clickCb.trig == 0)
+
+cfgClick.ResetAppearance()
+Assert("ResetAppearance restores EnableHudClickActions back to true", cfgClick.EnableHudClickActions == true)
+
+sceneJson := '{"op":7,"d":{"requestType":"GetSceneList","requestId":"InitSceneList","requestStatus":{"result":true},"responseData":{"currentProgramSceneName":"Main","scenes":[{"sceneIndex":0,"sceneName":"Outro"},{"sceneIndex":1,"sceneName":"Q&A"},{"sceneIndex":2,"sceneName":"Main"}]}}}'
+mockWs7 := MockWebSocket()
+cfgClick.EnableWS := true
+stClick.obsConnected := true
+stClick.obsWs := mockWs7
+HandleObsMessage(cfgClick, stClick, mockWs7, sceneJson)
+Assert("InitSceneList populates reversed OBS scene list incl. Q&A",
+    stClick.sceneList.Length == 3 && stClick.sceneList[1] == "Main" && stClick.sceneList[2] == "Q&A" && stClick.sceneList[3] == "Outro")
+
+menuBuilt := BuildSceneSwitcherMenu(cfgClick, stClick)
+Assert("BuildSceneSwitcherMenu includes cached scenes & dispatches GetSceneList refresh",
+    menuBuilt.scenes.Length == 3 && InStr(mockWs7.sent[1], '"GetSceneList"'))
+
+SwitchObsScene(cfgClick, stClick, 'Q&A "Live"')
+Assert("SwitchObsScene sends SetCurrentProgramScene with escaped scene name",
+    mockWs7.sent.Length == 2 && InStr(mockWs7.sent[2], '"SetCurrentProgramScene"') && InStr(mockWs7.sent[2], 'Q&A \"Live\"'))
+
+Assert("HandleHudPillClick MicGui invokes triggerMuteFn",
+    HandleHudPillClick(cfgClick, stClick, stClick.MicGui.Hwnd) == "mic" && clickCb.trig == 1)
+Assert("HandleHudPillClick RecGui sends ToggleRecord when OBS connected",
+    HandleHudPillClick(cfgClick, stClick, stClick.RecGui.Hwnd) == "rec" && InStr(mockWs7.sent[3], '"ToggleRecord"'))
+Assert("HandleHudPillClick StudioGui sends SetStudioModeEnabled",
+    HandleHudPillClick(cfgClick, stClick, stClick.StudioGui.Hwnd) == "studio" && InStr(mockWs7.sent[4], '"SetStudioModeEnabled"'))
+Assert("HandleHudPillClick VCamGui sends ToggleVirtualCam",
+    HandleHudPillClick(cfgClick, stClick, stClick.VCamGui.Hwnd) == "vcam" && InStr(mockWs7.sent[5], '"ToggleVirtualCam"'))
+
+stClick.unreadChatCount := 3
+Assert("HandleHudPillClick ChatGui clears unreadChatCount & StreamGui shows status tooltip",
+    HandleHudPillClick(cfgClick, stClick, stClick.ChatGui.Hwnd) == "chat" && stClick.unreadChatCount == 0
+    && HandleHudPillClick(cfgClick, stClick, stClick.StreamGui.Hwnd) == "stream")
+ToolTip()
+
+cfgClick.EnableWS := false
+stClick.obsConnected := false
+SwitchObsScene(cfgClick, stClick, "OfflineDeck")
+HandleHudPillClick(cfgClick, stClick, stClick.RecGui.Hwnd)
+Assert("Offline click fallback updates local recState and SwitchObsScene updates currentSceneName",
+    stClick.recState == 1 && stClick.currentSceneName == "OfflineDeck")
+SyncRecState(cfgClick, stClick, 0)
+
+stClick.MicGui.Destroy(), stClick.RecGui.Destroy(), stClick.ChatGui.Destroy()
+stClick.StudioGui.Destroy(), stClick.SceneGui.Destroy(), stClick.StreamGui.Destroy(), stClick.VCamGui.Destroy()
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -909,7 +975,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.1) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
