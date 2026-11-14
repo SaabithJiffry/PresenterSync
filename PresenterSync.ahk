@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.2.4
+; Version: 2.2.5
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.2.4.0
+;@Ahk2Exe-SetVersion 2.2.5.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -110,6 +110,14 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("Aggressive Mute Pulse", TogglePulse.Bind(cfg, state))
     if (cfg.AggressivePulse)
         AppearanceMenu.Check("Aggressive Mute Pulse")
+
+    AppearanceMenu.Add("Mute Audio Cue (Beep)", ToggleAudioCue.Bind(cfg, state))
+    if (cfg.EnableAudioCue)
+        AppearanceMenu.Check("Mute Audio Cue (Beep)")
+
+    AppearanceMenu.Add("Mute Status Toast", ToggleMuteToast.Bind(cfg, state))
+    if (cfg.EnableMuteToast)
+        AppearanceMenu.Check("Mute Status Toast")
 
     AppearanceMenu.Add()
 

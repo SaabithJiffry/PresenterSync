@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.2.4
+; Version: 2.2.5
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 2.2.4.0
+;@Ahk2Exe-SetVersion 2.2.5.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -51,6 +51,8 @@ class RemoteConfig {
     MonoIcon := false
     SleekCorners := false
     AggressivePulse := false
+    EnableAudioCue := false
+    EnableMuteToast := false
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -138,6 +140,8 @@ class RemoteConfig {
         this.MonoIcon := this.ReadBool("Appearance", "MonoIcon", 0)
         this.SleekCorners := this.ReadBool("Appearance", "SleekCorners", 0)
         this.AggressivePulse := this.ReadBool("Appearance", "AggressivePulse", 0)
+        this.EnableAudioCue := this.ReadBool("Appearance", "EnableAudioCue", 0)
+        this.EnableMuteToast := this.ReadBool("Appearance", "EnableMuteToast", 0)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -165,6 +169,8 @@ class RemoteConfig {
         this.MonoIcon := false
         this.SleekCorners := false
         this.AggressivePulse := false
+        this.EnableAudioCue := false
+        this.EnableMuteToast := false
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.ThemeMode := "System"
@@ -174,6 +180,8 @@ class RemoteConfig {
         this.WriteBool("Appearance", "MonoIcon", false)
         this.WriteBool("Appearance", "SleekCorners", false)
         this.WriteBool("Appearance", "AggressivePulse", false)
+        this.WriteBool("Appearance", "EnableAudioCue", false)
+        this.WriteBool("Appearance", "EnableMuteToast", false)
         this.Write("Appearance", "OpacityLevel", this.OpacityLevel)
         this.Write("Appearance", "IndicatorScale", this.IndicatorScale)
         this.Write("Appearance", "ThemeMode", this.ThemeMode)
@@ -635,6 +643,10 @@ SyncRemoteMuteState(cfg, state, newMuted) {
         cfg.IsMuted := newMuted
         cfg.WriteBool("Settings", "IsMuted", newMuted)
         PlayMuteAnimation(cfg, state)
+        if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
+            PlayMuteAudioCue(newMuted)
+        if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
+            ShowMuteToast(newMuted)
     }
 }
 
@@ -868,6 +880,14 @@ BuildRemoteTrayMenu(cfg, state) {
     AppearanceMenu.Add("Aggressive Mute Pulse", ToggleRemotePulse.Bind(cfg, state))
     if (cfg.AggressivePulse)
         AppearanceMenu.Check("Aggressive Mute Pulse")
+
+    AppearanceMenu.Add("Mute Audio Cue (Beep)", ToggleAudioCue.Bind(cfg, state))
+    if (cfg.EnableAudioCue)
+        AppearanceMenu.Check("Mute Audio Cue (Beep)")
+
+    AppearanceMenu.Add("Mute Status Toast", ToggleMuteToast.Bind(cfg, state))
+    if (cfg.EnableMuteToast)
+        AppearanceMenu.Check("Mute Status Toast")
 
     AppearanceMenu.Add()
 
