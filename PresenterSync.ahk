@@ -56,6 +56,7 @@ if (AppConfig.EnableWS)
     SetTimer AppState.obsTimerFn, -UIConstants.OBS_INIT_DELAY_MS
 
 UpdateZoomMonitorTimer(AppConfig, AppState)
+UpdateHostInternetRelay(AppConfig, AppState)
 
 ; --- CUSTOM TRAY MENU ---
 BuildTrayMenu(cfg, state) {
@@ -173,7 +174,16 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI.Bind(cfg))
     SettingsMenu.Add("Change Zoom Shortcuts", ChangeZoomShortcutsUI.Bind(cfg))
     SettingsMenu.Add()
-    SettingsMenu.Add("Remote Companion Info...", (*) => ShowRemoteCompanionInfo(cfg))
+    RemoteNetMenu := Menu()
+    RemoteNetMenu.Add("Same Router (LAN)", SetRemoteNetworkMode.Bind(cfg, state, "LAN"))
+    RemoteNetMenu.Add("Different Networks (Internet)", SetRemoteNetworkMode.Bind(cfg, state, "Internet"))
+    if (cfg.RemoteNetworkMode = "Internet")
+        RemoteNetMenu.Check("Different Networks (Internet)")
+    else
+        RemoteNetMenu.Check("Same Router (LAN)")
+    SettingsMenu.Add("Remote Network Mode", RemoteNetMenu)
+    SettingsMenu.Add("Remote Companion Info...", (*) => ShowRemoteCompanionInfo(cfg, state))
+    SettingsMenu.Add("Close Remote Companion...", PromptCloseRemoteCompanion.Bind(cfg, state))
     SettingsMenu.Add()
     SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI.Bind(cfg))
     SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI.Bind(cfg))
@@ -190,6 +200,7 @@ BuildTrayMenu(cfg, state) {
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
     if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
         A_TrayMenu.Check("Suspend All Hotkeys")
+    A_TrayMenu.Add("Close Remote Companion...", PromptCloseRemoteCompanion.Bind(cfg, state))
     A_TrayMenu.Add("Exit PresenterSync", ExitTrayApp)
 }
 

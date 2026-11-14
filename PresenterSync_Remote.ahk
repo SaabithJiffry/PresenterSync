@@ -32,6 +32,8 @@ A_IconTip := "PresenterSync Remote v" UIConstants.APP_VERSION
 ; === CONFIGURATION & STATE ===
 class RemoteConfig {
     ConfigFile := ""
+    NetworkMode := "LAN"
+    InternetPairingCode := ""
     HostAddress := "127.0.0.1"
     HostPort := "4455"
     ObsPassword := ""
@@ -40,6 +42,8 @@ class RemoteConfig {
 
     HwMuteHotkey := "b"
     EnablePointerMute := true
+    PptHotkey := "^F12"
+    ExitHotkey := "!+F12"
 
     ShowIndicator := true
     ThemeMode := "System"
@@ -101,6 +105,9 @@ class RemoteConfig {
     }
 
     Load() {
+        rawNetMode := StrLower(Trim(this.Read("Connection", "NetworkMode", "LAN")))
+        this.NetworkMode := (rawNetMode = "internet") ? "Internet" : "LAN"
+        this.InternetPairingCode := Trim(this.Read("Connection", "InternetPairingCode", ""))
         this.HostAddress := this.Read("Connection", "HostAddress", "127.0.0.1")
         rawPort := Trim(this.Read("Connection", "HostPort", "4455"))
         this.HostPort := (IsInteger(rawPort) && Integer(rawPort) >= 1 && Integer(rawPort) <= 65535) ? String(Integer(rawPort)) : "4455"
@@ -114,6 +121,13 @@ class RemoteConfig {
 
         this.HwMuteHotkey := this.Read("Pointer", "HwMuteHotkey", "b")
         this.EnablePointerMute := this.ReadBool("Pointer", "EnablePointerMute", 1)
+
+        this.PptHotkey := this.Read("Shortcuts", "PptHotkey", "^F12")
+        if (this.PptHotkey = "")
+            this.PptHotkey := "^F12"
+        this.ExitHotkey := this.Read("Shortcuts", "ExitHotkey", "!+F12")
+        if (this.ExitHotkey = "")
+            this.ExitHotkey := "!+F12"
 
         this.ShowIndicator := this.ReadBool("Appearance", "ShowIndicator", 1)
         rawTheme := StrLower(Trim(this.Read("Appearance", "ThemeMode", "System")))
@@ -189,6 +203,9 @@ class RemoteState {
     refreshHelpFn := ""
     pointerHotIfFn := ""
     activePointerKey := ""
+    activeToggleMuteHk := ""
+    activeExitHk := ""
+    onRemoteCloseSignal := ""
 
     MicGui := ""
     IconFont := ""
@@ -264,9 +281,10 @@ AppState.rebuildTrayFn := BuildRemoteTrayMenu.Bind(AppConfig, AppState)
 InitRemoteHUD(AppConfig, AppState)
 BuildRemoteTrayMenu(AppConfig, AppState)
 RegisterRemotePointerHotkey(AppConfig, AppState)
+RegisterRemoteAppHotkeys(AppConfig, AppState)
 
 ; === FIRST-RUN / CONNECTION PROMPT ===
-if (AppConfig.FirstRun || AppConfig.HostAddress = "") {
+if (AppConfig.FirstRun || (AppConfig.NetworkMode = "Internet" ? (AppConfig.InternetPairingCode = "") : (AppConfig.HostAddress = ""))) {
     ShowRemoteConnectionUI(AppConfig, AppState, true)
 } else {
     ; Start network connection
@@ -294,13 +312,65 @@ ConnectToRemoteOBS(cfg, state) {
         state.obsWs := ""
     }
 
+    if (cfg.NetworkMode = "Internet") {
+        pairCode := Trim(cfg.InternetPairingCode)
+        if (pairCode = "") {
+            if (IsObject(state.rebuildTrayFn))
+                try state.rebuildTrayFn.Call()
+            return
+        }
+        topic := GetInternetRelayTopic(pairCode)
+        wsUrl := "wss://ntfy.sh/" topic "/ws"
+        candidate := {
+            host: "ntfy.sh",
+            port: "443",
+            scheme: "wss",
+            path: "/" topic "/ws",
+            url: wsUrl,
+            raw: "Internet (" pairCode ")"
+        }
+        try {
+            state.obsWs := WebSocket(wsUrl, {
+                message: HandleRemoteObsMessage.Bind(cfg, state, candidate),
+                close: HandleRemoteObsClose.Bind(cfg, state, candidate)
+            }, true, "", 3500)
+            state.obsConnected := true
+            state.connStatus := "connected"
+            state.activeHost := candidate.raw
+            keepAliveMs := Max(10000, cfg.HeartbeatSeconds * 1000)
+            SetTimer state.heartbeatTimerFn, keepAliveMs
+            state.currentAlpha := state.baseAlpha
+            if IsObject(state.MicGui)
+                ApplyMicAppearance(cfg, state)
+            if (state.isMuted && cfg.ShowIndicator) {
+                state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
+                SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+            }
+            authTok := GetInternetRelayAuthToken(pairCode, cfg.ObsPassword)
+            mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+            PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
+            if (IsObject(state.rebuildTrayFn))
+                try state.rebuildTrayFn.Call()
+        } catch {
+            state.obsWs := ""
+            state.obsConnected := false
+            SetTimer state.breathTimerFn, 0
+            if (IsObject(state.MicGui)) {
+                state.currentAlpha := GetRemoteEffectiveAlpha(state)
+                ApplyMicAppearance(cfg, state)
+            }
+            FailoverToNextCandidate(cfg, state)
+        }
+        return
+    }
+
     if (state.candidates.Length == 0 || state.candidateIndex > state.candidates.Length) {
         state.candidates := ParseCandidateEndpoints(cfg.HostAddress, cfg.HostPort)
         state.candidateIndex := 1
     }
 
     candidate := state.candidates[state.candidateIndex]
-    wsUrl := "ws://" candidate.host ":" candidate.port
+    wsUrl := (candidate.HasOwnProp("url") && candidate.url != "") ? candidate.url : ("ws://" candidate.host ":" candidate.port)
 
     try {
         state.obsWs := WebSocket(wsUrl, {
@@ -319,6 +389,12 @@ ConnectToRemoteOBS(cfg, state) {
 }
 
 FailoverToNextCandidate(cfg, state) {
+    if (cfg.NetworkMode = "Internet") {
+        SetTimer state.reconnectTimerFn, -2500
+        if (IsObject(state.rebuildTrayFn))
+            try state.rebuildTrayFn.Call()
+        return
+    }
     state.candidateIndex += 1
     if (state.candidateIndex <= state.candidates.Length) {
         ; Probe next candidate immediately
@@ -373,6 +449,53 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
     if (IsObject(ws) && IsObject(state.obsWs) && ws != state.obsWs)
         return
     msg := (Type(rawMsg) == "Buffer") ? StrGet(rawMsg, "UTF-8") : String(rawMsg)
+
+    pkt := ParseRelayPacket(msg)
+    if IsObject(pkt) {
+        if (pkt.src != "host")
+            return
+        expectedTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+        if (pkt.cmd = "auth_error" || pkt.auth != expectedTok) {
+            state.connStatus := "auth_failed"
+            state.obsConnected := false
+            SetTimer state.reconnectTimerFn, 0
+            SetTimer state.heartbeatTimerFn, 0
+            SetTimer state.breathTimerFn, 0
+            if IsObject(ws)
+                try ws.shutdown()
+            if (state.obsWs == ws)
+                state.obsWs := ""
+            if (IsObject(state.MicGui)) {
+                state.currentAlpha := GetRemoteEffectiveAlpha(state)
+                ApplyMicAppearance(cfg, state)
+            }
+            if (IsObject(state.rebuildTrayFn))
+                try state.rebuildTrayFn.Call()
+            TrayTip("Internet Relay authentication failed. Check password in Change OBS Connection.", "PresenterSync Remote", 3)
+            return
+        }
+        if (pkt.cmd = "state") {
+            if (!state.obsConnected || state.connStatus != "connected") {
+                state.obsConnected := true
+                state.connStatus := "connected"
+                state.activeHost := candidate.raw
+                state.currentAlpha := state.baseAlpha
+                if IsObject(state.MicGui)
+                    ApplyMicAppearance(cfg, state)
+                if (IsObject(state.rebuildTrayFn))
+                    try state.rebuildTrayFn.Call()
+            }
+            SyncRemoteMuteState(cfg, state, (pkt.data = "1" || pkt.data = "true"))
+        } else if (pkt.cmd = "close_remote") {
+            if (state.HasOwnProp("onRemoteCloseSignal") && IsObject(state.onRemoteCloseSignal))
+                state.onRemoteCloseSignal.Call()
+            else
+                ExitApp()
+        }
+        return
+    }
+    if (cfg.NetworkMode = "Internet")
+        return
 
     if (!RegExMatch(msg, '"op"\s*:\s*(\d+)', &matchOp))
         return
@@ -429,6 +552,13 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     SyncRemoteMuteState(cfg, state, isMutedNow)
                 }
             }
+        } else if (RegExMatch(msg, '"eventType"\s*:\s*"CustomEvent"')) {
+            if (RegExMatch(msg, '"(?:command|presenterSyncAction)"\s*:\s*"CloseRemote"')) {
+                if (state.HasOwnProp("onRemoteCloseSignal") && IsObject(state.onRemoteCloseSignal))
+                    state.onRemoteCloseSignal.Call()
+                else
+                    ExitApp()
+            }
         }
     }
     else if (opCode == 7) {
@@ -481,6 +611,13 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
 RemoteHeartbeatTick(cfg, state) {
     if (!state.obsConnected || !IsObject(state.obsWs))
         return
+    if (cfg.NetworkMode = "Internet") {
+        topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+        mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+        PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
+        return
+    }
     ; Lightweight request to keep TCP session alive
     SendObsRequest(state.obsWs, "GetVersion", "KeepAlive")
 }
@@ -501,6 +638,9 @@ RemoveToolTip() {
 }
 
 OnRemoteClickerMute(cfg, state, *) {
+    if (!cfg.EnablePointerMute)
+        return
+
     static lastTick := 0
     now := A_TickCount
     if (now - lastTick < 150) ; 150ms hardware debounce shield
@@ -510,6 +650,17 @@ OnRemoteClickerMute(cfg, state, *) {
     if (!state.obsConnected || !IsObject(state.obsWs)) {
         ToolTip "PresenterSync Remote: Not connected to OBS host"
         SetTimer RemoveToolTip, -2000
+        return
+    }
+
+    if (cfg.NetworkMode = "Internet") {
+        topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+        mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+        if (!PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "toggle_mute", "1", authTok), "https://ntfy.sh", mockWs)) {
+            ToolTip "PresenterSync Remote: Internet Relay unreachable"
+            SetTimer RemoveToolTip, -2000
+        }
         return
     }
 
@@ -549,6 +700,40 @@ UnregisterRemotePointerHotkey(cfg, state) {
         }
     }
     state.activePointerKey := ""
+}
+
+ExitRemoteApp(*) {
+    ExitApp()
+}
+
+RegisterRemoteAppHotkeys(cfg, state) {
+    UnregisterRemoteAppHotkeys(cfg, state)
+    if (cfg.PptHotkey != "" && cfg.PptHotkey != "None") {
+        try {
+            Hotkey cfg.PptHotkey, ToggleRemotePointerMute.Bind(cfg, state), "On"
+            state.activeToggleMuteHk := cfg.PptHotkey
+        }
+    }
+    if (cfg.ExitHotkey != "" && cfg.ExitHotkey != "None") {
+        try {
+            Hotkey cfg.ExitHotkey, ExitRemoteApp, "On"
+            state.activeExitHk := cfg.ExitHotkey
+        }
+    }
+}
+
+UnregisterRemoteAppHotkeys(cfg, state) {
+    hkToggle := (state.activeToggleMuteHk != "") ? state.activeToggleMuteHk : cfg.PptHotkey
+    if (hkToggle != "" && hkToggle != "None") {
+        try Hotkey hkToggle, "Off"
+    }
+    state.activeToggleMuteHk := ""
+
+    hkExit := (state.activeExitHk != "") ? state.activeExitHk : cfg.ExitHotkey
+    if (hkExit != "" && hkExit != "None") {
+        try Hotkey hkExit, "Off"
+    }
+    state.activeExitHk := ""
 }
 
 ; --- SINGLE-PILL HUD CREATION & DRAGGING ---
@@ -738,6 +923,7 @@ BuildRemoteTrayMenu(cfg, state) {
     A_TrayMenu.Add("Pointer Controls", PointerMenu)
 
     A_TrayMenu.Add("Change OBS Connection...", (*) => ShowRemoteConnectionUI(cfg, state, false))
+    A_TrayMenu.Add("Change App Shortcuts...", (*) => ChangeRemoteAppHotkeysUI(cfg, state))
     A_TrayMenu.Add()
 
     ; 5. HELP, SAFETY & EXIT
@@ -746,7 +932,7 @@ BuildRemoteTrayMenu(cfg, state) {
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
     if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
         A_TrayMenu.Check("Suspend All Hotkeys")
-    A_TrayMenu.Add("Exit PresenterSync Remote", (*) => ExitApp())
+    A_TrayMenu.Add("Exit PresenterSync Remote", ExitRemoteApp)
 
     if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
         try state.refreshHelpFn.Call()
@@ -823,13 +1009,18 @@ ResetRemoteAppearanceAction(cfg, state, *) {
 }
 
 ToggleRemotePointerMute(cfg, state, *) {
+    ToolTip()
     cfg.EnablePointerMute := !cfg.EnablePointerMute
     cfg.WriteBool("Pointer", "EnablePointerMute", cfg.EnablePointerMute)
-    if (cfg.EnablePointerMute)
+    if (cfg.EnablePointerMute) {
         RegisterRemotePointerHotkey(cfg, state)
-    else
+        ToolTip "Pointer Mute Control: ON"
+    } else {
         UnregisterRemotePointerHotkey(cfg, state)
+        ToolTip "Pointer Mute Control: OFF"
+    }
     BuildRemoteTrayMenu(cfg, state)
+    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 ToggleRemoteSuspend(*) {
@@ -866,13 +1057,44 @@ ChangeRemotePointerKeyUI(cfg, state, *) {
     ))
 }
 
+ChangeRemoteAppHotkeysUI(cfg, state, *) {
+    SaveRemoteAppHk(values, ctrls, dlg) {
+        UnregisterRemoteAppHotkeys(cfg, state)
+        cfg.PptHotkey := values["ppt"]
+        cfg.ExitHotkey := values["exit"]
+        cfg.Write("Shortcuts", "PptHotkey", cfg.PptHotkey)
+        cfg.Write("Shortcuts", "ExitHotkey", cfg.ExitHotkey)
+        RegisterRemoteAppHotkeys(cfg, state)
+        BuildRemoteTrayMenu(cfg, state)
+        if dlg.HasOwnProp("_releaseState")
+            dlg._releaseState.Call()
+        dlg.Destroy()
+        TrayTip("Remote app shortcuts updated (" FormatHK(cfg.PptHotkey) " / " FormatHK(cfg.ExitHotkey) ").", "PresenterSync Remote", 1)
+    }
+
+    elements := [
+        {type: "Text", opts: "xm w170 h25 +0x200", text: "Toggle Pointer Mute:"},
+        {type: "Hotkey", id: "ppt", opts: "x+10 yp w130 h25", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Text", opts: "xm y+8 w170 h25 +0x200", text: "Exit PresenterSync Remote:"},
+        {type: "Hotkey", id: "exit", opts: "x+10 yp w130 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."}
+    ]
+
+    return BuildSettingsWindow("Edit Remote App Shortcuts", elements, SaveRemoteAppHk, {
+        saveBtnText: "Save & Apply",
+        saveBtnOpts: "xm w310 h32 Default y+16"
+    })
+}
+
 BuildRemoteHelpStatusLine(cfg, state) {
     connState := (state.connStatus = "auth_failed") ? "Auth Failed (Check Password)"
         : ((state.obsConnected && state.connStatus = "mic_error") ? ("Connected - Mic '" cfg.TargetMicName "' Not Found")
         : (state.obsConnected ? ("Connected to " state.activeHost) : "Searching / Disconnected"))
     clickerText := FormatHK(cfg.HwMuteHotkey) (cfg.EnablePointerMute ? "" : " (Disabled)")
-    hostText := (cfg.HostAddress != "" ? cfg.HostAddress : "(Not Set)") ":" cfg.HostPort
-    return "Current Status: " connState "  |  Clicker Key: " clickerText "  |  Host: " hostText
+    hostText := (cfg.NetworkMode = "Internet")
+        ? ("Internet (" (cfg.InternetPairingCode != "" ? cfg.InternetPairingCode : "Not Set") ")")
+        : ((cfg.HostAddress != "" ? cfg.HostAddress : "(Not Set)") ":" cfg.HostPort)
+    scText := "Toggle Mute: " FormatHK(cfg.PptHotkey) "  |  Exit: " FormatHK(cfg.ExitHotkey)
+    return "Current Status: " connState "  |  Clicker Key: " clickerText "  |  Host: " hostText "  |  " scText
 }
 
 ShowRemoteHelpUI(cfg, state, *) {
@@ -903,11 +1125,13 @@ ShowRemoteHelpUI(cfg, state, *) {
 
     ed := AddHelpGuideEdit(helpGui, 18, 66, 580, 340, GetRemoteSetupGuideText())
 
-    btnConn := helpGui.Add("Button", "x18 y418 w186 h32", "Change OBS Connection...")
-    btnKey := helpGui.Add("Button", "x215 y418 w186 h32", "Change Mute Button...")
-    btnClose := helpGui.Add("Button", "x412 y418 w186 h32 Default", "Close")
+    btnConn := helpGui.Add("Button", "x18 y418 w140 h32", "Change Connection...")
+    btnKey := helpGui.Add("Button", "x166 y418 w140 h32", "Change Mute Key...")
+    btnSc := helpGui.Add("Button", "x314 y418 w140 h32", "Edit App Shortcuts...")
+    btnClose := helpGui.Add("Button", "x462 y418 w136 h32 Default", "Close")
     Theme.RegisterControl(helpGui, btnConn, "Button", "accent")
     Theme.RegisterControl(helpGui, btnKey, "Button")
+    Theme.RegisterControl(helpGui, btnSc, "Button")
     Theme.RegisterControl(helpGui, btnClose, "Button")
 
     CloseRemoteHelp(*) {
@@ -918,6 +1142,7 @@ ShowRemoteHelpUI(cfg, state, *) {
     }
     btnConn.OnEvent("Click", (*) => ShowRemoteConnectionUI(cfg, state, false))
     btnKey.OnEvent("Click", (*) => ChangeRemotePointerKeyUI(cfg, state))
+    btnSc.OnEvent("Click", (*) => ChangeRemoteAppHotkeysUI(cfg, state))
     btnClose.OnEvent("Click", CloseRemoteHelp)
     helpGui.OnEvent("Close", CloseRemoteHelp)
     helpGui.OnEvent("Escape", CloseRemoteHelp)
@@ -982,44 +1207,77 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     dlg._testSeq := 0
     dlg._testWs := ""
     dlg._testTimer := ""
+    dlg.MarginX := 20
+    dlg.MarginY := 16
     Theme.ApplyToWindow(dlg)
     Theme.NamedWindows["OBS Remote Connection"] := dlg
 
     dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360", "Connect to Primary Streaming Host"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360", "Connect to Primary Streaming Host"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+4", "Enter Host IP / Computer Name (Supports comma-separated failover candidates):"), "Text", "muted")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+4", "Choose Same Router (LAN) or Different Networks (Over the Internet):"), "Text", "muted")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+12", "Host Address (e.g. STUDIO-PC.local, 192.168.1.50):"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Network Mode:"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editHost := dlg.Add("Edit", "w360", cfg.HostAddress)
+    netChoice := (cfg.NetworkMode = "Internet") ? 2 : 1
+    ddlNetMode := dlg.Add("DropDownList", "xm w360 Choose" netChoice, [
+        "1: Same Router / Local Wi-Fi or Ethernet (LAN - Default)",
+        "2: Different Networks / Over the Internet (WAN Relay)"
+    ])
+    Theme.RegisterControl(dlg, ddlNetMode, "DropDownList")
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    lblPair := dlg.Add("Text", "xm w360 y+10", "Internet Pairing Code (from Primary -> Remote Companion Info):")
+    Theme.RegisterControl(dlg, lblPair, "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    editPair := dlg.Add("Edit", "xm w360", cfg.InternetPairingCode)
+    Theme.RegisterControl(dlg, editPair, "Edit")
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    lblHost := dlg.Add("Text", "xm w360 y+8", "LAN Host Address (e.g. STUDIO-PC.local, 192.168.1.50):")
+    Theme.RegisterControl(dlg, lblHost, "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    editHost := dlg.Add("Edit", "xm w360", cfg.HostAddress)
     Theme.RegisterControl(dlg, editHost, "Edit")
 
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+8", "OBS WebSocket Port:"), "Text")
-    editPort := dlg.Add("Edit", "w360", cfg.HostPort)
+    lblPort := dlg.Add("Text", "xm w360 y+8", "OBS WebSocket Port:")
+    Theme.RegisterControl(dlg, lblPort, "Text")
+    editPort := dlg.Add("Edit", "xm w360", cfg.HostPort)
     Theme.RegisterControl(dlg, editPort, "Edit")
 
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+8", "OBS WebSocket Password (Optional):"), "Text")
-    editPw := dlg.Add("Edit", "w360 Password", cfg.ObsPassword)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "OBS WebSocket Password (Optional):"), "Text")
+    editPw := dlg.Add("Edit", "xm w360 Password", cfg.ObsPassword)
     Theme.RegisterControl(dlg, editPw, "Edit")
 
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+8", "Exact Audio Source Name:"), "Text")
-    editMic := dlg.Add("Edit", "w360", cfg.TargetMicName)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "Exact Audio Source Name:"), "Text")
+    editMic := dlg.Add("Edit", "xm w360", cfg.TargetMicName)
     Theme.RegisterControl(dlg, editMic, "Edit")
 
-    statusTxt := dlg.Add("Text", "w360 y+10 Center", "Status: Ready to test or connect")
+    UpdateModeFields(*) {
+        isInternet := (ddlNetMode.Value == 2)
+        lblPair.Enabled := isInternet
+        editPair.Enabled := isInternet
+        lblHost.Enabled := !isInternet
+        editHost.Enabled := !isInternet
+        lblPort.Enabled := !isInternet
+        editPort.Enabled := !isInternet
+    }
+    ddlNetMode.OnEvent("Change", UpdateModeFields)
+    UpdateModeFields()
+
+    statusTxt := dlg.Add("Text", "xm w360 y+10 Center", "Status: Ready to test or connect")
     Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
 
-    btnTest := dlg.Add("Button", "w230 h30 y+8", "Test Connection")
-    btnGuide := dlg.Add("Button", "x+10 w120 h30", "Setup Guide")
+    btnTest := dlg.Add("Button", "xm w230 h30 y+8", "Test Connection")
+    btnGuide := dlg.Add("Button", "x+10 yp w120 h30", "Setup Guide")
     Theme.RegisterControl(dlg, btnTest, "Button")
     Theme.RegisterControl(dlg, btnGuide, "Button")
 
-    btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt))
+    btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt, (ddlNetMode.Value == 2 ? "Internet" : "LAN"), editPair.Value))
     btnGuide.OnEvent("Click", (*) => ShowRemoteHelpUI(cfg, state))
 
-    btnSave := dlg.Add("Button", "x16 w360 h32 y+12 Default", isInitialBoot ? "Connect & Start" : "Save & Reconnect")
+    btnSave := dlg.Add("Button", "xm w360 h32 y+12 Default", isInitialBoot ? "Connect & Start" : "Save & Reconnect")
     Theme.RegisterControl(dlg, btnSave, "Button", "accent")
 
     CleanupDialog(exitIfInitial := false, *) {
@@ -1043,25 +1301,50 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     }
 
     SaveAndConnect(*) {
+        selMode := (ddlNetMode.Value == 2) ? "Internet" : "LAN"
+        pairVal := Trim(editPair.Value)
         h := Trim(editHost.Value)
         p := Trim(editPort.Value)
         m := Trim(editMic.Value)
-        if (h = "" || p = "" || m = "") {
+
+        if (m = "") {
             dlg.Opt("+OwnDialogs")
-            MsgBox("Host Address, Port, and Audio Source cannot be empty.", "Error", "Icon!")
+            MsgBox("Exact Audio Source Name cannot be empty.", "Error", "Icon!")
             return
         }
-        if (!IsInteger(p) || Integer(p) < 1 || Integer(p) > 65535) {
-            dlg.Opt("+OwnDialogs")
-            MsgBox("OBS WebSocket Port must be a number between 1 and 65535.", "Error", "Icon!")
-            return
+        if (selMode = "Internet") {
+            if (pairVal = "") {
+                dlg.Opt("+OwnDialogs")
+                MsgBox("Please enter the Internet Pairing Code from your Primary Host (Settings -> Remote Companion Info).", "Error", "Icon!")
+                return
+            }
+            if (h = "")
+                h := "127.0.0.1"
+            if (!IsInteger(p) || Integer(p) < 1 || Integer(p) > 65535)
+                p := "4455"
+        } else {
+            if (h = "" || p = "") {
+                dlg.Opt("+OwnDialogs")
+                MsgBox("Host Address, Port, and Audio Source cannot be empty.", "Error", "Icon!")
+                return
+            }
+            if (!IsInteger(p) || Integer(p) < 1 || Integer(p) > 65535) {
+                dlg.Opt("+OwnDialogs")
+                MsgBox("OBS WebSocket Port must be a number between 1 and 65535.", "Error", "Icon!")
+                return
+            }
         }
+
+        cfg.NetworkMode := selMode
+        cfg.InternetPairingCode := pairVal
         cfg.HostAddress := h
         cfg.HostPort := String(Integer(p))
         cfg.ObsPassword := editPw.Value
         cfg.TargetMicName := m
         cfg.FirstRun := false
 
+        cfg.Write("Connection", "NetworkMode", cfg.NetworkMode)
+        cfg.Write("Connection", "InternetPairingCode", cfg.InternetPairingCode)
         cfg.Write("Connection", "HostAddress", cfg.HostAddress)
         cfg.Write("Connection", "HostPort", cfg.HostPort)
         cfg.Write("Connection", "ObsPassword", cfg.ObsPassword)
@@ -1102,26 +1385,9 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     return dlg
 }
 
-TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
+TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode := "LAN", pairingCode := "") {
     if (dlg._closed || !WinExist("ahk_id " dlg.Hwnd))
         return
-
-    portClean := Trim(portStr)
-    if (!IsInteger(portClean) || Integer(portClean) < 1 || Integer(portClean) > 65535) {
-        statusLabel.Value := "Error: Port must be between 1 and 65535."
-        return
-    }
-
-    if (Trim(hostStr) = "") {
-        statusLabel.Value := "Error: No valid host address provided."
-        return
-    }
-
-    endpoints := ParseCandidateEndpoints(hostStr, portClean)
-    if (endpoints.Length == 0) {
-        statusLabel.Value := "Error: No valid host address provided."
-        return
-    }
 
     dlg._testSeq += 1
     mySeq := dlg._testSeq
@@ -1133,10 +1399,6 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
         try dlg._testWs.shutdown()
         dlg._testWs := ""
     }
-
-    currentIndex := 1
-    testSuccess := false
-    btnTest.Enabled := false
 
     IsCancelled() {
         return dlg._closed || dlg._testSeq != mySeq || !WinExist("ahk_id " dlg.Hwnd)
@@ -1160,6 +1422,79 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
         statusLabel.Value := msg
         btnTest.Enabled := true
     }
+
+    if (StrLower(Trim(netMode)) = "internet") {
+        pairClean := Trim(pairingCode)
+        if (pairClean = "") {
+            statusLabel.Value := "Error: Please enter your Internet Pairing Code."
+            return
+        }
+        btnTest.Enabled := false
+        statusLabel.Value := "Testing Internet Relay (" pairClean ")..."
+        topic := GetInternetRelayTopic(pairClean)
+        wsUrl := "wss://ntfy.sh/" topic "/ws"
+        expectedTok := GetInternetRelayAuthToken(pairClean, pwStr)
+
+        OnRelayTimeout() {
+            FinishTest("✓ Connected to Internet Relay (" pairClean ") - Waiting for Host response")
+        }
+
+        OnRelayTestMsg(ws, raw) {
+            if (IsCancelled() || (IsObject(dlg._testWs) && ws != dlg._testWs)) {
+                try ws.shutdown()
+                return
+            }
+            msg := (Type(raw) == "Buffer") ? StrGet(raw, "UTF-8") : String(raw)
+            pkt := ParseRelayPacket(msg)
+            if IsObject(pkt) && pkt.src = "host" {
+                if (pkt.cmd = "auth_error" || pkt.auth != expectedTok) {
+                    FinishTest("✕ Auth failed on Internet Relay (Check OBS Password)")
+                } else if (pkt.cmd = "state") {
+                    FinishTest("✓ Connected to Primary Host via Internet Relay (" pairClean ")!")
+                }
+            }
+        }
+
+        OnRelayTestClose(ws, st, re) {
+            if (IsCancelled() || (IsObject(dlg._testWs) && ws != dlg._testWs))
+                return
+            FinishTest("✕ Internet Relay connection closed (Check internet access)")
+        }
+
+        try {
+            dlg._testTimer := OnRelayTimeout
+            SetTimer dlg._testTimer, -2500
+            dlg._testWs := WebSocket(wsUrl, {
+                message: OnRelayTestMsg,
+                close: OnRelayTestClose
+            }, true, "", 3000)
+            PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", expectedTok))
+        } catch {
+            FinishTest("✕ Could not reach Internet Relay (Check internet / HTTPS firewall)")
+        }
+        return
+    }
+
+    portClean := Trim(portStr)
+    if (!IsInteger(portClean) || Integer(portClean) < 1 || Integer(portClean) > 65535) {
+        statusLabel.Value := "Error: Port must be between 1 and 65535."
+        return
+    }
+
+    if (Trim(hostStr) = "") {
+        statusLabel.Value := "Error: No valid host address provided."
+        return
+    }
+
+    endpoints := ParseCandidateEndpoints(hostStr, portClean)
+    if (endpoints.Length == 0) {
+        statusLabel.Value := "Error: No valid host address provided."
+        return
+    }
+
+    currentIndex := 1
+    testSuccess := false
+    btnTest.Enabled := false
 
     TryNextCandidate() {
         ClearProbeTimer()
@@ -1229,7 +1564,8 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
             try {
                 dlg._testTimer := OnCandidateTimeout
                 SetTimer dlg._testTimer, -3000
-                probeWs := WebSocket("ws://" target.host ":" target.port, {
+                wsProbeUrl := (target.HasOwnProp("url") && target.url != "") ? target.url : ("ws://" target.host ":" target.port)
+                probeWs := WebSocket(wsProbeUrl, {
                     message: OnTestMsg,
                     close: OnTestClose
                 }, true, "", 2000)

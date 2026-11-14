@@ -220,6 +220,15 @@ class MockObsServer:
                                 "op": 5,
                                 "d": {"eventType": "CurrentProgramSceneChanged", "eventData": {"sceneName": 'Cam / "2" \\ Live'}}
                             })))
+                    elif req_type == "BroadcastCustomEvent":
+                        conn.sendall(encode_frame(json.dumps({
+                            "op": 7,
+                            "d": {"requestType": req_type, "requestId": req_id, "requestStatus": {"result": True, "code": 100}}
+                        })))
+                        self.broadcast(encode_frame(json.dumps({
+                            "op": 5,
+                            "d": {"eventType": "CustomEvent", "eventData": req_data.get("eventData", {})}
+                        })))
         except Exception:
             pass
         finally:
@@ -292,6 +301,13 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
         extract_ahk_block(remote_src, "SyncRemoteMuteState("),
         extract_ahk_block(remote_src, "RemoveToolTip("),
         extract_ahk_block(remote_src, "OnRemoteClickerMute("),
+        extract_ahk_block(remote_src, "RegisterRemotePointerHotkey("),
+        extract_ahk_block(remote_src, "UnregisterRemotePointerHotkey("),
+        extract_ahk_block(remote_src, "ExitRemoteApp("),
+        extract_ahk_block(remote_src, "RegisterRemoteAppHotkeys("),
+        extract_ahk_block(remote_src, "UnregisterRemoteAppHotkeys("),
+        extract_ahk_block(remote_src, "ToggleRemotePointerMute("),
+        extract_ahk_block(remote_src, "ChangeRemoteAppHotkeysUI("),
         extract_ahk_block(remote_src, "BuildRemoteHelpStatusLine("),
     ]
 
@@ -334,7 +350,7 @@ FlushAndBail() {{
     FileAppend("[FAIL] Watchdog timeout reached`n", "{result_path}", "UTF-8")
     ExitApp(9)
 }}
-SetTimer FlushAndBail, -9000
+SetTimer FlushAndBail, -12000
 
 WaitUntil(pred, timeoutMs := 3000) {{
     start := A_TickCount
@@ -587,6 +603,64 @@ TriggerMute(dualHostCfg, dualHostState)
 Assert("Dual-client: Primary Host clicker unmutes OBS & syncs BOTH Primary Host and Smart Board Remote HUD states",
     WaitUntil(() => dualHostState.isMuted == false && dualRemState.isMuted == false))
 
+; Test Remote Pointer Mute Toggle (Ctrl+F12 behavior):
+; When OFF, clicking pointer on secondary laptop does NOT mute OBS, but live mic status from Primary still updates HUD!
+Assert("Remote default shortcuts are ^F12 and !+F12",
+    dualRemCfg.PptHotkey == "^F12" && dualRemCfg.ExitHotkey == "!+F12")
+ToggleRemotePointerMute(dualRemCfg, dualRemState)
+Assert("ToggleRemotePointerMute disables EnablePointerMute", dualRemCfg.EnablePointerMute == false)
+
+Sleep 180
+OnRemoteClickerMute(dualRemCfg, dualRemState)
+Sleep 120
+Assert("When EnablePointerMute=false, secondary laptop clicker does NOT mute OBS",
+    dualRemState.isMuted == false && dualHostState.isMuted == false)
+
+; Meanwhile, Primary Host mutes -> secondary laptop still receives live mic status!
+Sleep 180
+TriggerMute(dualHostCfg, dualHostState)
+Assert("When EnablePointerMute=false, secondary laptop HUD still displays live mic status from Primary",
+    WaitUntil(() => dualHostState.isMuted == true && dualRemState.isMuted == true))
+
+; Toggle EnablePointerMute back ON and unmute from secondary laptop
+ToggleRemotePointerMute(dualRemCfg, dualRemState)
+Assert("ToggleRemotePointerMute re-enables EnablePointerMute", dualRemCfg.EnablePointerMute == true)
+Sleep 180
+OnRemoteClickerMute(dualRemCfg, dualRemState)
+Assert("When EnablePointerMute=true, secondary laptop clicker unmutes OBS again",
+    WaitUntil(() => dualHostState.isMuted == false && dualRemState.isMuted == false))
+
+; Test Safe Manual Close Remote Companion over LAN BroadcastCustomEvent
+closeFlags := {{lan: false, wan: false}}
+dualRemState.onRemoteCloseSignal := (*) => (closeFlags.lan := true)
+SendCloseRemoteSignal(dualHostCfg, dualHostState)
+Assert("Safe manual SendCloseRemoteSignal broadcasts CloseRemote & triggers Remote shutdown handler",
+    WaitUntil(() => closeFlags.lan == true))
+
+; Test Internet Relay Mode (Different Networks) end-to-end between Host and Remote
+dualHostCfg.RemoteNetworkMode := "Internet"
+dualHostCfg.InternetPairingCode := "PS-TEST-2026"
+dualRemCfg.NetworkMode := "Internet"
+dualRemCfg.InternetPairingCode := "PS-TEST-2026"
+
+; Wire mock relay loopback between Host and Remote
+hostRelayOut := []
+remRelayOut := []
+dualHostState.relayMockWs := {{sendText: (this, pkt) => (hostRelayOut.Push(pkt), HandleRemoteObsMessage(dualRemCfg, dualRemState, {{raw: "Internet (PS-TEST-2026)"}}, dualRemState.obsWs, pkt))}}
+dualRemState.relayMockWs := {{sendText: (this, pkt) => (remRelayOut.Push(pkt), HandleHostRelayMessage(dualHostCfg, dualHostState, dualHostState.relayWs, pkt))}}
+
+; Remote clicker press over Internet Relay -> Host toggles OBS -> Host broadcasts state over Relay -> Remote syncs
+Sleep 180
+OnRemoteClickerMute(dualRemCfg, dualRemState)
+Assert("Internet Relay Mode: Remote clicker toggles OBS via Relay & syncs mute state back to Remote",
+    WaitUntil(() => dualHostState.isMuted == true && dualRemState.isMuted == true && remRelayOut.Length >= 1 && hostRelayOut.Length >= 1))
+
+; Safe Manual Close over Internet Relay
+dualRemState.onRemoteCloseSignal := (*) => (closeFlags.wan := true)
+SendCloseRemoteSignal(dualHostCfg, dualHostState)
+Assert("Internet Relay Mode: SendCloseRemoteSignal delivers close_remote packet to Remote",
+    closeFlags.wan == true)
+
 SetTimer dualRemState.reconnectTimerFn, 0
 SetTimer dualRemState.heartbeatTimerFn, 0
 SetTimer dualRemState.breathTimerFn, 0
@@ -622,7 +696,7 @@ def main():
                     [str(AHK_EXE), "/ErrorStdOut", str(harness)],
                     capture_output=True,
                     text=True,
-                    timeout=9,
+                    timeout=14,
                 )
             except subprocess.TimeoutExpired as exc:
                 output = result_path.read_text(encoding="utf-8") if result_path.exists() else ""
@@ -645,12 +719,14 @@ def main():
             host_toggles = [e for e in noauth_server.events if e[0] == "ToggleInputMute" and e[1] == "HostClickerMute"]
             dual_host_toggles = [e for e in auth_server.events if e[0] == "ToggleInputMute" and e[1] == "HostClickerMute"]
             keepalives = [e for e in auth_server.events if e[0] == "GetVersion" and e[1] == "KeepAlive"]
+            close_broadcasts = [e for e in auth_server.events if e[0] == "BroadcastCustomEvent"]
 
             server_checks = [
-                ("Server received 3 debounced ToggleInputMute from Remote", len(remote_toggles) == 3),
+                ("Server received 4 debounced ToggleInputMute from Remote (while blocking when EnablePointerMute=false)", len(remote_toggles) == 4),
                 ("Server received Remote GetVersion KeepAlive", len(keepalives) == 1),
-                ("Server received 2 HostClickerMute ToggleInputMute requests on NoAuth & 1 on Auth",
-                 len(host_toggles) == 2 and len(dual_host_toggles) == 1),
+                ("Server received 2 HostClickerMute ToggleInputMute requests on NoAuth & 3 on Auth",
+                 len(host_toggles) == 2 and len(dual_host_toggles) == 3),
+                ("Server received BroadcastCustomEvent CloseRemote from Primary Host", len(close_broadcasts) >= 1),
             ]
             srv_fail = 0
             for label, ok in server_checks:

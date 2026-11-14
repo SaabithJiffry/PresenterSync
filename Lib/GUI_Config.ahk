@@ -10,14 +10,14 @@ class UIConstants {
     static APP_VERSION := "2.2.3"
 
     ; --- Base HUD Dimensions & Ratios ---
-    static BASE_WIDTH_TEXT := 140
+    static BASE_WIDTH_TEXT := 168
     static BASE_WIDTH_ICON := 80
     static BASE_HEIGHT := 40
     static HUD_GAP := 6
     static MIN_HUD_GAP := 2
     static REC_HEIGHT := 34
     static ROW3_HEIGHT := 30
-    static REC_WIDTH_RATIO := 0.53
+    static REC_WIDTH_RATIO := 0.54
     static STUDIO_WIDTH_RATIO := 0.38
     static SCREEN_MARGIN_X := 20
     static SCREEN_MARGIN_Y := 20
@@ -35,17 +35,17 @@ class UIConstants {
     static MINI_TEXT_SIZE := 9
 
     static MIC_ICON_W := 30
-    static ICON_OFFSET_X := 15
-    static MIC_TEXT_W := 80
-    static TEXT_OFFSET_X := 50
-    static REC_ICON_W := 14
-    static REC_ICON_X := 4
-    static CHAT_ICON_W := 14
-    static CHAT_ICON_X := 4
-    static STUDIO_ICON_W := 14
-    static STUDIO_ICON_X := 4
-    static SCENE_PAD_X := 4
-    static LABEL_GAP_X := 2
+    static ICON_OFFSET_X := 18
+    static MIC_TEXT_W := 96
+    static TEXT_OFFSET_X := 56
+    static REC_ICON_W := 18
+    static REC_ICON_X := 8
+    static CHAT_ICON_W := 18
+    static CHAT_ICON_X := 8
+    static STUDIO_ICON_W := 18
+    static STUDIO_ICON_X := 8
+    static SCENE_PAD_X := 6
+    static LABEL_GAP_X := 6
 
     ; --- Animation & Timing Constants ---
     static FADE_STEPS := 10
@@ -946,6 +946,9 @@ class Config {
     SuspendHotkey := "^!+F12"
     HwMuteHotkey := "b"
 
+    RemoteNetworkMode := "LAN"
+    InternetPairingCode := ""
+
     savedX := "Default"
     savedY := "Default"
 
@@ -1072,6 +1075,14 @@ class Config {
         this.SuspendHotkey := this.Read("Settings", "SuspendHotkey", "^!+F12")
         this.HwMuteHotkey := this.Read("Settings", "HwMuteHotkey", "b")
 
+        rawNetMode := StrLower(Trim(this.Read("Settings", "RemoteNetworkMode", "LAN")))
+        this.RemoteNetworkMode := (rawNetMode = "internet") ? "Internet" : "LAN"
+        this.InternetPairingCode := Trim(this.Read("Settings", "InternetPairingCode", ""))
+        if (this.InternetPairingCode = "") {
+            this.InternetPairingCode := GenerateInternetPairingCode()
+            this.Write("Settings", "InternetPairingCode", this.InternetPairingCode)
+        }
+
         this.savedX := this.Read("Position", "X", "Default")
         this.savedY := this.Read("Position", "Y", "Default")
     }
@@ -1112,6 +1123,8 @@ class Config {
 class OverlayState {
     obsWs := ""
     obsConnected := false
+    relayWs := ""
+    relayConnected := false
     zoomConnected := false
     IsSyncing := false
     zoomLastMuted := -1
@@ -1124,6 +1137,14 @@ class OverlayState {
     currentSceneName := "Scene"
     unreadChatCount := 0
 
+    sceneMarqueeOffset := 0
+    sceneMarqueePhase := "pause_start"
+    sceneMarqueeTicks := 0
+    sceneMarqueeMaxOffset := 0
+    sceneMarqueeTextW := 0
+    sceneMarqueeFontPt := 9.0
+    sceneMarqueeTimerFn := ""
+
     baseAlpha := 220
     currentAlpha := 220
     breathDir := -5
@@ -1135,6 +1156,7 @@ class OverlayState {
     dragTimerFn := ""
     breathTimerFn := ""
     obsTimerFn := ""
+    relayTimerFn := ""
     zoomTimerFn := ""
     releaseSyncTimerFn := ""
     rebuildTrayFn := ""
@@ -1209,6 +1231,8 @@ class OverlayState {
         this.dragTimerFn := DragSyncTick.Bind(this)
         this.breathTimerFn := BreathingAnimation.Bind(cfg, this)
         this.obsTimerFn := ConnectToOBS.Bind(cfg, this)
+        this.relayTimerFn := ConnectHostInternetRelay.Bind(cfg, this)
+        this.sceneMarqueeTimerFn := SceneMarqueeTick.Bind(cfg, this)
         this.zoomTimerFn := ZoomStateMonitor.Bind(cfg, this)
         this.releaseSyncTimerFn := ReleaseSyncLock.Bind(this)
 
@@ -1234,17 +1258,15 @@ class OverlayState {
         if (cfg.ShowText) {
             stIconW := Round(UIConstants.STUDIO_ICON_W * cfg.IndicatorScale)
             stIconX := Round(UIConstants.STUDIO_ICON_X * cfg.IndicatorScale)
+            stGap := Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
             stTextSize := Max(1, Round(UIConstants.STUDIO_TEXT_SIZE * cfg.IndicatorScale))
-            reqStudioW := stIconX + stIconW + Gdip.MeasureTextWidth("STUDIO", "Segoe UI", stTextSize, 1) + Round(2 * UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
+            reqStudioW := stIconX + stIconW + stGap + Gdip.MeasureTextWidth("STUDIO", "Segoe UI", stTextSize, 1) + stIconX
             this.studioW := Max(minStudioW, reqStudioW)
         } else {
             this.studioW := minStudioW
         }
 
-        minSceneW := Max(UIConstants.MIN_TEXT_WIDTH, this.baseWidth - this.hudGap - this.studioW)
-        scPad := Round(UIConstants.SCENE_PAD_X * cfg.IndicatorScale)
-        reqSceneW := Gdip.MeasureTextWidth(this.currentSceneName, "Segoe UI", this.miniTextSize, 1) + (2 * scPad) + Round(4 * cfg.IndicatorScale)
-        this.sceneW := Max(minSceneW, reqSceneW)
+        this.sceneW := Max(UIConstants.MIN_TEXT_WIDTH, this.baseWidth - this.hudGap - this.studioW)
 
         extraRow2 := (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom))
         extraRow3 := (cfg.ShowExtraHuds && cfg.EnableWS)
@@ -1519,21 +1541,18 @@ GetRemoteSetupGuideText() {
         . "- Check 'Enable WebSocket server' and keep Server Port at 4455.`r`n"
         . "- Check 'Enable Authentication', set or copy your password, and click Apply.`r`n"
         . "- If Windows Firewall prompts, allow Private networks (TCP port 4455 inbound).`r`n`r`n"
-        . "2. COPY CONNECTION DETAILS FROM PRIMARY HOST`r`n"
+        . "2. CHOOSE SAME ROUTER (LAN) OR DIFFERENT NETWORKS (INTERNET)`r`n"
         . "- Right-click the PresenterSync tray icon (or any HUD pill) and open Settings -> Remote Companion Info....`r`n"
-        . "- Click 'Copy Universal String to Clipboard'. This includes your host's .local mDNS name plus active Ethernet / Wi-Fi IPs (for example: STUDIO-PC.local, 192.168.1.50, 192.168.1.125).`r`n`r`n"
+        . "- Same Router (LAN - Default): Click 'Copy Universal String to Clipboard' (includes .local mDNS + active Ethernet / Wi-Fi IPs, works across 2.4 GHz & 5 GHz SSIDs on the same router).`r`n"
+        . "- Different Networks (Internet): Switch Network Mode to 'Different Networks (Internet)' and copy the Internet Pairing Code (e.g., PS-XXXX-XXXX) to bridge over HTTPS/WSS when devices are on separate routers or hotspots.`r`n`r`n"
         . "3. CONNECT PRESENTER SYNC REMOTE (SMART BOARD / 2ND PC)`r`n"
         . "- Copy PresenterSync_Remote.exe to the Smart Board (or run PresenterSync_Remote.ahk).`r`n"
-        . "- Paste the Universal String into Host Address (comma-separated candidates trigger fast 2s auto-failover across LAN interfaces).`r`n"
-        . "- Keep Port = 4455, enter your OBS WebSocket Password, and match Exact Audio Source Name (default: Mic/Aux, case-sensitive in OBS Audio Mixer).`r`n"
-        . "- Click 'Test Connection' to verify LAN reachability and authentication, then click Connect & Start.`r`n`r`n"
-        . "4. CLICKER CONTROL, HUD FEEDBACK & TROUBLESHOOTING`r`n"
-        . "- Clicker Mute: Press your presenter mute key (default: b) to toggle OBS mic in <5 ms. A 150ms debounce shield prevents double toggles, and interception automatically pauses while typing inside Remote dialogs.`r`n"
-        . "- HUD Feedback: Left-drag the Remote pill to reposition; right-click for the menu. The pill dims automatically while disconnected and pulses gently when OBS mic is muted.`r`n"
-        . "- Searching for OBS Host: Verify both devices share the same network/subnet, OBS WebSocket server is enabled, and Windows Firewall allows TCP port 4455.`r`n"
-        . "- Auth Failed (OBS Code 4009): Check the password in Change OBS Connection... (auto-retry pauses so OBS won't be flooded).`r`n"
-        . "- Connected (Mic Not Found): Match exact spelling and casing of Audio Source Name in OBS Audio Mixer.`r`n"
-        . "- Keep-Alive: Remote sends a GetVersion heartbeat every 30s to prevent Wi-Fi sleep drops."
+        . "- Select matching Network Mode (Same Router LAN or Different Networks Internet), paste the Universal String or Internet Pairing Code, enter your OBS WebSocket Password, and match Exact Audio Source Name (default: Mic/Aux).`r`n"
+        . "- Click 'Test Connection' to verify reachability, then click Connect & Start.`r`n`r`n"
+        . "4. CLICKER CONTROL, REMOTE SHORTCUTS & SAFE MANUAL CLOSE`r`n"
+        . "- Clicker Mute: Press your presenter mute key (default: b) to toggle OBS mic. Toggle Pointer Mute Control ON/OFF anytime on the Remote PC with Ctrl+F12 (when OFF, the HUD still displays live mic status without muting on click).`r`n"
+        . "- Remote Exit & Safe Manual Close: Press Alt+Shift+F12 on the Remote PC to exit, or use 'Close Remote Companion...' in the Primary tray menu to send a confirmed shutdown signal.`r`n"
+        . "- Troubleshooting: If Auth Failed (OBS Code 4009), check your password in Change OBS Connection...; if Mic Not Found, match exact Audio Source Name casing in OBS Audio Mixer."
 }
 
 BuildLiveStatusInfo(cfg, state := "") {
@@ -1551,7 +1570,12 @@ BuildLiveStatusInfo(cfg, state := "") {
         . "  |  Labels: " (cfg.ShowText ? "ON" : "OFF")
         . "  |  Scale: " Round(cfg.IndicatorScale, 2) "x"
     themeStatus := cfg.ThemeMode " (Active: " (Theme.IsDarkMode() ? "Dark Mode" : "Light Mode") ")"
-    remoteHost := A_ComputerName ".local:4455  |  WS Auth: " (cfg.obsPassword != "" ? "Configured" : "None")
+    if (cfg.RemoteNetworkMode = "Internet") {
+        relayStat := (IsObject(state) && state.HasOwnProp("relayConnected") && state.relayConnected) ? "Relay Connected" : "Relay Standby"
+        remoteHost := "Internet Mode (" cfg.InternetPairingCode " - " relayStat ")"
+    } else {
+        remoteHost := A_ComputerName ".local:4455 (LAN)  |  WS Auth: " (cfg.obsPassword != "" ? "Configured" : "None")
+    }
     return {
         ptrMode: ptrMode,
         syncMode: syncMode,
@@ -1719,7 +1743,7 @@ ShowHelpWindow(cfg, state := "", *) {
     Theme.RegisterControl(helpGui, btnRemInfo, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnRemObs, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnRemTest, "Button", "tabButton")
-    btnRemInfo.OnEvent("Click", (*) => ShowRemoteCompanionInfo(cfg))
+    btnRemInfo.OnEvent("Click", (*) => ShowRemoteCompanionInfo(cfg, state))
     btnRemObs.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
     btnRemTest.OnEvent("Click", (*) => ShowPointerTester())
 
@@ -2000,22 +2024,26 @@ OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply) {
 
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit Pointer Mute Button")
     dlg._closed := false
+    dlg.MarginX := 20
+    dlg.MarginY := 18
     Theme.ApplyToWindow(dlg)
     Theme.NamedWindows["Edit Pointer Mute Button"] := dlg
 
     dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w280", "Presentation Clicker Mute Button"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w280", "Presentation Clicker Mute Button"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w280 y+4", "Press a button on your clicker, or click the box to type a custom key name:"), "Text", "muted")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w280 y+4", "Press a button on your clicker, or click the box to type a custom key name:"), "Text", "muted")
 
-    editKey := dlg.Add("Edit", "w280 y+12 Center", currentKey)
-    editKey.SetFont("s12 w700", Theme.UiFont)
+    dlg.SetFont("s12 w700", Theme.UiFont)
+    editKey := dlg.Add("Edit", "xm w280 h32 y+12 Center", currentKey)
     Theme.RegisterControl(dlg, editKey, "Edit", "accent")
 
-    statusTxt := dlg.Add("Text", "w280 y+6 Center", "Listening for clicker input...")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    statusTxt := dlg.Add("Text", "xm w280 y+8 Center", "Listening for clicker input...")
     Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
 
-    btnSave := dlg.Add("Button", "w280 h32 y+12 Default", saveBtnLabel)
+    dlg.SetFont("s10 w400", Theme.UiFont)
+    btnSave := dlg.Add("Button", "xm w280 h34 y+14 Default", saveBtnLabel)
     Theme.RegisterControl(dlg, btnSave, "Button", "accent")
 
     ih := InputHook("L0")
@@ -2153,18 +2181,20 @@ ShowPointerTester(*) {
 
     testerGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Pointer Tester")
     testerGui._closed := false
+    testerGui.MarginX := 20
+    testerGui.MarginY := 18
     Theme.ApplyToWindow(testerGui)
     Theme.NamedWindows["PointerTester"] := testerGui
 
-    testerGui.SetFont("s10 norm", Theme.UiFont)
-    Theme.RegisterControl(testerGui, testerGui.Add("Text", "w250 Center", "Press any button on your clicker."), "Text")
+    testerGui.SetFont("s10 w400 norm", Theme.UiFont)
+    Theme.RegisterControl(testerGui, testerGui.Add("Text", "xm w280 Center", "Press any button on your clicker:"), "Text", "muted")
 
-    keyDisplay := testerGui.Add("Text", "w250 Center y+15", "Listening...")
-    keyDisplay.SetFont("s14 w700 norm", Theme.UiFont)
+    testerGui.SetFont("s14 w700 norm", Theme.UiFont)
+    keyDisplay := testerGui.Add("Text", "xm w280 h38 y+12 Center +0x200", "Listening...")
     Theme.RegisterControl(testerGui, keyDisplay, "Text", "accent")
 
     testerGui.SetFont("s10 w400 norm", Theme.UiFont)
-    btn := testerGui.Add("Button", "w110 x70 y+20 h32 Default", "Close")
+    btn := testerGui.Add("Button", "xm w280 h34 y+16 Default", "Close")
     Theme.RegisterControl(testerGui, btn, "Button")
 
     ih := InputHook("L0 V")
@@ -2192,7 +2222,7 @@ ShowPointerTester(*) {
     testerGui.OnEvent("Escape", Cleanup)
     btn.OnEvent("Click", Cleanup)
 
-    testerGui.Show("AutoSize")
+    testerGui.Show("AutoSize Center")
     ih.Start()
     return testerGui
 }
@@ -2245,34 +2275,132 @@ ParseCandidateEndpoints(rawStr, defaultPort := "4455") {
         clean := Trim(item)
         if (clean = "")
             continue
-        clean := RegExReplace(clean, "i)^(?:wss?|https?)://", "")
-        clean := RTrim(clean, "/ ")
+        scheme := "ws"
+        hasExplicitScheme := false
+        if RegExMatch(clean, "i)^(wss|ws|https|http)://(.*)$", &sm) {
+            rawScheme := StrLower(sm[1])
+            scheme := (rawScheme = "wss" || rawScheme = "https") ? "wss" : "ws"
+            clean := sm[2]
+            hasExplicitScheme := true
+        }
+        clean := RTrim(clean, " ")
         if (clean = "")
             continue
+        path := "/"
+        if RegExMatch(clean, "^([^/]+)(/.*)$", &pm) {
+            clean := pm[1]
+            path := pm[2]
+        } else {
+            clean := RTrim(clean, "/")
+        }
         host := clean
-        port := defPort
+        port := (hasExplicitScheme && scheme = "wss") ? "443" : defPort
         if RegExMatch(clean, "^([^:]+):(.*)$", &m) {
             host := Trim(m[1])
             rawP := Trim(m[2])
-            port := (IsInteger(rawP) && Integer(rawP) >= 1 && Integer(rawP) <= 65535) ? String(Integer(rawP)) : defPort
+            if (IsInteger(rawP) && Integer(rawP) >= 1 && Integer(rawP) <= 65535)
+                port := String(Integer(rawP))
         }
         if (host = "")
             continue
-        key := host ":" port
-        if (!seen.Has(key)) {
-            seen[key] := true
-            endpoints.Push({host: host, port: port, raw: key})
+        rawKey := (scheme = "wss" ? ("wss://" host ":" port (path != "/" ? path : "")) : (host ":" port (path != "/" ? path : "")))
+        urlStr := scheme "://" host ":" port path
+        if (!seen.Has(urlStr)) {
+            seen[urlStr] := true
+            endpoints.Push({host: host, port: port, scheme: scheme, path: path, url: urlStr, raw: rawKey})
         }
     }
-    if (endpoints.Length == 0)
-        endpoints.Push({host: "127.0.0.1", port: defPort, raw: "127.0.0.1:" defPort})
+    if (endpoints.Length == 0) {
+        urlStr := "ws://127.0.0.1:" defPort "/"
+        endpoints.Push({host: "127.0.0.1", port: defPort, scheme: "ws", path: "/", url: urlStr, raw: "127.0.0.1:" defPort})
+    }
     return endpoints
 }
 
-ShowRemoteCompanionInfo(cfg, *) {
+SetRemoteNetworkMode(cfg, state, mode, *) {
+    norm := (StrLower(Trim(mode)) = "internet") ? "Internet" : "LAN"
+    cfg.RemoteNetworkMode := norm
+    cfg.Write("Settings", "RemoteNetworkMode", norm)
+    if (norm = "Internet" && cfg.InternetPairingCode = "") {
+        cfg.InternetPairingCode := GenerateInternetPairingCode()
+        cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode)
+    }
+    if IsObject(state) {
+        UpdateHostInternetRelay(cfg, state)
+        if state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn
+            try state.rebuildTrayFn.Call()
+        if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
+            try state.refreshHelpFn.Call()
+    }
+    TrayTip("Remote Network Mode: " (norm = "Internet" ? "Different Networks (Internet)" : "Same Router (LAN)"), "PresenterSync", 1)
+}
+
+PromptCloseRemoteCompanion(cfg, state := "", *) {
+    existing := Theme.FocusExistingWindow("Close Remote Companion")
+    if IsObject(existing)
+        return existing
+
+    Theme.AcquireSuspend()
+
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Close Remote Companion")
+    dlg._closed := false
+    dlg.MarginX := 20
+    dlg.MarginY := 18
+    Theme.ApplyToWindow(dlg)
+    Theme.NamedWindows["Close Remote Companion"] := dlg
+
+    dlg.SetFont("s10 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w340", "Turn Off Secondary Remote Companion?"), "Text")
+
+    modeDesc := (cfg.RemoteNetworkMode = "Internet")
+        ? "Different Networks (Internet Relay - " cfg.InternetPairingCode ")"
+        : "Same Router (LAN via OBS WebSocket)"
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w340 y+6", "This will send an immediate close signal to shut down PresenterSync Remote on your secondary laptop / Smart Board.`n`nActive Channel: " modeDesc), "Text", "muted")
+
+    dlg.SetFont("s10 w400", Theme.UiFont)
+    btnConfirm := dlg.Add("Button", "xm w164 h34 y+16 Default", "Turn Off Secondary")
+    btnCancel := dlg.Add("Button", "x+12 yp w164 h34", "Cancel")
+    Theme.RegisterControl(dlg, btnConfirm, "Button", "accent")
+    Theme.RegisterControl(dlg, btnCancel, "Button")
+
+    Cleanup(*) {
+        if (dlg._closed)
+            return
+        dlg._closed := true
+        Theme.UnregisterWindow(dlg, "Close Remote Companion")
+        Theme.ReleaseSuspend()
+        dlg.Destroy()
+    }
+
+    ConfirmClose(*) {
+        sent := SendCloseRemoteSignal(cfg, state)
+        Cleanup()
+        if (sent) {
+            TrayTip("Close signal sent to PresenterSync Remote.", "Remote Companion", 1)
+        } else {
+            TrayTip("Close signal queued. Ensure OBS WebSocket or Internet Relay is connected.", "Remote Companion", 2)
+        }
+    }
+
+    btnConfirm.OnEvent("Click", ConfirmClose)
+    btnCancel.OnEvent("Click", Cleanup)
+    dlg.OnEvent("Close", Cleanup)
+    dlg.OnEvent("Escape", Cleanup)
+
+    dlg.Show("AutoSize Center")
+    return dlg
+}
+
+ShowRemoteCompanionInfo(cfg, state := "", *) {
     existing := Theme.FocusExistingWindow("Remote Companion Connection Info")
     if IsObject(existing)
         return existing
+
+    if (cfg.InternetPairingCode = "") {
+        cfg.InternetPairingCode := GenerateInternetPairingCode()
+        cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode)
+    }
 
     endpoints := GetLocalNetworkEndpoints()
     candidates := [A_ComputerName ".local"]
@@ -2286,18 +2414,65 @@ ShowRemoteCompanionInfo(cfg, *) {
 
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Remote Companion Connection Info")
     dlg._closed := false
+    dlg.MarginX := 20
+    dlg.MarginY := 16
     Theme.ApplyToWindow(dlg)
     Theme.NamedWindows["Remote Companion Connection Info"] := dlg
 
     dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360", "Host Details for PresenterSync Remote"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360", "Host Details for PresenterSync Remote"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+4", "Enter these details on your secondary device (Smart Board / Laptop):"), "Text", "muted")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+4", "Configure how your secondary device (Smart Board / Laptop) connects:"), "Text", "muted")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+12", "Computer Name (mDNS):"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Remote Network Mode:"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editHost := dlg.Add("Edit", "w360 ReadOnly -Wrap", A_ComputerName ".local")
+    netChoice := (cfg.RemoteNetworkMode = "Internet") ? 2 : 1
+    ddlNetMode := dlg.Add("DropDownList", "xm w360 Choose" netChoice, [
+        "1: Same Router / Local Wi-Fi or Ethernet (LAN - Default)",
+        "2: Different Networks / Over the Internet (WAN Relay)"
+    ])
+    Theme.RegisterControl(dlg, ddlNetMode, "DropDownList")
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Different Networks - Internet Pairing Code:"), "Text")
+    dlg.SetFont("s10 w700", Theme.UiFont)
+    editPair := dlg.Add("Edit", "xm w180 h28 ReadOnly Center", cfg.InternetPairingCode)
+    Theme.RegisterControl(dlg, editPair, "Edit", "accent")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    btnCopyPair := dlg.Add("Button", "x+8 yp w100 h28", "Copy Code")
+    btnNewPair := dlg.Add("Button", "x+8 yp w64 h28", "New")
+    Theme.RegisterControl(dlg, btnCopyPair, "Button", "accent")
+    Theme.RegisterControl(dlg, btnNewPair, "Button")
+
+    ResetCopyPairBtn(*) {
+        if (!dlg._closed && WinExist("ahk_id " dlg.Hwnd))
+            btnCopyPair.Text := "Copy Code"
+    }
+    btnCopyPair.OnEvent("Click", (*) => (
+        A_Clipboard := cfg.InternetPairingCode,
+        btnCopyPair.Text := "✓ Copied!",
+        SetTimer(ResetCopyPairBtn, -1800),
+        TrayTip("Internet Pairing Code copied to clipboard.", "Copied!", 1)
+    ))
+    btnNewPair.OnEvent("Click", (*) => (
+        cfg.InternetPairingCode := GenerateInternetPairingCode(),
+        cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode),
+        editPair.Value := cfg.InternetPairingCode,
+        (IsObject(state) ? UpdateHostInternetRelay(cfg, state) : 0),
+        TrayTip("Generated new Internet Pairing Code: " cfg.InternetPairingCode, "Pairing Code Updated", 1)
+    ))
+
+    OnNetModeChanged(*) {
+        newMode := (ddlNetMode.Value == 2) ? "Internet" : "LAN"
+        SetRemoteNetworkMode(cfg, state, newMode)
+    }
+    ddlNetMode.OnEvent("Change", OnNetModeChanged)
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Same Router (LAN) - Computer Name (mDNS):"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    editHost := dlg.Add("Edit", "xm w360 ReadOnly -Wrap", A_ComputerName ".local")
     Theme.RegisterControl(dlg, editHost, "Edit")
 
     ipListText := ""
@@ -2306,19 +2481,19 @@ ShowRemoteCompanionInfo(cfg, *) {
     }
     if (ipListText != "") {
         dlg.SetFont("s9 w600", Theme.UiFont)
-        Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+8", "Detected Local IP Addresses:"), "Text")
+        Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "Detected Local IP Addresses:"), "Text")
         dlg.SetFont("s9 w400", Theme.UiFont)
-        editIps := dlg.Add("Edit", "w360 r3 ReadOnly", RTrim(ipListText, "`n"))
+        editIps := dlg.Add("Edit", "xm w360 r2 ReadOnly", RTrim(ipListText, "`n"))
         Theme.RegisterControl(dlg, editIps, "Edit")
     }
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+8", "Universal Connection String (Multi-Candidate):"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "Universal Connection String (Multi-Candidate LAN):"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editUniv := dlg.Add("Edit", "w360 ReadOnly -Wrap", universalString)
+    editUniv := dlg.Add("Edit", "xm w360 ReadOnly -Wrap", universalString)
     Theme.RegisterControl(dlg, editUniv, "Edit")
 
-    btnCopy := dlg.Add("Button", "w360 h30 y+10", "Copy Universal String to Clipboard")
+    btnCopy := dlg.Add("Button", "xm w360 h30 y+8", "Copy Universal String to Clipboard")
     Theme.RegisterControl(dlg, btnCopy, "Button", "accent")
     ResetCopyBtn(*) {
         if (!dlg._closed && WinExist("ahk_id " dlg.Hwnd))
@@ -2332,9 +2507,11 @@ ShowRemoteCompanionInfo(cfg, *) {
     ))
 
     statusLine := "OBS Port: 4455  |  Password: " (cfg.obsPassword != "" ? "Configured" : "None") "  |  Mic: " cfg.targetMicName
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w360 y+12 Center", statusLine), "Text", "muted")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10 Center", statusLine), "Text", "muted")
 
-    btnClose := dlg.Add("Button", "w360 h32 y+12 Default", "Close")
+    btnCloseRemote := dlg.Add("Button", "xm w176 h32 y+10", "Close Remote Companion...")
+    btnClose := dlg.Add("Button", "x+8 yp w176 h32 Default", "Close")
+    Theme.RegisterControl(dlg, btnCloseRemote, "Button")
     Theme.RegisterControl(dlg, btnClose, "Button")
 
     Cleanup(*) {
@@ -2345,6 +2522,7 @@ ShowRemoteCompanionInfo(cfg, *) {
         dlg.Destroy()
     }
 
+    btnCloseRemote.OnEvent("Click", (*) => PromptCloseRemoteCompanion(cfg, state))
     dlg.OnEvent("Close", Cleanup)
     dlg.OnEvent("Escape", Cleanup)
     btnClose.OnEvent("Click", Cleanup)
@@ -2416,7 +2594,7 @@ ApplyChatAppearance(cfg, state) {
         cIconW := Round(UIConstants.CHAT_ICON_W * cfg.IndicatorScale)
         cIconX := Round(UIConstants.CHAT_ICON_X * cfg.IndicatorScale)
         cTextX := cIconX + cIconW + Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
-        cTextW := Max(UIConstants.MIN_TEXT_WIDTH, state.chatW - cTextX - Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale))
+        cTextW := Max(UIConstants.MIN_TEXT_WIDTH, state.chatW - cTextX - cIconX)
         lbl := hasUnread ? (state.unreadChatCount " NEW") : "CHAT"
         iconCfg := {text: Chr(0xE8BD), font: state.IconFont, size: state.subIconSize, color: contentArgb, x: cIconX, w: cIconW}
         labelCfg := {text: lbl, size: state.subTextSize, bold: true, color: contentArgb, x: cTextX, w: cTextW, align: 0}
@@ -2452,8 +2630,9 @@ ApplyStudioAppearance(cfg, state) {
     if (cfg.ShowText) {
         stIconW := Round(UIConstants.STUDIO_ICON_W * cfg.IndicatorScale)
         stIconX := Round(UIConstants.STUDIO_ICON_X * cfg.IndicatorScale)
-        stTextX := stIconX + stIconW
-        stTextW := Max(UIConstants.MIN_TEXT_WIDTH, state.studioW - stTextX - Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale))
+        stGap := Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
+        stTextX := stIconX + stIconW + stGap
+        stTextW := Max(UIConstants.MIN_TEXT_WIDTH, state.studioW - stTextX - stIconX)
         stIconSize := Max(1, Round(UIConstants.STUDIO_ICON_SIZE_TEXT * cfg.IndicatorScale))
         stTextSize := Max(1, Round(UIConstants.STUDIO_TEXT_SIZE * cfg.IndicatorScale))
         iconCfg := {text: Chr(0xE7F4), font: state.IconFont, size: stIconSize, color: contentArgb, x: stIconX, w: stIconW}
@@ -2478,32 +2657,116 @@ RenderAllHudPills(cfg, state) {
 SyncSceneState(cfg, state, sceneName) {
     if (sceneName != "" && state.currentSceneName != sceneName) {
         state.currentSceneName := sceneName
+        state.sceneMarqueeOffset := 0
+        state.sceneMarqueePhase := "pause_start"
+        state.sceneMarqueeTicks := 0
         state.ComputeDimensions(cfg)
         if (cfg.ShowIndicator && cfg.ShowExtraHuds && !state.isDraggingHud) {
             UpdateHudLayout(state, state.savedX, state.savedY)
-            RenderAllHudPills(cfg, state)
+            ApplySceneAppearance(cfg, state)
         }
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
             try state.refreshHelpFn.Call()
     }
 }
 
-ApplySceneAppearance(cfg, state) {
+ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
     if (!IsObject(state.SceneGui))
         return false
 
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
     scPad := Round(UIConstants.SCENE_PAD_X * cfg.IndicatorScale)
-    labelCfg := {
-        text: state.currentSceneName,
-        size: state.miniTextSize,
-        bold: true,
-        color: Gdip.HexToArgb("FFFFFF"),
-        x: scPad,
-        w: Max(UIConstants.MIN_TEXT_WIDTH, pos.sceneW - 2 * scPad),
-        align: 1
+    availW := Max(UIConstants.MIN_TEXT_WIDTH, pos.sceneW - 2 * scPad)
+
+    fitFontPt := Float(state.miniTextSize)
+    minFontPt := Max(6.5, Round(7.5 * cfg.IndicatorScale, 1))
+    fullW := Gdip.MeasureTextWidth(state.currentSceneName, "Segoe UI", fitFontPt, 1)
+    while (fullW > availW && fitFontPt > minFontPt) {
+        fitFontPt := Max(minFontPt, Round(fitFontPt - 0.5, 1))
+        fullW := Gdip.MeasureTextWidth(state.currentSceneName, "Segoe UI", fitFontPt, 1)
+    }
+
+    if (fullW <= availW) {
+        if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
+            SetTimer(state.sceneMarqueeTimerFn, 0)
+        state.sceneMarqueeMaxOffset := 0
+        state.sceneMarqueeOffset := 0
+        labelCfg := {
+            text: state.currentSceneName,
+            size: fitFontPt,
+            bold: true,
+            color: Gdip.HexToArgb("FFFFFF"),
+            x: scPad,
+            w: availW,
+            align: 1,
+            autoFit: true
+        }
+    } else {
+        marqueeFontPt := Max(7.0, Round(8.0 * cfg.IndicatorScale, 1))
+        textW := Gdip.MeasureTextWidth(state.currentSceneName, "Segoe UI", marqueeFontPt, 1)
+        state.sceneMarqueeFontPt := marqueeFontPt
+        state.sceneMarqueeTextW := textW
+        state.sceneMarqueeMaxOffset := Max(0, textW - availW)
+        if (!fromMarqueeTick) {
+            state.sceneMarqueeOffset := 0
+            state.sceneMarqueePhase := "pause_start"
+            state.sceneMarqueeTicks := 0
+            if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS && state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
+                SetTimer(state.sceneMarqueeTimerFn, 40)
+        }
+        drawX := scPad - Round(state.sceneMarqueeOffset)
+        labelCfg := {
+            text: state.currentSceneName,
+            size: marqueeFontPt,
+            bold: true,
+            color: Gdip.HexToArgb("FFFFFF"),
+            x: drawX,
+            w: textW + 12,
+            align: 0,
+            autoFit: false,
+            clipX: scPad,
+            clipW: availW
+        }
     }
     return Gdip.RenderPill(state.SceneGui.Hwnd, pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH, Gdip.HexToArgb(state.colors.scene), Gdip.BgrToArgb(state.colors.sceneBorder), state.baseAlpha, GetCornerRadius(cfg, pos.sceneH), "", labelCfg)
+}
+
+SceneMarqueeTick(cfg, state) {
+    if (!IsObject(state.SceneGui) || !cfg.ShowIndicator || !cfg.ShowExtraHuds || !cfg.EnableWS || state.sceneMarqueeMaxOffset <= 0) {
+        if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
+            SetTimer(state.sceneMarqueeTimerFn, 0)
+        return
+    }
+    if (state.isDraggingHud)
+        return
+
+    stepPx := Max(1.0, 1.2 * cfg.IndicatorScale)
+    if (state.sceneMarqueePhase = "pause_start") {
+        state.sceneMarqueeTicks += 1
+        if (state.sceneMarqueeTicks >= 30) {
+            state.sceneMarqueeTicks := 0
+            state.sceneMarqueePhase := "scroll_left"
+        } else {
+            return
+        }
+    } else if (state.sceneMarqueePhase = "scroll_left") {
+        state.sceneMarqueeOffset += stepPx
+        if (state.sceneMarqueeOffset >= state.sceneMarqueeMaxOffset) {
+            state.sceneMarqueeOffset := state.sceneMarqueeMaxOffset
+            state.sceneMarqueePhase := "pause_end"
+            state.sceneMarqueeTicks := 0
+        }
+    } else if (state.sceneMarqueePhase = "pause_end") {
+        state.sceneMarqueeTicks += 1
+        if (state.sceneMarqueeTicks >= 30) {
+            state.sceneMarqueeTicks := 0
+            state.sceneMarqueeOffset := 0
+            state.sceneMarqueePhase := "pause_start"
+        } else {
+            return
+        }
+    }
+    ApplySceneAppearance(cfg, state, true)
 }
 
 SyncRecState(cfg, state, newState) {
@@ -2535,7 +2798,7 @@ ApplyRecAppearance(cfg, state) {
         rIconW := Round(UIConstants.REC_ICON_W * cfg.IndicatorScale)
         rIconX := Round(UIConstants.REC_ICON_X * cfg.IndicatorScale)
         rTextX := rIconX + rIconW + Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
-        rTextW := Max(UIConstants.MIN_TEXT_WIDTH, state.recW - rTextX - Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale))
+        rTextW := Max(UIConstants.MIN_TEXT_WIDTH, state.recW - rTextX - rIconX)
         iconCfg := {text: glyph, font: state.IconFont, size: state.subIconSize, color: contentArgb, x: rIconX, w: rIconW}
         labelCfg := {text: lbl, size: state.subTextSize, bold: true, color: contentArgb, x: rTextX, w: rTextW, align: 0}
     } else {
@@ -2552,6 +2815,7 @@ SyncUIState(cfg, state, obsIsMuted) {
         cfg.IsMuted := obsIsMuted
         cfg.WriteBool("Settings", "IsMuted", state.isMuted)
         PlayMuteAnimation(cfg, state)
+        BroadcastHostRelayMuteState(cfg, state)
     }
 }
 
@@ -2695,6 +2959,8 @@ UpdateHudLayout(state, anchorX := "", anchorY := "", skipHwnd := 0) {
 UpdateHudVisibility(cfg, state) {
     state.animSeq += 1
     if (!cfg.ShowIndicator) {
+        if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
+            SetTimer(state.sceneMarqueeTimerFn, 0)
         if IsObject(state.MicGui)
             state.MicGui.Hide()
         if IsObject(state.RecGui)
@@ -2731,6 +2997,8 @@ UpdateHudVisibility(cfg, state) {
         ApplySceneAppearance(cfg, state)
         state.SceneGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH))
     } else {
+        if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
+            SetTimer(state.sceneMarqueeTimerFn, 0)
         state.StudioGui.Hide()
         state.SceneGui.Hide()
     }

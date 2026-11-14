@@ -146,8 +146,9 @@ class Gdip {
         pFamily := this.GetFontFamily(fontName)
         measuredW := 0
         if (pFamily) {
+            pxSize := Float(ptSize) * (96.0 / 72.0)
             pFont := 0
-            DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", Float(ptSize), "Int", fontStyle, "Int", 3, "Ptr*", &pFont)
+            DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", pxSize, "Int", fontStyle, "Int", 2, "Ptr*", &pFont)
             if (pFont) {
                 pFormat := this.CreateTypographicFormat(0, 1, 0)
                 NumPut("Float", 0.0, "Float", 0.0, "Float", 4000.0, "Float", 400.0, this._layoutRect, 0)
@@ -165,7 +166,7 @@ class Gdip {
         return measuredW
     }
 
-    static DrawText(pGraphics, textStr, fontName, ptSize, fontStyle, argbColor, x, y, w, h, hAlign := 1, vAlign := 1, trimming := 0) {
+    static DrawText(pGraphics, textStr, fontName, ptSize, fontStyle, argbColor, x, y, w, h, hAlign := 1, vAlign := 1, trimming := 0, autoFit := true) {
         if (textStr = "" || w <= 0 || h <= 0)
             return
 
@@ -173,25 +174,25 @@ class Gdip {
         if (!pFamily)
             return
 
-        fitPtSize := Float(ptSize)
+        fitPxSize := Float(ptSize) * (96.0 / 72.0)
         pFont := 0
-        DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", fitPtSize, "Int", fontStyle, "Int", 3, "Ptr*", &pFont)
+        DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", fitPxSize, "Int", fontStyle, "Int", 2, "Ptr*", &pFont)
         if (!pFont)
             return
 
         pFormat := this.CreateTypographicFormat(hAlign, vAlign, trimming)
 
-        ; Auto-fit font size if measured multi-character text width exceeds available box width w
-        if (StrLen(textStr) > 1) {
+        ; Auto-fit font size if measured text or glyph width exceeds available box width w
+        if (autoFit && StrLen(textStr) >= 1) {
             NumPut("Float", 0.0, "Float", 0.0, "Float", 4000.0, "Float", Float(h * 2), this._layoutRect, 0)
             NumPut("Float", 0.0, "Float", 0.0, "Float", 0.0, "Float", 0.0, this._boundRect, 0)
             DllCall("gdiplus\GdipMeasureString", "Ptr", pGraphics, "WStr", textStr, "Int", -1, "Ptr", pFont, "Ptr", this._layoutRect, "Ptr", pFormat, "Ptr", this._boundRect, "Ptr", 0, "Ptr", 0)
             measuredW := NumGet(this._boundRect, 8, "Float")
             if (measuredW > Float(w) && measuredW > 0.0) {
-                fitPtSize := Max(1.0, fitPtSize * (Float(w) / measuredW) * 0.96)
+                fitPxSize := Max(1.0, fitPxSize * (Float(w) / measuredW) * 0.96)
                 DllCall("gdiplus\GdipDeleteFont", "Ptr", pFont)
                 pFont := 0
-                DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", fitPtSize, "Int", fontStyle, "Int", 3, "Ptr*", &pFont)
+                DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", fitPxSize, "Int", fontStyle, "Int", 2, "Ptr*", &pFont)
                 if (!pFont) {
                     if (pFormat)
                         DllCall("gdiplus\GdipDeleteStringFormat", "Ptr", pFormat)
@@ -277,7 +278,16 @@ class Gdip {
             if (IsObject(labelCfg) && labelCfg.text != "") {
                 style := labelCfg.HasOwnProp("bold") && labelCfg.bold ? 1 : 0
                 align := labelCfg.HasOwnProp("align") ? labelCfg.align : 0
-                this.DrawText(pGraphics, labelCfg.text, "Segoe UI", labelCfg.size, style, labelCfg.color, labelCfg.x, 0, labelCfg.w, h, align, 1)
+                autoFit := labelCfg.HasOwnProp("autoFit") ? labelCfg.autoFit : true
+                hasClip := labelCfg.HasOwnProp("clipW") && labelCfg.clipW > 0
+                if (hasClip) {
+                    clipX := labelCfg.HasOwnProp("clipX") ? Float(labelCfg.clipX) : Float(labelCfg.x)
+                    DllCall("gdiplus\GdipSetClipRect", "Ptr", pGraphics, "Float", clipX, "Float", 0.0, "Float", Float(labelCfg.clipW), "Float", Float(h), "Int", 0)
+                }
+                this.DrawText(pGraphics, labelCfg.text, "Segoe UI", labelCfg.size, style, labelCfg.color, labelCfg.x, 0, labelCfg.w, h, align, 1, 0, autoFit)
+                if (hasClip) {
+                    DllCall("gdiplus\GdipResetClip", "Ptr", pGraphics)
+                }
             }
 
             DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
