@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v3.0.0
-;              and PresenterSync Remote v3.0.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v3.0.1
+;              and PresenterSync Remote v3.0.1 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 3.0.0", UIConstants.APP_VERSION == "3.0.0")
+Assert("APP_VERSION updated to 3.0.1", UIConstants.APP_VERSION == "3.0.1")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v3.0.0 and Remote Host",
-    InStr(summaryTxt, "v3.0.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v3.0.1 and Remote Host",
+    InStr(summaryTxt, "v3.0.1") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1204,7 +1204,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v3.0.0", "2.4.0") == 1
+    CompareSemVer("v3.0.1", "3.0.0") == 1
+    && CompareSemVer("v3.0.0", "2.4.0") == 1
     && CompareSemVer("v2.4.0", "2.3.6") == 1
     && CompareSemVer("v2.3.6", "2.3.6") == 0
     && CompareSemVer("2.3.5", "2.3.6") == -1
@@ -1302,7 +1303,7 @@ Assert("ApplyControlCenterSettings updates all 6 tab subsystems, persists INI, a
 ApplyControlCenterSettings(cfgCC, stCC, { EnableWS: false, EnableZoom: false }, false)
 
 ; ==============================================================================
-; SECTION 21: v3.0.0 FULL AUDIT & HARDENING REGRESSIONS
+; SECTION 21: v3.0.1 FULL AUDIT & HARDENING REGRESSIONS
 ; ==============================================================================
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1471,6 +1472,101 @@ remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
 Assert("Scope guard: PresenterSync_Remote stays strictly 1-tier Mic HUD",
     !RegExMatch(remoteSrc, "\b(RecGui|ChatGui|StudioGui|SceneGui|StreamGui|VCamGui)\b"))
 
+; 21.7 v3.0.1 UI Layout, Single-Row Tab & Overlap Regressions
+CheckGuiNoOverlaps(gObj) {
+    gObj.GetClientPos(,, &cw, &ch)
+    tabCtrl := ""
+    tcy := 0
+    for c in gObj {
+        if (c.Type = "Tab2" || c.Type = "Tab" || c.Type = "Tab3") {
+            tabCtrl := c
+            c.GetPos(, &tcy)
+            break
+        }
+    }
+    rowCnt := IsObject(tabCtrl) ? SendMessage(0x132C, 0, 0, tabCtrl.Hwnd) : 1
+    tabCount := IsObject(tabCtrl) ? SendMessage(0x1304, 0, 0, tabCtrl.Hwnd) : 1
+    if (rowCnt != 1)
+        return { ok: false, reason: "tabRows=" rowCnt }
+    Loop tabCount {
+        idx := A_Index - 1
+        if (IsObject(tabCtrl)) {
+            tabCtrl.Choose(A_Index)
+            Sleep(15)
+        }
+        tabRowBottom := 0
+        if (IsObject(tabCtrl)) {
+            rcItem := Buffer(16, 0)
+            SendMessage(0x130A, idx, rcItem.Ptr, tabCtrl.Hwnd)
+            tabRowBottom := tcy + NumGet(rcItem, 12, "Int")
+        }
+        vis := []
+        for c in gObj {
+            if (c.Type = "Tab2" || c.Type = "Tab" || c.Type = "Tab3")
+                continue
+            if (!DllCall("IsWindowVisible", "Ptr", c.Hwnd))
+                continue
+            c.GetPos(&cx, &cy, &ccw, &cch)
+            if (cx < 0 || cy < 0 || (cx + ccw) > (cw + 2) || (cy + cch) > (ch + 2))
+                return { ok: false, reason: "oob on tab " A_Index ": " c.Type }
+            if (IsObject(tabCtrl) && cy >= tcy && cy < tabRowBottom && c.Type = "Text")
+                return { ok: false, reason: "header overlaps tab on tab " A_Index }
+            vis.Push({ x: cx, y: cy, r: cx + ccw, b: cy + cch, t: c.Type })
+        }
+        Loop vis.Length {
+            i := A_Index
+            a := vis[i]
+            j := i + 1
+            while (j <= vis.Length) {
+                b := vis[j]
+                if (Max(0, Min(a.r, b.r) - Max(a.x, b.x)) > 0 && Max(0, Min(a.b, b.b) - Max(a.y, b.y)) > 0)
+                    return { ok: false, reason: "overlap on tab " A_Index ": " a.t " x " b.t }
+                j += 1
+            }
+        }
+    }
+    return { ok: true, reason: "" }
+}
+
+Theme.SetMode("Dark")
+uiHelp := ShowHelpWindow(cfgAudit, stAudit)
+helpClipChildren := (DllCall("GetWindowLong", "Ptr", uiHelp.Hwnd, "Int", -16, "UInt") & 0x02000000) != 0
+helpNoPrefix := true
+for tc in uiHelp._themedCtrls {
+    if (tc._themeType = "Text" && (DllCall("GetWindowLong", "Ptr", tc.Hwnd, "Int", -16, "UInt") & 0x80) == 0)
+        helpNoPrefix := false
+}
+helpRes := CheckGuiNoOverlaps(uiHelp)
+PostMessage(0x0010, 0, 0, uiHelp.Hwnd)
+Sleep(40)
+
+uiCC := ShowControlCenterWindow(cfgAudit, stAudit)
+ccRes := CheckGuiNoOverlaps(uiCC)
+PostMessage(0x0010, 0, 0, uiCC.Hwnd)
+Sleep(40)
+
+uiPM := ShowProfileManagerUI(cfgAudit, stAudit)
+pmRes := CheckGuiNoOverlaps(uiPM)
+PostMessage(0x0010, 0, 0, uiPM.Hwnd)
+Sleep(40)
+
+uiHk := ChangeAppHotkeysUI(cfgAudit)
+hkWideEnough := true
+for c in uiHk {
+    if (c.Type = "Hotkey") {
+        c.GetPos(,, &hkW)
+        if (hkW < 160)
+            hkWideEnough := false
+    }
+}
+PostMessage(0x0010, 0, 0, uiHk.Hwnd)
+Sleep(40)
+Theme.SetMode("System")
+
+Assert("v3.0.1 Help, Control Center & Profile Manager maintain single-row tabs, zero overlaps & SS_NOPREFIX",
+    helpClipChildren && helpNoPrefix && helpRes.ok && ccRes.ok && pmRes.ok && hkWideEnough,
+    Format("help=({},{}) cc=({}) pm=({}) hkW={}", helpRes.ok, helpRes.reason, ccRes.reason, pmRes.reason, hkWideEnough))
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1478,7 +1574,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.0.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.0.1) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
