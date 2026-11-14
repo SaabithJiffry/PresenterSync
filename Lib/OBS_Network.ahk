@@ -17,6 +17,100 @@ FormatSendKey(hk) {
     return hk
 }
 
+ExtractBaseKeyName(hk) {
+    s := Trim(String(hk))
+    if (s = "" || s = "None")
+        return ""
+    s := RegExReplace(s, "i)\s+up$", "")
+    s := RegExReplace(s, "^[*~$<>^!+#]+(?=.+$)", "")
+    return Trim(s)
+}
+
+WaitPushToMuteRelease(cfg, hk, keyWaitFn := "") {
+    if (!IsObject(cfg) || !cfg.HasOwnProp("EnablePushToMute") || !cfg.EnablePushToMute)
+        return false
+    baseKey := ExtractBaseKeyName(hk)
+    if (baseKey = "")
+        return false
+    holdSec := (IsSet(UIConstants) && UIConstants.HasOwnProp("PUSH_TO_MUTE_HOLD_MS")) ? (UIConstants.PUSH_TO_MUTE_HOLD_MS / 1000.0) : 0.35
+    holdOpt := "T" Format("{:.3f}", holdSec)
+    if IsObject(keyWaitFn) {
+        if (keyWaitFn.Call(baseKey, holdOpt))
+            return false
+        keyWaitFn.Call(baseKey, "T15")
+        return true
+    }
+    if (KeyWait(baseKey, holdOpt))
+        return false
+    KeyWait(baseKey, "T15")
+    return true
+}
+
+DispatchHostMuteToggle(cfg, state) {
+    obsOpen := WinExist("ahk_exe obs64.exe")
+    zoomOpen := WinExist("ahk_exe Zoom.exe")
+
+    if (cfg.AudioRoutingMode == 1) {
+        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+            return true
+        if (!obsOpen || cfg.ObsMuteHotkey = "None" || cfg.ObsMuteHotkey = "") {
+            SoundPlay "*16"
+            return false
+        }
+        SetKeyDelay -1, 30
+        try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
+        SetKeyDelay 50, 50
+    } else if (cfg.AudioRoutingMode == 2) {
+        if (!zoomOpen) {
+            SoundPlay "*16"
+            return false
+        }
+        SetKeyDelay -1, 30
+        try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
+        SetKeyDelay 50, 50
+    } else if (cfg.AudioRoutingMode == 3) {
+        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+            return true
+        if (!obsOpen && !zoomOpen) {
+            SoundPlay "*16"
+            return false
+        }
+        state.IsSyncing := true
+        SetKeyDelay -1, 30
+        if (obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
+            try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
+        if (zoomOpen && cfg.ZoomMuteHotkey != "")
+            try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
+        SetKeyDelay 50, 50
+        SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
+    }
+
+    if (!state.obsConnected && !state.zoomConnected)
+        SyncUIState(cfg, state, !state.isMuted)
+    return true
+}
+
+DispatchRemoteMuteToggle(cfg, state) {
+    if (cfg.NetworkMode = "Internet") {
+        topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+        mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+        if (!PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "toggle_mute", "1", authTok), "https://ntfy.sh", mockWs)) {
+            ToolTip "PresenterSync Remote: Internet Relay unreachable"
+            SetTimer () => ToolTip(), -2000
+            return false
+        }
+        return true
+    }
+
+    if (!SendObsToggleInputMute(state.obsWs, cfg.TargetMicName, "RemoteClickerMute")) {
+        ToolTip "PresenterSync Remote: Not connected to OBS host"
+        SetTimer () => ToolTip(), -2000
+        return false
+    }
+    return true
+}
+
 EscapeJsonStr(str) {
     s := StrReplace(String(str), "\", "\\")
     s := StrReplace(s, '"', '\"')

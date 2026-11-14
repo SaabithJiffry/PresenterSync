@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.2.5
+; Version: 2.2.6
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.2.5.0
+;@Ahk2Exe-SetVersion 2.2.6.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -194,6 +194,9 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Close Remote Companion...", PromptCloseRemoteCompanion.Bind(cfg, state))
     SettingsMenu.Add()
     SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI.Bind(cfg))
+    SettingsMenu.Add("Enable Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state))
+    if (cfg.EnablePushToMute)
+        SettingsMenu.Check("Enable Cough / Push-to-Mute (Hold)")
     SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI.Bind(cfg))
     SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
     SettingsMenu.Add()
@@ -696,6 +699,9 @@ LaptopKeyboardMute(cfg, state, ThisHotkey) {
 
 TriggerMute(cfg, state) {
     static lastTick := 0
+    static inHold := false
+    if (inHold)
+        return false
     now := A_TickCount
     if (now - lastTick < 150) ; 150ms hardware debounce shield
         return false
@@ -705,45 +711,15 @@ TriggerMute(cfg, state) {
         return
     }
 
-    obsOpen := WinExist("ahk_exe obs64.exe")
-    zoomOpen := WinExist("ahk_exe Zoom.exe")
-
-    if (cfg.AudioRoutingMode == 1) {
-        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
-            return
-        if (!obsOpen || cfg.ObsMuteHotkey = "None" || cfg.ObsMuteHotkey = "") {
-            SoundPlay "*16"
-            return
+    inHold := true
+    try {
+        if (DispatchHostMuteToggle(cfg, state)) {
+            if (WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
+                DispatchHostMuteToggle(cfg, state)
+                lastTick := A_TickCount
+            }
         }
-        SetKeyDelay -1, 30
-        try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
-        SetKeyDelay 50, 50
-    } else if (cfg.AudioRoutingMode == 2) {
-        if !zoomOpen {
-            SoundPlay "*16"
-            return
-        }
-        SetKeyDelay -1, 30
-        try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
-        SetKeyDelay 50, 50
-    } else if (cfg.AudioRoutingMode == 3) {
-        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
-            return
-        if (!obsOpen && !zoomOpen) {
-            SoundPlay "*16"
-            return
-        }
-        state.IsSyncing := true
-        SetKeyDelay -1, 30
-        if (obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
-            try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
-        if (zoomOpen && cfg.ZoomMuteHotkey != "")
-            try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
-        SetKeyDelay 50, 50
-        SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
-    }
-
-    if (!state.obsConnected && !state.zoomConnected) {
-        SyncUIState(cfg, state, !state.isMuted)
+    } finally {
+        inHold := false
     }
 }
