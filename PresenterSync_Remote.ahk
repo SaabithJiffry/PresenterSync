@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 3.0.1
+; Version: 3.1.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 3.0.1.0
+;@Ahk2Exe-SetVersion 3.1.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -1258,12 +1258,80 @@ ShowRemoteHelpUI(cfg, state, *) {
     Theme.ApplyToWindow(helpGui)
     Theme.NamedWindows["RemoteHelpWindow"] := helpGui
 
-    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x18 y16 w580", "Smart Board & Remote Companion Setup Guide"), "Text")
-
+    ; --- Persistent Top Search Bar ---
+    helpGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x14 y15 w84 h22", "Search Help:"), "Text")
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    statusCtrl := helpGui.Add("Text", "x18 y40 w580 h34", BuildRemoteHelpStatusLine(cfg, state))
-    Theme.RegisterControl(helpGui, statusCtrl, "Text", "muted")
+    edRemSearch := helpGui.Add("Edit", "x102 y12 w416 h26")
+    Theme.RegisterControl(helpGui, edRemSearch, "Edit")
+    DllCall("SendMessage", "Ptr", edRemSearch.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "Search Remote HUD, Pointer Controls, Pairing Code, Tray menus...")
+    btnRemClear := helpGui.Add("Button", "x526 y12 w68 h26", "Clear")
+    Theme.RegisterControl(helpGui, btnRemClear, "Button")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x602 y15 w124 h22 Right", "Type to search"), "Text", "muted")
+
+    tabNames := ["Mic HUD Guide", "Setup Guide", "Help Search"]
+    helpGui.SetFont("s9 w600 norm", Theme.UiFont)
+    tabs := helpGui.Add("Tab2", "x14 y48 w712 h436 +0x0400 -0x0200", tabNames)
+    tabs._tabNames := tabNames
+    Theme.RegisterControl(helpGui, tabs, "Tab")
+
+    ; --- TAB 1: REMOTE 1-TIER MIC HUD ANATOMY ---
+    tabs.UseTab(1)
+    helpGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w680 h22", "Interactive Remote 1-Tier Mic HUD Guide - Click any state or callout [1]-[4]:"), "Text", "tabText")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+
+    remAnatomy := GetRemoteHudAnatomyItems()
+    selectedRemIdx := 1
+    picRemHud := helpGui.Add("Picture", "x30 y120 w680 h194", "HBITMAP:" BuildRemoteHudDiagramBitmap(cfg, selectedRemIdx, 680, 194))
+
+    remBtns := []
+    for i, item in remAnatomy {
+        bx := 30 + (i - 1) * 172
+        bCtrl := helpGui.Add("Button", Format("x{} y322 w164 h28", bx), StrReplace(item.tag, "&", "&&"))
+        Theme.RegisterControl(helpGui, bCtrl, "Button", "tabButton")
+        remBtns.Push(bCtrl)
+    }
+
+    edRemHudDetail := AddHelpGuideEdit(helpGui, 30, 356, 680, 114, "")
+    SelectRemHudItem(idx, redraw := true) {
+        if (idx < 1 || idx > remAnatomy.Length)
+            return
+        selectedRemIdx := idx
+        it := remAnatomy[idx]
+        edRemHudDetail.Value := it.tag "  " it.pillTitle "`r`n"
+            . "SUMMARY: " it.summary "`r`n`r`n"
+            . "STATES:`r`n" it.states "`r`n`r`n"
+            . "HOW TO USE:`r`n" it.actions "`r`n`r`n"
+            . "WHERE TO CONFIGURE:`r`n" it.configWhere
+        if (redraw && WinExist("ahk_id " helpGui.Hwnd))
+            ApplyDiagramBitmap(picRemHud, BuildRemoteHudDiagramBitmap(cfg, selectedRemIdx, 680, 194))
+    }
+    SelectRemHudItem(selectedRemIdx, false)
+
+    for idx, bCtrl in remBtns {
+        localIdx := idx
+        bCtrl.OnEvent("Click", ((k, *) => SelectRemHudItem(k, true)).Bind(localIdx))
+    }
+
+    OnRemoteDiagramClick(ctrl, *) {
+        pt := Buffer(8, 0), rc := Buffer(16, 0)
+        DllCall("GetCursorPos", "Ptr", pt)
+        DllCall("ScreenToClient", "Ptr", ctrl.Hwnd, "Ptr", pt)
+        DllCall("GetClientRect", "Ptr", ctrl.Hwnd, "Ptr", rc)
+        cw := Max(1, NumGet(rc, 8, "Int")), ch := Max(1, NumGet(rc, 12, "Int"))
+        relX := NumGet(pt, 0, "Int") * (680.0 / cw)
+        relY := NumGet(pt, 4, "Int") * (194.0 / ch)
+        hitId := HitTestRemoteHudDiagram(relX, relY)
+        if (hitId >= 1 && hitId <= 4)
+            SelectRemHudItem(hitId, true)
+    }
+    picRemHud.OnEvent("Click", OnRemoteDiagramClick)
+
+    ; --- TAB 2: SETUP GUIDE & CONNECTION STATUS ---
+    tabs.UseTab(2)
+    statusCtrl := helpGui.Add("Text", "x30 y94 w680 h36", BuildRemoteHelpStatusLine(cfg, state))
+    Theme.RegisterControl(helpGui, statusCtrl, "Text", "tabMuted")
 
     RefreshRemoteHelp(*) {
         if WinExist("ahk_id " helpGui.Hwnd)
@@ -1272,12 +1340,70 @@ ShowRemoteHelpUI(cfg, state, *) {
     if IsObject(state)
         state.refreshHelpFn := RefreshRemoteHelp
 
-    ed := AddHelpGuideEdit(helpGui, 18, 80, 580, 326, GetRemoteSetupGuideText())
+    AddHelpGuideEdit(helpGui, 30, 136, 680, 334, GetRemoteSetupGuideText())
 
-    btnConn := helpGui.Add("Button", "x18 y418 w140 h32", "Change Connection...")
-    btnKey := helpGui.Add("Button", "x166 y418 w140 h32", "Change Mute Key...")
-    btnSc := helpGui.Add("Button", "x314 y418 w140 h32", "Edit App Shortcuts...")
-    btnClose := helpGui.Add("Button", "x462 y418 w136 h32 Default", "Close")
+    ; --- TAB 3: SEARCHABLE REMOTE TRAY & HELP TOPICS ---
+    tabs.UseTab(3)
+    helpGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w470 h22", "Remote Tray Menus, LAN/WAN Relay & HUD Reference:"), "Text", "tabText")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    lblRemCount := helpGui.Add("Text", "x510 y94 w200 h22 Right", "")
+    Theme.RegisterControl(helpGui, lblRemCount, "Text", "tabMuted")
+
+    ddlRemScope := helpGui.Add("DropDownList", "x30 y122 w230 Choose1", ["All Remote Help", "HUD", "Tray", "Remote", "Features", "Shortcuts"])
+    Theme.RegisterControl(helpGui, ddlRemScope, "DropDownList")
+    btnQuickConn := helpGui.Add("Button", "x272 y121 w138 h26", "Connection")
+    btnQuickPtr := helpGui.Add("Button", "x420 y121 w138 h26", "Mute / Cough")
+    btnQuickHud := helpGui.Add("Button", "x568 y121 w142 h26", "HUD Look")
+    for bq in [btnQuickConn, btnQuickPtr, btnQuickHud]
+        Theme.RegisterControl(helpGui, bq, "Button", "tabButton")
+
+    lbRemItems := helpGui.Add("ListBox", "x30 y156 w270 h314 +0x0100")
+    Theme.RegisterControl(helpGui, lbRemItems, "ListBox")
+    edRemTopicDetail := AddHelpGuideEdit(helpGui, 312, 156, 398, 314, "")
+
+    remResults := []
+    ShowRemSearchSelection(*) {
+        idx := lbRemItems.Value
+        if (idx >= 1 && idx <= remResults.Length)
+            edRemTopicDetail.Value := BuildHelpEntryDetailText(remResults[idx])
+        else
+            edRemTopicDetail.Value := "No Remote help topics matched '" edRemSearch.Value "'. Clear the filter or try 'remote', 'pairing', 'cough', 'snap', 'dodge', or 'tray'."
+    }
+
+    RunRemoteHelpSearch(*) {
+        catArg := (ddlRemScope.Text = "All Remote Help") ? "All" : ddlRemScope.Text
+        remResults := SearchHelpEntries(edRemSearch.Value, catArg, true)
+        lblRemCount.Value := remResults.Length (remResults.Length = 1 ? " match" : " matches")
+        PopulateHelpListBox(lbRemItems, remResults, true)
+        ShowRemSearchSelection()
+    }
+
+    OnRemoteSearchChange(*) {
+        if (Trim(edRemSearch.Value) != "" && tabs.Value != 3)
+            tabs.Choose(3)
+        RunRemoteHelpSearch()
+    }
+    edRemSearch.OnEvent("Change", OnRemoteSearchChange)
+    ddlRemScope.OnEvent("Change", RunRemoteHelpSearch)
+    lbRemItems.OnEvent("Change", ShowRemSearchSelection)
+    btnRemClear.OnEvent("Click", (*) => (edRemSearch.Value := "", ddlRemScope.Choose(1), RunRemoteHelpSearch()))
+    btnQuickConn.OnEvent("Click", (*) => (edRemSearch.Value := "pairing", ddlRemScope.Choose(1), RunRemoteHelpSearch()))
+    btnQuickPtr.OnEvent("Click", (*) => (edRemSearch.Value := "cough", ddlRemScope.Choose(1), RunRemoteHelpSearch()))
+    btnQuickHud.OnEvent("Click", (*) => (edRemSearch.Value := "appearance", ddlRemScope.Choose(1), RunRemoteHelpSearch()))
+    RunRemoteHelpSearch()
+
+    tabs.UseTab()
+
+    helpGui._onThemeRefresh := (*) => (
+        WinExist("ahk_id " helpGui.Hwnd) ? ApplyDiagramBitmap(picRemHud, BuildRemoteHudDiagramBitmap(cfg, selectedRemIdx, 680, 194)) : 0
+    )
+
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    btnConn := helpGui.Add("Button", "x14 y494 w172 h34", "Change Connection...")
+    btnKey := helpGui.Add("Button", "x198 y494 w164 h34", "Change Mute Key...")
+    btnSc := helpGui.Add("Button", "x374 y494 w174 h34", "Edit App Shortcuts...")
+    btnClose := helpGui.Add("Button", "x590 y494 w136 h34 Default", "Close")
     Theme.RegisterControl(helpGui, btnConn, "Button", "accent")
     Theme.RegisterControl(helpGui, btnKey, "Button")
     Theme.RegisterControl(helpGui, btnSc, "Button")
@@ -1286,6 +1412,7 @@ ShowRemoteHelpUI(cfg, state, *) {
     CloseRemoteHelp(*) {
         if (IsObject(state) && state.HasOwnProp("refreshHelpFn"))
             state.refreshHelpFn := ""
+        helpGui._onThemeRefresh := ""
         Theme.UnregisterWindow(helpGui, "RemoteHelpWindow")
         helpGui.Destroy()
     }
@@ -1296,7 +1423,7 @@ ShowRemoteHelpUI(cfg, state, *) {
     helpGui.OnEvent("Close", CloseRemoteHelp)
     helpGui.OnEvent("Escape", CloseRemoteHelp)
 
-    helpGui.Show("w616 h466 Center")
+    helpGui.Show("w740 h540 Center")
     btnClose.Focus()
     return helpGui
 }

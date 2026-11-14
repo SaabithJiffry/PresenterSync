@@ -5,9 +5,10 @@
 
 #Include "%A_LineFile%\..\Gdip.ahk"
 #Include "%A_LineFile%\..\OBS_Network.ahk"
+#Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "3.0.1"
+    static APP_VERSION := "3.1.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -557,6 +558,9 @@ class Theme {
         } else if (ctrlType = "Edit") {
             ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_CFD" : "Explorer", "Ptr", 0)
+        } else if (ctrlType = "ListBox") {
+            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
+            DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
         } else if (ctrlType = "DropDownList") {
             ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_CFD" : "Explorer", "Ptr", 0)
@@ -582,6 +586,10 @@ class Theme {
                 }
             }
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.tabSubclassPtr, "Ptr", 2, "Ptr", 0)
+            if (!ctrl.HasOwnProp("_fluentChangeHooked")) {
+                ctrl._fluentChangeHooked := true
+                ctrl.OnEvent("Change", (tc, *) => DllCall("RedrawWindow", "Ptr", tc.Gui.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0185))
+            }
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Text") {
             if (role = "accent") {
@@ -611,6 +619,9 @@ class Theme {
             for ctrl in guiObj._themedCtrls {
                 try this.ApplyToControl(ctrl, "", isDark)
             }
+        }
+        if (guiObj.HasOwnProp("_onThemeRefresh") && guiObj._onThemeRefresh) {
+            try guiObj._onThemeRefresh.Call()
         }
         DllCall("SetWindowPos", "Ptr", guiObj.Hwnd, "Ptr", 0, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", 0x0037)
         DllCall("RedrawWindow", "Ptr", guiObj.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0585)
@@ -1053,7 +1064,10 @@ TabFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     res := DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam, "Ptr")
     if (uMsg == 0x0201 || uMsg == 0x0202 || uMsg == 0x130C || uMsg == 0x1330 || ((uMsg == 0x0100 || uMsg == 0x0101) && (wParam == 0x25 || wParam == 0x27 || wParam == 0x09))) {
         parentHwnd := DllCall("GetParent", "Ptr", hwnd, "Ptr")
-        DllCall("RedrawWindow", "Ptr", parentHwnd ? parentHwnd : hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0185)
+        targetHwnd := parentHwnd ? parentHwnd : hwnd
+        DllCall("RedrawWindow", "Ptr", targetHwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0185)
+        if (uMsg == 0x130C || uMsg == 0x1330)
+            SetTimer(() => (WinExist("ahk_id " targetHwnd) ? DllCall("RedrawWindow", "Ptr", targetHwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0185) : 0), -1)
     }
     return res
 }
@@ -2133,21 +2147,266 @@ ShowHelpWindow(cfg, state := "", *) {
         return existing
     }
 
-    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync v" UIConstants.APP_VERSION " - Interactive Help & Guide")
+    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync v" UIConstants.APP_VERSION " - Interactive Help Center & HUD Guide")
     Theme.ApplyToWindow(helpGui)
     Theme.NamedWindows["HelpWindow"] := helpGui
 
-    tabNames := ["Shortcuts", "Pointer & PPT", "Audio & Sync", "Remote Setup", "HUD & Theme", "Live Status"]
+    ; --- PERSISTENT TOP SEARCH BAR (visible above Tab2 across all tabs) ---
     helpGui.SetFont("s9 w600 norm", Theme.UiFont)
-    tabs := helpGui.Add("Tab2", "x14 y12 w664 h468 +0x0400 -0x0200", tabNames)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x14 y15 w84 h22", "Search Help:"), "Text")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edGlobalSearch := helpGui.Add("Edit", "x100 y12 w418 h26")
+    Theme.RegisterControl(helpGui, edGlobalSearch, "Edit")
+    DllCall("SendMessage", "Ptr", edGlobalSearch.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "Search HUD pills, Tray menus, OBS, Zoom, clicker, profiles...")
+
+    btnClearSearch := helpGui.Add("Button", "x526 y12 w68 h26", "Clear")
+    Theme.RegisterControl(helpGui, btnClearSearch, "Button")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x602 y15 w224 h22 Right", "Type keyword -> Search tab"), "Text", "muted")
+
+    tabNames := ["Visual HUD", "Tray Menus", "Features A-Z", "Search Help", "Shortcuts", "Remote Setup", "Live Status"]
+    helpGui.SetFont("s9 w600 norm", Theme.UiFont)
+    tabs := helpGui.Add("Tab2", "x14 y48 w812 h504 +0x0400 -0x0200", tabNames)
     tabs._tabNames := tabNames
     Theme.RegisterControl(helpGui, tabs, "Tab")
 
-    ; --- TAB 1: SHORTCUTS ---
+    ; =========================================================================
+    ; TAB 1: VISUAL HUD ANATOMY (Interactive Clickable GDI+ Live HUD Diagram)
+    ; =========================================================================
     tabs.UseTab(1)
-    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Global App, Clicker & Fallback Shortcuts"), "Text", "tabText")
+    helpGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w780 h22", "Interactive Live HUD Anatomy - Click any pill or callout badge [1]-[8]:"), "Text", "tabText")
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+
+    hudAnatomy := GetPrimaryHudAnatomyItems()
+    selectedHudIdx := 7 ; Start highlighting the core LIVE/MUTED Mic pill
+    picHudDiagram := helpGui.Add("Picture", "x32 y118 w776 h240", "HBITMAP:" BuildPrimaryHudDiagramBitmap(cfg, selectedHudIdx, 776, 240))
+
+    hudBtns := []
+    for i, item in hudAnatomy {
+        bx := 30 + (i - 1) * 98
+        bCtrl := helpGui.Add("Button", Format("x{} y364 w92 h28", bx), item.tag)
+        Theme.RegisterControl(helpGui, bCtrl, "Button", "tabButton")
+        hudBtns.Push(bCtrl)
+    }
+
+    edHudDetail := AddHelpGuideEdit(helpGui, 30, 398, 780, 136, "")
+
+    FormatHudAnatomyDetail(idx) {
+        it := hudAnatomy[idx]
+        return it.tag "  " it.pillTitle "`r`n"
+            . "LAYER: " it.tier "`r`n"
+            . "SUMMARY: " it.summary "`r`n`r`n"
+            . "STATES:`r`n" it.states "`r`n`r`n"
+            . "HOW TO USE:`r`n" it.actions "`r`n`r`n"
+            . "WHERE TO CONFIGURE:`r`n" it.configWhere
+    }
+
+    SelectHudAnatomy(idx, redrawDiagram := true) {
+        if (idx < 1 || idx > hudAnatomy.Length)
+            return
+        selectedHudIdx := idx
+        edHudDetail.Value := FormatHudAnatomyDetail(idx)
+        if (redrawDiagram && WinExist("ahk_id " helpGui.Hwnd))
+            ApplyDiagramBitmap(picHudDiagram, BuildPrimaryHudDiagramBitmap(cfg, selectedHudIdx, 776, 240))
+    }
+
+    SelectHudAnatomy(selectedHudIdx, false)
+    for idx, bCtrl in hudBtns {
+        localIdx := idx
+        bCtrl.OnEvent("Click", ((k, *) => SelectHudAnatomy(k, true)).Bind(localIdx))
+    }
+
+    OnPrimaryDiagramClick(ctrl, *) {
+        pt := Buffer(8, 0), rc := Buffer(16, 0)
+        DllCall("GetCursorPos", "Ptr", pt)
+        DllCall("ScreenToClient", "Ptr", ctrl.Hwnd, "Ptr", pt)
+        DllCall("GetClientRect", "Ptr", ctrl.Hwnd, "Ptr", rc)
+        cw := Max(1, NumGet(rc, 8, "Int")), ch := Max(1, NumGet(rc, 12, "Int"))
+        relX := NumGet(pt, 0, "Int") * (776.0 / cw)
+        relY := NumGet(pt, 4, "Int") * (240.0 / ch)
+        hitId := HitTestPrimaryHudDiagram(relX, relY)
+        if (hitId >= 1 && hitId <= 8)
+            SelectHudAnatomy(hitId, true)
+    }
+    picHudDiagram.OnEvent("Click", OnPrimaryDiagramClick)
+
+    ; =========================================================================
+    ; TAB 2: TRAY MENUS & SUBMENUS EXPLORER
+    ; =========================================================================
+    tabs.UseTab(2)
+    helpGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w780 h22", "Complete System Tray & Submenu Reference (Primary & Remote):"), "Text", "tabText")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+
+    trayGroups := ["All Tray Menus", "Top-Level Quick Toggles", "Indicator Appearance Submenu", "Settings Submenu", "Bottom Utilities & Exit", "Remote Companion Tray Menu"]
+    ddlTrayCat := helpGui.Add("DropDownList", "x30 y122 w250 Choose1", trayGroups)
+    Theme.RegisterControl(helpGui, ddlTrayCat, "DropDownList")
+
+    edTrayFilter := helpGui.Add("Edit", "x290 y122 w308 h26")
+    Theme.RegisterControl(helpGui, edTrayFilter, "Edit")
+    DllCall("SendMessage", "Ptr", edTrayFilter.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "Filter tray items (e.g. dodge, snap, 4455, pulse)...")
+
+    btnTrayReset := helpGui.Add("Button", "x606 y122 w76 h26", "Reset")
+    Theme.RegisterControl(helpGui, btnTrayReset, "Button", "tabButton")
+
+    lblTrayCount := helpGui.Add("Text", "x690 y125 w120 h22 Right", "")
+    Theme.RegisterControl(helpGui, lblTrayCount, "Text", "tabMuted")
+
+    lbTrayItems := helpGui.Add("ListBox", "x30 y156 w320 h378 +0x0100")
+    Theme.RegisterControl(helpGui, lbTrayItems, "ListBox")
+    edTrayDetail := AddHelpGuideEdit(helpGui, 362, 156, 448, 378, "")
+
+    trayFiltered := []
+    ShowTraySelection(*) {
+        idx := lbTrayItems.Value
+        if (idx >= 1 && idx <= trayFiltered.Length)
+            edTrayDetail.Value := BuildHelpEntryDetailText(trayFiltered[idx])
+        else
+            edTrayDetail.Value := "No Tray menu items matched your filter. Click Reset or clear the filter box."
+    }
+
+    RefreshTrayExplorer(*) {
+        allTray := SearchHelpEntries(edTrayFilter.Value, "Tray", false)
+        selGrp := ddlTrayCat.Text
+        trayFiltered := []
+        for entry in allTray {
+            if (selGrp = "All Tray Menus" || entry.group = selGrp)
+                trayFiltered.Push(entry)
+        }
+        lblTrayCount.Value := trayFiltered.Length " items"
+        PopulateHelpListBox(lbTrayItems, trayFiltered, false)
+        ShowTraySelection()
+    }
+    ddlTrayCat.OnEvent("Change", RefreshTrayExplorer)
+    edTrayFilter.OnEvent("Change", RefreshTrayExplorer)
+    btnTrayReset.OnEvent("Click", (*) => (ddlTrayCat.Choose(1), edTrayFilter.Value := "", RefreshTrayExplorer()))
+    lbTrayItems.OnEvent("Change", ShowTraySelection)
+    RefreshTrayExplorer()
+
+    ; =========================================================================
+    ; TAB 3: FEATURES A-Z ENCYCLOPEDIA
+    ; =========================================================================
+    tabs.UseTab(3)
+    helpGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w780 h22", "Feature Encyclopedia - Complete Plain-English Guide to Every Capability:"), "Text", "tabText")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+
+    featGroups := ["All Features", "Getting Started & Overview", "Audio Routing & OBS Telemetry", "Conferencing (Zoom / Teams / Meet)", "PowerPoint & Hardware Clicker", "HUD Customization & Visuals", "Profiles, Updates & Startup"]
+    ddlFeatCat := helpGui.Add("DropDownList", "x30 y122 w360 Choose1", featGroups)
+    Theme.RegisterControl(helpGui, ddlFeatCat, "DropDownList")
+    lblFeatCount := helpGui.Add("Text", "x402 y125 w408 h22 Right", "")
+    Theme.RegisterControl(helpGui, lblFeatCount, "Text", "tabMuted")
+
+    lbFeatItems := helpGui.Add("ListBox", "x30 y156 w300 h378 +0x0100")
+    Theme.RegisterControl(helpGui, lbFeatItems, "ListBox")
+    edFeatDetail := AddHelpGuideEdit(helpGui, 342, 156, 468, 378, "")
+
+    featFiltered := []
+    ShowFeatSelection(*) {
+        idx := lbFeatItems.Value
+        if (idx >= 1 && idx <= featFiltered.Length)
+            edFeatDetail.Value := BuildHelpEntryDetailText(featFiltered[idx])
+    }
+
+    RefreshFeatureExplorer(*) {
+        allFeat := SearchHelpEntries("", "Features", false)
+        selGrp := ddlFeatCat.Text
+        featFiltered := []
+        for entry in allFeat {
+            if (selGrp = "All Features" || entry.group = selGrp)
+                featFiltered.Push(entry)
+        }
+        lblFeatCount.Value := featFiltered.Length " feature guides"
+        PopulateHelpListBox(lbFeatItems, featFiltered, false)
+        ShowFeatSelection()
+    }
+    ddlFeatCat.OnEvent("Change", RefreshFeatureExplorer)
+    lbFeatItems.OnEvent("Change", ShowFeatSelection)
+    RefreshFeatureExplorer()
+
+    ; =========================================================================
+    ; TAB 4: INSTANT SEARCH RESULTS
+    ; =========================================================================
+    tabs.UseTab(4)
+    helpGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w530 h22", "Search Results - HUD Indicators, Tray Menus, Submenus, Features & Shortcuts:"), "Text", "tabText")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    lblSearchCount := helpGui.Add("Text", "x570 y94 w240 h22 Right", "")
+    Theme.RegisterControl(helpGui, lblSearchCount, "Text", "tabMuted")
+
+    ddlSearchScope := helpGui.Add("DropDownList", "x30 y122 w204 Choose1", ["All", "HUD", "Tray", "Features", "Shortcuts", "Remote"])
+    Theme.RegisterControl(helpGui, ddlSearchScope, "DropDownList")
+
+    quickTags := [
+        { label: "Mute",       query: "mute" },
+        { label: "OBS",        query: "obs" },
+        { label: "Zoom/Teams", query: "zoom teams meet" },
+        { label: "Clicker",    query: "clicker" },
+        { label: "Snap/Dodge", query: "snap dodge" },
+        { label: "Remote",     query: "remote" }
+    ]
+    for i, tagObj in quickTags {
+        tx := 244 + (i - 1) * 95
+        bt := helpGui.Add("Button", Format("x{} y121 w90 h26", tx), tagObj.label)
+        Theme.RegisterControl(helpGui, bt, "Button", "tabButton")
+        bt.OnEvent("Click", ((qStr, *) => (edGlobalSearch.Value := qStr, ddlSearchScope.Choose(1), tabs.Choose(4), RunGlobalSearch())).Bind(tagObj.query))
+    }
+
+    lbSearchResults := helpGui.Add("ListBox", "x30 y156 w320 h378 +0x0100")
+    Theme.RegisterControl(helpGui, lbSearchResults, "ListBox")
+    edSearchDetail := AddHelpGuideEdit(helpGui, 362, 156, 448, 338, "")
+
+    btnSearchViewHud := helpGui.Add("Button", "x362 y500 w218 h34", "Jump to Visual HUD Diagram")
+    btnSearchOpenCC := helpGui.Add("Button", "x592 y500 w218 h34", "Open Control Center...")
+    Theme.RegisterControl(helpGui, btnSearchViewHud, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnSearchOpenCC, "Button", "tabButton")
+
+    searchResults := []
+    ShowSearchSelection(*) {
+        idx := lbSearchResults.Value
+        if (idx >= 1 && idx <= searchResults.Length) {
+            cur := searchResults[idx]
+            edSearchDetail.Value := BuildHelpEntryDetailText(cur)
+        } else {
+            edSearchDetail.Value := "No topics matched '" edGlobalSearch.Value "'.`r`n`r`nTry broader keywords such as: mute, obs, zoom, teams, meet, tray, stream, vcam, rec, chat, pulse, scale, theme, profile, clicker, or remote."
+        }
+    }
+
+    RunGlobalSearch(*) {
+        q := edGlobalSearch.Value
+        scope := ddlSearchScope.Text
+        searchResults := SearchHelpEntries(q, scope, false)
+        lblSearchCount.Value := searchResults.Length (searchResults.Length = 1 ? " match" : " matches") (q != "" ? (" for '" q "'") : " (All)")
+        PopulateHelpListBox(lbSearchResults, searchResults, true)
+        ShowSearchSelection()
+    }
+
+    btnSearchViewHud.OnEvent("Click", (*) => (
+        idx := lbSearchResults.Value,
+        (idx >= 1 && idx <= searchResults.Length && searchResults[idx].hudId >= 1) ? SelectHudAnatomy(searchResults[idx].hudId, true) : 0,
+        tabs.Choose(1)
+    ))
+    btnSearchOpenCC.OnEvent("Click", (*) => ShowControlCenterWindow(cfg, state))
+
+    OnGlobalSearchEdited(*) {
+        if (Trim(edGlobalSearch.Value) != "" && tabs.Value != 4)
+            tabs.Choose(4)
+        RunGlobalSearch()
+    }
+    edGlobalSearch.OnEvent("Change", OnGlobalSearchEdited)
+    ddlSearchScope.OnEvent("Change", RunGlobalSearch)
+    lbSearchResults.OnEvent("Change", ShowSearchSelection)
+    btnClearSearch.OnEvent("Click", (*) => (edGlobalSearch.Value := "", ddlSearchScope.Choose(1), RunGlobalSearch()))
+    RunGlobalSearch()
+
+    ; =========================================================================
+    ; TAB 5: SHORTCUTS (Dynamic Live Active Hotkeys & Collision Guard)
+    ; =========================================================================
+    tabs.UseTab(5)
+    helpGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w780 h22", "Active Global App, Hardware Clicker & Fallback Shortcuts:"), "Text", "tabText")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+
     scCol1 := "Cycle Pointer Modes:`n"
         . "Toggle OBS WebSocket:`n"
         . "Toggle Conf Monitor:`n"
@@ -2157,137 +2416,67 @@ ShowHelpWindow(cfg, state := "", *) {
         . "Clicker Mute Button:`n"
         . "OBS Mute / Rec / Pause:`n"
         . "Conf Mute / Rec / Pause:"
-    activeConfKey := (NormalizeConferencingApp(cfg.ConferencingApp) = "Teams") ? cfg.TeamsMuteHotkey : ((NormalizeConferencingApp(cfg.ConferencingApp) = "Meet") ? cfg.MeetMuteHotkey : cfg.ZoomMuteHotkey)
+    normApp := NormalizeConferencingApp(cfg.ConferencingApp)
+    activeConfKey := (normApp = "Teams") ? cfg.TeamsMuteHotkey : ((normApp = "Meet") ? cfg.MeetMuteHotkey : cfg.ZoomMuteHotkey)
     scCol2 := FormatHK(cfg.PptHotkey) "`n"
         . FormatHK(cfg.WsHotkey) "`n"
         . FormatHK(cfg.ZoomHotkey) "`n"
         . FormatHK(cfg.IndHotkey) "`n"
         . FormatHK(cfg.SuspendHotkey) "`n"
         . FormatHK(cfg.ExitHotkey) "`n"
-        . FormatHK(cfg.HwMuteHotkey) "`n"
+        . FormatHK(cfg.HwMuteHotkey) (cfg.EnablePushToMute ? "  (Hold >= 350ms = Cough Mute)" : "  (Tap Toggle)") "`n"
         . FormatHK(cfg.ObsMuteHotkey) "  /  " FormatHK(cfg.ObsRecHotkey) "  /  " FormatHK(cfg.ObsPauseHotkey) "`n"
-        . FormatHK(activeConfKey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey) "  (" NormalizeConferencingApp(cfg.ConferencingApp) ")"
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w200 h195", scCol1), "Text", "tabMuted")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x238 y94 w424 h195", scCol2), "Text", "tabText")
+        . FormatHK(activeConfKey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey) "  (" normApp ")"
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y122 w200 h192", scCol1), "Text", "tabMuted")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x238 y122 w572 h192", scCol2), "Text", "tabText")
 
     shortcutNotes := "HOW SHORTCUTS WORK`r`n"
-        . "- Clicker Mute Button: Works in Full PPT + Mute and Pointer Mute Only modes, and automatically pauses while PresenterSync settings windows are active so typing never toggles your mic.`r`n"
-        . "- Fallback Shortcuts (OBS / Zoom / Teams / Meet): Triggered when OBS WebSocket Sync is disabled (Mode 1 / 3) or when syncing Conferencing mic in Mode 2 / Mode 3.`r`n"
-        . "- Disable Any Key: Clear a shortcut or set it to 'None' in Settings to leave it unbound."
-    AddHelpGuideEdit(helpGui, 30, 296, 632, 114, shortcutNotes)
+        . "• Hardware Clicker Mute Button: Works in Full PPT + Mute and Pointer Mute Only modes, protected by a 150ms hardware debounce and automatic pause while any PresenterSync settings window is active.`r`n"
+        . "• Mutual Exclusion Shield: Binding PgDn, Esc, Tab, or F5 as your Clicker Mute Button automatically excludes it from PowerPoint slide forwarding so one button press never changes a slide AND mutes at once.`r`n"
+        . "• Fallback Shortcuts (OBS / Zoom / Teams / Meet): Fired automatically when OBS WebSocket Sync is disabled (Mode 1 / 3) or when syncing Conferencing mute in Mode 2 / Mode 3.`r`n"
+        . "• Disable Any Key: Clear a shortcut box or enter 'None' to leave it unbound."
+    AddHelpGuideEdit(helpGui, 30, 322, 780, 166, shortcutNotes)
 
-    btnAppHk := helpGui.Add("Button", "x30 y424 w200 h34", "Edit App Shortcuts")
-    btnObsHk := helpGui.Add("Button", "x246 y424 w200 h34", "Edit OBS Settings")
-    btnZoomHk := helpGui.Add("Button", "x462 y424 w200 h34", "Edit Conf Shortcuts")
+    btnAppHk := helpGui.Add("Button", "x30 y498 w186 h34", "Edit App Shortcuts")
+    btnObsHk := helpGui.Add("Button", "x228 y498 w186 h34", "Edit OBS Settings")
+    btnZoomHk := helpGui.Add("Button", "x426 y498 w186 h34", "Edit Conf Shortcuts")
+    btnTesterSc := helpGui.Add("Button", "x624 y498 w186 h34", "Launch Clicker Tester")
     Theme.RegisterControl(helpGui, btnAppHk, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnObsHk, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnZoomHk, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnTesterSc, "Button", "tabButton")
     btnAppHk.OnEvent("Click", (*) => ChangeAppHotkeysUI(cfg))
     btnObsHk.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
     btnZoomHk.OnEvent("Click", (*) => ChangeZoomShortcutsUI(cfg))
+    btnTesterSc.OnEvent("Click", (*) => ShowPointerTester())
 
-    ; --- TAB 2: POINTER & PPT ---
-    tabs.UseTab(2)
-    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Smart PowerPoint & Hardware Clicker Step-by-Step"), "Text", "tabText")
-    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    pptGuide := "1. CHOOSE A POINTER MODE (Tray -> Pointer Controls, or press " FormatHK(cfg.PptHotkey) ")`r`n"
-        . "- Full PPT + Mute: Routes slide keys (PgUp/PgDn, Arrows, Space, Enter, Tab, Esc, Shift+F5) directly to PowerPoint in the background while keeping your clicker mute button active.`r`n"
-        . "- Pointer Mute Only: Leaves keyboard/navigation keys untouched for normal typing while keeping your clicker mute button armed.`r`n"
-        . "- OFF: Disables clicker slide routing and mute interception.`r`n`r`n"
-        . "2. DISCOVER & ASSIGN YOUR CLICKER MUTE BUTTON`r`n"
-        . "- Click 'Launch Clicker Tester' below and press the key on your wireless presenter you want to assign (such as b for blank screen, Tab, or a media key).`r`n"
-        . "- Click 'Change Mute Button', press that key (or click inside the text box to type any AutoHotkey key name like PgDn or F12), then click Save & Restart.`r`n`r`n"
-        . "3. BACKGROUND POWERPOINT RELIABILITY & DWM ANIMATION FIX`r`n"
-        . "- Hybrid Delivery: Dispatches PowerPoint COM commands first (150ms debounce shield) and falls back to ControlSend for {Tab}/{Enter} hyperlinks or cross-UAC scenarios.`r`n"
-        . "- Smooth Fade/Morph Animations: In OBS Studio, capture PowerPoint via Window Capture -> Capture Method 'Windows 10 (1903 and up)', and in Windows Settings -> Display -> Graphics set POWERPNT.EXE to 'High performance'."
-    AddHelpGuideEdit(helpGui, 30, 94, 632, 316, pptGuide)
-
-    btnTester := helpGui.Add("Button", "x30 y424 w200 h34", "Launch Clicker Tester")
-    btnHwMute := helpGui.Add("Button", "x246 y424 w200 h34", "Change Mute Button")
-    btnIntercepts := helpGui.Add("Button", "x462 y424 w200 h34", "Configure Intercepts")
-    Theme.RegisterControl(helpGui, btnTester, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnHwMute, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnIntercepts, "Button", "tabButton")
-    btnTester.OnEvent("Click", (*) => ShowPointerTester())
-    btnHwMute.OnEvent("Click", (*) => ChangeHwMuteHotkeyUI(cfg))
-    btnIntercepts.OnEvent("Click", (*) => ConfigurePointerKeysUI(cfg))
-
-    ; --- TAB 3: AUDIO & SYNC ---
-    tabs.UseTab(3)
-    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Audio Routing Profiles, OBS WebSocket v5 & Conferencing UIA"), "Text", "tabText")
-    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    syncGuide := "1. SELECT YOUR AUDIO ROUTING PROFILE (Settings -> Audio Setup Wizard...)`r`n"
-        . "- Mode 1 (Pro OBS Setup / VB-Cable): Ideal when OBS audio feeds Zoom/Teams/Meet. Toggles OBS mic via WebSocket ToggleInputMute (or OBS shortcut fallback).`r`n"
-        . "- Mode 2 (Conferencing-Only): Works without OBS by dispatching your active app mute key (Zoom Alt+A, Teams Ctrl+Shift+M, Meet Ctrl+D) and bridging Remote Companion state.`r`n"
-        . "- Mode 3 (Dual App Sync): Keeps OBS and your chosen conferencing app synchronized two-way so muting in either app mirrors cleanly.`r`n`r`n"
-        . "2. OBS STUDIO WEBSOCKET v5 SETUP (Recommended for Mode 1 & Mode 3)`r`n"
-        . "- In OBS Studio: Tools -> WebSocket Server Settings -> Enable WebSocket server (Port 4455).`r`n"
-        . "- Enable Authentication and set a password, then open 'OBS Settings' below to enter that password and your exact OBS mic source name (default: Mic/Aux).`r`n"
-        . "- Toggle with Tray -> OBS WebSocket Sync (or " FormatHK(cfg.WsHotkey) ") for live 4-tier telemetry.`r`n`r`n"
-        . "3. CONFERENCING MONITORING (Zoom, Microsoft Teams, Google Meet)`r`n"
-        . "- Choose your platform in Control Center -> Audio & Conf. For Zoom, enable 'Always show meeting controls' under Accessibility.`r`n"
-        . "- Toggle with Tray -> Conf Monitoring (or " FormatHK(cfg.ZoomHotkey) "). Acoustic Chime & Mute Toast can also be enabled in Control Center."
-    AddHelpGuideEdit(helpGui, 30, 94, 632, 316, syncGuide)
-
-    btnWizard := helpGui.Add("Button", "x30 y424 w200 h34", "Audio Setup Wizard")
-    btnObsCfg := helpGui.Add("Button", "x246 y424 w200 h34", "OBS Settings")
-    btnZoomCfg := helpGui.Add("Button", "x462 y424 w200 h34", "Conf Shortcuts")
-    Theme.RegisterControl(helpGui, btnWizard, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnObsCfg, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnZoomCfg, "Button", "tabButton")
-    btnWizard.OnEvent("Click", (*) => PromptForSetup(cfg, false))
-    btnObsCfg.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
-    btnZoomCfg.OnEvent("Click", (*) => ChangeZoomShortcutsUI(cfg))
-
-    ; --- TAB 4: REMOTE SETUP ---
-    tabs.UseTab(4)
-    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Smart Board & Secondary PC Companion (PresenterSync Remote)"), "Text", "tabText")
-    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    AddHelpGuideEdit(helpGui, 30, 94, 632, 316, GetRemoteSetupGuideText())
-
-    btnRemInfo := helpGui.Add("Button", "x30 y424 w200 h34", "Remote Connection Info")
-    btnRemObs := helpGui.Add("Button", "x246 y424 w200 h34", "Edit OBS Settings")
-    btnRemTest := helpGui.Add("Button", "x462 y424 w200 h34", "Launch Clicker Tester")
-    Theme.RegisterControl(helpGui, btnRemInfo, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnRemObs, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnRemTest, "Button", "tabButton")
-    btnRemInfo.OnEvent("Click", (*) => ShowRemoteCompanionInfo(cfg, state))
-    btnRemObs.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
-    btnRemTest.OnEvent("Click", (*) => ShowPointerTester())
-
-    ; --- TAB 5: HUD & THEME ---
-    tabs.UseTab(5)
-    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Adaptive 4-Tier HUD Overlay & Live Appearance Guide"), "Text", "tabText")
-    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    hudGuide := "1. ADAPTIVE 4-TIER HUD STACK`r`n"
-        . "- Row 1 (Bottom): Live (Green) / Muted (Red) Mic indicator with local CoreAudio Voice Activity VU bar and breathing pulse when muted.`r`n"
-        . "- Row 2 (Middle - OBS / Conf): 3-state Recording (NOT REC / REC MM:SS / PAUSED) + Unread Chat badge.`r`n"
-        . "- Row 3 (Upper - OBS): Studio Mode badge + dynamically sized Active Program Scene pill (short-click to switch scenes).`r`n"
-        . "- Row 4 (Top - OBS): Live Stream status / dropped-frame warning (STREAM) + Virtual Camera toggle (VCAM).`r`n`r`n"
-        . "2. MOUSE, TOUCH, SNAPPING & SMART VISIBILITY`r`n"
-        . "- Move / Quick-Actions: Left-drag anywhere to reposition (with Magnetic Screen/Window Snapping), right-click for menu, or short-click pills to trigger actions.`r`n"
-        . "- Scaling & Palettes: 8 scales (0.25x-5.0x), Ghost/Frosted/Solid opacity, 5 color presets, Auto-Dodge ghost hover, and Click-Through (hold Alt to drag).`r`n`r`n"
-        . "3. TRY LIVE ADJUSTMENTS BELOW (APPLIES IMMEDIATELY WITHOUT RESTART):"
-    AddHelpGuideEdit(helpGui, 30, 94, 632, 268, hudGuide)
-
-    btnTogExtra := helpGui.Add("Button", "x30 y380 w308 h34", "Toggle Extra HUDs (ON/OFF)")
-    btnTogText := helpGui.Add("Button", "x354 y380 w308 h34", "Toggle HUD Text Labels")
-    btnCycTheme := helpGui.Add("Button", "x30 y424 w308 h34", "Cycle Theme (System/Dark/Light)")
-    btnResetPos := helpGui.Add("Button", "x354 y424 w308 h34", "Reset HUD Position")
-    Theme.RegisterControl(helpGui, btnTogExtra, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnTogText, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnCycTheme, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnResetPos, "Button", "tabButton")
-
-    ; --- TAB 6: LIVE STATUS ---
+    ; =========================================================================
+    ; TAB 6: REMOTE SETUP (Smart Board & Companion Bridge Guide)
+    ; =========================================================================
     tabs.UseTab(6)
-    helpGui.SetFont("s11 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y62 w632", "Live Configuration, Telemetry & Remote Host Status"), "Text", "tabText")
+    helpGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w780 h22", "Smart Board & Secondary PC Companion Setup (PresenterSync Remote):"), "Text", "tabText")
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    AddHelpGuideEdit(helpGui, 30, 122, 780, 366, GetRemoteSetupGuideText())
+
+    btnRemInfo := helpGui.Add("Button", "x30 y498 w252 h34", "Remote Connection Info...")
+    btnRemTest := helpGui.Add("Button", "x294 y498 w252 h34", "Launch Clicker Tester")
+    btnRemSearch := helpGui.Add("Button", "x558 y498 w252 h34", "Browse Remote Help Topics")
+    Theme.RegisterControl(helpGui, btnRemInfo, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnRemTest, "Button", "tabButton")
+    Theme.RegisterControl(helpGui, btnRemSearch, "Button", "tabButton")
+    btnRemInfo.OnEvent("Click", (*) => ShowRemoteCompanionInfo(cfg, state))
+    btnRemTest.OnEvent("Click", (*) => ShowPointerTester())
+    btnRemSearch.OnEvent("Click", (*) => (edGlobalSearch.Value := "", ddlSearchScope.Choose(6), RunGlobalSearch(), tabs.Choose(4)))
+
+    ; =========================================================================
+    ; TAB 7: LIVE STATUS & INSTANT CONTROLS
+    ; =========================================================================
+    tabs.UseTab(7)
+    helpGui.SetFont("s10 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w780 h22", "Live Configuration, Telemetry & Remote Host Diagnostics:"), "Text", "tabText")
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+
     statusCol1 := "PresenterSync Version:`n"
         . "Audio Routing Profile:`n"
         . "Active Pointer Mode:`n"
@@ -2296,9 +2485,27 @@ ShowHelpWindow(cfg, state := "", *) {
         . "Application Theme:`n"
         . "Target OBS Mic Source:`n"
         . "Remote Companion Host:"
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y98 w185 h270", statusCol1), "Text", "tabMuted")
-    statusValCtrl := helpGui.Add("Text", "x222 y98 w440 h270", BuildLiveStatusValues(cfg, state))
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y124 w195 h220", statusCol1), "Text", "tabMuted")
+    statusValCtrl := helpGui.Add("Text", "x235 y124 w575 h220", BuildLiveStatusValues(cfg, state))
     Theme.RegisterControl(helpGui, statusValCtrl, "Text", "tabText")
+
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y350 w780 h22", "Instant Live Toggles & Configuration Actions (No Restart Needed for Toggles):"), "Text", "tabMuted")
+
+    btnTogExtra := helpGui.Add("Button", "x30 y382 w186 h34", "Toggle Extra HUDs")
+    btnTogText := helpGui.Add("Button", "x228 y382 w186 h34", "Toggle HUD Labels")
+    btnCycTheme := helpGui.Add("Button", "x426 y382 w186 h34", "Cycle Theme")
+    btnResetPos := helpGui.Add("Button", "x624 y382 w186 h34", "Reset HUD Position")
+
+    btnRefreshStatus := helpGui.Add("Button", "x30 y428 w252 h34", "Refresh Status")
+    btnResetApp := helpGui.Add("Button", "x294 y428 w252 h34", "Reset Appearance")
+    btnOpenAbout := helpGui.Add("Button", "x558 y428 w252 h34", "About v" UIConstants.APP_VERSION)
+
+    btnStatusWizard := helpGui.Add("Button", "x30 y474 w252 h34", "Run Audio Setup Wizard...")
+    btnStatusMuteKey := helpGui.Add("Button", "x294 y474 w252 h34", "Change Mute Button...")
+    btnStatusIntercepts := helpGui.Add("Button", "x558 y474 w252 h34", "Configure Intercepts...")
+
+    for bLive in [btnTogExtra, btnTogText, btnCycTheme, btnResetPos, btnRefreshStatus, btnResetApp, btnOpenAbout, btnStatusWizard, btnStatusMuteKey, btnStatusIntercepts]
+        Theme.RegisterControl(helpGui, bLive, "Button", "tabButton")
 
     RefreshHelpStatus(*) {
         if WinExist("ahk_id " helpGui.Hwnd)
@@ -2342,6 +2549,7 @@ ShowHelpWindow(cfg, state := "", *) {
 
     OnHelpResetAppearance(*) {
         ResetAppearance(cfg, state)
+        SelectHudAnatomy(selectedHudIdx, true)
         SyncTrayAndHelp()
     }
 
@@ -2349,34 +2557,48 @@ ShowHelpWindow(cfg, state := "", *) {
     btnTogText.OnEvent("Click", OnHelpToggleText)
     btnCycTheme.OnEvent("Click", OnHelpCycleTheme)
     btnResetPos.OnEvent("Click", OnHelpResetPos)
-
-    btnRefreshStatus := helpGui.Add("Button", "x30 y424 w200 h34", "Refresh Status")
-    btnResetApp := helpGui.Add("Button", "x246 y424 w200 h34", "Reset Appearance")
-    btnOpenAbout := helpGui.Add("Button", "x462 y424 w200 h34", "About v" UIConstants.APP_VERSION)
-    Theme.RegisterControl(helpGui, btnRefreshStatus, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnResetApp, "Button", "tabButton")
-    Theme.RegisterControl(helpGui, btnOpenAbout, "Button", "tabButton")
     btnRefreshStatus.OnEvent("Click", RefreshHelpStatus)
     btnResetApp.OnEvent("Click", OnHelpResetAppearance)
     btnOpenAbout.OnEvent("Click", (*) => ShowAboutWindow(cfg, state))
+    btnStatusWizard.OnEvent("Click", (*) => PromptForSetup(cfg, false))
+    btnStatusMuteKey.OnEvent("Click", (*) => ChangeHwMuteHotkeyUI(cfg))
+    btnStatusIntercepts.OnEvent("Click", (*) => ConfigurePointerKeysUI(cfg))
 
     tabs.UseTab()
 
-    helpGui.SetFont("s10 w400 norm", Theme.UiFont)
-    btn := helpGui.Add("Button", "w140 x276 y492 h34 Default", "Got it!")
-    Theme.RegisterControl(helpGui, btn, "Button")
+    ; Keep Visual HUD Diagram synchronized cleanly whenever Light/Dark theme refreshes
+    helpGui._onThemeRefresh := (*) => (
+        WinExist("ahk_id " helpGui.Hwnd) ? ApplyDiagramBitmap(picHudDiagram, BuildPrimaryHudDiagramBitmap(cfg, selectedHudIdx, 776, 240)) : 0
+    )
+
+    ; =========================================================================
+    ; FOOTER BAR (Outside Tab2)
+    ; =========================================================================
+    helpGui.SetFont("s9 w400 norm", Theme.UiFont)
+    btnOpenCC := helpGui.Add("Button", "x14 y562 w196 h34", "Open Control Center...")
+    btnJumpHud := helpGui.Add("Button", "x222 y562 w188 h34", "Visual HUD Guide")
+    btnJumpTray := helpGui.Add("Button", "x422 y562 w188 h34", "Browse Tray Menus")
+    btnClose := helpGui.Add("Button", "x676 y562 w150 h34 Default", "Got it!")
+    for bFoot in [btnOpenCC, btnJumpHud, btnJumpTray, btnClose]
+        Theme.RegisterControl(helpGui, bFoot, "Button")
+
     CloseHelp(*) {
         if (IsObject(state) && state.HasOwnProp("refreshHelpFn"))
             state.refreshHelpFn := ""
+        helpGui._onThemeRefresh := ""
         Theme.UnregisterWindow(helpGui, "HelpWindow")
         helpGui.Destroy()
     }
-    btn.OnEvent("Click", CloseHelp)
+
+    btnOpenCC.OnEvent("Click", (*) => ShowControlCenterWindow(cfg, state))
+    btnJumpHud.OnEvent("Click", (*) => tabs.Choose(1))
+    btnJumpTray.OnEvent("Click", (*) => tabs.Choose(2))
+    btnClose.OnEvent("Click", CloseHelp)
     helpGui.OnEvent("Close", CloseHelp)
     helpGui.OnEvent("Escape", CloseHelp)
 
-    helpGui.Show("w692 h540")
-    btn.Focus()
+    helpGui.Show("w840 h612 Center")
+    btnClose.Focus()
     return helpGui
 }
 

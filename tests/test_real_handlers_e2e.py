@@ -1,5 +1,5 @@
 """
-End-to-End Live WebSocket Integration Test for PresenterSync v3.0.1
+End-to-End Live WebSocket Integration Test for PresenterSync v3.1.0
 Tests the real production handlers from Lib/OBS_Network.ahk, PresenterSync.ahk,
 and PresenterSync_Remote.ahk over live localhost RFC 6455 WebSocket v5 servers.
 """
@@ -701,10 +701,51 @@ AuditRemoteDialog(name, dlgObj, minW := 260, minH := 120) {{
         if (y + h > maxBot)
             maxBot := y + h
     }}
+    tabCtrl := ""
+    tcy := 0
+    for ctrl in dlgObj {{
+        if (ctrl.Type = "Tab2" || ctrl.Type = "Tab" || ctrl.Type = "Tab3") {{
+            tabCtrl := ctrl
+            ctrl.GetPos(, &tcy)
+            break
+        }}
+    }}
+    tabRowOk := true
+    overlapOk := true
+    if IsObject(tabCtrl) {{
+        rowCnt := SendMessage(0x132C, 0, 0, tabCtrl.Hwnd)
+        tabCnt := SendMessage(0x1304, 0, 0, tabCtrl.Hwnd)
+        if (rowCnt != 1)
+            tabRowOk := false
+        Loop tabCnt {{
+            tabCtrl.Choose(A_Index)
+            Sleep(15)
+            visRects := []
+            for vc in dlgObj {{
+                if (vc.Type = "Tab2" || vc.Type = "Tab" || vc.Type = "Tab3")
+                    continue
+                if (!DllCall("IsWindowVisible", "Ptr", vc.Hwnd))
+                    continue
+                vc.GetPos(&vx, &vy, &vw, &vh)
+                visRects.Push({{ x: vx, y: vy, r: vx + vw, b: vy + vh }})
+            }}
+            Loop visRects.Length {{
+                i := A_Index
+                a := visRects[i]
+                j := i + 1
+                while (j <= visRects.Length) {{
+                    b := visRects[j]
+                    if (Max(0, Min(a.r, b.r) - Max(a.x, b.x)) > 0 && Max(0, Min(a.b, b.b) - Max(a.y, b.y)) > 0)
+                        overlapOk := false
+                    j += 1
+                }}
+            }}
+        }}
+    }}
     WinClose("ahk_id " dlgObj.Hwnd)
-    Assert(name " layout & control bounds valid",
-        cw >= minW && ch >= minH && insideOk && (ch - maxBot) >= 8,
-        Format("Client={{}}x{{}}, maxBot={{}}", cw, ch, maxBot))
+    Assert(name " layout, tabs & control bounds valid",
+        cw >= minW && ch >= minH && insideOk && (ch - maxBot) >= 8 && tabRowOk && overlapOk,
+        Format("Client={{}}x{{}}, maxBot={{}}, tabRowOk={{}}, overlapOk={{}}", cw, ch, maxBot, tabRowOk, overlapOk))
 }}
 
 AuditRemoteDialog("Remote OBS Connection UI", ShowRemoteConnectionUI(dualRemCfg, dualRemState, false), 360, 380)
