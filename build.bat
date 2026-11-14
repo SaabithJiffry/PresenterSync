@@ -26,10 +26,10 @@ echo =======================================================
 
 echo [1/2] Compiling PresenterSync.exe (Primary Streaming Host)...
 if exist "%~dp0PresenterSync.exe" del /f /q "%~dp0PresenterSync.exe"
-"%AHK2EXE%" /in "%~dp0PresenterSync.ahk" /out "%~dp0PresenterSync.exe" /icon "%~dp0%ICON%" /base "%BASE%"
+"%AHK2EXE%" /in "%~dp0PresenterSync.ahk" /out "%~dp0PresenterSync.exe" /icon "%~dp0%ICON%" /base "%BASE%" /silent verbose
 if %errorlevel% neq 0 (
     echo [FAILED] Compilation of PresenterSync.exe failed with exit code %errorlevel%.
-    pause
+    if /i not "%~1"=="--nopause" pause
     exit /b %errorlevel%
 )
 echo [OK] PresenterSync.exe built successfully.
@@ -37,10 +37,10 @@ echo [OK] PresenterSync.exe built successfully.
 echo.
 echo [2/2] Compiling PresenterSync_Remote.exe (Smart Board Companion)...
 if exist "%~dp0PresenterSync_Remote.exe" del /f /q "%~dp0PresenterSync_Remote.exe"
-"%AHK2EXE%" /in "%~dp0PresenterSync_Remote.ahk" /out "%~dp0PresenterSync_Remote.exe" /icon "%~dp0%REMOTE_ICON%" /base "%BASE%"
+"%AHK2EXE%" /in "%~dp0PresenterSync_Remote.ahk" /out "%~dp0PresenterSync_Remote.exe" /icon "%~dp0%REMOTE_ICON%" /base "%BASE%" /silent verbose
 if %errorlevel% neq 0 (
     echo [FAILED] Compilation of PresenterSync_Remote.exe failed with exit code %errorlevel%.
-    pause
+    if /i not "%~1"=="--nopause" pause
     exit /b %errorlevel%
 )
 echo [OK] PresenterSync_Remote.exe built successfully.
@@ -60,5 +60,5 @@ echo Portable binaries ready:
 echo  - PresenterSync.exe
 echo  - PresenterSync_Remote.exe
 echo =======================================================
-pause
+if /i not "%~1"=="--nopause" pause
 

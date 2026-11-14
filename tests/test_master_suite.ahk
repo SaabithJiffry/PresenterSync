@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.3.6
-;              and PresenterSync Remote v2.3.6 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.4.0
+;              and PresenterSync Remote v2.4.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.3.6", UIConstants.APP_VERSION == "2.3.6")
+Assert("APP_VERSION updated to 2.4.0", UIConstants.APP_VERSION == "2.4.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.3.6 and Remote Host",
-    InStr(summaryTxt, "v2.3.6") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.4.0 and Remote Host",
+    InStr(summaryTxt, "v2.4.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -457,6 +457,8 @@ stScene.RecGui.Destroy()
 stScene.ChatGui.Destroy()
 stScene.StudioGui.Destroy()
 stScene.SceneGui.Destroy()
+stScene.StreamGui.Destroy()
+stScene.VCamGui.Destroy()
 
 ; 3. Label Mode (ShowText = true) Layer 2 & Layer 3 Non-Overlapping Geometry
 Assert("UIConstants Label Mode dimensions widened to prevent icon/text overlap",
@@ -1003,6 +1005,7 @@ snapFar := ComputeMagneticSnap(500, 500, 80, 40, 0, 14, winRects, fakeWA)
 Assert("ComputeMagneticSnap leaves HUD unmoved when outside 14px threshold",
     snapFar.snappedX == false && snapFar.snappedY == false && snapFar.x == 500 && snapFar.y == 500)
 
+prevDhwSnap := DetectHiddenWindows(true)
 Assert("ApplyHudClickThroughStyle sets +WS_EX_TRANSPARENT (0x20) when enabled & Alt not held",
     ApplyHudClickThroughStyle(cfgSnap, stSnap, true) == true
     && (WinGetExStyle("ahk_id " stSnap.MicGui.Hwnd) & 0x20) != 0)
@@ -1014,9 +1017,11 @@ cfgSnap.HudClickThrough := false
 cfgSnap.HudAutoDodge := true
 cfgSnap.EnableWS := false
 cfgSnap.EnableZoom := false
+cfgSnap.savedX := 400
+cfgSnap.savedY := 400
+stSnap.ComputeDimensions(cfgSnap)
 stSnap.savedX := 400
 stSnap.savedY := 400
-stSnap.ComputeDimensions(cfgSnap)
 AutoDodgeTick(cfgSnap, stSnap, { x: 420, y: 420 }, false)
 Assert("AutoDodgeTick engages ghost alpha + click-through when cursor enters HUD stack",
     stSnap.isAutoDodged == true && stSnap.currentAlpha == UIConstants.DODGE_ALPHA
@@ -1026,6 +1031,7 @@ AutoDodgeTick(cfgSnap, stSnap, { x: 100, y: 100 }, false)
 Assert("AutoDodgeTick restores baseAlpha & clickability when cursor leaves HUD stack",
     stSnap.isAutoDodged == false && stSnap.currentAlpha == stSnap.baseAlpha
     && (WinGetExStyle("ahk_id " stSnap.MicGui.Hwnd) & 0x20) == 0)
+DetectHiddenWindows(prevDhwSnap)
 
 cfgSnap.ResetAppearance()
 UpdateAutoDodgeTimer(cfgSnap, stSnap)
@@ -1096,14 +1102,16 @@ stMode2Host := {
 authMode2 := GetInternetRelayAuthToken(cfgMode2Host.InternetPairingCode, cfgMode2Host.obsPassword)
 pktMode2Toggle := FormatRelayPacket("remote", "toggle_mute", "1", authMode2)
 HandleHostRelayMessage(cfgMode2Host, stMode2Host, stMode2Host.relayWs, pktMode2Toggle)
+mode2LastPkt := mode2Packets.Length >= 1 ? ParseRelayPacket(mode2Packets[mode2Packets.Length]) : ""
 Assert("Mode 2 HandleHostRelayMessage toggles muted state without OBS and broadcasts host packet",
-    stMode2Host.isMuted == true && mode2Packets.Length >= 1 && InStr(mode2Packets[mode2Packets.Length], '"data":"1"'))
+    stMode2Host.isMuted == true && IsObject(mode2LastPkt) && mode2LastPkt.src == "host" && mode2LastPkt.cmd == "state" && mode2LastPkt.data == "1")
 
 pktMode2Sync := FormatRelayPacket("remote", "sync_req", "0", authMode2)
 mode2Packets := []
 HandleHostRelayMessage(cfgMode2Host, stMode2Host, stMode2Host.relayWs, pktMode2Sync)
+mode2SyncPkt := mode2Packets.Length == 1 ? ParseRelayPacket(mode2Packets[1]) : ""
 Assert("Mode 2 sync_req responds even when RemoteNetworkMode=LAN",
-    mode2Packets.Length == 1 && InStr(mode2Packets[1], '"cmd":"state"') && InStr(mode2Packets[1], '"data":"1"'))
+    mode2Packets.Length == 1 && IsObject(mode2SyncPkt) && mode2SyncPkt.src == "host" && mode2SyncPkt.cmd == "state" && mode2SyncPkt.data == "1")
 
 remCfgLan := { NetworkMode: "LAN", EnableRelayFallback: true, InternetPairingCode: "PS-MODE2-234" }
 remStateLan := { usingRelayFallback: false }
@@ -1137,7 +1145,7 @@ Assert("Initial profile list contains Default",
 ; Save a custom Teams Studio profile; saving a non-Default profile auto-snapshots Default first
 cfgProf.AudioRoutingMode := 2
 cfgProf.ConferencingApp := "Microsoft Teams"
-cfgProf.HudColorPreset := "Broadcast"
+cfgProf.HudColorPreset := "Broadcast Tally"
 cfgProf.ShowText := true
 cfgProf.CatchArrows := false
 cfgProf.SaveProfile("Teams Lecture")
@@ -1160,11 +1168,11 @@ Assert("ApplyProfile switches back to Default and restores RoutingMode=1, Zoom, 
     && cfgProfCheck.HudColorPreset == "Standard"
     && stProf.rebuildCount >= 1)
 
-Assert("ApplyProfile switches to Teams Lecture and restores Teams + Broadcast + ShowText + CatchArrows",
+Assert("ApplyProfile switches to Teams Lecture and restores Teams + Broadcast Tally + ShowText + CatchArrows",
     cfgProfCheck.ApplyProfile("Teams Lecture", stProf)
     && cfgProfCheck.AudioRoutingMode == 2
     && cfgProfCheck.ConferencingApp == "Microsoft Teams"
-    && cfgProfCheck.HudColorPreset == "Broadcast"
+    && cfgProfCheck.HudColorPreset == "Broadcast Tally"
     && cfgProfCheck.ShowText == true
     && cfgProfCheck.CatchArrows == false)
 
@@ -1214,6 +1222,81 @@ Assert("CheckForUpdates parses release JSON and /tags fallback for update_availa
     && curRes.ok == true && curRes.status == "up_to_date" && curRes.updateAvailable == false
     && errRes.ok == false && errRes.status == "error")
 
+; ==============================================================================
+; SECTION 20: STAGE 13 (v2.4.0) - UNIFIED FLUENT CONTROL CENTER DASHBOARD
+; ==============================================================================
+if FileExist(testIni)
+    FileDelete(testIni)
+cfgCC := Config(testIni)
+stCC := OverlayState(cfgCC)
+ccEvents := { tray: 0, help: 0, rebind: 0 }
+stCC.rebuildTrayFn := (*) => (ccEvents.tray += 1)
+stCC.refreshHelpFn := (*) => (ccEvents.help += 1)
+stCC.rebindHotkeysFn := (*) => (ccEvents.rebind += 1)
+
+ccWin := ShowControlCenterWindow(cfgCC, stCC)
+hasSixTabs := false
+for ctrl in ccWin {
+    if (ctrl.HasOwnProp("_tabNames") && ctrl._tabNames.Length == 6)
+        hasSixTabs := true
+}
+Assert("ShowControlCenterWindow creates 6-tab Fluent Control Center dashboard", hasSixTabs)
+AuditDialogGeometry("ControlCenterWindow", ccWin, 680, 520)
+
+ccVals := {
+    AudioRoutingMode: 3,
+    ConferencingApp: "Teams",
+    targetMicName: "Shure MV7",
+    TeamsMuteHotkey: "^+m",
+    ShowVoiceMeter: false,
+    EnableAudioCue: true,
+    EnableMuteToast: true,
+    EnableWS: true,
+    EnableZoom: true, ; should be forced false when EnableWS is true
+    obsPassword: "LivePass240",
+    ShowStreamHud: true,
+    ShowRecTimer: true,
+    ObsMuteHotkey: "^F1",
+    PointerMode: "Pointer Mute Only",
+    HwMuteHotkey: "F14",
+    EnablePushToMute: true,
+    CatchArrows: false,
+    IndicatorScale: 1.5,
+    OpacityLevel: UIConstants.OPACITY_SOLID,
+    HudColorPreset: "Broadcast Tally",
+    ThemeMode: "Dark",
+    ShowText: true,
+    MonoIcon: true,
+    SleekCorners: true,
+    EnableHudClickActions: true,
+    EnableMagneticSnap: true,
+    HudAutoDodge: true,
+    HudClickThrough: false,
+    RemoteNetworkMode: "Internet",
+    PptHotkey: "^F11",
+    StartWithWindows: false
+}
+ApplyControlCenterSettings(cfgCC, stCC, ccVals, false)
+cfgCCReload := Config(testIni)
+Assert("ApplyControlCenterSettings updates all 6 tab subsystems, persists INI, and refreshes live without reload",
+    cfgCCReload.AudioRoutingMode == 3
+    && cfgCCReload.ConferencingApp == "Microsoft Teams"
+    && cfgCCReload.targetMicName == "Shure MV7"
+    && cfgCCReload.EnableAudioCue == true
+    && cfgCCReload.EnableWS == true
+    && cfgCCReload.EnableZoom == false
+    && cfgCCReload.obsPassword == "LivePass240"
+    && cfgCCReload.EnablePPT == false
+    && cfgCCReload.EnableMicOnly == true
+    && cfgCCReload.HwMuteHotkey == "F14"
+    && cfgCCReload.EnablePushToMute == true
+    && cfgCCReload.CatchArrows == false
+    && Abs(cfgCCReload.IndicatorScale - 1.5) < 0.01
+    && cfgCCReload.HudColorPreset == "Broadcast Tally"
+    && cfgCCReload.RemoteNetworkMode == "Internet"
+    && cfgCCReload.PptHotkey == "^F11"
+    && ccEvents.tray >= 1 && ccEvents.help >= 1 && ccEvents.rebind >= 1)
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1221,7 +1304,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.3.6) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.4.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

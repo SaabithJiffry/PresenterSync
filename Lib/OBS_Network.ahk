@@ -68,7 +68,7 @@ GetConferencingWindowSpec(appType := "Zoom") {
                 return "ahk_exe Teams.exe"
             return "ahk_exe ms-teams.exe"
         case "Google Meet":
-            for spec in ["Meet ahk_exe chrome.exe", "Meet ahk_exe msedge.exe", "Meet ahk_exe firefox.exe"] {
+            for spec in ["Meet ahk_exe chrome.exe", "Meet ahk_exe msedge.exe", "Meet ahk_exe firefox.exe", "Meet ahk_exe brave.exe"] {
                 if WinExist(spec)
                     return spec
             }
