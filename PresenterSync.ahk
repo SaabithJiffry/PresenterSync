@@ -188,7 +188,7 @@ BuildTrayMenu(cfg, state) {
     A_TrayMenu.Add("About PresenterSync", ShowAboutWindow.Bind(cfg, state))
     A_TrayMenu.Add()
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
-    if A_IsSuspended
+    if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
         A_TrayMenu.Check("Suspend All Hotkeys")
     A_TrayMenu.Add("Exit PresenterSync", ExitTrayApp)
 }
@@ -458,6 +458,7 @@ SetGhost(cfg, state, *) {
 
 ApplyThemeLive(cfg, state, themeMenu, mode, *) {
     SetThemeMode(cfg, themeMenu, mode)
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
 }
 
@@ -483,17 +484,17 @@ ExitTrayApp(*) {
 }
 
 ; --- SYSTEM HOTKEYS ---
-if (AppConfig.PptHotkey != "")
+if (AppConfig.PptHotkey != "" && AppConfig.PptHotkey != "None")
     try Hotkey(AppConfig.PptHotkey, (*) => CyclePointerMode(AppConfig, AppState))
-if (AppConfig.WsHotkey != "")
+if (AppConfig.WsHotkey != "" && AppConfig.WsHotkey != "None")
     try Hotkey(AppConfig.WsHotkey, (*) => ToggleWS(AppConfig, AppState))
-if (AppConfig.ZoomHotkey != "")
+if (AppConfig.ZoomHotkey != "" && AppConfig.ZoomHotkey != "None")
     try Hotkey(AppConfig.ZoomHotkey, (*) => ToggleZoom(AppConfig, AppState))
-if (AppConfig.IndHotkey != "")
+if (AppConfig.IndHotkey != "" && AppConfig.IndHotkey != "None")
     try Hotkey(AppConfig.IndHotkey, (*) => ToggleIndicator(AppConfig, AppState))
-if (AppConfig.SuspendHotkey != "")
+if (AppConfig.SuspendHotkey != "" && AppConfig.SuspendHotkey != "None")
     try Hotkey(AppConfig.SuspendHotkey, (*) => ToggleSuspend(), "S")
-if (AppConfig.ExitHotkey != "")
+if (AppConfig.ExitHotkey != "" && AppConfig.ExitHotkey != "None")
     try Hotkey(AppConfig.ExitHotkey, (*) => ExitTrayApp())
 
 RemoveToolTip() {
@@ -607,11 +608,11 @@ HotIf
 RegisterPassthroughHooks(cfg, state) {
     if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
         try Hotkey(FormatPassthroughHook(cfg.ObsMuteHotkey), LaptopKeyboardMute.Bind(cfg, state))
-    if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && cfg.ZoomMuteHotkey != "")
+    if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && cfg.ZoomMuteHotkey != "None" && cfg.ZoomMuteHotkey != "")
         try Hotkey(FormatPassthroughHook(cfg.ZoomMuteHotkey), LaptopKeyboardMute.Bind(cfg, state))
 
-    obsRecHook := (cfg.ObsRecHotkey != "") ? FormatPassthroughHook(cfg.ObsRecHotkey) : ""
-    zoomRecHook := (cfg.ZoomRecHotkey != "") ? FormatPassthroughHook(cfg.ZoomRecHotkey) : ""
+    obsRecHook := (cfg.ObsRecHotkey != "" && cfg.ObsRecHotkey != "None") ? FormatPassthroughHook(cfg.ObsRecHotkey) : ""
+    zoomRecHook := (cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") ? FormatPassthroughHook(cfg.ZoomRecHotkey) : ""
     if (obsRecHook != "" && obsRecHook = zoomRecHook) {
         try Hotkey(obsRecHook, LaptopCombinedRecToggle.Bind(cfg, state))
     } else {
@@ -621,8 +622,8 @@ RegisterPassthroughHooks(cfg, state) {
             try Hotkey(zoomRecHook, LaptopZoomRecToggle.Bind(cfg, state))
     }
 
-    obsPauseHook := (cfg.ObsPauseHotkey != "") ? FormatPassthroughHook(cfg.ObsPauseHotkey) : ""
-    zoomPauseHook := (cfg.ZoomPauseHotkey != "") ? FormatPassthroughHook(cfg.ZoomPauseHotkey) : ""
+    obsPauseHook := (cfg.ObsPauseHotkey != "" && cfg.ObsPauseHotkey != "None") ? FormatPassthroughHook(cfg.ObsPauseHotkey) : ""
+    zoomPauseHook := (cfg.ZoomPauseHotkey != "" && cfg.ZoomPauseHotkey != "None") ? FormatPassthroughHook(cfg.ZoomPauseHotkey) : ""
     if (obsPauseHook != "" && obsPauseHook = zoomPauseHook) {
         try Hotkey(obsPauseHook, LaptopCombinedPauseToggle.Bind(cfg, state))
     } else {

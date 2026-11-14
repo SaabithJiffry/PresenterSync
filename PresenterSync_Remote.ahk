@@ -19,6 +19,7 @@ ProcessSetPriority "High"
 #Include <WebSocket>
 #Include <Crypto>
 #Include <Gdip>
+#Include <OBS_Network>
 #Include <GUI_Config>
 
 Gdip.Startup()
@@ -104,8 +105,12 @@ class RemoteConfig {
         rawPort := Trim(this.Read("Connection", "HostPort", "4455"))
         this.HostPort := (IsInteger(rawPort) && Integer(rawPort) >= 1 && Integer(rawPort) <= 65535) ? String(Integer(rawPort)) : "4455"
         this.ObsPassword := this.Read("Connection", "ObsPassword", "")
-        this.TargetMicName := this.Read("Connection", "TargetMicName", "Mic/Aux")
+        this.TargetMicName := Trim(this.Read("Connection", "TargetMicName", "Mic/Aux"))
+        if (this.TargetMicName = "")
+            this.TargetMicName := "Mic/Aux"
         this.HeartbeatSeconds := this.ReadInt("Connection", "HeartbeatSeconds", 30)
+        if (this.HeartbeatSeconds < 10 || this.HeartbeatSeconds > 3600)
+            this.HeartbeatSeconds := 30
 
         this.HwMuteHotkey := this.Read("Pointer", "HwMuteHotkey", "b")
         this.EnablePointerMute := this.ReadBool("Pointer", "EnablePointerMute", 1)
@@ -181,6 +186,7 @@ class RemoteState {
     reconnectTimerFn := ""
     heartbeatTimerFn := ""
     rebuildTrayFn := ""
+    refreshHelpFn := ""
     pointerHotIfFn := ""
     activePointerKey := ""
 
@@ -250,6 +256,7 @@ class RemoteState {
 }
 
 AppConfig := RemoteConfig()
+Theme.Init(AppConfig.ThemeMode)
 AppState := RemoteState(AppConfig)
 AppState.rebuildTrayFn := BuildRemoteTrayMenu.Bind(AppConfig, AppState)
 
@@ -400,6 +407,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
 
         ; Restore base alpha & query initial mic mute status
         state.currentAlpha := state.baseAlpha
+        if IsObject(state.MicGui)
+            ApplyMicAppearance(cfg, state)
         escMic := EscapeJsonStr(cfg.TargetMicName)
         SendObsRequest(ws, "GetInputMute", "InitRemoteMute", '{"inputName":"' escMic '"}')
 
@@ -408,9 +417,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
     }
     else if (opCode == 5) {
         ; Op 5: Event payload
-        if (InStr(msg, '"eventType":"InputMuteStateChanged"') || InStr(msg, '"eventType": "InputMuteStateChanged"')) {
-            escMic := EscapeJsonStr(cfg.TargetMicName)
-            if (InStr(msg, '"inputName":"' escMic '"') || InStr(msg, '"inputName": "' escMic '"')) {
+        if (RegExMatch(msg, '"eventType"\s*:\s*"InputMuteStateChanged"')) {
+            if (RegExMatch(msg, '"inputName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchInput) && UnescapeJsonStr(matchInput[1]) == cfg.TargetMicName) {
                 if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                     if (state.connStatus = "mic_error") {
                         state.connStatus := "connected"
@@ -448,12 +456,23 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 } else {
                     SetTimer state.breathTimerFn, 0
                 }
+                if (IsObject(state.rebuildTrayFn))
+                    try state.rebuildTrayFn.Call()
             }
         }
         else if (InStr(msg, '"requestId":"RemoteClickerMute"') || InStr(msg, '"requestId": "RemoteClickerMute"')) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
+                if (state.connStatus != "mic_error") {
+                    state.connStatus := "mic_error"
+                    if (IsObject(state.rebuildTrayFn))
+                        try state.rebuildTrayFn.Call()
+                }
                 ToolTip "PresenterSync Remote: Audio source '" cfg.TargetMicName "' not found in OBS"
                 SetTimer RemoveToolTip, -2500
+            } else if (state.connStatus = "mic_error" && RegExMatch(msg, '"result"\s*:\s*true')) {
+                state.connStatus := "connected"
+                if (IsObject(state.rebuildTrayFn))
+                    try state.rebuildTrayFn.Call()
             }
         }
     }
@@ -550,12 +569,15 @@ InitRemoteHUD(cfg, state) {
 
     OnMessage(0x0201, WM_REMOTE_LBUTTONDOWN.Bind(cfg, state))
     OnMessage(0x0205, WM_REMOTE_RBUTTONUP.Bind(state))
+    OnMessage(0x02E0, WM_REMOTE_DPICHANGED.Bind(cfg, state))
 }
 
 WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     if (!IsObject(state.MicGui) || hwnd != state.MicGui.Hwnd)
         return
 
+    state.animSeq += 1
+    SetTimer state.breathTimerFn, 0
     state.isDraggingHud := true
     PostMessage(0xA1, 2,,, "ahk_id " hwnd) ; Native Windows drag (HTCAPTION)
     KeyWait "LButton"
@@ -579,6 +601,17 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
 WM_REMOTE_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
     if (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
         A_TrayMenu.Show()
+}
+
+WM_REMOTE_DPICHANGED(cfg, state, wParam, lParam, msg, hwnd) {
+    if (!IsObject(state.MicGui) || hwnd != state.MicGui.Hwnd)
+        return
+    newLeft := NumGet(lParam, 0, "Int")
+    newTop := NumGet(lParam, 4, "Int")
+    state.savedX := newLeft
+    state.savedY := newTop
+    state.MicGui.Move(newLeft, newTop, state.baseWidth, state.baseHeight)
+    ApplyMicAppearance(cfg, state)
 }
 
 RefreshRemoteHudAppearance(cfg, state) {
@@ -711,9 +744,12 @@ BuildRemoteTrayMenu(cfg, state) {
     A_TrayMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
     A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI())
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
-    if A_IsSuspended
+    if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
         A_TrayMenu.Check("Suspend All Hotkeys")
     A_TrayMenu.Add("Exit PresenterSync Remote", (*) => ExitApp())
+
+    if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
 }
 
 ToggleRemoteIndicator(cfg, state, *) {
@@ -830,10 +866,22 @@ ChangeRemotePointerKeyUI(cfg, state, *) {
     ))
 }
 
+BuildRemoteHelpStatusLine(cfg, state) {
+    connState := (state.connStatus = "auth_failed") ? "Auth Failed (Check Password)"
+        : ((state.obsConnected && state.connStatus = "mic_error") ? ("Connected - Mic '" cfg.TargetMicName "' Not Found")
+        : (state.obsConnected ? ("Connected to " state.activeHost) : "Searching / Disconnected"))
+    clickerText := FormatHK(cfg.HwMuteHotkey) (cfg.EnablePointerMute ? "" : " (Disabled)")
+    hostText := (cfg.HostAddress != "" ? cfg.HostAddress : "(Not Set)") ":" cfg.HostPort
+    return "Current Status: " connState "  |  Clicker Key: " clickerText "  |  Host: " hostText
+}
+
 ShowRemoteHelpUI(cfg, state, *) {
     existing := Theme.FocusExistingWindow("RemoteHelpWindow")
-    if IsObject(existing)
+    if IsObject(existing) {
+        if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
         return existing
+    }
 
     helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Remote v" UIConstants.APP_VERSION " - Setup & Help Guide")
     Theme.ApplyToWindow(helpGui)
@@ -842,11 +890,16 @@ ShowRemoteHelpUI(cfg, state, *) {
     helpGui.SetFont("s11 w700 norm", Theme.UiFont)
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x18 y16 w580", "Smart Board & Remote Companion Setup Guide"), "Text")
 
-    connState := (state.connStatus = "auth_failed") ? "Auth Failed (Check Password)"
-        : ((state.obsConnected && state.connStatus = "mic_error") ? ("Connected - Mic '" cfg.TargetMicName "' Not Found")
-        : (state.obsConnected ? ("Connected to " state.activeHost) : "Searching / Disconnected"))
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x18 y40 w580", "Current Status: " connState "  |  Clicker Key: " FormatHK(cfg.HwMuteHotkey) "  |  Host: " (cfg.HostAddress != "" ? cfg.HostAddress : "(Not Set)") ":" cfg.HostPort), "Text", "muted")
+    statusCtrl := helpGui.Add("Text", "x18 y40 w580", BuildRemoteHelpStatusLine(cfg, state))
+    Theme.RegisterControl(helpGui, statusCtrl, "Text", "muted")
+
+    RefreshRemoteHelp(*) {
+        if WinExist("ahk_id " helpGui.Hwnd)
+            statusCtrl.Value := BuildRemoteHelpStatusLine(cfg, state)
+    }
+    if IsObject(state)
+        state.refreshHelpFn := RefreshRemoteHelp
 
     ed := AddHelpGuideEdit(helpGui, 18, 66, 580, 340, GetRemoteSetupGuideText())
 
@@ -858,6 +911,8 @@ ShowRemoteHelpUI(cfg, state, *) {
     Theme.RegisterControl(helpGui, btnClose, "Button")
 
     CloseRemoteHelp(*) {
+        if (IsObject(state) && state.HasOwnProp("refreshHelpFn"))
+            state.refreshHelpFn := ""
         Theme.UnregisterWindow(helpGui, "RemoteHelpWindow")
         helpGui.Destroy()
     }
@@ -926,6 +981,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     dlg._closed := false
     dlg._testSeq := 0
     dlg._testWs := ""
+    dlg._testTimer := ""
     Theme.ApplyToWindow(dlg)
     Theme.NamedWindows["OBS Remote Connection"] := dlg
 
@@ -971,6 +1027,10 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
             return
         dlg._closed := true
         dlg._testSeq += 1
+        if IsObject(dlg._testTimer) {
+            SetTimer dlg._testTimer, 0
+            dlg._testTimer := ""
+        }
         if IsObject(dlg._testWs) {
             try dlg._testWs.shutdown()
             dlg._testWs := ""
@@ -1015,6 +1075,10 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         SetTimer state.heartbeatTimerFn, 0
         SetTimer state.breathTimerFn, 0
         state.animSeq += 1
+        if IsObject(state.obsWs) {
+            try state.obsWs.shutdown()
+            state.obsWs := ""
+        }
         state.obsConnected := false
         state.connStatus := "searching"
         state.activeHost := ""
@@ -1026,7 +1090,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         }
         if (IsObject(state.rebuildTrayFn))
             try state.rebuildTrayFn.Call()
-        ConnectToRemoteOBS(cfg, state)
+        SetTimer state.reconnectTimerFn, -20
     }
 
     btnSave.OnEvent("Click", SaveAndConnect)
@@ -1061,6 +1125,10 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
 
     dlg._testSeq += 1
     mySeq := dlg._testSeq
+    if IsObject(dlg._testTimer) {
+        SetTimer dlg._testTimer, 0
+        dlg._testTimer := ""
+    }
     if IsObject(dlg._testWs) {
         try dlg._testWs.shutdown()
         dlg._testWs := ""
@@ -1074,7 +1142,15 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
         return dlg._closed || dlg._testSeq != mySeq || !WinExist("ahk_id " dlg.Hwnd)
     }
 
+    ClearProbeTimer() {
+        if IsObject(dlg._testTimer) {
+            SetTimer dlg._testTimer, 0
+            dlg._testTimer := ""
+        }
+    }
+
     FinishTest(msg) {
+        ClearProbeTimer()
         if IsObject(dlg._testWs) {
             try dlg._testWs.shutdown()
             dlg._testWs := ""
@@ -1086,6 +1162,7 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
     }
 
     TryNextCandidate() {
+        ClearProbeTimer()
         if (IsCancelled() || testSuccess)
             return
         if (currentIndex > endpoints.Length) {
@@ -1097,12 +1174,24 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
         statusLabel.Value := "Testing " target.raw " (" currentIndex "/" endpoints.Length ")..."
         SetTimer RunCurrentProbe, -15
 
+        OnCandidateTimeout() {
+            if (IsCancelled() || testSuccess)
+                return
+            if IsObject(dlg._testWs) {
+                try dlg._testWs.shutdown()
+                dlg._testWs := ""
+            }
+            currentIndex += 1
+            TryNextCandidate()
+        }
+
         RunCurrentProbe() {
             if (IsCancelled() || testSuccess)
                 return
+            probeWs := ""
 
             OnTestMsg(ws, raw) {
-                if (IsCancelled()) {
+                if (IsCancelled() || (IsObject(dlg._testWs) && ws != dlg._testWs)) {
                     try ws.shutdown()
                     return
                 }
@@ -1122,8 +1211,9 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
             }
 
             OnTestClose(ws, st, re) {
-                if (IsCancelled() || testSuccess)
+                if (IsCancelled() || testSuccess || (IsObject(dlg._testWs) && ws != dlg._testWs))
                     return
+                ClearProbeTimer()
                 if IsObject(dlg._testWs) {
                     try dlg._testWs.shutdown()
                     dlg._testWs := ""
@@ -1137,11 +1227,15 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
             }
 
             try {
-                dlg._testWs := WebSocket("ws://" target.host ":" target.port, {
+                dlg._testTimer := OnCandidateTimeout
+                SetTimer dlg._testTimer, -3000
+                probeWs := WebSocket("ws://" target.host ":" target.port, {
                     message: OnTestMsg,
                     close: OnTestClose
                 }, true, "", 2000)
+                dlg._testWs := probeWs
             } catch {
+                ClearProbeTimer()
                 dlg._testWs := ""
                 if (IsCancelled())
                     return

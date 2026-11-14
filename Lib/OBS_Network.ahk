@@ -114,7 +114,7 @@ ConnectToOBS(cfg, state) {
         state.obsWs := WebSocket("ws://127.0.0.1:4455", {
             message: HandleObsMessage.Bind(cfg, state),
             close: HandleObsClose.Bind(cfg, state)
-        })
+        }, true, "", 2000)
     } catch {
         state.obsWs := ""
         if (cfg.EnableWS)
@@ -204,9 +204,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             try state.refreshHelpFn.Call()
     }
     else if (opCode == 5) {
-        if (InStr(msg, '"eventType":"InputMuteStateChanged"') || InStr(msg, '"eventType": "InputMuteStateChanged"')) {
-            escMic := EscapeJsonStr(cfg.targetMicName)
-            if (InStr(msg, '"inputName":"' escMic '"') || InStr(msg, '"inputName": "' escMic '"')) {
+        if (RegExMatch(msg, '"eventType"\s*:\s*"InputMuteStateChanged"')) {
+            if (RegExMatch(msg, '"inputName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchInput) && UnescapeJsonStr(matchInput[1]) == cfg.targetMicName) {
                 if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                     isMutedOBS := (matchMuted[1] == "true")
                     PushObsMuteToZoom(cfg, state, isMutedOBS)
@@ -377,6 +376,25 @@ ZoomStateMonitor(cfg, state) {
     state.zoomConnected := (cfg.EnableZoom && !cfg.EnableWS)
     if (state.zoomConnected != wasConn && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
         try state.refreshHelpFn.Call()
+
+    if (cfg.AudioRoutingMode == 3 && !state.IsSyncing) {
+        if (state.zoomLastMuted != -1 && zoomInfo.muted != state.zoomLastMuted && zoomInfo.muted != state.isMuted) {
+            sentObs := false
+            if (cfg.EnableWS && state.obsConnected)
+                sentObs := SendObsSetInputMute(state.obsWs, cfg.targetMicName, zoomInfo.muted)
+            if (!sentObs && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "" && WinExist("ahk_exe obs64.exe")) {
+                SetKeyDelay -1, 30
+                try ControlSend FormatSendKey(cfg.ObsMuteHotkey),, "ahk_exe obs64.exe"
+                SetKeyDelay 50, 50
+                sentObs := true
+            }
+            if (sentObs) {
+                state.IsSyncing := true
+                SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
+            }
+        }
+    }
+
     if (cfg.EnableZoom && !cfg.EnableWS) {
         SyncUIState(cfg, state, zoomInfo.muted)
         if (zoomInfo.hasRec) {
@@ -386,17 +404,6 @@ ZoomStateMonitor(cfg, state) {
         } else if (state.zoomSawRecControl && A_TickCount >= state.zoomRecGraceUntil) {
             state.zoomSawRecControl := false
             SyncRecState(cfg, state, 0)
-        }
-    } else if (cfg.EnableWS && cfg.AudioRoutingMode == 3 && state.obsConnected && !state.IsSyncing) {
-        if (state.zoomLastMuted != -1 && zoomInfo.muted != state.zoomLastMuted && zoomInfo.muted != state.isMuted) {
-            state.IsSyncing := true
-            sentWs := SendObsSetInputMute(state.obsWs, cfg.targetMicName, zoomInfo.muted)
-            if (!sentWs && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "" && WinExist("ahk_exe obs64.exe")) {
-                SetKeyDelay -1, 30
-                try ControlSend FormatSendKey(cfg.ObsMuteHotkey),, "ahk_exe obs64.exe"
-                SetKeyDelay 50, 50
-            }
-            SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
         }
     }
     state.zoomLastMuted := zoomInfo.muted

@@ -12,7 +12,7 @@
 #Include "%A_ScriptDir%\..\Lib\GUI_Config.ahk"
 
 Gdip.Startup()
-OnExit((*) => Gdip.Shutdown())
+OnExit((*) => (Theme.Shutdown(), Gdip.Shutdown()))
 
 results := []
 PassCount := 0
@@ -171,6 +171,9 @@ report .= "Total: " (PassCount + FailCount) " | Passed: " PassCount " | Failed: 
 for line in results
     report .= line "`n"
 
-FileAppend(report, A_ScriptDir "\live_ops_results.log")
-ExitApp()
+logFile := A_ScriptDir "\live_ops_results.log"
+if FileExist(logFile)
+    FileDelete(logFile)
+FileAppend(report, logFile)
+ExitApp(FailCount > 0 ? 1 : 0)
 

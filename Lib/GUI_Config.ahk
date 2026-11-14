@@ -1021,7 +1021,9 @@ class Config {
             this.Write("Settings", "ZoomPauseHotkey", this.ZoomPauseHotkey)
         }
         this.obsPassword := this.Read("Settings", "ObsPassword", "")
-        this.targetMicName := this.Read("Settings", "TargetMicName", "Mic/Aux")
+        this.targetMicName := Trim(this.Read("Settings", "TargetMicName", "Mic/Aux"))
+        if (this.targetMicName = "")
+            this.targetMicName := "Mic/Aux"
 
         this.EnablePPT := this.ReadBool("Settings", "EnablePPT")
         this.EnableMicOnly := this.ReadBool("Settings", "EnableMicOnly")
@@ -1456,7 +1458,7 @@ PromptForSetup(cfg, isInitialBoot := false) {
     elements := [
         {type: "Text", opts: "w280", text: "Select your Audio Routing Profile:"},
         {type: "DropDownList", id: "mode", opts: "w280 Choose" initialMode, items: modes, onChange: UpdateFieldStates},
-        {type: "Text", id: "obsLbl", opts: "w280 y+15", text: "OBS Mute Shortcut:"},
+        {type: "Text", id: "obsLbl", opts: "w280 y+15", text: "OBS Mute Shortcut" (cfg.EnableWS ? " (Optional with WebSocket):" : ":")},
         {type: "Hotkey", id: "obsHotkey", opts: "w280", value: obsVal},
         {type: "Text", id: "zoomLbl", opts: "w280 y+10", text: "Zoom Mute Shortcut (Default Alt+A):"},
         {type: "Hotkey", id: "zoomHotkey", opts: "w280", value: zoomVal}
@@ -1878,22 +1880,22 @@ ShowAboutWindow(cfg := "", state := "", *) {
 
     helpBtn := aboutGui.Add("Button", "w110 x+12 h32", "Help & Guide")
     Theme.RegisterControl(aboutGui, helpBtn, "Button")
+    CloseAbout(*) {
+        Theme.UnregisterWindow(aboutGui, "AboutWindow")
+        aboutGui.Destroy()
+    }
     if IsObject(cfg)
-        helpBtn.OnEvent("Click", (*) => ShowHelpWindow(cfg, state))
+        helpBtn.OnEvent("Click", (*) => (CloseAbout(), ShowHelpWindow(cfg, state)))
     else
         helpBtn.Enabled := false
 
     closeBtn := aboutGui.Add("Button", "w110 x+12 h32 Default", "Close")
     Theme.RegisterControl(aboutGui, closeBtn, "Button")
-    CloseAbout(*) {
-        Theme.UnregisterWindow(aboutGui, "AboutWindow")
-        aboutGui.Destroy()
-    }
     closeBtn.OnEvent("Click", CloseAbout)
     aboutGui.OnEvent("Close", CloseAbout)
     aboutGui.OnEvent("Escape", CloseAbout)
 
-    aboutGui.Show("AutoSize")
+    aboutGui.Show("AutoSize Center")
     return aboutGui
 }
 
@@ -2243,15 +2245,16 @@ ParseCandidateEndpoints(rawStr, defaultPort := "4455") {
         clean := Trim(item)
         if (clean = "")
             continue
-        clean := RegExReplace(clean, "i)^wss?://", "")
+        clean := RegExReplace(clean, "i)^(?:wss?|https?)://", "")
         clean := RTrim(clean, "/ ")
         if (clean = "")
             continue
         host := clean
         port := defPort
-        if RegExMatch(clean, "^(.*?):\s*(\d+)$", &m) {
+        if RegExMatch(clean, "^([^:]+):(.*)$", &m) {
             host := Trim(m[1])
-            port := (IsInteger(m[2]) && Integer(m[2]) >= 1 && Integer(m[2]) <= 65535) ? String(Integer(m[2])) : defPort
+            rawP := Trim(m[2])
+            port := (IsInteger(rawP) && Integer(rawP) >= 1 && Integer(rawP) <= 65535) ? String(Integer(rawP)) : defPort
         }
         if (host = "")
             continue
@@ -2743,7 +2746,7 @@ PlayMuteAnimation(cfg, state) {
 
     if (!cfg.ShowIndicator) {
         SetTimer state.breathTimerFn, 0
-        state.currentAlpha := state.baseAlpha
+        state.currentAlpha := (state.HasOwnProp("activeHost") && !state.obsConnected) ? Max(60, Round(state.baseAlpha * 0.4)) : state.baseAlpha
         ApplyMicAppearance(cfg, state)
         return
     }
@@ -2792,7 +2795,7 @@ PlayMuteAnimation(cfg, state) {
     if (state.animSeq != mySeq)
         return
 
-    state.currentAlpha := state.baseAlpha
+    state.currentAlpha := (state.HasOwnProp("activeHost") && !state.obsConnected) ? Max(60, Round(state.baseAlpha * 0.4)) : state.baseAlpha
     ApplyMicAppearance(cfg, state, state.savedX, state.savedY, state.baseWidth, state.baseHeight, state.currentAlpha)
 
     if (state.isMuted && cfg.ShowIndicator && (!state.HasOwnProp("activeHost") || state.obsConnected)) {
@@ -2865,6 +2868,8 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
 
     prevX := state.savedX
     prevY := state.savedY
+    state.animSeq += 1
+    SetTimer state.breathTimerFn, 0
     state.activeDragHwnd := hwnd
     state.isDraggingHud := true
     SetTimer state.dragTimerFn, UIConstants.DRAG_SYNC_INTERVAL_MS
