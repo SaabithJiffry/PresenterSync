@@ -1,5 +1,5 @@
 """
-End-to-End Live WebSocket Integration Test for PresenterSync v3.1.1
+End-to-End Live WebSocket Integration Test for PresenterSync v3.2.0
 Tests the real production handlers from Lib/OBS_Network.ahk, PresenterSync.ahk,
 and PresenterSync_Remote.ahk over live localhost RFC 6455 WebSocket v5 servers.
 """
@@ -793,6 +793,20 @@ Assert("Remote About curates strictly Remote capabilities without host bloat",
     && !InStr(remAboutInc, "Control Center")
     && !InStr(remAboutInc, "Virtual Camera")
     && !InStr(remAboutInc, "Studio Mode"))
+
+remHelpLive := ShowRemoteHelpUI(dualRemCfg, dualRemState)
+liveRefreshOk := false
+if (IsObject(dualRemState.refreshHelpFn)) {{
+    SetHudColorPreset(dualRemCfg, dualRemState, "Broadcast Tally")
+    liveRefreshOk := WinExist("ahk_id " remHelpLive.Hwnd) != 0
+}}
+WinClose("ahk_id " remHelpLive.Hwnd)
+try WinWaitClose("ahk_id " remHelpLive.Hwnd, , 1)
+SetHudColorPreset(dualRemCfg, dualRemState, "Standard")
+remConnectHits := SearchHelpEntries("connect", "All", true)
+Assert("Remote Help diagram redraws live on preset change & 'connect' search matches >= 4 entries",
+    liveRefreshOk && remConnectHits.Length >= 4,
+    Format("liveOk={{}} hits={{}}", liveRefreshOk, remConnectHits.Length))
 
 SetTimer dualRemState.reconnectTimerFn, 0
 SetTimer dualRemState.heartbeatTimerFn, 0
