@@ -1,5 +1,5 @@
 """
-End-to-End Live WebSocket Integration Test for PresenterSync v2.2.3
+End-to-End Live WebSocket Integration Test for PresenterSync v2.2.4
 Tests the real production handlers from Lib/OBS_Network.ahk, PresenterSync.ahk,
 and PresenterSync_Remote.ahk over live localhost RFC 6455 WebSocket v5 servers.
 """
@@ -307,8 +307,13 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
         extract_ahk_block(remote_src, "RegisterRemoteAppHotkeys("),
         extract_ahk_block(remote_src, "UnregisterRemoteAppHotkeys("),
         extract_ahk_block(remote_src, "ToggleRemotePointerMute("),
+        extract_ahk_block(remote_src, "ChangeRemotePointerKeyUI("),
         extract_ahk_block(remote_src, "ChangeRemoteAppHotkeysUI("),
         extract_ahk_block(remote_src, "BuildRemoteHelpStatusLine("),
+        extract_ahk_block(remote_src, "ShowRemoteHelpUI("),
+        extract_ahk_block(remote_src, "ShowRemoteAboutUI("),
+        extract_ahk_block(remote_src, "ShowRemoteConnectionUI("),
+        extract_ahk_block(remote_src, "TestConnectionAction("),
     ]
 
     lib_dir = str(ROOT_DIR / "Lib")
@@ -660,6 +665,49 @@ dualRemState.onRemoteCloseSignal := (*) => (closeFlags.wan := true)
 SendCloseRemoteSignal(dualHostCfg, dualHostState)
 Assert("Internet Relay Mode: SendCloseRemoteSignal delivers close_remote packet to Remote",
     closeFlags.wan == true)
+
+; Test Internet Relay "event":"open" handshake from ntfy on Remote & Host Relay close refresh
+dualRemState.isMuted := false
+HandleRemoteObsMessage(dualRemCfg, dualRemState, {{raw: "Internet (PS-TEST-2026)"}}, dualRemState.obsWs, '{{"id":"open1","time":1700000000,"event":"open","topic":"psync_test"}}')
+Assert("Internet Relay Mode: Remote 'event':'open' dispatches sync_req and receives Host state",
+    dualRemState.isMuted == true)
+
+helpRefreshTracker := {{called: false}}
+dualHostState.relayConnected := true
+dualHostState.refreshHelpFn := (*) => (helpRefreshTracker.called := true)
+HandleHostRelayClose(dualHostCfg, dualHostState, "", 1000, "Normal close")
+SetTimer dualHostState.relayTimerFn, 0
+Assert("HandleHostRelayClose resets relayConnected=false and notifies refreshHelpFn",
+    dualHostState.relayConnected == false && helpRefreshTracker.called == true)
+
+; Test Remote Dialog Windows Geometry & Bounds
+AuditRemoteDialog(name, dlgObj, minW := 260, minH := 120) {{
+    if (!IsObject(dlgObj) || !WinExist("ahk_id " dlgObj.Hwnd)) {{
+        Assert(name " window opens", false)
+        return
+    }}
+    dlgObj.GetClientPos(,, &cw, &ch)
+    insideOk := true
+    maxBot := 0
+    for ctrl in dlgObj {{
+        ctrl.GetPos(&x, &y, &w, &h)
+        if (x < 0 || y < 0 || (x + w) > (cw + 2) || (y + h) > (ch + 2)) {{
+            insideOk := false
+            break
+        }}
+        if (y + h > maxBot)
+            maxBot := y + h
+    }}
+    WinClose("ahk_id " dlgObj.Hwnd)
+    Assert(name " layout & control bounds valid",
+        cw >= minW && ch >= minH && insideOk && (ch - maxBot) >= 8,
+        Format("Client={{}}x{{}}, maxBot={{}}", cw, ch, maxBot))
+}}
+
+AuditRemoteDialog("Remote OBS Connection UI", ShowRemoteConnectionUI(dualRemCfg, dualRemState, false), 360, 380)
+AuditRemoteDialog("Remote App Shortcuts UI", ChangeRemoteAppHotkeysUI(dualRemCfg, dualRemState), 300, 110)
+AuditRemoteDialog("Remote Help UI", ShowRemoteHelpUI(dualRemCfg, dualRemState), 580, 440)
+AuditRemoteDialog("Remote About UI", ShowRemoteAboutUI(), 340, 185)
 
 SetTimer dualRemState.reconnectTimerFn, 0
 SetTimer dualRemState.heartbeatTimerFn, 0
