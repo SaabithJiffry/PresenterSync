@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.4.0"
+    static APP_VERSION := "3.0.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -524,7 +524,7 @@ class Theme {
     static RegisterControl(guiObj, ctrl, ctrlType := "", role := "") {
         ctrl._themeType := ctrlType
         ctrl._themeRole := role
-        if (role = "tabButton")
+        if (role = "tabButton" || role = "tabText")
             ctrl._inTab := true
         if (guiObj.HasOwnProp("_themedCtrls"))
             guiObj._themedCtrls.Push(ctrl)
@@ -548,7 +548,10 @@ class Theme {
             if DllCall("IsWindowVisible", "Ptr", ctrl.Hwnd)
                 DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Checkbox") {
-            ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_BG " c" UIConstants.LIGHT_TEXT))
+            if (role = "tabText")
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_SURFACE " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
+            else
+                ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_BG " c" UIConstants.LIGHT_TEXT))
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
         } else if (ctrlType = "Edit") {
             ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
@@ -853,7 +856,8 @@ HotkeyFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         isEnabled := DllCall("IsWindowEnabled", "Ptr", hwnd)
         hasFocus := (DllCall("GetFocus", "Ptr") == hwnd)
 
-        parentBgBgr := parentDark ? UIConstants.DARK_BG_BGR : UIConstants.LIGHT_BG_BGR
+        inTab := (IsObject(ctrl) && ctrl.HasOwnProp("_inTab") && ctrl._inTab)
+        parentBgBgr := parentDark ? (inTab ? UIConstants.DARK_SURFACE_BGR : UIConstants.DARK_BG_BGR) : (inTab ? UIConstants.LIGHT_SURFACE_BGR : UIConstants.LIGHT_BG_BGR)
         hBrParent := DllCall("CreateSolidBrush", "UInt", parentBgBgr, "Ptr")
         DllCall("FillRect", "Ptr", hdcMem, "Ptr", rc, "Ptr", hBrParent)
         DllCall("DeleteObject", "Ptr", hBrParent)
@@ -1501,26 +1505,7 @@ class Config {
         this.Write("Settings", "ActiveProfile", canonical)
         this.Load()
 
-        if IsObject(state) {
-            if (state.HasOwnProp("obsTimerFn") && state.obsTimerFn)
-                SetTimer state.obsTimerFn, (this.EnableWS ? -50 : 0)
-            if (state.HasOwnProp("zoomTimerFn") && state.zoomTimerFn)
-                UpdateZoomMonitorTimer(this, state)
-            if (state.HasOwnProp("relayTimerFn"))
-                UpdateHostInternetRelay(this, state)
-            if (state.HasOwnProp("MicGui") && IsObject(state.MicGui)) {
-                RefreshHudAppearance(this, state)
-                ApplyHudClickThroughStyle(this, state)
-            }
-            if (state.HasOwnProp("autoDodgeTimerFn") && state.autoDodgeTimerFn)
-                UpdateAutoDodgeTimer(this, state)
-            if (state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
-                try state.rebindHotkeysFn.Call()
-            if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
-                try state.rebuildTrayFn.Call()
-            if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
-                try state.refreshHelpFn.Call()
-        }
+        SyncTelemetryBackendsFromConfig(this, state)
         return true
     }
 
@@ -1559,6 +1544,7 @@ class OverlayState {
     relayConnected := false
     zoomConnected := false
     IsSyncing := false
+    syncSource := ""
     zoomLastMuted := -1
     zoomRecGraceUntil := 0
     zoomSawRecControl := false
@@ -3888,10 +3874,10 @@ AutoDodgeTick(cfg, state, cursorPos := "", altHeldOverride := -1) {
         if (IsObject(cursorPos)) {
             mx := cursorPos.x, my := cursorPos.y
         } else {
-            prevMode := A_CoordModeMouse
-            CoordMode("Mouse", "Screen")
-            MouseGetPos(&mx, &my)
-            CoordMode("Mouse", prevMode)
+            pt := Buffer(8, 0)
+            if !DllCall("GetCursorPos", "Ptr", pt, "Int")
+                return
+            mx := NumGet(pt, 0, "Int"), my := NumGet(pt, 4, "Int")
         }
         bounds := GetHudStackBounds(cfg, state)
         inside := (mx >= bounds.left && mx <= bounds.right && my >= bounds.top && my <= bounds.bottom)
@@ -3958,6 +3944,8 @@ InitHUD(cfg, state, showWindows := true) {
         if (cfg.ShowIndicator && state.isMuted)
             SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     }
+    ApplyHudClickThroughStyle(cfg, state)
+    UpdateAutoDodgeTimer(cfg, state)
 
     OnMessage(0x0003, WM_HUD_MOVE.Bind(state))
     OnMessage(0x0201, WM_LBUTTONDOWN.Bind(cfg, state))
@@ -4704,10 +4692,103 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true) {
 
 CheckForUpdatesUI(currentVer := "", *) => CheckForUpdates(currentVer, "", false)
 
-ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true) {
+_HotkeyValidatorGuard(*) => false
+_HotkeyValidatorNoop(*) => 0
+
+IsValidHotkeySpec(hk) {
+    s := Trim(String(hk))
+    if (s = "" || StrLower(s) = "none")
+        return true
+    if RegExMatch(s, "^[*~$<>^!+#]+$")
+        return false
+    try {
+        HotIf(_HotkeyValidatorGuard)
+        Hotkey(s, _HotkeyValidatorNoop, "Off")
+        HotIf()
+        return true
+    } catch {
+        HotIf()
+        return false
+    }
+}
+
+SyncTelemetryBackendsFromConfig(cfg, state) {
+    if (!IsObject(state))
+        return
+    if (state.HasOwnProp("colors"))
+        state.colors := UIConstants.GetColorPalette(cfg.HudColorPreset)
+    if (state.HasOwnProp("baseAlpha"))
+        state.baseAlpha := cfg.OpacityLevel
+
+    hadObsSession := (state.HasOwnProp("obsConnected") && state.obsConnected) || (state.HasOwnProp("obsWs") && IsObject(state.obsWs))
+    if (state.HasOwnProp("obsTimerFn") && state.obsTimerFn)
+        SetTimer(state.obsTimerFn, cfg.EnableWS ? -50 : 0)
+
+    if (!cfg.EnableWS) {
+        if (state.HasOwnProp("obsConnected"))
+            state.obsConnected := false
+        if (state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+            try state.obsWs.shutdown()
+            state.obsWs := ""
+        }
+        if (state.HasOwnProp("streamTimerFn") && state.streamTimerFn)
+            SetTimer(state.streamTimerFn, 0)
+        if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
+            SetTimer(state.sceneMarqueeTimerFn, 0)
+        if (state.HasOwnProp("streamState"))
+            SyncStreamState(cfg, state, 0)
+        if (state.HasOwnProp("vcamActive"))
+            SyncVCamState(cfg, state, false)
+        if (state.HasOwnProp("studioModeActive"))
+            SyncStudioState(cfg, state, false)
+        state.currentSceneName := "Scene"
+        state.sceneList := []
+        if (state.HasOwnProp("recState") && (hadObsSession || !cfg.EnableZoom))
+            SyncRecState(cfg, state, 0)
+    }
+
+    if (!cfg.EnableZoom || cfg.EnableWS) {
+        if (state.HasOwnProp("zoomConnected"))
+            state.zoomConnected := false
+        if (state.HasOwnProp("zoomLastMuted"))
+            state.zoomLastMuted := -1
+        if (state.HasOwnProp("zoomRecGraceUntil"))
+            state.zoomRecGraceUntil := 0
+        if (state.HasOwnProp("zoomSawRecControl"))
+            state.zoomSawRecControl := false
+        if (!cfg.EnableWS && !cfg.EnableZoom) {
+            if (state.HasOwnProp("unreadChatCount"))
+                SyncChatState(cfg, state, 0)
+            if (state.HasOwnProp("recState"))
+                SyncRecState(cfg, state, 0)
+        }
+    }
+
+    if (state.HasOwnProp("zoomTimerFn") && state.zoomTimerFn)
+        UpdateZoomMonitorTimer(cfg, state)
+    if (state.HasOwnProp("relayTimerFn"))
+        UpdateHostInternetRelay(cfg, state)
+    if (state.HasOwnProp("MicGui") && IsObject(state.MicGui)) {
+        RefreshHudAppearance(cfg, state)
+        UpdateHudVisibility(cfg, state)
+        ApplyHudClickThroughStyle(cfg, state)
+        UpdateVoiceMeterTimer(cfg, state)
+    }
+    if (state.HasOwnProp("autoDodgeTimerFn") && state.autoDodgeTimerFn)
+        UpdateAutoDodgeTimer(cfg, state)
+    if (state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+        try state.rebindHotkeysFn.Call()
+    if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+        try state.rebuildTrayFn.Call()
+    if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
+}
+
+ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, invalidKeys := "") {
     if (!IsObject(cfg))
         return false
 
+    invalidCount := 0
     if IsObject(vals) {
         if vals.HasOwnProp("AudioRoutingMode") {
             rm := Integer(vals.AudioRoutingMode)
@@ -4725,26 +4806,6 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true) 
             mic := Trim(vals.targetMicName) != "" ? Trim(vals.targetMicName) : "Mic/Aux"
             cfg.targetMicName := mic
             cfg.Write("Settings", "TargetMicName", mic)
-        }
-        if vals.HasOwnProp("ZoomMuteHotkey") {
-            cfg.ZoomMuteHotkey := Trim(vals.ZoomMuteHotkey) != "" ? Trim(vals.ZoomMuteHotkey) : "None"
-            cfg.Write("Settings", "ZoomMuteHotkey", cfg.ZoomMuteHotkey)
-        }
-        if vals.HasOwnProp("TeamsMuteHotkey") {
-            cfg.TeamsMuteHotkey := Trim(vals.TeamsMuteHotkey) != "" ? Trim(vals.TeamsMuteHotkey) : "None"
-            cfg.Write("Settings", "TeamsMuteHotkey", cfg.TeamsMuteHotkey)
-        }
-        if vals.HasOwnProp("MeetMuteHotkey") {
-            cfg.MeetMuteHotkey := Trim(vals.MeetMuteHotkey) != "" ? Trim(vals.MeetMuteHotkey) : "None"
-            cfg.Write("Settings", "MeetMuteHotkey", cfg.MeetMuteHotkey)
-        }
-        if vals.HasOwnProp("ZoomRecHotkey") {
-            cfg.ZoomRecHotkey := Trim(vals.ZoomRecHotkey) != "" ? Trim(vals.ZoomRecHotkey) : "None"
-            cfg.Write("Settings", "ZoomRecHotkey", cfg.ZoomRecHotkey)
-        }
-        if vals.HasOwnProp("ZoomPauseHotkey") {
-            cfg.ZoomPauseHotkey := Trim(vals.ZoomPauseHotkey) != "" ? Trim(vals.ZoomPauseHotkey) : "None"
-            cfg.Write("Settings", "ZoomPauseHotkey", cfg.ZoomPauseHotkey)
         }
         if vals.HasOwnProp("ShowVoiceMeter") {
             cfg.ShowVoiceMeter := !!vals.ShowVoiceMeter
@@ -4782,18 +4843,6 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true) 
             cfg.ShowRecTimer := !!vals.ShowRecTimer
             cfg.WriteBool("Settings", "ShowRecTimer", cfg.ShowRecTimer)
         }
-        if vals.HasOwnProp("ObsMuteHotkey") {
-            cfg.ObsMuteHotkey := Trim(vals.ObsMuteHotkey) != "" ? Trim(vals.ObsMuteHotkey) : "None"
-            cfg.Write("Settings", "ObsHotkey", cfg.ObsMuteHotkey)
-        }
-        if vals.HasOwnProp("ObsRecHotkey") {
-            cfg.ObsRecHotkey := Trim(vals.ObsRecHotkey) != "" ? Trim(vals.ObsRecHotkey) : "None"
-            cfg.Write("Settings", "ObsRecHotkey", cfg.ObsRecHotkey)
-        }
-        if vals.HasOwnProp("ObsPauseHotkey") {
-            cfg.ObsPauseHotkey := Trim(vals.ObsPauseHotkey) != "" ? Trim(vals.ObsPauseHotkey) : "None"
-            cfg.Write("Settings", "ObsPauseHotkey", cfg.ObsPauseHotkey)
-        }
 
         ; Tab 3: Pointer & Clicker
         if vals.HasOwnProp("PointerMode") {
@@ -4810,10 +4859,6 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true) 
             }
             cfg.WriteBool("Settings", "EnablePPT", cfg.EnablePPT)
             cfg.WriteBool("Settings", "EnableMicOnly", cfg.EnableMicOnly)
-        }
-        if vals.HasOwnProp("HwMuteHotkey") {
-            cfg.HwMuteHotkey := Trim(vals.HwMuteHotkey) != "" ? Trim(vals.HwMuteHotkey) : "None"
-            cfg.Write("Settings", "HwMuteHotkey", cfg.HwMuteHotkey)
         }
         if vals.HasOwnProp("EnablePushToMute") {
             cfg.EnablePushToMute := !!vals.EnablePushToMute
@@ -4866,19 +4911,35 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true) 
             cfg.Write("Settings", "RemoteNetworkMode", rMode)
         }
 
-        ; Tab 6: Global Shortcuts & System
+        ; Uniform hotkey validation & persistence (Tabs 1, 2, 3, 6)
         for hkSpec in [
-            { prop: "PptHotkey", key: "PptHotkey" },
-            { prop: "WsHotkey", key: "WsHotkey" },
-            { prop: "ZoomHotkey", key: "ZoomHotkey" },
-            { prop: "IndHotkey", key: "IndHotkey" },
-            { prop: "SuspendHotkey", key: "SuspendHotkey" },
-            { prop: "ExitHotkey", key: "ExitHotkey" }
+            { prop: "ZoomMuteHotkey", key: "ZoomMuteHotkey", label: "Zoom Mute Hotkey" },
+            { prop: "TeamsMuteHotkey", key: "TeamsMuteHotkey", label: "Teams Mute Hotkey" },
+            { prop: "MeetMuteHotkey", key: "MeetMuteHotkey", label: "Meet Mute Hotkey" },
+            { prop: "ZoomRecHotkey", key: "ZoomRecHotkey", label: "Conferencing Rec Hotkey" },
+            { prop: "ZoomPauseHotkey", key: "ZoomPauseHotkey", label: "Conferencing Pause Hotkey" },
+            { prop: "ObsMuteHotkey", key: "ObsHotkey", label: "OBS Mute Hotkey" },
+            { prop: "ObsRecHotkey", key: "ObsRecHotkey", label: "OBS Rec Hotkey" },
+            { prop: "ObsPauseHotkey", key: "ObsPauseHotkey", label: "OBS Pause Hotkey" },
+            { prop: "HwMuteHotkey", key: "HwMuteHotkey", label: "Clicker Mute Button" },
+            { prop: "PptHotkey", key: "PptHotkey", label: "Cycle Pointer Mode" },
+            { prop: "WsHotkey", key: "WsHotkey", label: "Toggle OBS Sync" },
+            { prop: "ZoomHotkey", key: "ZoomHotkey", label: "Toggle Conf Monitor" },
+            { prop: "IndHotkey", key: "IndHotkey", label: "Show / Hide HUD" },
+            { prop: "SuspendHotkey", key: "SuspendHotkey", label: "Suspend All Hotkeys" },
+            { prop: "ExitHotkey", key: "ExitHotkey", label: "Exit Application" }
         ] {
             if vals.HasOwnProp(hkSpec.prop) {
-                v := Trim(vals.%hkSpec.prop%)
-                cfg.%hkSpec.prop% := (v != "") ? v : "None"
-                cfg.Write("Settings", hkSpec.key, cfg.%hkSpec.prop%)
+                rawHk := Trim(String(vals.%hkSpec.prop%))
+                if (!IsValidHotkeySpec(rawHk)) {
+                    invalidCount += 1
+                    if IsObject(invalidKeys)
+                        invalidKeys.Push({ prop: hkSpec.prop, label: hkSpec.label, value: rawHk })
+                    continue
+                }
+                normHk := (rawHk = "" || StrLower(rawHk) = "none") ? "None" : rawHk
+                cfg.%hkSpec.prop% := normHk
+                cfg.Write("Settings", hkSpec.key, normHk)
             }
         }
         if vals.HasOwnProp("StartWithWindows") {
@@ -4886,40 +4947,8 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true) 
         }
     }
 
-    if IsObject(state) {
-        if (state.HasOwnProp("colors"))
-            state.colors := UIConstants.GetColorPalette(cfg.HudColorPreset)
-        if (state.HasOwnProp("obsTimerFn") && state.obsTimerFn) {
-            if (cfg.EnableWS) {
-                SetTimer state.obsTimerFn, -50
-            } else {
-                SetTimer state.obsTimerFn, 0
-                state.obsConnected := false
-                if (state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
-                    try state.obsWs.shutdown()
-                    state.obsWs := ""
-                }
-            }
-        }
-        if (state.HasOwnProp("zoomTimerFn") && state.zoomTimerFn)
-            UpdateZoomMonitorTimer(cfg, state)
-        if (state.HasOwnProp("relayTimerFn"))
-            UpdateHostInternetRelay(cfg, state)
-        if (state.HasOwnProp("MicGui") && IsObject(state.MicGui)) {
-            RefreshHudAppearance(cfg, state)
-            UpdateHudVisibility(cfg, state)
-            ApplyHudClickThroughStyle(cfg, state)
-        }
-        if (state.HasOwnProp("autoDodgeTimerFn") && state.autoDodgeTimerFn)
-            UpdateAutoDodgeTimer(cfg, state)
-        if (state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
-            try state.rebindHotkeysFn.Call()
-        if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
-            try state.rebuildTrayFn.Call()
-        if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
-            try state.refreshHelpFn.Call()
-    }
-    return true
+    SyncTelemetryBackendsFromConfig(cfg, state)
+    return (invalidCount == 0)
 }
 
 ShowControlCenterWindow(cfg, state := "", *) {
@@ -4958,7 +4987,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
         "3: Dual App Sync (OBS + Conferencing)"
     ]
     ddlRouting := ccGui.Add("DropDownList", "x250 y92 w430 Choose" (cfg.AudioRoutingMode >= 1 && cfg.AudioRoutingMode <= 3 ? cfg.AudioRoutingMode : 1), routingLabels)
-    Theme.RegisterControl(ccGui, ddlRouting, "Edit")
+    Theme.RegisterControl(ccGui, ddlRouting, "DropDownList")
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y134 w210", "Conferencing Application:"), "Text", "tabText")
@@ -4970,7 +4999,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
             confIdx := i
     }
     ddlConfApp := ccGui.Add("DropDownList", "x250 y130 w210 Choose" confIdx, confApps)
-    Theme.RegisterControl(ccGui, ddlConfApp, "Edit")
+    Theme.RegisterControl(ccGui, ddlConfApp, "DropDownList")
 
     btnWizard := ccGui.Add("Button", "x472 y128 w208 h28", "Run Audio Setup Wizard...")
     Theme.RegisterControl(ccGui, btnWizard, "Button", "tabButton")
@@ -5066,7 +5095,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
     ptrIdx := cfg.EnablePPT ? 1 : (cfg.EnableMicOnly ? 2 : 3)
     ddlPointerMode := ccGui.Add("DropDownList", "x250 y94 w430 Choose" ptrIdx, ["Full PPT + Mute", "Pointer Mute Only", "OFF"])
-    Theme.RegisterControl(ccGui, ddlPointerMode, "Edit")
+    Theme.RegisterControl(ccGui, ddlPointerMode, "DropDownList")
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y138 w210", "Clicker Mute Button Key:"), "Text", "tabText")
@@ -5114,14 +5143,14 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y96 w130", "Indicator Scale:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
     ddlScale := ccGui.Add("DropDownList", "x165 y92 w175 Choose" scIdx, scaleLabels)
-    Theme.RegisterControl(ccGui, ddlScale, "Edit")
+    Theme.RegisterControl(ccGui, ddlScale, "DropDownList")
 
     opIdx := (cfg.OpacityLevel == UIConstants.OPACITY_SOLID) ? 1 : ((cfg.OpacityLevel == UIConstants.OPACITY_GHOST) ? 3 : 2)
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x360 y96 w130", "Transparency:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
     ddlOpacity := ccGui.Add("DropDownList", "x495 y92 w185 Choose" opIdx, ["Solid (100%)", "Frosted (85%)", "Ghost (50%)"])
-    Theme.RegisterControl(ccGui, ddlOpacity, "Edit")
+    Theme.RegisterControl(ccGui, ddlOpacity, "DropDownList")
 
     palNames := GetHudColorPresetNames()
     palIdx := 1
@@ -5133,7 +5162,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y134 w130", "Color Palette:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
     ddlPalette := ccGui.Add("DropDownList", "x165 y130 w175 Choose" palIdx, palNames)
-    Theme.RegisterControl(ccGui, ddlPalette, "Edit")
+    Theme.RegisterControl(ccGui, ddlPalette, "DropDownList")
 
     themeModes := ["System", "Dark", "Light"]
     tmIdx := (cfg.ThemeMode = "Dark") ? 2 : ((cfg.ThemeMode = "Light") ? 3 : 1)
@@ -5141,7 +5170,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x360 y134 w130", "Window Theme:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
     ddlTheme := ccGui.Add("DropDownList", "x495 y130 w185 Choose" tmIdx, themeModes)
-    Theme.RegisterControl(ccGui, ddlTheme, "Edit")
+    Theme.RegisterControl(ccGui, ddlTheme, "DropDownList")
 
     chkShowInd := ccGui.Add("Checkbox", "x32 y174 w310 h24" (cfg.ShowIndicator ? " Checked" : ""), "Show Primary Mute HUD Indicator")
     chkShowExtra := ccGui.Add("Checkbox", "x360 y174 w320 h24" (cfg.ShowExtraHuds ? " Checked" : ""), "Show Extra Telemetry HUDs (Rows 2-4)")
@@ -5174,7 +5203,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
     rNetIdx := (cfg.RemoteNetworkMode = "Internet") ? 2 : 1
     ddlRemoteNet := ccGui.Add("DropDownList", "x250 y94 w430 Choose" rNetIdx, ["Same Router (LAN)", "Different Networks (Internet)"])
-    Theme.RegisterControl(ccGui, ddlRemoteNet, "Edit")
+    Theme.RegisterControl(ccGui, ddlRemoteNet, "DropDownList")
 
     if (cfg.InternetPairingCode = "") {
         cfg.InternetPairingCode := GenerateInternetPairingCode()
@@ -5238,7 +5267,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
             pChoose := idx
     }
     ddlProfile := ccGui.Add("DropDownList", "x175 y92 w195 Choose" pChoose, profList)
-    Theme.RegisterControl(ccGui, ddlProfile, "Edit")
+    Theme.RegisterControl(ccGui, ddlProfile, "DropDownList")
     btnProfLoad := ccGui.Add("Button", "x380 y90 w94 h28", "Load")
     btnProfSave := ccGui.Add("Button", "x482 y90 w94 h28", "Save")
     btnProfMgr := ccGui.Add("Button", "x584 y90 w96 h28", "Manage...")
@@ -5369,10 +5398,11 @@ ShowControlCenterWindow(cfg, state := "", *) {
         cfg.ApplyProfile(ddlProfile.Text, state) ? (SyncControlsFromConfig(), lblStatus.Value := "Loaded profile: " cfg.ActiveProfile) : (lblStatus.Value := "Save snapshot to '" ddlProfile.Text "' first.")
     ))
     btnProfSave.OnEvent("Click", (*) => (
-        OnApplyClick(),
-        cfg.SaveProfile(ddlProfile.Text),
-        SyncControlsFromConfig(),
-        lblStatus.Value := "Saved settings to profile: " cfg.ActiveProfile
+        OnApplyClick() ? (
+            cfg.SaveProfile(ddlProfile.Text),
+            SyncControlsFromConfig(),
+            lblStatus.Value := "Saved settings to profile: " cfg.ActiveProfile
+        ) : 0
     ))
     btnProfMgr.OnEvent("Click", (*) => ShowProfileManagerUI(cfg, state))
 
@@ -5430,8 +5460,18 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ExitHotkey: edHkExit.Value,
             StartWithWindows: chkStartup.Value
         }
-        ApplyControlCenterSettings(cfg, state, vals, true)
+        invalidKeys := []
+        ok := ApplyControlCenterSettings(cfg, state, vals, true, invalidKeys)
+        if (!ok && invalidKeys.Length > 0) {
+            badLabels := ""
+            for idx, item in invalidKeys
+                badLabels .= (idx > 1 ? ", " : "") item.label " ('" item.value "')"
+            SyncControlsFromConfig()
+            lblStatus.Value := "Ignored invalid hotkey: " badLabels " (valid settings saved)."
+            return false
+        }
         lblStatus.Value := "All settings applied and saved live (" FormatTime(, "HH:mm:ss") ")."
+        return true
     }
 
     CloseControlCenter(*) {

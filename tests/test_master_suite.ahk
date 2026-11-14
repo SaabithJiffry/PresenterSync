@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.4.0
-;              and PresenterSync Remote v2.4.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v3.0.0
+;              and PresenterSync Remote v3.0.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.4.0", UIConstants.APP_VERSION == "2.4.0")
+Assert("APP_VERSION updated to 3.0.0", UIConstants.APP_VERSION == "3.0.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.4.0 and Remote Host",
-    InStr(summaryTxt, "v2.4.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v3.0.0 and Remote Host",
+    InStr(summaryTxt, "v3.0.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -323,7 +323,7 @@ try {
 }
 hostSrcText := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
 Assert("Dynamic Hotkey with 'S' option registers & PresenterSync.ahk marks SuspendHotkey 'S'",
-    hkRegisteredOk && InStr(hostSrcText, 'Hotkey(AppConfig.SuspendHotkey, (*) => ToggleSuspend(), "S")') > 0)
+    hkRegisteredOk && InStr(hostSrcText, 'Hotkey(cfg.SuspendHotkey, (*) => ToggleSuspend(), "S")') > 0)
 
 mockWs := {sent: [], sendText: (this, txt) => this.sent.Push(txt)}
 brokenWs := {sendText: (this, txt) => (ThrowError())}
@@ -1204,7 +1204,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v2.4.0", "2.3.6") == 1
+    CompareSemVer("v3.0.0", "2.4.0") == 1
+    && CompareSemVer("v2.4.0", "2.3.6") == 1
     && CompareSemVer("v2.3.6", "2.3.6") == 0
     && CompareSemVer("2.3.5", "2.3.6") == -1
     && CompareSemVer("2.10.0", "2.9.9") == 1)
@@ -1297,6 +1298,179 @@ Assert("ApplyControlCenterSettings updates all 6 tab subsystems, persists INI, a
     && cfgCCReload.PptHotkey == "^F11"
     && ccEvents.tray >= 1 && ccEvents.help >= 1 && ccEvents.rebind >= 1)
 
+; Stop any background timers started by Section 20 Control Center test
+ApplyControlCenterSettings(cfgCC, stCC, { EnableWS: false, EnableZoom: false }, false)
+
+; ==============================================================================
+; SECTION 21: v3.0.0 FULL AUDIT & HARDENING REGRESSIONS
+; ==============================================================================
+if FileExist(testIni)
+    FileDelete(testIni)
+
+; 21.1 Optimistic mute flip matrix across Modes 1/2/3 and telemetry combinations
+Assert("ShouldOptimisticallyFlipMute handles Mode 1/2/3 & WS/Zoom telemetry accurately",
+    ShouldOptimisticallyFlipMute({AudioRoutingMode: 1, EnableWS: false, EnableZoom: false}, {obsConnected: false, zoomConnected: false}) == true
+    && ShouldOptimisticallyFlipMute({AudioRoutingMode: 1, EnableWS: false, EnableZoom: true}, {obsConnected: false, zoomConnected: true}) == true
+    && ShouldOptimisticallyFlipMute({AudioRoutingMode: 1, EnableWS: true, EnableZoom: false}, {obsConnected: true, zoomConnected: false}) == false
+    && ShouldOptimisticallyFlipMute({AudioRoutingMode: 2, EnableWS: true, EnableZoom: false}, {obsConnected: true, zoomConnected: false}) == true
+    && ShouldOptimisticallyFlipMute({AudioRoutingMode: 2, EnableWS: false, EnableZoom: true}, {obsConnected: false, zoomConnected: true}) == false
+    && ShouldOptimisticallyFlipMute({AudioRoutingMode: 3, EnableWS: false, EnableZoom: false}, {obsConnected: false, zoomConnected: false}) == true
+    && ShouldOptimisticallyFlipMute({AudioRoutingMode: 3, EnableWS: true, EnableZoom: false}, {obsConnected: true, zoomConnected: false}) == false)
+
+; 21.2 Mode 3 Cough / Push-to-Mute rapid (<1000ms) syncSource directional lock
+cfgAudit := Config(testIni)
+cfgAudit.AudioRoutingMode := 3
+cfgAudit.ConferencingApp := "Zoom"
+cfgAudit.ZoomMuteHotkey := "!a"
+stAudit := OverlayState(cfgAudit)
+stAudit.obsTimerFn := ""
+stAudit.zoomTimerFn := ""
+stAudit.relayTimerFn := ""
+stAudit.autoDodgeTimerFn := ""
+stAudit.releaseSyncTimerFn := (*) => 0
+coughSends := []
+coughSender := (k, w) => coughSends.Push({k: k, w: w})
+PushObsMuteToZoom(cfgAudit, stAudit, true, {hasMic: true, muted: false, micHwnd: 55}, coughSender)
+pressOk := (coughSends.Length == 1 && stAudit.IsSyncing && stAudit.syncSource = "obs")
+PushObsMuteToZoom(cfgAudit, stAudit, false, {hasMic: true, muted: true, micHwnd: 55}, coughSender)
+releaseOk := (coughSends.Length == 2 && stAudit.syncSource = "obs")
+stAudit.IsSyncing := true
+stAudit.syncSource := "zoom"
+PushObsMuteToZoom(cfgAudit, stAudit, true, {hasMic: true, muted: false, micHwnd: 55}, coughSender)
+echoBlocked := (coughSends.Length == 2)
+ReleaseSyncLock(stAudit)
+Assert("Mode 3 Cough (<1000ms) release forwards cleanly while Zoom echo lock stays blocked",
+    pressOk && releaseOk && echoBlocked && !stAudit.IsSyncing && stAudit.syncSource = "")
+
+; 21.3 Hotkey syntax validation + ApplyControlCenterSettings & ApplyProfile backend teardown
+Assert("IsValidHotkeySpec accepts valid specs and rejects invalid syntax",
+    IsValidHotkeySpec("b") && IsValidHotkeySpec("!a") && IsValidHotkeySpec("^+m")
+    && IsValidHotkeySpec("^!+F12") && IsValidHotkeySpec("None") && IsValidHotkeySpec("")
+    && !IsValidHotkeySpec("Invalid_Key_Name_999") && !IsValidHotkeySpec("bad key") && !IsValidHotkeySpec("^!"))
+
+fakeWsObj := { closed: false, shutdown: (this) => (this.closed := true) }
+stAudit.obsWs := fakeWsObj
+stAudit.obsConnected := true
+stAudit.recState := 1
+stAudit.streamState := 1
+stAudit.vcamActive := true
+stAudit.studioModeActive := true
+stAudit.zoomConnected := true
+stAudit.currentSceneName := "Keynote"
+cfgAudit.EnableWS := true
+cfgAudit.PptHotkey := "^F12"
+badHkList := []
+ccRes := ApplyControlCenterSettings(cfgAudit, stAudit, {
+    EnableWS: 0,
+    EnableZoom: 0,
+    PptHotkey: "Invalid_Key_Name_999",
+    HwMuteHotkey: "b"
+}, false, badHkList)
+Assert("ApplyControlCenterSettings rejects bad hotkeys without corrupting config & tears down WS telemetry",
+    !ccRes && badHkList.Length == 1 && badHkList[1].prop = "PptHotkey"
+    && cfgAudit.PptHotkey == "^F12" && cfgAudit.HwMuteHotkey == "b"
+    && fakeWsObj.closed && !stAudit.obsConnected && stAudit.recState == 0
+    && stAudit.streamState == 0 && !stAudit.vcamActive && !stAudit.studioModeActive
+    && !stAudit.zoomConnected && stAudit.currentSceneName == "Scene")
+
+cfgAudit.EnableWS := false
+cfgAudit.SaveProfile("AuditBasic")
+stAudit.obsConnected := true
+stAudit.recState := 2
+stAudit.streamState := 2
+stAudit.vcamActive := true
+stAudit.studioModeActive := true
+stAudit.zoomConnected := true
+profSwOk := cfgAudit.ApplyProfile("AuditBasic", stAudit)
+Assert("Config.ApplyProfile resets stale OBS/Zoom telemetry when switching to non-WS profile",
+    profSwOk && !cfgAudit.EnableWS && !stAudit.obsConnected && stAudit.recState == 0
+    && stAudit.streamState == 0 && !stAudit.vcamActive && !stAudit.studioModeActive && !stAudit.zoomConnected)
+
+; 21.4 InitHUD hidden click-through + AutoDodgeTick cursor & locked-desktop handling
+cfgAudit.ShowIndicator := true
+cfgAudit.ShowExtraHuds := true
+cfgAudit.EnableWS := false
+cfgAudit.EnableZoom := true
+cfgAudit.HudClickThrough := true
+cfgAudit.HudAutoDodge := true
+cfgAudit.savedX := 300
+cfgAudit.savedY := 300
+stHudAudit := OverlayState(cfgAudit)
+stHudAudit.obsTimerFn := ""
+stHudAudit.zoomTimerFn := ""
+stHudAudit.relayTimerFn := ""
+stHudAudit.autoDodgeTimerFn := ""
+stHudAudit.savedX := 300
+stHudAudit.savedY := 300
+InitHUD(cfgAudit, stHudAudit, false)
+prevDhw := A_DetectHiddenWindows
+DetectHiddenWindows(true)
+hiddenEx := WinGetExStyle("ahk_id " stHudAudit.MicGui.Hwnd)
+DetectHiddenWindows(prevDhw)
+
+cfgAudit.HudClickThrough := false
+ApplyHudClickThroughStyle(cfgAudit, stHudAudit, false)
+UpdateHudVisibility(cfgAudit, stHudAudit)
+bHud := GetHudStackBounds(cfgAudit, stHudAudit)
+AutoDodgeTick(cfgAudit, stHudAudit, {x: bHud.left + 10, y: bHud.top + 10}, 0)
+dodgedOk := (stHudAudit.isAutoDodged && stHudAudit.currentAlpha <= UIConstants.DODGE_ALPHA && (WinGetExStyle("ahk_id " stHudAudit.MicGui.Hwnd) & 0x20) != 0)
+AutoDodgeTick(cfgAudit, stHudAudit, {x: bHud.right + 120, y: bHud.bottom + 120}, 0)
+restoredOk := (!stHudAudit.isAutoDodged && stHudAudit.currentAlpha == stHudAudit.baseAlpha && (WinGetExStyle("ahk_id " stHudAudit.MicGui.Hwnd) & 0x20) == 0)
+for gProp in ["MicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"] {
+    if IsObject(stHudAudit.%gProp%)
+        try stHudAudit.%gProp%.Destroy()
+}
+Assert("InitHUD(show=false) enforces ClickThrough & AutoDodgeTick toggles ghost pass-through cleanly",
+    (hiddenEx & 0x20) != 0 && dodgedOk && restoredOk)
+
+; 21.5 Control Center Tab Checkboxes + Interactive invalid-hotkey Apply & Theme balance
+Theme.SetMode("Dark")
+ccAuditGui := ShowControlCenterWindow(cfgAudit, stAudit)
+ccChkTabCount := 0
+ccTabCtrl := ""
+ccBtnApply := ""
+ccLblStatus := ""
+ccEdPpt := ""
+for c in ccAuditGui._themedCtrls {
+    if (c._themeType = "Checkbox" && c._themeRole = "tabText")
+        ccChkTabCount += 1
+    else if (c._themeType = "Tab")
+        ccTabCtrl := c
+    else if (c._themeType = "Button" && InStr(c.Text, "Apply"))
+        ccBtnApply := c
+    else if (c._themeType = "Text" && InStr(c.Text, "Active Profile:"))
+        ccLblStatus := c
+    else if (c._themeType = "Edit" && c.Value = cfgAudit.PptHotkey && !IsObject(ccEdPpt))
+        ccEdPpt := c
+}
+ccUiOk := false
+if (IsObject(ccTabCtrl) && IsObject(ccBtnApply) && IsObject(ccLblStatus) && IsObject(ccEdPpt)) {
+    SendMessage(0x1330, 5, 0, ccTabCtrl.Hwnd)
+    Sleep(30)
+    ccEdPpt.Value := "Invalid_Key_Name_999"
+    SendMessage(0x00F5, 0, 0, ccBtnApply.Hwnd)
+    Sleep(50)
+    warnOk := (InStr(ccLblStatus.Value, "Ignored invalid hotkey") && ccEdPpt.Value == cfgAudit.PptHotkey)
+    SendMessage(0x00F5, 0, 0, ccBtnApply.Hwnd)
+    Sleep(50)
+    validOk := InStr(ccLblStatus.Value, "All settings applied and saved live")
+    ccUiOk := warnOk && validOk
+}
+PostMessage(0x0010, 0, 0, ccAuditGui.Hwnd)
+Sleep(50)
+Theme.SetMode("Light")
+ccAuditLight := ShowControlCenterWindow(cfgAudit, stAudit)
+PostMessage(0x0010, 0, 0, ccAuditLight.Hwnd)
+Sleep(50)
+Theme.SetMode("System")
+Assert("Control Center registers all 25 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
+    ccChkTabCount == 25 && ccUiOk && Theme.SuspendLockCount == 0)
+
+; 21.6 Scope Guard: PresenterSync_Remote remains strictly 1-tier Mic HUD (no multi-tier GUIs)
+remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
+Assert("Scope guard: PresenterSync_Remote stays strictly 1-tier Mic HUD",
+    !RegExMatch(remoteSrc, "\b(RecGui|ChatGui|StudioGui|SceneGui|StreamGui|VCamGui)\b"))
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1304,7 +1478,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.4.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.0.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

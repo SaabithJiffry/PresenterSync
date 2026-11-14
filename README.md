@@ -1,10 +1,10 @@
-# PresenterSync v2.4.0 🎙️📊
+# PresenterSync v3.0.0 🎙️📊
 
 PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It bridges OBS Studio, Zoom / Microsoft Teams / Google Meet, and Microsoft PowerPoint, allowing you to control your slides, track recording/stream/vcam/studio/scene/chat telemetry, and manage your microphone without ever losing window focus or broadcasting a hot mic.
 
 ## 🚀 Features
 
-*   **Unified Fluent Control Center Dashboard (`v2.4.0`):** Configure every subsystem in one Windows 11 Fluent 6-tab dashboard (**Audio & Conf**, **OBS & Stream**, **Pointer**, **HUD & Theme**, **Remote**, **Profiles & Sys**) and click **Apply & Save** to update settings, rebind hotkeys, and refresh the HUD and tray menu live without restarting.
+*   **Unified Fluent Control Center Dashboard (`v3.0.0`):** Configure every subsystem in one Windows 11 Fluent 6-tab dashboard (**Audio & Conf**, **OBS & Stream**, **Pointer**, **HUD & Theme**, **Remote**, **Profiles & Sys**) and click **Apply & Save** to validate hotkeys, update settings, rebind hotkeys, tear down or switch telemetry backends, and refresh the HUD and tray menu live without restarting.
 *   **3 Audio Routing Profiles & Multi-Platform Conferencing (`Zoom`, `Microsoft Teams`, `Google Meet`):**
     1. **Pro OBS Setup (VB-Cable):** Controls OBS mic directly.
     2. **Standard Direct Mic (Conferencing-Only):** Controls Zoom, Microsoft Teams, or Google Meet mic directly without OBS.
@@ -49,9 +49,9 @@ To let PresenterSync read Zoom's Mute, Recording, and Unread Chat controls relia
 
 You can run PresenterSync in two ways:
 
-### Option A: The Ready-to-Run Executable (Recommended)
-The ready-to-run `.exe` version (no AutoHotkey installation required) is currently being finalized. 
-👉 **[It will be available on Gumroad here shortly!](https://saabithjiffry.gumroad.com/l/presentersync)**
+### Option A: Ready-to-Run Portable Executables (Recommended)
+Zero-dependency portable executables (`PresenterSync.exe` and `PresenterSync_Remote.exe` for x64 Windows) can be built directly from the repository or obtained via releases:
+👉 **[PresenterSync on Gumroad](https://saabithjiffry.gumroad.com/l/presentersync)**
 
 ### Option B: Run from Source
 If you prefer to run the raw script or compile it yourself:
@@ -80,14 +80,14 @@ You can build standalone, zero-dependency `.exe` binaries for both the primary a
 ## 🎮 How It Works
 
 1. **Initial Setup:** On your first launch, choose your Audio Routing Mode (`1`, `2`, or `3`) and configure your OBS / Zoom fallback shortcuts.
-2. **Choose Monitoring Engine:** Right-click the PresenterSync tray icon (or right-click directly on any HUD pill) to enable **OBS WebSocket Sync** or **Zoom Monitoring** (mutually exclusive).
+2. **Choose Monitoring Engine:** Right-click the PresenterSync tray icon (or right-click directly on any HUD pill) to enable **OBS WebSocket Sync** or **Conferencing Monitoring** (`Zoom`, `Microsoft Teams`, or `Google Meet`, mutually exclusive).
 3. **Interactive Help & Remote Guide:** Open **Help & Shortcuts** in the tray menu for step-by-step setup instructions across **Shortcuts**, **Pointer & PPT**, **Audio & Sync**, **Remote Setup**, **HUD & Theme**, and **Live Status**.
 4. **Customize Live:** Left-drag any HUD pill to reposition the whole stack (coordinates save automatically), or use **Indicator Appearance** to change scale, labels, opacity, corner style, and **App Theme** (**Follow System**, **Dark Mode**, or **Light Mode**) live without interrupting your active session.
 
 **Default System Shortcuts (Primary Host):**
 *   `Ctrl + F12` : Cycle Pointer Modes (Full PPT + Mute / Mute Only / OFF)
 *   `Alt + F12` : Toggle OBS WebSocket Sync ON/OFF
-*   `Ctrl + Alt + F12` : Toggle Zoom Monitoring ON/OFF
+*   `Ctrl + Alt + F12` : Toggle Conferencing Monitoring ON/OFF (`Zoom` / `Teams` / `Meet`)
 *   `Ctrl + Shift + F12` : Hide/Unhide the HUD Indicator
 *   `Ctrl + Alt + Shift + F12` : Suspend All Hotkeys
 *   `Alt + Shift + F12` : Exit Application

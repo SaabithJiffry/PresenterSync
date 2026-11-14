@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.4.0
+; Version: 3.0.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.4.0.0
+;@Ahk2Exe-SetVersion 3.0.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -582,7 +582,8 @@ BoundHwMuteHotkey := ""
 BoundPassthroughHooks := []
 
 BindSystemHotkeys(cfg, state) {
-    global BoundSystemHotkeys, AppConfig, AppState
+    global BoundSystemHotkeys
+    HotIf()
     for oldHk in BoundSystemHotkeys {
         try Hotkey(oldHk, "Off")
     }
@@ -603,10 +604,10 @@ BindSystemHotkeys(cfg, state) {
         try Hotkey(cfg.IndHotkey, (*) => ToggleIndicator(cfg, state), "On")
         BoundSystemHotkeys.Push(cfg.IndHotkey)
     }
-    if (AppConfig.SuspendHotkey != "" && AppConfig.SuspendHotkey != "None") {
-        try Hotkey(AppConfig.SuspendHotkey, (*) => ToggleSuspend(), "S")
-        try Hotkey(AppConfig.SuspendHotkey, "On")
-        BoundSystemHotkeys.Push(AppConfig.SuspendHotkey)
+    if (cfg.SuspendHotkey != "" && cfg.SuspendHotkey != "None") {
+        try Hotkey(cfg.SuspendHotkey, (*) => ToggleSuspend(), "S")
+        try Hotkey(cfg.SuspendHotkey, "On")
+        BoundSystemHotkeys.Push(cfg.SuspendHotkey)
     }
     if (cfg.ExitHotkey != "" && cfg.ExitHotkey != "None") {
         try Hotkey(cfg.ExitHotkey, (*) => ExitTrayApp(), "On")
@@ -831,7 +832,7 @@ LaptopZoomPauseToggle(cfg, state, ThisHotkey) {
 }
 
 LaptopKeyboardMute(cfg, state, ThisHotkey) {
-    if (!state.obsConnected && !state.zoomConnected) {
+    if (ShouldOptimisticallyFlipMute(cfg, state)) {
         SyncUIState(cfg, state, !state.isMuted)
     }
 }

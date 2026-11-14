@@ -92,6 +92,19 @@ GetActiveConferencingMuteHotkey(cfg) {
     }
 }
 
+ShouldOptimisticallyFlipMute(cfg, state) {
+    zoomMonActive := (IsObject(state) && state.HasOwnProp("zoomConnected") && state.zoomConnected
+        && (!IsObject(cfg) || !cfg.HasOwnProp("EnableZoom") || cfg.EnableZoom)
+        && (!IsObject(cfg) || !cfg.HasOwnProp("EnableWS") || !cfg.EnableWS))
+    obsMonActive := (IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected)
+    mode := (IsObject(cfg) && cfg.HasOwnProp("AudioRoutingMode")) ? cfg.AudioRoutingMode : 1
+    if (mode == 2)
+        return !zoomMonActive
+    if (mode == 3)
+        return !(obsMonActive || zoomMonActive)
+    return !obsMonActive
+}
+
 DispatchHostMuteToggle(cfg, state) {
     obsOpen := WinExist("ahk_exe obs64.exe")
     appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
@@ -125,6 +138,8 @@ DispatchHostMuteToggle(cfg, state) {
             return false
         }
         state.IsSyncing := true
+        if (state.HasOwnProp("syncSource"))
+            state.syncSource := "manual"
         SetKeyDelay -1, 30
         if (obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
             try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
@@ -134,7 +149,7 @@ DispatchHostMuteToggle(cfg, state) {
         SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
     }
 
-    if (!state.obsConnected && !state.zoomConnected)
+    if (ShouldOptimisticallyFlipMute(cfg, state))
         SyncUIState(cfg, state, !state.isMuted)
     return true
 }
@@ -442,6 +457,8 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
         zoomOpen := WinExist(confSpec)
         if (cfg.AudioRoutingMode == 3 && (obsOpen || zoomOpen)) {
             state.IsSyncing := true
+            if (state.HasOwnProp("syncSource"))
+                state.syncSource := "manual"
             if (state.HasOwnProp("releaseSyncTimerFn") && state.releaseSyncTimerFn)
                 SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
         }
@@ -455,10 +472,10 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
             try ControlSend FormatSendKey(confHk), , confSpec
             SetKeyDelay 50, 50
         }
-        if ((cfg.AudioRoutingMode == 2 && !state.zoomConnected) || (!state.obsConnected && !state.zoomConnected)) {
+        if (ShouldOptimisticallyFlipMute(cfg, state))
             SyncUIState(cfg, state, !state.isMuted)
-        }
-        BroadcastHostRelayMuteState(cfg, state)
+        else
+            BroadcastHostRelayMuteState(cfg, state)
     }
 }
 
@@ -784,27 +801,36 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
 
 ReleaseSyncLock(state) {
     state.IsSyncing := false
+    if (state.HasOwnProp("syncSource"))
+        state.syncSource := ""
 }
 
-PushObsMuteToZoom(cfg, state, obsIsMuted) {
+PushObsMuteToZoom(cfg, state, obsIsMuted, mockZoomState := "", sendFn := "") {
     confHk := GetActiveConferencingMuteHotkey(cfg)
-    if (cfg.AudioRoutingMode != 3 || state.IsSyncing || confHk = "" || confHk = "None")
+    curSrc := state.HasOwnProp("syncSource") ? state.syncSource : ""
+    if (cfg.AudioRoutingMode != 3 || (state.IsSyncing && curSrc != "obs") || confHk = "" || confHk = "None")
         return
     appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
     confSpec := GetConferencingWindowSpec(appType)
-    if !WinExist(confSpec)
+    if (!IsObject(mockZoomState) && !WinExist(confSpec))
         return
 
-    zoomState := DetectZoomStates(confSpec, appType)
+    zoomState := IsObject(mockZoomState) ? mockZoomState : DetectZoomStates(confSpec, appType)
     if (!zoomState.hasMic || zoomState.muted == obsIsMuted)
         return
 
     state.IsSyncing := true
+    state.syncSource := "obs"
     targetWin := zoomState.micHwnd ? ("ahk_id " zoomState.micHwnd) : confSpec
-    SetKeyDelay -1, 30
-    try ControlSend FormatSendKey(confHk),, targetWin
-    SetKeyDelay 50, 50
-    SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
+    if (IsObject(sendFn)) {
+        sendFn.Call(FormatSendKey(confHk), targetWin)
+    } else {
+        SetKeyDelay -1, 30
+        try ControlSend FormatSendKey(confHk),, targetWin
+        SetKeyDelay 50, 50
+    }
+    if (state.HasOwnProp("releaseSyncTimerFn") && state.releaseSyncTimerFn)
+        SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
 }
 
 ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "") {
@@ -924,6 +950,8 @@ ZoomStateMonitor(cfg, state) {
             }
             if (sentObs) {
                 state.IsSyncing := true
+                if (state.HasOwnProp("syncSource"))
+                    state.syncSource := "zoom"
                 SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
             }
         }
