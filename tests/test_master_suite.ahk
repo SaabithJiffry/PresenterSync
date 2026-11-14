@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v3.0.1
-;              and PresenterSync Remote v3.0.1 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v3.1.0
+;              and PresenterSync Remote v3.1.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 3.0.1", UIConstants.APP_VERSION == "3.0.1")
+Assert("APP_VERSION updated to 3.1.0", UIConstants.APP_VERSION == "3.1.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v3.0.1 and Remote Host",
-    InStr(summaryTxt, "v3.0.1") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v3.1.0 and Remote Host",
+    InStr(summaryTxt, "v3.1.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1204,7 +1204,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v3.0.1", "3.0.0") == 1
+    CompareSemVer("v3.1.0", "3.0.1") == 1
+    && CompareSemVer("v3.0.1", "3.0.0") == 1
     && CompareSemVer("v3.0.0", "2.4.0") == 1
     && CompareSemVer("v2.4.0", "2.3.6") == 1
     && CompareSemVer("v2.3.6", "2.3.6") == 0
@@ -1567,6 +1568,58 @@ Assert("v3.0.1 Help, Control Center & Profile Manager maintain single-row tabs, 
     helpClipChildren && helpNoPrefix && helpRes.ok && ccRes.ok && pmRes.ok && hkWideEnough,
     Format("help=({},{}) cc=({}) pm=({}) hkW={}", helpRes.ok, helpRes.reason, ccRes.reason, pmRes.reason, hkWideEnough))
 
+; ==============================================================================
+; SECTION 22: v3.1.0 VISUAL HUD DIAGRAM, TRAY ENCYCLOPEDIA & SEARCH REGRESSIONS
+; ==============================================================================
+primAnatomy := GetPrimaryHudAnatomyItems()
+remAnatomy := GetRemoteHudAnatomyItems()
+Assert("HelpCenter anatomy metadata has 8 Primary items and 4 Remote items",
+    primAnatomy.Length == 8 && remAnatomy.Length == 4)
+
+hBmpPrim := BuildPrimaryHudDiagramBitmap(cfgAudit, 7, 776, 240)
+hBmpRem := BuildRemoteHudDiagramBitmap(cfgAudit, 1, 680, 194)
+Assert("HelpCenter GDI+ diagram renderers return valid HBITMAP handles",
+    hBmpPrim != 0 && hBmpRem != 0)
+if (hBmpPrim)
+    DllCall("DeleteObject", "Ptr", hBmpPrim)
+if (hBmpRem)
+    DllCall("DeleteObject", "Ptr", hBmpRem)
+
+hitCard1 := HitTestPrimaryHudDiagram(40, 20)
+hitPill7 := HitTestPrimaryHudDiagram(340, 145)
+hitPill8 := HitTestPrimaryHudDiagram(340, 166)
+hitRem2 := HitTestRemoteHudDiagram(520, 30)
+Assert("HelpCenter diagram hit-testers resolve cards, LIVE pill, VU bar & Remote cards accurately",
+    hitCard1 == 1 && hitPill7 == 7 && hitPill8 == 8 && hitRem2 == 2,
+    Format("c1={} p7={} p8={} r2={}", hitCard1, hitPill7, hitPill8, hitRem2))
+
+kbAll := GetHelpKnowledgeBase()
+kbTray := SearchHelpEntries("", "Tray", false)
+kbDodge := SearchHelpEntries("dodge alt", "Tray", false)
+kbObsErr := SearchHelpEntries("4009 password", "All", false)
+kbRemSafe := SearchHelpEntries("", "All", true)
+remHasHostOnlyHud := false
+for rEnt in kbRemSafe {
+    if (SubStr(rEnt.id, 1, 4) = "hud-" || rEnt.id = "tray-app-vu" || rEnt.id = "tray-app-rectimer" || rEnt.id = "tray-app-stream") {
+        remHasHostOnlyHud := true
+        break
+    }
+}
+Assert("Help Search matches Tray menus, multi-word queries & enforces Remote 1-tier isolation",
+    kbAll.Length >= 50 && kbTray.Length >= 28 && kbDodge.Length >= 1 && kbDodge[1].id == "tray-app-dodge" && kbObsErr.Length >= 1 && kbRemSafe.Length >= 18 && !remHasHostOnlyHud,
+    Format("all={} tray={} dodge={} obsErr={} rem={} hostLeak={}", kbAll.Length, kbTray.Length, kbDodge.Length, kbObsErr.Length, kbRemSafe.Length, remHasHostOnlyHud))
+
+Theme.SetMode("Light")
+uiHelpLight := ShowHelpWindow(cfgAudit, stAudit)
+helpLightRes := CheckGuiNoOverlaps(uiHelpLight)
+helpLightClip := (DllCall("GetWindowLong", "Ptr", uiHelpLight.Hwnd, "Int", -16, "UInt") & 0x02000000) != 0
+PostMessage(0x0010, 0, 0, uiHelpLight.Hwnd)
+Sleep(40)
+Theme.SetMode("System")
+Assert("v3.1.0 ShowHelpWindow passes 7-tab single-row & zero-overlap audit in Light mode too",
+    helpLightRes.ok && helpLightClip,
+    Format("ok={}, reason={}", helpLightRes.ok, helpLightRes.reason))
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1574,7 +1627,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.0.1) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.1.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

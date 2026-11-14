@@ -1,10 +1,11 @@
-# PresenterSync v3.0.1 🎙️📊
+# PresenterSync v3.1.0 🎙️📊
 
 PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It bridges OBS Studio, Zoom / Microsoft Teams / Google Meet, and Microsoft PowerPoint, allowing you to control your slides, track recording/stream/vcam/studio/scene/chat telemetry, and manage your microphone without ever losing window focus or broadcasting a hot mic.
 
 ## 🚀 Features
 
-*   **Unified Fluent Control Center Dashboard (`v3.0.1`):** Configure every subsystem in one Windows 11 Fluent 6-tab dashboard (**Audio & Conf**, **OBS & Stream**, **Pointer**, **HUD & Theme**, **Remote**, **Profiles & Sys**) and click **Apply & Save** to validate hotkeys, update settings, rebind hotkeys, tear down or switch telemetry backends, and refresh the HUD and tray menu live without restarting.
+*   **Interactive Help Center, Live Visual HUD Guide & Instant Search (`v3.1.0`):** Explore an annotated **Live HUD Diagram** with numbered arrow callouts explaining every pill, color state, click/drag/hold/Alt gesture, and the CoreAudio Voice Activity bar; browse every **System Tray menu and submenu**; read the categorized **Features A-Z** guide; and search any feature, menu item, or shortcut instantly in both PresenterSync and PresenterSync Remote.
+*   **Unified Fluent Control Center Dashboard:** Configure every subsystem in one Windows 11 Fluent 6-tab dashboard (**Audio & Conf**, **OBS & Stream**, **Pointer**, **HUD & Theme**, **Remote**, **Profiles & Sys**) and click **Apply & Save** to validate hotkeys, update settings, rebind hotkeys, tear down or switch telemetry backends, and refresh the HUD and tray menu live without restarting.
 *   **3 Audio Routing Profiles & Multi-Platform Conferencing (`Zoom`, `Microsoft Teams`, `Google Meet`):**
     1. **Pro OBS Setup (VB-Cable):** Controls OBS mic directly.
     2. **Standard Direct Mic (Conferencing-Only):** Controls Zoom, Microsoft Teams, or Google Meet mic directly without OBS.
