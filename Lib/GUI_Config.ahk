@@ -1326,12 +1326,16 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
 
     HandleSave(*) {
         for el in trackedElements {
-            if (el.HasOwnProp("required") && el.required && ctrls[el.id].Value = "") {
-                dlg.Opt("+OwnDialogs")
-                errTitle := el.HasOwnProp("errorTitle") ? el.errorTitle : "Error"
-                errMsg := el.HasOwnProp("errorMsg") ? el.errorMsg : "Shortcuts cannot be left blank."
-                MsgBox(errMsg, errTitle, "Icon!")
-                return false
+            if (el.HasOwnProp("required") && el.required) {
+                rawVal := String(ctrls[el.id].Value)
+                isPw := el.HasOwnProp("opts") && InStr(el.opts, "Password")
+                if (isPw ? (rawVal = "") : (Trim(rawVal) = "")) {
+                    dlg.Opt("+OwnDialogs")
+                    errTitle := el.HasOwnProp("errorTitle") ? el.errorTitle : "Error"
+                    errMsg := el.HasOwnProp("errorMsg") ? el.errorMsg : "Shortcuts cannot be left blank."
+                    MsgBox(errMsg, errTitle, "Icon!")
+                    return false
+                }
             }
         }
         values := Map()
@@ -2245,9 +2249,9 @@ ParseCandidateEndpoints(rawStr, defaultPort := "4455") {
             continue
         host := clean
         port := defPort
-        if RegExMatch(clean, "^(.*?):(\d+)$", &m) {
-            host := m[1]
-            port := m[2]
+        if RegExMatch(clean, "^(.*?):\s*(\d+)$", &m) {
+            host := Trim(m[1])
+            port := (IsInteger(m[2]) && Integer(m[2]) >= 1 && Integer(m[2]) <= 65535) ? String(Integer(m[2])) : defPort
         }
         if (host = "")
             continue
@@ -2321,7 +2325,7 @@ ShowRemoteCompanionInfo(cfg, *) {
         A_Clipboard := universalString,
         btnCopy.Text := "✓ Copied to Clipboard!",
         SetTimer(ResetCopyBtn, -1800),
-        TrayTip("Copied!", "Universal connection string copied to clipboard.", 1)
+        TrayTip("Universal connection string copied to clipboard.", "Copied!", 1)
     ))
 
     statusLine := "OBS Port: 4455  |  Password: " (cfg.obsPassword != "" ? "Configured" : "None") "  |  Mic: " cfg.targetMicName

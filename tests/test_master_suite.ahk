@@ -10,11 +10,12 @@
 #Include "%A_ScriptDir%\..\Lib\WebSocket.ahk"
 #Include "%A_ScriptDir%\..\Lib\Crypto.ahk"
 #Include "%A_ScriptDir%\..\Lib\Gdip.ahk"
+#Include "%A_ScriptDir%\..\Lib\UIA.ahk"
 #Include "%A_ScriptDir%\..\Lib\OBS_Network.ahk"
 #Include "%A_ScriptDir%\..\Lib\GUI_Config.ahk"
 
 Gdip.Startup()
-OnExit((*) => Gdip.Shutdown())
+OnExit((*) => (Theme.Shutdown(), UIA.Shutdown(), Gdip.Shutdown()))
 
 results := []
 PassCount := 0
@@ -164,14 +165,16 @@ Assert("Tier 2 Chat Pill GDI+ Render", p3 != false)
 Assert("Tier 3 Studio Pill GDI+ Render", p4 != false)
 Assert("Tier 3 Scene Pill GDI+ Render", p5 != false)
 
-; Test Scaled Geometry (0.5x, 1.0x, 2.5x, 5.0x)
-scales := [0.5, 1.0, 2.5, 5.0]
+; Test Scaled Geometry & Real GDI+ Rendering across all 8 preset scales
+scales := [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 5.0]
 for sc in scales {
     cfg.IndicatorScale := sc
     state.ComputeDimensions(cfg)
     layout := ComputeHudLayout(state, 500, 500)
-    Assert("HUD Layout computation at scale " sc "x", layout.micW > 0 && layout.recH > 0 && layout.studioW > 0)
+    okMic := ApplyMicAppearance(cfg, state)
+    Assert("HUD GDI+ & Layout computation at scale " sc "x", okMic != false && layout.micW > 0 && layout.recH > 0 && layout.studioW > 0)
 }
+cfg.IndicatorScale := 1.0
 
 ; Cleanup primary HUD windows
 state.MicGui.Destroy()
@@ -240,6 +243,59 @@ rawScene := 'Scene "Main" \ 1'
 escScene := EscapeJsonStr(rawScene)
 Assert("EscapeJsonStr/UnescapeJsonStr round-trip", UnescapeJsonStr(escScene) == rawScene)
 Assert("UnescapeJsonStr decodes \/ and \t", UnescapeJsonStr('Cam\/A\tDeck') == "Cam/A`tDeck")
+Assert("UnescapeJsonStr single-pass preserves escaped backslash before n/r/t",
+    UnescapeJsonStr('C:\\new\tline\\r\\n') == "C:\new`tline\r\n")
+Assert("UnescapeJsonStr decodes unicode escape \u0026", UnescapeJsonStr('Q\u0026A') == "Q&A")
+complexRaw := 'C:\new\tab\"q"' . "`n`r`b`f"
+Assert("EscapeJsonStr/UnescapeJsonStr complex backslash + control chars round-trip",
+    UnescapeJsonStr(EscapeJsonStr(complexRaw)) == complexRaw)
+
+epEdge := ParseCandidateEndpoints("192.168.1.10 : 4456, badport.local:99999, zero.local:0", "4455")
+Assert("ParseCandidateEndpoints trims whitespace around colon & clamps invalid ports",
+    epEdge.Length == 3
+    && epEdge[1].host == "192.168.1.10" && epEdge[1].port == "4456"
+    && epEdge[2].host == "badport.local" && epEdge[2].port == "4455"
+    && epEdge[3].host == "zero.local" && epEdge[3].port == "4455")
+
+; Live UIA + DetectZoomStates integration test against real temporary Win32 GUIs
+mockZoom1 := Gui("+ToolWindow -Caption", "Zoom Meeting Audit 1")
+mockZoom1.AddButton("w120 h30", "Unmute all")
+mockZoom1.AddButton("w120 h30", "Mute my audio")
+mockZoom1.AddButton("w120 h30", "Pause Recording")
+mockZoom1.AddButton("w160 h30", "Chat, 2 unread messages")
+mockZoom1.Show("x-32000 y-32000 w320 h160 NoActivate")
+hwnd1 := mockZoom1.Hwnd
+zRes1 := DetectZoomStates("ahk_id " hwnd1)
+mockZoom1.Destroy()
+Assert("Live UIA DetectZoomStates ignores 'Unmute all' and detects unmuted mic + paused=1 rec + 2 unread chat",
+    zRes1.foundWindow && zRes1.hasMic && !zRes1.muted && zRes1.micHwnd == hwnd1
+    && zRes1.hasRec && zRes1.recState == 1 && zRes1.hasChat && zRes1.unreadChat == 2)
+
+mockZoom2 := Gui("+ToolWindow -Caption", "Zoom Meeting Audit 2")
+mockZoom2.AddButton("w160 h30", "Mute participants upon entry")
+mockZoom2.AddButton("w120 h30", "Unmute all")
+mockZoom2.AddButton("w120 h30", "Unmute my audio")
+mockZoom2.AddButton("w120 h30", "Resume Recording")
+mockZoom2.AddButton("w160 h30", "5 unread in Chat")
+mockZoom2.Show("x-32000 y-32000 w320 h160 NoActivate")
+hwnd2 := mockZoom2.Hwnd
+zRes2 := DetectZoomStates("ahk_id " hwnd2)
+mockZoom2.Destroy()
+Assert("Live UIA DetectZoomStates detects muted mic + paused=2 rec + 5 unread chat",
+    zRes2.foundWindow && zRes2.hasMic && zRes2.muted && zRes2.micHwnd == hwnd2
+    && zRes2.hasRec && zRes2.recState == 2 && zRes2.hasChat && zRes2.unreadChat == 5)
+
+; Verify dynamic Hotkey S option remains suspend-exempt under Suspend(true)
+Hotkey("^!+F19", (*) => 0, "S")
+Suspend(true)
+ListHotkeys()
+Sleep 40
+hotkeyReport := ControlGetText("Edit1", "ahk_id " A_ScriptHwnd)
+try WinHide("ahk_id " A_ScriptHwnd)
+Suspend(false)
+Hotkey("^!+F19", "Off")
+Assert("Dynamic Hotkey with 'S' option remains exempt under Suspend(true)",
+    RegExMatch(hotkeyReport, "m)F19.*\breg\b(?!\(no\))"))
 
 mockWs := {sent: [], sendText: (this, txt) => this.sent.Push(txt)}
 brokenWs := {sendText: (this, txt) => (ThrowError())}

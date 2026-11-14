@@ -383,6 +383,13 @@ HandleRemoteObsMessage(rCfg, rState, cand, rWs, '{{"op":5,"d":{{"eventType":"Inp
 Assert("Remote Op 5 InputMuteStateChanged recovers connStatus=connected & isMuted=true",
     rState.connStatus == "connected" && rState.isMuted == true)
 
+; Stale WebSocket guard: messages/closes from old sockets must not clobber active connection state
+rStaleWs := {{}}
+HandleRemoteObsMessage(rCfg, rState, cand, rStaleWs, '{{"op":5,"d":{{"eventType":"InputMuteStateChanged","eventData":{{"inputName":"Mic \\"1\\"","inputMuted":false}}}}}}')
+HandleRemoteObsClose(rCfg, rState, cand, rStaleWs, 4009, "Stale socket close")
+Assert("Remote ignores stale WebSocket message & close events",
+    rState.obsConnected == true && rState.connStatus == "connected" && rState.isMuted == true)
+
 ; Close with 4009 auth failure sets auth_failed cleanly
 rState.obsConnected := false
 HandleRemoteObsClose(rCfg, rState, cand, rWs, 4009, "Auth failed")
@@ -426,6 +433,18 @@ hCfg.AudioRoutingMode := 3
 TriggerMute(hCfg, hState)
 Assert("Host TriggerMute Mode 3 toggles via WS & parses escaped Scene",
     WaitUntil(() => hState.isMuted == false && hState.currentSceneName == 'Cam / "2" \\ Live'))
+
+; HostClickerMute missing source response resets shared tooltip timer cleanly
+HandleObsMessage(hCfg, hState, hWs, '{{"op":7,"d":{{"requestId":"HostClickerMute","requestStatus":{{"result":false,"code":600}}}}}}')
+SetTimer(ClearObsNetworkToolTip, 0)
+ToolTip()
+
+; Host stale WebSocket guard
+hStaleWs := {{}}
+HandleObsMessage(hCfg, hState, hStaleWs, '{{"op":5,"d":{{"eventType":"InputMuteStateChanged","eventData":{{"inputName":"Mic \\"1\\"","inputMuted":true}}}}}}')
+HandleObsClose(hCfg, hState, hStaleWs, 4009, "Stale host close")
+Assert("Host ignores stale WebSocket message & close events",
+    hState.obsConnected == true && hState.isMuted == false)
 
 try hWs.shutdown()
 hState.obsConnected := false
@@ -476,6 +495,33 @@ hCfg.HwMuteHotkey := "F5"
 Assert("IsPptKeyNotMute allows +F5 when HwMuteHotkey=F5", IsPptKeyNotMute(hCfg, "+F5") == true)
 hCfg.HwMuteHotkey := "None"
 Assert("IsPptKeyNotMute allows Esc when HwMuteHotkey=None", IsPptKeyNotMute(hCfg, "Esc") == true)
+
+; =====================================================================
+; TEST 5: Live RefreshHudAppearance Recomputes Headroom & Tier Visibility
+; =====================================================================
+hudIni := "{work_dir}\\hud_e2e.ini"
+hudCfg := Config(hudIni)
+hudCfg.ShowIndicator := true
+hudCfg.EnableWS := true
+hudCfg.EnableZoom := false
+hudCfg.ShowExtraHuds := false
+vTopHud := SysGet(77)
+hudCfg.savedX := 220
+hudCfg.savedY := vTopHud + 5
+hudState := OverlayState(hudCfg)
+InitHUD(hudCfg, hudState, false)
+hudCfg.ShowExtraHuds := true
+RefreshHudAppearance(hudCfg, hudState)
+expectedHudY := vTopHud + hudState.recHeight + hudState.row3Height + (2 * hudState.hudGap)
+recVis := DllCall("IsWindowVisible", "Ptr", hudState.RecGui.Hwnd)
+studioVis := DllCall("IsWindowVisible", "Ptr", hudState.StudioGui.Hwnd)
+hudState.MicGui.Destroy()
+hudState.RecGui.Destroy()
+hudState.ChatGui.Destroy()
+hudState.StudioGui.Destroy()
+hudState.SceneGui.Destroy()
+Assert("RefreshHudAppearance updates savedY headroom & reveals Extra HUD windows",
+    hudState.savedY == expectedHudY && recVis != 0 && studioVis != 0)
 
 summary := "PASS=" PassCount "`nFAIL=" FailCount "`n"
 FileAppend(summary, "{result_path}", "UTF-8")

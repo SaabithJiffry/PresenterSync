@@ -328,6 +328,8 @@ FailoverToNextCandidate(cfg, state) {
 HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     if IsObject(ws)
         try ws.shutdown()
+    if (IsObject(ws) && IsObject(state.obsWs) && state.obsWs != ws)
+        return
     if (state.obsWs == ws)
         state.obsWs := ""
 
@@ -349,7 +351,7 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
         SetTimer state.reconnectTimerFn, 0
         if (IsObject(state.rebuildTrayFn))
             try state.rebuildTrayFn.Call()
-        TrayTip("PresenterSync Remote", "OBS WebSocket authentication failed. Check password in Change OBS Connection.", 3)
+        TrayTip("OBS WebSocket authentication failed. Check password in Change OBS Connection.", "PresenterSync Remote", 3)
         return
     }
 
@@ -361,6 +363,8 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
 }
 
 HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
+    if (IsObject(ws) && IsObject(state.obsWs) && ws != state.obsWs)
+        return
     msg := (Type(rawMsg) == "Buffer") ? StrGet(rawMsg, "UTF-8") : String(rawMsg)
 
     if (!RegExMatch(msg, '"op"\s*:\s*(\d+)', &matchOp))
@@ -429,7 +433,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 ApplyMicAppearance(cfg, state)
                 if (IsObject(state.rebuildTrayFn))
                     try state.rebuildTrayFn.Call()
-                TrayTip("PresenterSync Remote", "Audio source '" cfg.TargetMicName "' was not found in OBS Studio.", 2)
+                TrayTip("Audio source '" cfg.TargetMicName "' was not found in OBS Studio.", "PresenterSync Remote", 2)
             } else if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                 state.connStatus := "connected"
                 isMutedNow := (matchMuted[1] == "true")
@@ -793,14 +797,23 @@ ToggleRemotePointerMute(cfg, state, *) {
 }
 
 ToggleRemoteSuspend(*) {
+    if (Theme.SuspendLockCount > 0) {
+        Theme.WasSuspendedBeforeDialogs := !Theme.WasSuspendedBeforeDialogs
+        if (Theme.WasSuspendedBeforeDialogs)
+            A_TrayMenu.Check("Suspend All Hotkeys")
+        else
+            A_TrayMenu.Uncheck("Suspend All Hotkeys")
+        TrayTip(Theme.WasSuspendedBeforeDialogs ? "Hotkeys will remain suspended after dialog closes." : "Hotkeys will resume after dialog closes.", "PresenterSync Remote", 1)
+        return
+    }
     Suspend(-1)
     Theme.WasSuspendedBeforeDialogs := A_IsSuspended
     if A_IsSuspended {
         A_TrayMenu.Check("Suspend All Hotkeys")
-        TrayTip("PresenterSync Remote", "All hotkeys suspended.", 1)
+        TrayTip("All hotkeys suspended.", "PresenterSync Remote", 1)
     } else {
         A_TrayMenu.Uncheck("Suspend All Hotkeys")
-        TrayTip("PresenterSync Remote", "Hotkeys active.", 1)
+        TrayTip("Hotkeys active.", "PresenterSync Remote", 1)
     }
 }
 
@@ -813,7 +826,7 @@ ChangeRemotePointerKeyUI(cfg, state, *) {
         cfg.Write("Pointer", "HwMuteHotkey", val),
         RegisterRemotePointerHotkey(cfg, state),
         BuildRemoteTrayMenu(cfg, state),
-        TrayTip("Pointer Mute", cfg.EnablePointerMute ? ("Mute button registered: " val) : ("Mute button saved (Pointer Mute disabled): " val), 1)
+        TrayTip(cfg.EnablePointerMute ? ("Mute button registered: " val) : ("Mute button saved (Pointer Mute disabled): " val), "Pointer Mute", 1)
     ))
 }
 
@@ -907,6 +920,8 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     if IsObject(existing)
         return existing
 
+    Theme.AcquireSuspend()
+
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "OBS Remote Connection")
     dlg._closed := false
     dlg._testSeq := 0
@@ -961,6 +976,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
             dlg._testWs := ""
         }
         Theme.UnregisterWindow(dlg, "OBS Remote Connection")
+        Theme.ReleaseSuspend()
         dlg.Destroy()
         if (exitIfInitial)
             ExitApp()
@@ -997,11 +1013,17 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         ; Disconnect existing and trigger fresh failover connection
         SetTimer state.reconnectTimerFn, 0
         SetTimer state.heartbeatTimerFn, 0
+        SetTimer state.breathTimerFn, 0
+        state.animSeq += 1
         state.obsConnected := false
         state.connStatus := "searching"
         state.activeHost := ""
         state.candidateIndex := 1
         state.candidates := []
+        if (IsObject(state.MicGui)) {
+            state.currentAlpha := GetRemoteEffectiveAlpha(state)
+            ApplyMicAppearance(cfg, state)
+        }
         if (IsObject(state.rebuildTrayFn))
             try state.rebuildTrayFn.Call()
         ConnectToRemoteOBS(cfg, state)
@@ -1023,6 +1045,11 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel) {
     portClean := Trim(portStr)
     if (!IsInteger(portClean) || Integer(portClean) < 1 || Integer(portClean) > 65535) {
         statusLabel.Value := "Error: Port must be between 1 and 65535."
+        return
+    }
+
+    if (Trim(hostStr) = "") {
+        statusLabel.Value := "Error: No valid host address provided."
         return
     }
 

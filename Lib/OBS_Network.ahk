@@ -20,6 +20,8 @@ FormatSendKey(hk) {
 EscapeJsonStr(str) {
     s := StrReplace(String(str), "\", "\\")
     s := StrReplace(s, '"', '\"')
+    s := StrReplace(s, "`b", "\b")
+    s := StrReplace(s, "`f", "\f")
     s := StrReplace(s, "`r", "\r")
     s := StrReplace(s, "`n", "\n")
     s := StrReplace(s, "`t", "\t")
@@ -28,13 +30,42 @@ EscapeJsonStr(str) {
 
 UnescapeJsonStr(str) {
     s := String(str)
-    s := StrReplace(s, '\"', '"')
-    s := StrReplace(s, "\/", "/")
-    s := StrReplace(s, "\r", "`r")
-    s := StrReplace(s, "\n", "`n")
-    s := StrReplace(s, "\t", "`t")
-    s := StrReplace(s, "\\", "\")
-    return s
+    out := ""
+    i := 1
+    len := StrLen(s)
+    while (i <= len) {
+        ch := SubStr(s, i, 1)
+        if (ch = "\" && i < len) {
+            nxt := SubStr(s, i + 1, 1)
+            switch nxt {
+                case '"': out .= '"'
+                case "\": out .= "\"
+                case "/": out .= "/"
+                case "b": out .= "`b"
+                case "f": out .= "`f"
+                case "n": out .= "`n"
+                case "r": out .= "`r"
+                case "t": out .= "`t"
+                case "u":
+                    if (i + 5 <= len && RegExMatch(SubStr(s, i + 2, 4), "^[0-9A-Fa-f]{4}$")) {
+                        out .= Chr(Integer("0x" SubStr(s, i + 2, 4)))
+                        i += 6
+                        continue
+                    }
+                    out .= "\u"
+                default: out .= nxt
+            }
+            i += 2
+        } else {
+            out .= ch
+            i += 1
+        }
+    }
+    return out
+}
+
+ClearObsNetworkToolTip() {
+    ToolTip()
 }
 
 TrySendWsText(ws, payload) {
@@ -94,6 +125,8 @@ ConnectToOBS(cfg, state) {
 HandleObsClose(cfg, state, ws, status, reason) {
     if IsObject(ws)
         try ws.shutdown()
+    if (IsObject(ws) && IsObject(state.obsWs) && state.obsWs != ws)
+        return
     if (state.obsWs == ws)
         state.obsWs := ""
 
@@ -116,7 +149,7 @@ HandleObsClose(cfg, state, ws, status, reason) {
                 if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
                     try state.rebuildTrayFn.Call()
                 UpdateZoomMonitorTimer(cfg, state)
-                UpdateHudVisibility(cfg, state)
+                RefreshHudAppearance(cfg, state)
                 if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
                     try state.refreshHelpFn.Call()
             }
@@ -136,6 +169,8 @@ HandleObsClose(cfg, state, ws, status, reason) {
 }
 
 HandleObsMessage(cfg, state, ws, rawMsg) {
+    if (IsObject(ws) && IsObject(state.obsWs) && ws != state.obsWs)
+        return
     msg := (Type(rawMsg) == "Buffer") ? StrGet(rawMsg, "UTF-8") : String(rawMsg)
 
     if (!RegExMatch(msg, '"op"\s*:\s*(\d+)', &matchOp))
@@ -204,7 +239,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
     else if (opCode == 7) {
         if (InStr(msg, '"requestId":"InitState"') || InStr(msg, '"requestId": "InitState"')) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
-                TrayTip("PresenterSync", "Audio source '" cfg.targetMicName "' was not found in OBS Studio.", 2)
+                TrayTip("Audio source '" cfg.targetMicName "' was not found in OBS Studio.", "PresenterSync", 2)
             } else if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                 isMutedOBS := (matchMuted[1] == "true")
                 PushObsMuteToZoom(cfg, state, isMutedOBS)
@@ -214,7 +249,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         else if (InStr(msg, '"requestId":"HostClickerMute"') || InStr(msg, '"requestId": "HostClickerMute"')) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
                 ToolTip("PresenterSync: Audio source '" cfg.targetMicName "' not found in OBS")
-                SetTimer(() => ToolTip(), -2500)
+                SetTimer(ClearObsNetworkToolTip, -2500)
             }
         }
         else if (InStr(msg, '"requestId":"InitRecState"') || InStr(msg, '"requestId": "InitRecState"')) {
@@ -254,14 +289,15 @@ PushObsMuteToZoom(cfg, state, obsIsMuted) {
         return
 
     state.IsSyncing := true
+    targetWin := zoomState.micHwnd ? ("ahk_id " zoomState.micHwnd) : "ahk_exe Zoom.exe"
     SetKeyDelay -1, 30
-    try ControlSend FormatSendKey(cfg.ZoomMuteHotkey),, "ahk_exe Zoom.exe"
+    try ControlSend FormatSendKey(cfg.ZoomMuteHotkey),, targetWin
     SetKeyDelay 50, 50
     SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
 }
 
 DetectZoomStates(targetSpec := "ahk_exe Zoom.exe") {
-    result := {foundWindow: false, hasMic: false, muted: false, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
+    result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
     hwndList := WinGetList(targetSpec)
     if (hwndList.Length == 0)
         return result
@@ -276,13 +312,15 @@ DetectZoomStates(targetSpec := "ahk_exe Zoom.exe") {
             continue
         names := UIA.GetWindowElementNames(hwnd, false)
         for n in names {
-            if (!result.hasMic) {
+            if (!result.hasMic && !RegExMatch(n, "i)\b(when joining|on entry|all|participants)\b")) {
                 if RegExMatch(n, "i)\bunmute\b.*\baudio\b|^unmute(\b|,|$)") {
                     result.hasMic := true
                     result.muted := true
-                } else if (RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute(\b|,|$)") && !RegExMatch(n, "i)\b(when joining|on entry|all|participants)\b")) {
+                    result.micHwnd := hwnd
+                } else if RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute(\b|,|$)") {
                     result.hasMic := true
                     result.muted := false
+                    result.micHwnd := hwnd
                 }
             }
             if (result.recState == 0) {
@@ -326,6 +364,7 @@ ZoomStateMonitor(cfg, state) {
         wasConn := state.zoomConnected
         state.zoomConnected := false
         state.zoomLastMuted := -1
+        state.zoomRecGraceUntil := 0
         state.zoomSawRecControl := false
         if (cfg.EnableZoom && !cfg.EnableWS)
             SyncRecState(cfg, state, 0)

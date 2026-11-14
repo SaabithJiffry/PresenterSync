@@ -3,7 +3,7 @@
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
 ; Version: 2.2.3
 ; Author: Saabith Jiffry
-; License: MIT 
+; License: MIT
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -126,15 +126,7 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("Transparency Level", OpacityMenu)
 
     ScaleMenu := Menu()
-    ScaleOptions := [
-        {label: "Tiny (x0.25)", val: 0.25},
-        {label: "Small (x0.5)", val: 0.5},
-        {label: "Normal (x1.0)", val: 1.0},
-        {label: "Large (x1.5)", val: 1.5},
-        {label: "Huge (x2.0)", val: 2.0},
-        {label: "Massive (x2.5)", val: 2.5},
-        {label: "Colossal (x3.0)", val: 3.0},
-        {label: "Gigantic (x5.0)", val: 5.0}
+    ScaleOptions := [{ label: "Tiny (x0.25)", val: 0.25 }, { label: "Small (x0.5)", val: 0.5 }, { label: "Normal (x1.0)", val: 1.0 }, { label: "Large (x1.5)", val: 1.5 }, { label: "Huge (x2.0)", val: 2.0 }, { label: "Massive (x2.5)", val: 2.5 }, { label: "Colossal (x3.0)", val: 3.0 }, { label: "Gigantic (x5.0)", val: 5.0 }
     ]
     for opt in ScaleOptions {
         ScaleMenu.Add(opt.label, ApplyScaleLive.Bind(cfg, state, opt.val))
@@ -168,10 +160,7 @@ BuildTrayMenu(cfg, state) {
     ; 4. SETTINGS & CONFIGURATION SUBMENU
     SettingsMenu := Menu()
     RoutingMenu := Menu()
-    RoutingModes := [
-        {label: "1: Pro OBS Setup (VB-Cable)", mode: 1},
-        {label: "2: Standard Direct Mic (Zoom-Only)", mode: 2},
-        {label: "3: Dual App Sync (OBS + Zoom)", mode: 3}
+    RoutingModes := [{ label: "1: Pro OBS Setup (VB-Cable)", mode: 1 }, { label: "2: Standard Direct Mic (Zoom-Only)", mode: 2 }, { label: "3: Dual App Sync (OBS + Zoom)", mode: 3 }
     ]
     for rm in RoutingModes {
         RoutingMenu.Add(rm.label, SetRoutingMode.Bind(cfg, rm.mode))
@@ -210,14 +199,20 @@ NotifyHelpRefresh(state) {
 }
 
 ToggleSuspend(*) {
+    if (Theme.SuspendLockCount > 0) {
+        Theme.WasSuspendedBeforeDialogs := !Theme.WasSuspendedBeforeDialogs
+        SetTrayCheck("Suspend All Hotkeys", Theme.WasSuspendedBeforeDialogs)
+        TrayTip(Theme.WasSuspendedBeforeDialogs ? "Hotkeys will remain suspended after dialog closes." : "Hotkeys will resume after dialog closes.", "PresenterSync", 1)
+        return
+    }
     Suspend(-1)
     Theme.WasSuspendedBeforeDialogs := A_IsSuspended
     if A_IsSuspended {
         A_TrayMenu.Check("Suspend All Hotkeys")
-        TrayTip("PresenterSync", "All hotkeys suspended.", 1)
+        TrayTip("All hotkeys suspended.", "PresenterSync", 1)
     } else {
         A_TrayMenu.Uncheck("Suspend All Hotkeys")
-        TrayTip("PresenterSync", "Hotkeys active.", 1)
+        TrayTip("Hotkeys active.", "PresenterSync", 1)
     }
 }
 
@@ -331,7 +326,7 @@ ToggleWS(cfg, state, *) {
     }
 
     UpdateZoomMonitorTimer(cfg, state)
-    UpdateHudVisibility(cfg, state)
+    RefreshHudAppearance(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -375,7 +370,7 @@ ToggleZoom(cfg, state, *) {
     }
 
     UpdateZoomMonitorTimer(cfg, state)
-    UpdateHudVisibility(cfg, state)
+    RefreshHudAppearance(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -399,7 +394,7 @@ ToggleExtraHuds(cfg, state, *) {
     cfg.WriteBool("Settings", "ShowExtraHuds", cfg.ShowExtraHuds)
 
     SetTrayCheck("Show Extra HUDs", cfg.ShowExtraHuds)
-    UpdateHudVisibility(cfg, state)
+    RefreshHudAppearance(cfg, state)
     NotifyHelpRefresh(state)
     ToolTip(cfg.ShowExtraHuds ? "Extra HUDs: ON" : "Extra HUDs: OFF")
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
@@ -497,7 +492,7 @@ if (AppConfig.ZoomHotkey != "")
 if (AppConfig.IndHotkey != "")
     try Hotkey(AppConfig.IndHotkey, (*) => ToggleIndicator(AppConfig, AppState))
 if (AppConfig.SuspendHotkey != "")
-    try Hotkey(AppConfig.SuspendHotkey, (*) => ToggleSuspend())
+    try Hotkey(AppConfig.SuspendHotkey, (*) => ToggleSuspend(), "S")
 if (AppConfig.ExitHotkey != "")
     try Hotkey(AppConfig.ExitHotkey, (*) => ExitTrayApp())
 
@@ -524,33 +519,33 @@ IsPptKeyNotMute(cfg, pptKey) {
 }
 
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Down")
-$Down::SendToPPT(AppConfig, "{Down}")
+$Down:: SendToPPT(AppConfig, "{Down}")
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Up")
-$Up::SendToPPT(AppConfig, "{Up}")
+$Up:: SendToPPT(AppConfig, "{Up}")
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Left")
-$Left::SendToPPT(AppConfig, "{Left}")
+$Left:: SendToPPT(AppConfig, "{Left}")
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Right")
-$Right::SendToPPT(AppConfig, "{Right}")
+$Right:: SendToPPT(AppConfig, "{Right}")
 
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchPg && IsPptKeyNotMute(AppConfig, "PgDn")
-$PgDn::SendToPPT(AppConfig, "{PgDn}")
+$PgDn:: SendToPPT(AppConfig, "{PgDn}")
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchPg && IsPptKeyNotMute(AppConfig, "PgUp")
-$PgUp::SendToPPT(AppConfig, "{PgUp}")
+$PgUp:: SendToPPT(AppConfig, "{PgUp}")
 
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchSpace && IsPptKeyNotMute(AppConfig, "Space")
-$Space::SendToPPT(AppConfig, "{Space}")
+$Space:: SendToPPT(AppConfig, "{Space}")
 
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEnter && IsPptKeyNotMute(AppConfig, "Enter")
-$Enter::SendToPPT(AppConfig, "{Enter}")
+$Enter:: SendToPPT(AppConfig, "{Enter}")
 
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchTab && IsPptKeyNotMute(AppConfig, "Tab")
-$Tab::SendToPPT(AppConfig, "{Tab}")
+$Tab:: SendToPPT(AppConfig, "{Tab}")
 
 #HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEsc && IsPptKeyNotMute(AppConfig, "Esc")
-$Esc::SendToPPT(AppConfig, "{Esc}")
+$Esc:: SendToPPT(AppConfig, "{Esc}")
 
 #HotIf IsPptInterceptActive(AppConfig) && IsPptKeyNotMute(AppConfig, "+F5")
-$+F5::SendToPPT(AppConfig, "{Blind}{F5}") ; Always intercepted if PPT mode is active
+$+F5:: SendToPPT(AppConfig, "{Blind}{F5}") ; Always intercepted if PPT mode is active
 
 #HotIf ; Reset directive
 
@@ -580,17 +575,17 @@ SendToPPT(cfg, Key) {
             }
         }
         if (!comHandled) {
-            try ControlSend Key,, "ahk_class screenClass ahk_exe POWERPNT.EXE"
+            try ControlSend Key, , "ahk_class screenClass ahk_exe POWERPNT.EXE"
         }
     }
     else if WinExist("PowerPoint Presenter View ahk_exe POWERPNT.EXE") {
-        try ControlSend Key,, "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
+        try ControlSend Key, , "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
     }
     else if WinExist("ahk_class PPTFrameClass ahk_exe POWERPNT.EXE") {
-        try ControlSend Key,, "ahk_class PPTFrameClass ahk_exe POWERPNT.EXE"
+        try ControlSend Key, , "ahk_class PPTFrameClass ahk_exe POWERPNT.EXE"
     }
     else if WinExist("ahk_exe POWERPNT.EXE") {
-        try ControlSend Key,, "ahk_exe POWERPNT.EXE"
+        try ControlSend Key, , "ahk_exe POWERPNT.EXE"
     }
     else {
         SoundPlay "*16"
@@ -701,7 +696,7 @@ TriggerMute(cfg, state) {
             return
         }
         SetKeyDelay -1, 30
-        try ControlSend FormatSendKey(cfg.ObsMuteHotkey),, "ahk_exe obs64.exe"
+        try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
         SetKeyDelay 50, 50
     } else if (cfg.AudioRoutingMode == 2) {
         if !zoomOpen {
@@ -709,7 +704,7 @@ TriggerMute(cfg, state) {
             return
         }
         SetKeyDelay -1, 30
-        try ControlSend FormatSendKey(cfg.ZoomMuteHotkey),, "ahk_exe Zoom.exe"
+        try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
         SetKeyDelay 50, 50
     } else if (cfg.AudioRoutingMode == 3) {
         if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
@@ -721,9 +716,9 @@ TriggerMute(cfg, state) {
         state.IsSyncing := true
         SetKeyDelay -1, 30
         if (obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
-            try ControlSend FormatSendKey(cfg.ObsMuteHotkey),, "ahk_exe obs64.exe"
+            try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
         if (zoomOpen && cfg.ZoomMuteHotkey != "")
-            try ControlSend FormatSendKey(cfg.ZoomMuteHotkey),, "ahk_exe Zoom.exe"
+            try ControlSend FormatSendKey(cfg.ZoomMuteHotkey), , "ahk_exe Zoom.exe"
         SetKeyDelay 50, 50
         SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
     }
