@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.2.4
-;              and PresenterSync Remote v2.2.4 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.2.5
+;              and PresenterSync Remote v2.2.5 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.2.4", UIConstants.APP_VERSION == "2.2.4")
+Assert("APP_VERSION updated to 2.2.5", UIConstants.APP_VERSION == "2.2.5")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.2.4 and Remote Host",
-    InStr(summaryTxt, "v2.2.4") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.2.5 and Remote Host",
+    InStr(summaryTxt, "v2.2.5") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -588,6 +588,40 @@ for sc in [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 5.0] {
 Assert("All 8 HUD scales (0.25x-5.0x) maintain exact stack width & non-overlapping icon/label bounds",
     allScalesOk, scaleDetail)
 
+; ==============================================================================
+; SECTION 8: STAGE 1 (v2.2.5) - OPTIONAL AUDIO CUE & MUTE TOAST
+; ==============================================================================
+cfgAudioTest := Config(testIni)
+Assert("EnableAudioCue defaults to false", cfgAudioTest.EnableAudioCue == false)
+Assert("EnableMuteToast defaults to false", cfgAudioTest.EnableMuteToast == false)
+
+cueTonesMute := GetMuteAudioCueTones(true)
+cueTonesLive := GetMuteAudioCueTones(false)
+Assert("Mute audio cue uses descending two-tone chime", cueTonesMute.f1 == 880 && cueTonesMute.f2 == 520 && cueTonesMute.f1 > cueTonesMute.f2)
+Assert("Unmute audio cue uses ascending two-tone chime", cueTonesLive.f1 == 520 && cueTonesLive.f2 == 880 && cueTonesLive.f1 < cueTonesLive.f2)
+
+callbackTrack := { tray: 0, help: 0 }
+mockCueState := { isMuted: false, MicGui: "", rebuildTrayFn: (*) => (callbackTrack.tray += 1), refreshHelpFn: (*) => (callbackTrack.help += 1) }
+
+ToggleAudioCue(cfgAudioTest, mockCueState)
+ToggleMuteToast(cfgAudioTest, mockCueState)
+cfgAudioReload := Config(testIni)
+Assert("ToggleAudioCue and ToggleMuteToast persist true to INI & invoke tray/help refresh",
+    cfgAudioTest.EnableAudioCue == true && cfgAudioReload.EnableAudioCue == true
+    && cfgAudioTest.EnableMuteToast == true && cfgAudioReload.EnableMuteToast == true
+    && callbackTrack.tray == 2 && callbackTrack.help == 2)
+
+SyncUIState(cfgAudioTest, mockCueState, true)
+Assert("SyncUIState with EnableAudioCue/EnableMuteToast transitions to muted safely",
+    mockCueState.isMuted == true && cfgAudioTest.IsMuted == true)
+ToolTip()
+
+cfgAudioTest.ResetAppearance()
+cfgAudioResetReload := Config(testIni)
+Assert("ResetAppearance clears EnableAudioCue and EnableMuteToast back to false",
+    cfgAudioTest.EnableAudioCue == false && cfgAudioResetReload.EnableAudioCue == false
+    && cfgAudioTest.EnableMuteToast == false && cfgAudioResetReload.EnableMuteToast == false)
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -595,7 +629,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.4) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.5) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

@@ -7,7 +7,7 @@
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 
 class UIConstants {
-    static APP_VERSION := "2.2.4"
+    static APP_VERSION := "2.2.5"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -926,6 +926,8 @@ class Config {
     MonoIcon := false
     SleekCorners := false
     AggressivePulse := false
+    EnableAudioCue := false
+    EnableMuteToast := false
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -1051,6 +1053,8 @@ class Config {
         this.MonoIcon := this.ReadBool("Settings", "MonoIcon")
         this.SleekCorners := this.ReadBool("Settings", "SleekCorners")
         this.AggressivePulse := this.ReadBool("Settings", "AggressivePulse")
+        this.EnableAudioCue := this.ReadBool("Settings", "EnableAudioCue", false)
+        this.EnableMuteToast := this.ReadBool("Settings", "EnableMuteToast", false)
         this.OpacityLevel := this.ReadInt("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -1094,6 +1098,8 @@ class Config {
         this.MonoIcon := false
         this.SleekCorners := false
         this.AggressivePulse := false
+        this.EnableAudioCue := false
+        this.EnableMuteToast := false
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
@@ -1102,6 +1108,8 @@ class Config {
         this.Write("Settings", "MonoIcon", 0)
         this.Write("Settings", "SleekCorners", 0)
         this.Write("Settings", "AggressivePulse", 0)
+        this.Write("Settings", "EnableAudioCue", 0)
+        this.Write("Settings", "EnableMuteToast", 0)
         this.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         this.Write("Settings", "IndicatorScale", 1.0)
         Theme.SetMode("System")
@@ -2815,12 +2823,60 @@ ApplyRecAppearance(cfg, state) {
     return Gdip.RenderPill(state.RecGui.Hwnd, pos.recX, pos.recY, pos.recW, pos.recH, Gdip.HexToArgb(bg), Gdip.BgrToArgb(brd), state.baseAlpha, GetCornerRadius(cfg, pos.recH), iconCfg, labelCfg)
 }
 
+GetMuteAudioCueTones(isMuted) {
+    return isMuted
+        ? { f1: 880, d1: 65, f2: 520, d2: 95 }
+        : { f1: 520, d1: 65, f2: 880, d2: 95 }
+}
+
+PlayMuteAudioCue(isMuted, async := true) {
+    if (async) {
+        SetTimer(() => PlayMuteAudioCue(isMuted, false), -1)
+        return
+    }
+    tones := GetMuteAudioCueTones(isMuted)
+    try {
+        SoundBeep(tones.f1, tones.d1)
+        SoundBeep(tones.f2, tones.d2)
+    }
+}
+
+ShowMuteToast(isMuted) {
+    ToolTip(isMuted ? "Mic: MUTED" : "Mic: LIVE")
+    SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+}
+
+ToggleBoolSetting(cfg, state, propName, remoteSection := "Appearance") {
+    val := !cfg.%propName%
+    cfg.%propName% := val
+    section := (cfg is Config) ? "Settings" : remoteSection
+    cfg.WriteBool(section, propName, val)
+    if (IsObject(state)) {
+        if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+    }
+}
+
+ToggleAudioCue(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "EnableAudioCue")
+}
+
+ToggleMuteToast(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "EnableMuteToast")
+}
+
 SyncUIState(cfg, state, obsIsMuted) {
     if (state.isMuted != obsIsMuted) {
         state.isMuted := obsIsMuted
         cfg.IsMuted := obsIsMuted
         cfg.WriteBool("Settings", "IsMuted", state.isMuted)
         PlayMuteAnimation(cfg, state)
+        if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
+            PlayMuteAudioCue(obsIsMuted)
+        if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
+            ShowMuteToast(obsIsMuted)
         BroadcastHostRelayMuteState(cfg, state)
     }
 }
