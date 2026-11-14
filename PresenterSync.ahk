@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.3.5
+; Version: 2.3.6
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.3.5.0
+;@Ahk2Exe-SetVersion 2.3.6.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -231,6 +231,7 @@ BuildTrayMenu(cfg, state) {
             ProfileMenu.Check(pName)
     }
     ProfileMenu.Add()
+    ProfileMenu.Add("Save Current as New Profile...", (*) => ShowProfileManagerUI(cfg, state))
     ProfileMenu.Add("Manage Profiles...", (*) => ShowProfileManagerUI(cfg, state))
     SettingsMenu.Add("Configuration Profiles", ProfileMenu)
 
@@ -257,12 +258,18 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
     SettingsMenu.Add()
     SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI.Bind(cfg))
+    SettingsMenu.Add()
+    SettingsMenu.Add("Start with Windows", ToggleStartWithWindows.Bind(cfg, state))
+    if (cfg.StartWithWindows)
+        SettingsMenu.Check("Start with Windows")
+    SettingsMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
 
     A_TrayMenu.Add("Settings", SettingsMenu)
 
     ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg, state))
     A_TrayMenu.Add("About PresenterSync", ShowAboutWindow.Bind(cfg, state))
+    A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
     A_TrayMenu.Add()
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
     if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
