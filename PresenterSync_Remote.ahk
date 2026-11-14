@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.3.3
+; Version: 2.3.4
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 2.3.3.0
+;@Ahk2Exe-SetVersion 2.3.4.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -33,6 +33,7 @@ A_IconTip := "PresenterSync Remote v" UIConstants.APP_VERSION
 class RemoteConfig {
     ConfigFile := ""
     NetworkMode := "LAN"
+    EnableRelayFallback := true
     InternetPairingCode := ""
     HostAddress := "127.0.0.1"
     HostPort := "4455"
@@ -115,6 +116,7 @@ class RemoteConfig {
     Load() {
         rawNetMode := StrLower(Trim(this.Read("Connection", "NetworkMode", "LAN")))
         this.NetworkMode := (rawNetMode = "internet") ? "Internet" : "LAN"
+        this.EnableRelayFallback := this.ReadBool("Connection", "EnableRelayFallback", 1)
         this.InternetPairingCode := Trim(this.Read("Connection", "InternetPairingCode", ""))
         this.HostAddress := this.Read("Connection", "HostAddress", "127.0.0.1")
         rawPort := Trim(this.Read("Connection", "HostPort", "4455"))
@@ -217,6 +219,7 @@ class RemoteState {
     activeHost := ""
     candidateIndex := 1
     candidates := []
+    usingRelayFallback := false
 
     isMuted := false
     baseAlpha := 220
@@ -348,7 +351,7 @@ ConnectToRemoteOBS(cfg, state) {
         state.obsWs := ""
     }
 
-    if (cfg.NetworkMode = "Internet") {
+    if (IsRemoteUsingInternetChannel(cfg, state)) {
         pairCode := Trim(cfg.InternetPairingCode)
         if (pairCode = "") {
             if (IsObject(state.rebuildTrayFn))
@@ -357,13 +360,14 @@ ConnectToRemoteOBS(cfg, state) {
         }
         topic := GetInternetRelayTopic(pairCode)
         wsUrl := "wss://ntfy.sh/" topic "/ws"
+        relayPrefix := (state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback) ? "Relay Bridge (" : "Internet ("
         candidate := {
             host: "ntfy.sh",
             port: "443",
             scheme: "wss",
             path: "/" topic "/ws",
             url: wsUrl,
-            raw: "Internet (" pairCode ")"
+            raw: relayPrefix pairCode ")"
         }
         try {
             state.obsWs := WebSocket(wsUrl, {
@@ -426,6 +430,15 @@ ConnectToRemoteOBS(cfg, state) {
 
 FailoverToNextCandidate(cfg, state) {
     if (cfg.NetworkMode = "Internet") {
+        state.usingRelayFallback := false
+        SetTimer state.reconnectTimerFn, -2500
+        if (IsObject(state.rebuildTrayFn))
+            try state.rebuildTrayFn.Call()
+        return
+    }
+    if (state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback) {
+        state.usingRelayFallback := false
+        state.candidateIndex := 1
         SetTimer state.reconnectTimerFn, -2500
         if (IsObject(state.rebuildTrayFn))
             try state.rebuildTrayFn.Call()
@@ -436,9 +449,14 @@ FailoverToNextCandidate(cfg, state) {
         ; Probe next candidate immediately
         SetTimer state.reconnectTimerFn, -50
     } else {
-        ; All candidates exhausted, wait reconnect interval before retrying from first
+        ; All LAN candidates exhausted: seamlessly bridge via Internet Relay if configured (e.g., Mode 2 Host without OBS)
         state.candidateIndex := 1
-        SetTimer state.reconnectTimerFn, -2500
+        if (ShouldRemoteFallbackToRelay(cfg, state)) {
+            state.usingRelayFallback := true
+            SetTimer state.reconnectTimerFn, -100
+        } else {
+            SetTimer state.reconnectTimerFn, -2500
+        }
     }
     if (IsObject(state.rebuildTrayFn))
         try state.rebuildTrayFn.Call()
@@ -530,7 +548,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         }
         return
     }
-    if (cfg.NetworkMode = "Internet") {
+    if (IsRemoteUsingInternetChannel(cfg, state)) {
         if RegExMatch(msg, '"event"\s*:\s*"open"') {
             topic := GetInternetRelayTopic(cfg.InternetPairingCode)
             authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
@@ -654,7 +672,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
 RemoteHeartbeatTick(cfg, state) {
     if (!state.obsConnected || !IsObject(state.obsWs))
         return
-    if (cfg.NetworkMode = "Internet") {
+    if (IsRemoteUsingInternetChannel(cfg, state)) {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
         authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
@@ -1215,8 +1233,8 @@ BuildRemoteHelpStatusLine(cfg, state) {
         : ((state.obsConnected && state.connStatus = "mic_error") ? ("Connected - Mic '" cfg.TargetMicName "' Not Found")
         : (state.obsConnected ? ("Connected to " state.activeHost) : "Searching / Disconnected"))
     clickerText := FormatHK(cfg.HwMuteHotkey) (cfg.EnablePointerMute ? "" : " (Disabled)")
-    hostText := (cfg.NetworkMode = "Internet")
-        ? ("Internet (" (cfg.InternetPairingCode != "" ? cfg.InternetPairingCode : "Not Set") ")")
+    hostText := IsRemoteUsingInternetChannel(cfg, state)
+        ? (((state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback) ? "Relay Bridge (" : "Internet (") (cfg.InternetPairingCode != "" ? cfg.InternetPairingCode : "Not Set") ")")
         : ((cfg.HostAddress != "" ? cfg.HostAddress : "(Not Set)") ":" cfg.HostPort)
     scText := "Toggle Mute: " FormatHK(cfg.PptHotkey) "  |  Exit: " FormatHK(cfg.ExitHotkey)
     return "Current Status: " connState "  |  Clicker Key: " clickerText "  |  Host: " hostText "  |  " scText
@@ -1355,7 +1373,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     Theme.RegisterControl(dlg, ddlNetMode, "DropDownList")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    lblPair := dlg.Add("Text", "xm w360 y+10", "Internet Pairing Code (from Primary -> Remote Companion Info):")
+    lblPair := dlg.Add("Text", "xm w360 y+10", "Internet Pairing Code (Optional Fallback / WAN):")
     Theme.RegisterControl(dlg, lblPair, "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
     editPair := dlg.Add("Edit", "xm w360", cfg.InternetPairingCode)
@@ -1383,8 +1401,8 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
 
     UpdateModeFields(*) {
         isInternet := (ddlNetMode.Value == 2)
-        lblPair.Enabled := isInternet
-        editPair.Enabled := isInternet
+        lblPair.Enabled := true
+        editPair.Enabled := true
         lblHost.Enabled := !isInternet
         editHost.Enabled := !isInternet
         lblPort.Enabled := !isInternet
@@ -1493,6 +1511,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         state.connStatus := "searching"
         state.activeHost := ""
         state.candidateIndex := 1
+        state.usingRelayFallback := false
         state.candidates := []
         if (IsObject(state.MicGui)) {
             state.currentAlpha := GetRemoteEffectiveAlpha(state)
