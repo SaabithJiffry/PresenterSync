@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 2.2.6
+; Version: 2.2.7
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 2.2.6.0
+;@Ahk2Exe-SetVersion 2.2.7.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -48,6 +48,7 @@ class RemoteConfig {
 
     ShowIndicator := true
     ThemeMode := "System"
+    HudColorPreset := "Standard"
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -137,6 +138,7 @@ class RemoteConfig {
         rawTheme := StrLower(Trim(this.Read("Appearance", "ThemeMode", "System")))
         this.ThemeMode := (rawTheme = "dark") ? "Dark" : ((rawTheme = "light") ? "Light" : "System")
         Theme.SetMode(this.ThemeMode)
+        this.HudColorPreset := NormalizeHudColorPreset(this.Read("Appearance", "HudColorPreset", "Standard"))
 
         this.ShowText := this.ReadBool("Appearance", "ShowText", 0)
         this.MonoIcon := this.ReadBool("Appearance", "MonoIcon", 0)
@@ -176,6 +178,7 @@ class RemoteConfig {
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.ThemeMode := "System"
+        this.HudColorPreset := "Standard"
         Theme.SetMode("System")
 
         this.WriteBool("Appearance", "ShowText", false)
@@ -187,6 +190,7 @@ class RemoteConfig {
         this.Write("Appearance", "OpacityLevel", this.OpacityLevel)
         this.Write("Appearance", "IndicatorScale", this.IndicatorScale)
         this.Write("Appearance", "ThemeMode", this.ThemeMode)
+        this.Write("Appearance", "HudColorPreset", this.HudColorPreset)
     }
 }
 
@@ -211,6 +215,7 @@ class RemoteState {
     heartbeatTimerFn := ""
     rebuildTrayFn := ""
     refreshHelpFn := ""
+    refreshHudFn := ""
     pointerHotIfFn := ""
     activePointerKey := ""
     activeToggleMuteHk := ""
@@ -261,6 +266,7 @@ class RemoteState {
     }
 
     ComputeDimensions(cfg) {
+        this.colors := UIConstants.GetColorPalette(cfg.HasOwnProp("HudColorPreset") ? cfg.HudColorPreset : "Standard")
         this.baseWidth := Round((cfg.ShowText ? UIConstants.BASE_WIDTH_TEXT : UIConstants.BASE_WIDTH_ICON) * cfg.IndicatorScale)
         this.baseHeight := Round(UIConstants.BASE_HEIGHT * cfg.IndicatorScale)
         this.iconSize := Max(1, Round(UIConstants.MIC_ICON_SIZE * cfg.IndicatorScale))
@@ -286,6 +292,7 @@ AppConfig := RemoteConfig()
 Theme.Init(AppConfig.ThemeMode)
 AppState := RemoteState(AppConfig)
 AppState.rebuildTrayFn := BuildRemoteTrayMenu.Bind(AppConfig, AppState)
+AppState.refreshHudFn := RefreshRemoteHudAppearance.Bind(AppConfig, AppState)
 
 ; === INITIALIZE HUD & HOTKEYS ===
 InitRemoteHUD(AppConfig, AppState)
@@ -933,6 +940,14 @@ BuildRemoteTrayMenu(cfg, state) {
     else
         ThemeMenu.Check("Follow System")
     AppearanceMenu.Add("App Theme", ThemeMenu)
+
+    PresetMenu := Menu()
+    for pName in GetHudColorPresetNames() {
+        PresetMenu.Add(pName, SetHudColorPreset.Bind(cfg, state, pName))
+        if (cfg.HudColorPreset = pName)
+            PresetMenu.Check(pName)
+    }
+    AppearanceMenu.Add("HUD Color Preset", PresetMenu)
 
     AppearanceMenu.Add()
     AppearanceMenu.Add("Reset Indicator Position", ResetRemotePositionAction.Bind(cfg, state))

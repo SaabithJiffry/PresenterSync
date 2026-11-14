@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 2.2.6
+; Version: 2.2.7
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 2.2.6.0
+;@Ahk2Exe-SetVersion 2.2.7.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -157,6 +157,14 @@ BuildTrayMenu(cfg, state) {
         ThemeMenu.Check("Follow System")
 
     AppearanceMenu.Add("App Theme", ThemeMenu)
+
+    PresetMenu := Menu()
+    for pName in GetHudColorPresetNames() {
+        PresetMenu.Add(pName, SetHudColorPreset.Bind(cfg, state, pName))
+        if (cfg.HudColorPreset = pName)
+            PresetMenu.Check(pName)
+    }
+    AppearanceMenu.Add("HUD Color Preset", PresetMenu)
 
     AppearanceMenu.Add()
     AppearanceMenu.Add("Reset Indicator Position", ApplyResetPositionLive.Bind(cfg, state))
