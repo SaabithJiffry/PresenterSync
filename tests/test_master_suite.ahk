@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v2.2.8
-;              and PresenterSync Remote v2.2.8 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v2.2.9
+;              and PresenterSync Remote v2.2.9 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -228,13 +228,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 2.2.8", UIConstants.APP_VERSION == "2.2.8")
+Assert("APP_VERSION updated to 2.2.9", UIConstants.APP_VERSION == "2.2.9")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v2.2.8 and Remote Host",
-    InStr(summaryTxt, "v2.2.8") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v2.2.9 and Remote Host",
+    InStr(summaryTxt, "v2.2.9") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -764,6 +764,66 @@ Assert("VoiceMeterTick stops & zeroes voicePeak when muted",
 
 meterState.MicGui.Destroy()
 
+; ==============================================================================
+; SECTION 12: STAGE 5 (v2.2.9) - LIVE ELAPSED RECORDING TIMER ON REC PILL
+; ==============================================================================
+Assert("FormatElapsedShort formats MM:SS, H:MM:SS, and clamps negative values",
+    FormatElapsedShort(0) == "00:00"
+    && FormatElapsedShort(5) == "00:05"
+    && FormatElapsedShort(65) == "01:05"
+    && FormatElapsedShort(3599) == "59:59"
+    && FormatElapsedShort(3600) == "1:00:00"
+    && FormatElapsedShort(3665) == "1:01:05"
+    && FormatElapsedShort(-12) == "00:00")
+
+cfgRec := Config(testIni)
+Assert("ShowRecTimer defaults to true", cfgRec.ShowRecTimer == true)
+
+stRec := OverlayState(cfgRec)
+recCb := { tray: 0 }
+stRec.rebuildTrayFn := (*) => (recCb.tray += 1)
+stRec.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+stRec.RecGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+stRec.ChatGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+
+ToggleRecTimer(cfgRec, stRec)
+cfgRecReload := Config(testIni)
+Assert("ToggleRecTimer persists false to INI and refreshes tray",
+    cfgRec.ShowRecTimer == false && cfgRecReload.ShowRecTimer == false && recCb.tray == 1)
+
+cfgRec.ResetAppearance()
+Assert("ResetAppearance restores ShowRecTimer back to true", cfgRec.ShowRecTimer == true)
+
+cfgRec.ShowText := true
+SyncRecState(cfgRec, stRec, 1, 125000)
+Assert("SyncRecState syncs initialDurationMs=125000 -> 125s and preserves Label Mode row2 width",
+    stRec.recState == 1 && stRec.recElapsedSec == 125
+    && (stRec.recW + stRec.hudGap + stRec.chatW) == stRec.baseWidth)
+
+RecTimerTick(cfgRec, stRec)
+Assert("RecTimerTick increments recElapsedSec while recording active", stRec.recElapsedSec == 126)
+
+SyncRecState(cfgRec, stRec, 2)
+RecTimerTick(cfgRec, stRec)
+Assert("Paused rec state preserves elapsed seconds and stops incrementing",
+    stRec.recState == 2 && stRec.recElapsedSec == 126)
+
+SyncRecState(cfgRec, stRec, 1)
+Assert("Resuming from Pause preserves existing recElapsedSec",
+    stRec.recState == 1 && stRec.recElapsedSec == 126)
+
+SyncRecState(cfgRec, stRec, 0)
+Assert("Stopping recording resets recElapsedSec back to 0",
+    stRec.recState == 0 && stRec.recElapsedSec == 0)
+
+wsRecMsg := '{"op":7,"d":{"requestType":"GetRecordStatus","requestId":"InitRecState","requestStatus":{"result":true,"code":100},"responseData":{"outputActive":true,"outputPaused":false,"outputDuration":90500}}}'
+HandleObsMessage(cfgRec, stRec, "", wsRecMsg)
+Assert("HandleObsMessage InitRecState parses OBS outputDuration into recElapsedSec=90",
+    stRec.recState == 1 && stRec.recElapsedSec == 90)
+SyncRecState(cfgRec, stRec, 0)
+
+stRec.MicGui.Destroy(), stRec.RecGui.Destroy(), stRec.ChatGui.Destroy()
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -771,7 +831,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.8) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v2.2.9) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
