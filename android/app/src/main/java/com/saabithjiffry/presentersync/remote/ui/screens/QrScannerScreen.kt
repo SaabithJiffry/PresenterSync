@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -52,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -64,7 +66,10 @@ import com.google.zxing.MultiFormatReader
 import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import com.saabithjiffry.presentersync.remote.config.DeepLinkParser
+import com.saabithjiffry.presentersync.remote.config.DeviceProfileMode
 import com.saabithjiffry.presentersync.remote.config.ParsedConnectionPayload
+import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
+import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -76,6 +81,7 @@ fun QrScannerDialog(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val formFactor = rememberFormFactor(DeviceProfileMode.AUTO)
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -100,8 +106,9 @@ fun QrScannerDialog(
         Surface(
             modifier = Modifier
                 .widthIn(max = 560.dp)
-                .fillMaxWidth(0.94f)
-                .padding(vertical = 16.dp),
+                .fillMaxWidth(formFactor.dialogWidthFraction)
+                .heightIn(max = (formFactor.heightDp * formFactor.dialogMaxHeightFraction).dp)
+                .padding(vertical = if (formFactor.isCompactHeight) 6.dp else 14.dp),
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.background,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -192,7 +199,7 @@ fun QrScannerDialog(
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(260.dp)
+                                .height(if (formFactor.isCompactHeight) 160.dp else 250.dp)
                         ) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 CameraQrPreviewBox(
@@ -234,13 +241,19 @@ fun QrScannerDialog(
                             }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 OutlinedButton(
                                     onClick = onDismiss,
+                                    contentPadding = CompactExplorerButtonPadding,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text("Use Session Code Instead")
+                                    Text(
+                                        if (formFactor.isTightWidth) "Session Code" else "Use Session Code",
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                                 Button(
                                     onClick = {
@@ -251,9 +264,10 @@ fun QrScannerDialog(
                                             onPayloadScanned(parsed)
                                         }
                                     },
+                                    contentPadding = CompactExplorerButtonPadding,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text("Apply URI")
+                                    Text("Apply URI", maxLines = 1, softWrap = false)
                                 }
                             }
                         }

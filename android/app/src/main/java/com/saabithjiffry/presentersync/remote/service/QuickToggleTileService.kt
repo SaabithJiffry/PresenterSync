@@ -39,26 +39,33 @@ class QuickToggleTileService : TileService() {
         }
 
         if (Settings.canDrawOverlays(this)) {
-            runCatching {
-                FloatingHudForegroundService.startService(this)
-            }
-            refreshTile()
-        } else {
-            val intent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val pi = android.app.PendingIntent.getActivity(
-                    this,
-                    41,
-                    intent,
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-                )
-                startActivityAndCollapse(pi)
+            val started = FloatingHudForegroundService.startService(this)
+            if (!started) {
+                openMainForHudStart()
             } else {
-                @Suppress("DEPRECATION")
-                startActivityAndCollapse(intent)
+                refreshTile()
             }
+        } else {
+            openMainForHudStart()
+        }
+    }
+
+    private fun openMainForHudStart() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(MainActivity.EXTRA_AUTO_START_HUD, true)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val pi = android.app.PendingIntent.getActivity(
+                this,
+                41,
+                intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            startActivityAndCollapse(pi)
+        } else {
+            @Suppress("DEPRECATION")
+            startActivityAndCollapse(intent)
         }
     }
 

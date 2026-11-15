@@ -39,26 +39,40 @@ class MicPillCanvasView(context: Context) : View(context) {
     private var currentAlpha: Int = AppConstants.OPACITY_FROSTED
     private var overrideMuted: Boolean? = null
 
+    private var maxContainerWidthPx: Int = 0
+
     fun updateRenderState(
         cfg: RemoteConfig,
         conn: ConnectionUiState,
         alpha: Int = cfg.opacityLevel,
-        mutedOverride: Boolean? = null
+        mutedOverride: Boolean? = null,
+        maxContainerWidthPx: Int = this.maxContainerWidthPx
     ) {
         config = cfg
         connState = conn
         currentAlpha = alpha.coerceIn(0, 255)
         overrideMuted = mutedOverride
+        this.maxContainerWidthPx = maxContainerWidthPx
         invalidate()
     }
 
-    fun computeTargetWidthPx(): Int {
-        val baseDp = if (config.showText) AppConstants.BASE_WIDTH_TEXT else AppConstants.BASE_WIDTH_ICON
-        return dpToPx(baseDp * config.indicatorScale).coerceAtLeast(16)
+    fun effectiveScale(safeWidthPx: Int = maxContainerWidthPx): Float {
+        val boundWidth = if (safeWidthPx > 0) safeWidthPx else resources.displayMetrics.widthPixels
+        return ScreenBoundsCalculator.computeBoundedPillScale(
+            requestedScale = config.indicatorScale,
+            showText = config.showText,
+            safeWidthPx = boundWidth,
+            density = resources.displayMetrics.density
+        )
     }
 
-    fun computeTargetHeightPx(): Int {
-        return dpToPx(AppConstants.BASE_HEIGHT * config.indicatorScale).coerceAtLeast(12)
+    fun computeTargetWidthPx(safeWidthPx: Int = maxContainerWidthPx): Int {
+        val baseDp = if (config.showText) AppConstants.BASE_WIDTH_TEXT else AppConstants.BASE_WIDTH_ICON
+        return dpToPx(baseDp * effectiveScale(safeWidthPx)).coerceAtLeast(16)
+    }
+
+    fun computeTargetHeightPx(safeWidthPx: Int = maxContainerWidthPx): Int {
+        return dpToPx(AppConstants.BASE_HEIGHT * effectiveScale(safeWidthPx)).coerceAtLeast(12)
     }
 
     private fun dpToPx(dp: Float): Int {

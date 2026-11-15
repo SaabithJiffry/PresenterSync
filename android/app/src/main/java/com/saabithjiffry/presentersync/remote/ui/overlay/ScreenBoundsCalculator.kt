@@ -100,6 +100,37 @@ object ScreenBoundsCalculator {
         return OverlayPointPx(x, y)
     }
 
+    fun computePositionRatios(
+        x: Int,
+        y: Int,
+        bounds: SafeRectPx,
+        viewWidthPx: Int,
+        viewHeightPx: Int
+    ): Pair<Float, Float> {
+        val minX = bounds.left
+        val maxX = (bounds.right - viewWidthPx).coerceAtLeast(minX)
+        val minY = bounds.top
+        val maxY = (bounds.bottom - viewHeightPx).coerceAtLeast(minY)
+        val spanX = (maxX - minX).coerceAtLeast(1)
+        val spanY = (maxY - minY).coerceAtLeast(1)
+        val rx = ((x.coerceIn(minX, maxX) - minX).toFloat() / spanX.toFloat()).coerceIn(0f, 1f)
+        val ry = ((y.coerceIn(minY, maxY) - minY).toFloat() / spanY.toFloat()).coerceIn(0f, 1f)
+        return rx to ry
+    }
+
+    fun computeBoundedPillScale(
+        requestedScale: Float,
+        showText: Boolean,
+        safeWidthPx: Int,
+        density: Float
+    ): Float {
+        val baseWidthDp = if (showText) AppConstants.BASE_WIDTH_TEXT else AppConstants.BASE_WIDTH_ICON
+        val safeDensity = density.coerceAtLeast(0.5f)
+        val maxWidthPx = (safeWidthPx * AppConstants.PILL_MAX_VIEWPORT_WIDTH_FRACTION).coerceAtLeast(16f)
+        val maxScale = (maxWidthPx / (baseWidthDp * safeDensity)).coerceAtLeast(0.25f)
+        return requestedScale.coerceIn(0.25f, maxScale)
+    }
+
     fun resolvePosition(
         savedX: Int,
         savedY: Int,
@@ -107,12 +138,23 @@ object ScreenBoundsCalculator {
         viewWidthPx: Int,
         viewHeightPx: Int,
         marginXPx: Int,
-        marginYPx: Int
+        marginYPx: Int,
+        savedXRatio: Float = -1f,
+        savedYRatio: Float = -1f
     ): OverlayPointPx {
         val minX = bounds.left
         val maxX = (bounds.right - viewWidthPx).coerceAtLeast(minX)
         val minY = bounds.top
         val maxY = (bounds.bottom - viewHeightPx).coerceAtLeast(minY)
+
+        if (savedXRatio in 0f..1f && savedYRatio in 0f..1f) {
+            val mappedX = minX + ((maxX - minX) * savedXRatio).roundToInt()
+            val mappedY = minY + ((maxY - minY) * savedYRatio).roundToInt()
+            return OverlayPointPx(
+                x = mappedX.coerceIn(minX, maxX),
+                y = mappedY.coerceIn(minY, maxY)
+            )
+        }
 
         if (savedX < 0 || savedY < 0) {
             return computeDefaultPosition(bounds, viewWidthPx, viewHeightPx, marginXPx, marginYPx)

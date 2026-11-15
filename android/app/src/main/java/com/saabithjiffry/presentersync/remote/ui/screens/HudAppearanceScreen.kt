@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,9 +52,11 @@ import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.HudColorPalettes
 import com.saabithjiffry.presentersync.remote.config.ThemeMode
+import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
 import com.saabithjiffry.presentersync.remote.network.ConnStatus
 import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
 import com.saabithjiffry.presentersync.remote.ui.overlay.MicPillCanvasView
+import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 
 private val SCALE_OPTIONS = listOf(
@@ -80,18 +83,19 @@ fun HudAppearanceScreen(
 ) {
     val context = LocalContext.current
     val cfg by app.configStore.config.collectAsStateWithLifecycle()
+    val formFactor = rememberFormFactor(cfg.deviceProfileMode)
     var previewStateIdx by remember { mutableIntStateOf(0) } // 0 = LIVE, 1 = MUTED, 2 = OFFLINE
 
     Column(
         modifier = Modifier
-            .widthIn(max = 760.dp)
+            .widthIn(max = if (formFactor.isWideTwoColumn) 980.dp else 760.dp)
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .padding(formFactor.outerPaddingDp.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // 1. Live Floating Pill Preview & Windows 11 App Theme Card
-        ExplorerCard(contentPadding = 18) {
+        ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -141,8 +145,8 @@ fun HudAppearanceScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        val previewCfg = remember(cfg) {
-                            cfg.copy(indicatorScale = cfg.indicatorScale.coerceAtMost(2.2f))
+                        val previewCfg = remember(cfg, formFactor.previewMaxScale) {
+                            cfg.copy(indicatorScale = cfg.indicatorScale.coerceAtMost(formFactor.previewMaxScale))
                         }
                         val previewConn = remember(previewStateIdx) {
                             when (previewStateIdx) {
@@ -170,9 +174,9 @@ fun HudAppearanceScreen(
                             }
                         )
 
-                        if (cfg.indicatorScale > 2.2f) {
+                        if (cfg.indicatorScale > formFactor.previewMaxScale) {
                             Text(
-                                text = "Preview scaled down to fit card; actual floating pill uses full ${cfg.indicatorScale}x size.",
+                                text = "Preview scaled to ${formFactor.previewMaxScale}x inside card; overlay pill uses up to ${cfg.indicatorScale}x within screen bounds.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -287,7 +291,11 @@ fun HudAppearanceScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 Text(
-                    text = "Indicator Scale (Smart Board 65\"–86\" Ready)",
+                    text = if (formFactor.isPhone) {
+                        "Indicator Scale (Auto-Bounded to Phone Width)"
+                    } else {
+                        "Indicator Scale (Smart Board 65\"–86\" Ready)"
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium
                 )
@@ -391,31 +399,32 @@ fun HudAppearanceScreen(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
                         onClick = {
                             app.configStore.resetPosition()
                             Toast.makeText(context, "Pill position reset to bottom-right", Toast.LENGTH_SHORT).show()
                         },
-                        modifier = Modifier.weight(1f)
+                        contentPadding = CompactExplorerButtonPadding
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Reset Position")
+                        Text("Reset Position", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                     OutlinedButton(
                         onClick = {
                             app.configStore.resetAppearance()
                             Toast.makeText(context, "HUD appearance reset to defaults", Toast.LENGTH_SHORT).show()
                         },
-                        modifier = Modifier.weight(1f)
+                        contentPadding = CompactExplorerButtonPadding
                     ) {
                         Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Reset Appearance")
+                        Text("Reset Appearance", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }

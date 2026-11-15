@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -57,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -64,10 +66,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
+import com.saabithjiffry.presentersync.remote.config.ResolvedFormFactor
+import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
 import com.saabithjiffry.presentersync.remote.input.ClickerMuteController
 import com.saabithjiffry.presentersync.remote.service.CapturedKeyEvent
 import com.saabithjiffry.presentersync.remote.service.ClickerAccessibilityService
+import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
+import com.saabithjiffry.presentersync.remote.ui.theme.ResponsiveExplorerActionRow
 
 private val QUICK_CLICKER_KEYS = listOf(
     "KEYCODE_B" to "B (Logitech Black Screen)",
@@ -81,6 +87,7 @@ private val QUICK_CLICKER_KEYS = listOf(
     "KEYCODE_M" to "M"
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PointerSettingsScreen(
     app: PresenterSyncRemoteApp
@@ -88,6 +95,7 @@ fun PointerSettingsScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val cfg by app.configStore.config.collectAsStateWithLifecycle()
+    val formFactor = rememberFormFactor(cfg.deviceProfileMode)
 
     val serviceConnectedFlow by ClickerAccessibilityService.serviceActive.collectAsStateWithLifecycle()
     val testerEvents by ClickerAccessibilityService.testerEvents.collectAsStateWithLifecycle()
@@ -121,16 +129,16 @@ fun PointerSettingsScreen(
 
     Column(
         modifier = Modifier
-            .widthIn(max = 760.dp)
+            .widthIn(max = if (formFactor.isWideTwoColumn) 980.dp else 760.dp)
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .padding(formFactor.outerPaddingDp.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // 1. Hardware Pointer Global Service Status Card
         val badgeColor = if (a11yEnabled) Color(0xFF10B981) else Color(0xFFD97706)
         ExplorerCard(
-            contentPadding = 18,
+            contentPadding = formFactor.cardPaddingDp,
             borderColor = if (a11yEnabled) MaterialTheme.colorScheme.outline else badgeColor.copy(alpha = 0.55f)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -174,9 +182,10 @@ fun PointerSettingsScreen(
                     }
                 }
 
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
                         onClick = {
@@ -184,19 +193,29 @@ fun PointerSettingsScreen(
                                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                             }
                         },
-                        modifier = Modifier.weight(1f)
+                        contentPadding = CompactExplorerButtonPadding
                     ) {
-                        Icon(Icons.Default.AccessibilityNew, contentDescription = null)
+                        Icon(Icons.Default.AccessibilityNew, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(if (a11yEnabled) "Accessibility Settings" else "Enable Service")
+                        Text(
+                            if (a11yEnabled) "Accessibility Settings" else "Enable Service",
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     OutlinedButton(
                         onClick = { showRestrictedGuideDialog = true },
-                        modifier = Modifier.weight(1f)
+                        contentPadding = CompactExplorerButtonPadding
                     ) {
-                        Icon(Icons.Default.Security, contentDescription = null)
+                        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Android 13/14+ Guide")
+                        Text(
+                            "Android 13+ Guide",
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -279,53 +298,39 @@ fun PointerSettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 // Assigned Button Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                ResponsiveExplorerActionRow(
+                    title = "Pointer Mute Button",
+                    subtitle = "${ClickerMuteController.friendlyKeyLabel(cfg.hwMuteHotkey)} (${cfg.hwMuteHotkey})",
+                    subtitleColor = MaterialTheme.colorScheme.primary,
+                    isTightWidth = formFactor.isTightWidth
                 ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text("Pointer Mute Button", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        Text(
-                            text = "${ClickerMuteController.friendlyKeyLabel(cfg.hwMuteHotkey)} (${cfg.hwMuteHotkey})",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    OutlinedButton(onClick = { showCaptureDialog = true }) {
-                        Icon(Icons.Default.Keyboard, contentDescription = null)
+                    OutlinedButton(
+                        onClick = { showCaptureDialog = true },
+                        contentPadding = CompactExplorerButtonPadding
+                    ) {
+                        Icon(Icons.Default.Keyboard, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Change Button")
+                        Text("Change Button", maxLines = 1, softWrap = false)
                     }
                 }
             }
         }
 
         // 3. Global Shortcuts Card
-        ExplorerCard(contentPadding = 18) {
+        ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                ResponsiveExplorerActionRow(
+                    title = "Keyboard Shortcuts (USB/BT Keyboard)",
+                    subtitle = "Active globally when Accessibility Service is enabled and not suspended.",
+                    isTightWidth = formFactor.isTightWidth
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Keyboard Shortcuts (USB/BT Keyboard)",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Active globally when Accessibility Service is enabled and not suspended.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    OutlinedButton(onClick = { showShortcutDialog = true }) {
-                        Icon(Icons.Default.Edit, contentDescription = null)
+                    OutlinedButton(
+                        onClick = { showShortcutDialog = true },
+                        contentPadding = CompactExplorerButtonPadding
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Edit")
+                        Text("Edit", maxLines = 1, softWrap = false)
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -349,29 +354,17 @@ fun PointerSettingsScreen(
         }
 
         // 4. Live Clicker Tester Diagnostic Card
-        ExplorerCard(contentPadding = 18) {
+        ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                ResponsiveExplorerActionRow(
+                    title = "Live Clicker Diagnostic Tester",
+                    subtitle = if (testerOpen) {
+                        "Listening... Press any presenter clicker button to inspect Android KeyCode & filtering."
+                    } else {
+                        "Verify your USB/Bluetooth presenter buttons before presenting."
+                    },
+                    isTightWidth = formFactor.isTightWidth
                 ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text(
-                            text = "Live Clicker Diagnostic Tester",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = if (testerOpen) {
-                                "Listening... Press any presenter clicker button to inspect Android KeyCode & filtering."
-                            } else {
-                                "Verify your USB/Bluetooth presenter buttons before presenting."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                     Button(
                         onClick = {
                             testerOpen = !testerOpen
@@ -379,9 +372,14 @@ fun PointerSettingsScreen(
                             if (testerOpen) {
                                 ClickerAccessibilityService.clearTesterEvents()
                             }
-                        }
+                        },
+                        contentPadding = CompactExplorerButtonPadding
                     ) {
-                        Text(if (testerOpen) "Stop Tester" else "Launch Clicker Tester")
+                        Text(
+                            if (testerOpen) "Stop Tester" else "Launch Clicker Tester",
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
 
@@ -518,6 +516,7 @@ private fun CaptureClickerButtonDialog(
         }
     }
 
+    val formFactor = rememberFormFactor(com.saabithjiffry.presentersync.remote.config.DeviceProfileMode.AUTO)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -525,8 +524,9 @@ private fun CaptureClickerButtonDialog(
         Surface(
             modifier = Modifier
                 .widthIn(max = 580.dp)
-                .fillMaxWidth(0.92f)
-                .padding(vertical = 16.dp),
+                .fillMaxWidth(formFactor.dialogWidthFraction)
+                .heightIn(max = (formFactor.heightDp * formFactor.dialogMaxHeightFraction).dp)
+                .padding(vertical = if (formFactor.isCompactHeight) 6.dp else 14.dp),
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -630,6 +630,7 @@ private fun RestrictedSettingsGuideDialog(
     onOpenAccessibility: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val formFactor = rememberFormFactor(com.saabithjiffry.presentersync.remote.config.DeviceProfileMode.AUTO)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -637,8 +638,9 @@ private fun RestrictedSettingsGuideDialog(
         Surface(
             modifier = Modifier
                 .widthIn(max = 580.dp)
-                .fillMaxWidth(0.92f)
-                .padding(vertical = 16.dp),
+                .fillMaxWidth(formFactor.dialogWidthFraction)
+                .heightIn(max = (formFactor.heightDp * formFactor.dialogMaxHeightFraction).dp)
+                .padding(vertical = if (formFactor.isCompactHeight) 6.dp else 14.dp),
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)

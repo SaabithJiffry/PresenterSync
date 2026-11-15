@@ -280,14 +280,19 @@ class FloatingHudForegroundService : LifecycleService() {
         const val ACTION_DISABLE_CLICK_THROUGH = "com.saabithjiffry.presentersync.remote.DISABLE_CLICK_THROUGH"
         const val ACTION_RECONNECT = "com.saabithjiffry.presentersync.remote.RECONNECT"
 
-        fun startService(context: Context, action: String = ACTION_START) {
+        fun startService(context: Context, action: String = ACTION_START): Boolean {
             val intent = Intent(context, FloatingHudForegroundService::class.java).setAction(action)
-            context.startForegroundService(intent)
+            return try {
+                context.startForegroundService(intent)
+                true
+            } catch (_: Exception) {
+                false
+            }
         }
 
         fun stopService(context: Context) {
             val intent = Intent(context, FloatingHudForegroundService::class.java).setAction(ACTION_STOP)
-            context.startService(intent)
+            runCatching { context.startService(intent) }
         }
     }
 }

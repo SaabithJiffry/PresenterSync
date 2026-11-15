@@ -72,8 +72,11 @@ data class RemoteConfig(
     val firstRun: Boolean = true,
     val isMuted: Boolean = false,
     val startOnBoot: Boolean = false,
+    val deviceProfileMode: DeviceProfileMode = DeviceProfileMode.AUTO,
     val savedX: Int = -1,
-    val savedY: Int = -1
+    val savedY: Int = -1,
+    val savedXRatio: Float = -1f,
+    val savedYRatio: Float = -1f
 )
 
 class RemoteConfigStore(context: Context) {
@@ -136,8 +139,11 @@ class RemoteConfigStore(context: Context) {
             firstRun = prefs.getBoolean("firstRun", true),
             isMuted = prefs.getBoolean("isMuted", false),
             startOnBoot = prefs.getBoolean("startOnBoot", false),
+            deviceProfileMode = DeviceProfileMode.fromRaw(prefs.getString("deviceProfileMode", "Auto")),
             savedX = prefs.getInt("savedX", -1),
-            savedY = prefs.getInt("savedY", -1)
+            savedY = prefs.getInt("savedY", -1),
+            savedXRatio = prefs.getFloat("savedXRatio", -1f).let { if (it in 0f..1f) it else -1f },
+            savedYRatio = prefs.getFloat("savedYRatio", -1f).let { if (it in 0f..1f) it else -1f }
         )
     }
 
@@ -149,7 +155,33 @@ class RemoteConfigStore(context: Context) {
         return next
     }
 
-    fun resetPosition() = update { it.copy(savedX = -1, savedY = -1) }
+    fun resetPosition() = update {
+        it.copy(savedX = -1, savedY = -1, savedXRatio = -1f, savedYRatio = -1f)
+    }
+
+    fun applyFormFactorPreset(targetClass: FormFactorClass) = update { prev ->
+        when (targetClass) {
+            FormFactorClass.LARGE_BOARD -> prev.copy(
+                indicatorScale = 2.0f,
+                showText = true,
+                sleekCorners = false,
+                hudAutoDodge = true,
+                enableMagneticSnap = true
+            )
+            FormFactorClass.TABLET -> prev.copy(
+                indicatorScale = 1.5f,
+                showText = true,
+                sleekCorners = false,
+                enableMagneticSnap = true
+            )
+            FormFactorClass.COMPACT_PHONE -> prev.copy(
+                indicatorScale = 1.0f,
+                showText = false,
+                sleekCorners = true,
+                enableMagneticSnap = true
+            )
+        }
+    }
 
     fun resetAppearance() = update {
         it.copy(
@@ -207,8 +239,11 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("firstRun", c.firstRun)
             .putBoolean("isMuted", c.isMuted)
             .putBoolean("startOnBoot", c.startOnBoot)
+            .putString("deviceProfileMode", c.deviceProfileMode.rawValue)
             .putInt("savedX", c.savedX)
             .putInt("savedY", c.savedY)
+            .putFloat("savedXRatio", c.savedXRatio)
+            .putFloat("savedYRatio", c.savedYRatio)
             .apply()
     }
 }

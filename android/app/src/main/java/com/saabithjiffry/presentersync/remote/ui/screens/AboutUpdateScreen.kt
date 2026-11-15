@@ -43,12 +43,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.saabithjiffry.presentersync.remote.config.AppConstants
+import com.saabithjiffry.presentersync.remote.config.DeviceProfileMode
+import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
 import com.saabithjiffry.presentersync.remote.network.AppUpdater
 import com.saabithjiffry.presentersync.remote.network.UpdateCheckResult
+import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -60,6 +64,7 @@ fun AboutUpdateDialog(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val formFactor = rememberFormFactor(DeviceProfileMode.AUTO)
     var checking by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<UpdateCheckResult?>(null) }
 
@@ -70,9 +75,9 @@ fun AboutUpdateDialog(
         Surface(
             modifier = Modifier
                 .widthIn(max = 580.dp)
-                .fillMaxWidth(0.94f)
-                .heightIn(max = 650.dp)
-                .padding(vertical = 14.dp),
+                .fillMaxWidth(formFactor.dialogWidthFraction)
+                .heightIn(max = (formFactor.heightDp * formFactor.dialogMaxHeightFraction).dp)
+                .padding(vertical = if (formFactor.isCompactHeight) 6.dp else 14.dp),
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.background,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -211,7 +216,7 @@ fun AboutUpdateDialog(
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Button(
                                     onClick = {
@@ -222,11 +227,17 @@ fun AboutUpdateDialog(
                                         }
                                     },
                                     enabled = !checking,
+                                    contentPadding = CompactExplorerButtonPadding,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(Icons.Default.SystemUpdate, contentDescription = null)
+                                    Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("Check for Updates")
+                                    Text(
+                                        if (formFactor.isTightWidth) "Updates" else "Check for Updates",
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                                 OutlinedButton(
                                     onClick = {
@@ -237,11 +248,17 @@ fun AboutUpdateDialog(
                                             )
                                         }
                                     },
+                                    contentPadding = CompactExplorerButtonPadding,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(Icons.Default.OpenInBrowser, contentDescription = null)
+                                    Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("GitHub Repo")
+                                    Text(
+                                        "GitHub Repo",
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                         }
