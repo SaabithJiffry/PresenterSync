@@ -3,31 +3,40 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 5.2.0
+; Version: 5.3.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
-#SingleInstance Force
+#SingleInstance Off
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 5.2.0.0
+;@Ahk2Exe-SetVersion 5.3.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
 #Include <Crypto>
+#Include <RemoteBridgeClient>
 #Include <Gdip>
 #Include <OBS_Network>
 #Include <GUI_Config>
 
+g_RemoteCli := ParseRemoteCliArgs(A_Args)
+g_RemoteMutex := AcquireRemoteInstanceMutex(g_RemoteCli.instanceName)
+if (g_RemoteMutex.alreadyExists) {
+    TrayTip("PresenterSync Remote" (g_RemoteCli.instanceName != "" ? " [" g_RemoteCli.instanceName "]" : "") " is already running. Use -Instance <name> to run another remote.", "PresenterSync Remote", 2)
+    Sleep(350)
+    ExitApp(0)
+}
+
 Gdip.Startup()
-OnExit((*) => (Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => (ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSyncRemote.ico"))
     try TraySetIcon(A_ScriptDir "\PresenterSyncRemote.ico")
-A_IconTip := "PresenterSync Remote v" UIConstants.APP_VERSION
+A_IconTip := "PresenterSync Remote v" UIConstants.APP_VERSION (g_RemoteCli.instanceName != "" ? " [" g_RemoteCli.instanceName "]" : "")
 
 ; === CONFIGURATION & STATE ===
 class RemoteConfig {
@@ -37,6 +46,11 @@ class RemoteConfig {
     InternetPairingCode := ""
     HostAddress := "127.0.0.1"
     HostPort := "4455"
+    BridgePort := "4456"
+    SessionPairingCode := ""
+    SessionToken := ""
+    DeviceId := ""
+    InstanceName := ""
     ObsPassword := ""
     TargetMicName := "Mic/Aux"
     HeartbeatSeconds := 30
@@ -70,7 +84,15 @@ class RemoteConfig {
     savedY := "Default"
 
     __New(filePath := "") {
-        this.ConfigFile := (filePath != "") ? filePath : A_ScriptDir "\PresenterSync_Remote.ini"
+        global g_RemoteCli
+        if (filePath != "")
+            this.ConfigFile := filePath
+        else if (IsObject(g_RemoteCli) && g_RemoteCli.configPath != "")
+            this.ConfigFile := g_RemoteCli.configPath
+        else if (IsObject(g_RemoteCli) && g_RemoteCli.instanceName != "")
+            this.ConfigFile := A_ScriptDir "\PresenterSync_Remote_" SanitizeInstanceFileSlug(g_RemoteCli.instanceName) ".ini"
+        else
+            this.ConfigFile := A_ScriptDir "\PresenterSync_Remote.ini"
         this.Load()
     }
 
@@ -115,6 +137,7 @@ class RemoteConfig {
     }
 
     Load() {
+        global g_RemoteCli
         rawNetMode := StrLower(Trim(this.Read("Connection", "NetworkMode", "LAN")))
         this.NetworkMode := (rawNetMode = "internet") ? "Internet" : "LAN"
         this.EnableRelayFallback := this.ReadBool("Connection", "EnableRelayFallback", 1)
@@ -122,6 +145,17 @@ class RemoteConfig {
         this.HostAddress := this.Read("Connection", "HostAddress", "127.0.0.1")
         rawPort := Trim(this.Read("Connection", "HostPort", "4455"))
         this.HostPort := (IsInteger(rawPort) && Integer(rawPort) >= 1 && Integer(rawPort) <= 65535) ? String(Integer(rawPort)) : "4455"
+        rawBPort := Trim(this.Read("Connection", "BridgePort", "4456"))
+        this.BridgePort := (IsInteger(rawBPort) && Integer(rawBPort) >= 1 && Integer(rawBPort) <= 65535) ? String(Integer(rawBPort)) : "4456"
+        this.SessionPairingCode := Trim(this.Read("Connection", "SessionPairingCode", ""))
+        this.SessionToken := Trim(this.Read("Connection", "SessionToken", ""))
+        this.DeviceId := Trim(this.Read("Connection", "DeviceId", ""))
+        if (this.DeviceId = "") {
+            this.DeviceId := GenerateRemoteDeviceId("win")
+            this.Write("Connection", "DeviceId", this.DeviceId)
+        }
+        cliInst := IsObject(g_RemoteCli) ? Trim(g_RemoteCli.instanceName) : ""
+        this.InstanceName := (cliInst != "") ? cliInst : Trim(this.Read("Connection", "InstanceName", ""))
         this.ObsPassword := this.Read("Connection", "ObsPassword", "")
         this.TargetMicName := Trim(this.Read("Connection", "TargetMicName", "Mic/Aux"))
         if (this.TargetMicName = "")
@@ -222,6 +256,7 @@ class RemoteState {
     candidateIndex := 1
     candidates := []
     usingRelayFallback := false
+    usingBridge := false
 
     isMuted := false
     baseAlpha := 220
@@ -340,7 +375,33 @@ RegisterRemotePointerHotkey(AppConfig, AppState)
 RegisterRemoteAppHotkeys(AppConfig, AppState)
 
 ; === FIRST-RUN / CONNECTION PROMPT ===
-if (AppConfig.FirstRun || (AppConfig.NetworkMode = "Internet" ? (AppConfig.InternetPairingCode = "") : (AppConfig.HostAddress = ""))) {
+if (g_RemoteCli.pairingUri != "") {
+    parsedUri := ParseRemotePairingUri(g_RemoteCli.pairingUri)
+    if IsObject(parsedUri) {
+        AppConfig.NetworkMode := parsedUri.networkMode
+        if (parsedUri.hostAddress != "")
+            AppConfig.HostAddress := parsedUri.hostAddress
+        AppConfig.HostPort := parsedUri.hostPort
+        AppConfig.BridgePort := parsedUri.bridgePort
+        if (parsedUri.sessionCode != "")
+            AppConfig.SessionPairingCode := parsedUri.sessionCode
+        if (parsedUri.obsPassword != "")
+            AppConfig.ObsPassword := parsedUri.obsPassword
+        if (parsedUri.targetMicName != "")
+            AppConfig.TargetMicName := parsedUri.targetMicName
+        if (parsedUri.internetPairingCode != "")
+            AppConfig.InternetPairingCode := parsedUri.internetPairingCode
+        if (AppConfig.SessionPairingCode != "" && AppConfig.NetworkMode = "LAN") {
+            pairRes := PairRemoteWithHostBridge(AppConfig.HostAddress, AppConfig.BridgePort, AppConfig.SessionPairingCode, AppConfig.DeviceId, GetRemoteDisplayDeviceName(AppConfig))
+            if (pairRes.ok)
+                ApplyBridgePairResultToConfig(AppConfig, pairRes)
+        }
+        AppConfig.FirstRun := false
+        SaveRemoteConnectionSettingsToIni(AppConfig)
+    }
+}
+
+if (AppConfig.FirstRun || (AppConfig.NetworkMode = "Internet" ? (AppConfig.InternetPairingCode = "") : (AppConfig.HostAddress = "" && AppConfig.SessionPairingCode = "" && AppConfig.SessionToken = ""))) {
     ShowRemoteConnectionUI(AppConfig, AppState, true)
 } else {
     ; Start network connection
@@ -369,6 +430,7 @@ ConnectToRemoteOBS(cfg, state) {
 
     state.connStatus := "searching"
     state.activeHost := ""
+    state.usingBridge := false
 
     if IsObject(state.obsWs) {
         try state.obsWs.shutdown()
@@ -427,8 +489,12 @@ ConnectToRemoteOBS(cfg, state) {
     }
 
     if (state.candidates.Length == 0 || state.candidateIndex > state.candidates.Length) {
-        state.candidates := ParseCandidateEndpoints(cfg.HostAddress, cfg.HostPort)
+        state.candidates := BuildRemoteLanCandidateQueue(cfg)
         state.candidateIndex := 1
+    }
+    if (state.candidates.Length == 0) {
+        FailoverToNextCandidate(cfg, state)
+        return
     }
 
     candidate := state.candidates[state.candidateIndex]
@@ -442,12 +508,17 @@ ConnectToRemoteOBS(cfg, state) {
         return
     }
     wsUrl := (candidate.HasOwnProp("url") && candidate.url != "") ? candidate.url : ("ws://" candidate.host ":" candidate.port)
+    isBridgeCand := candidate.HasOwnProp("isBridge") && candidate.isBridge
 
     try {
         state.obsWs := WebSocket(wsUrl, {
             message: HandleRemoteObsMessage.Bind(cfg, state, candidate),
             close: HandleRemoteObsClose.Bind(cfg, state, candidate)
-        }, true, "", 2000) ; 2000ms connection timeout for fast failover
+        }, true, "", isBridgeCand ? 2200 : 2000) ; Fast connection timeout for failover
+        if (isBridgeCand) {
+            if (!TrySendWsText(state.obsWs, BuildRemoteBridgeAuthJson(cfg)))
+                Throw Error("Failed to send Bridge auth payload")
+        }
     } catch {
         state.obsWs := ""
         SetTimer state.breathTimerFn, 0
@@ -500,6 +571,7 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
 
     wasConnected := state.obsConnected
     state.obsConnected := false
+    state.usingBridge := false
     state.activeHost := ""
     SetTimer state.heartbeatTimerFn, 0
     SetTimer state.breathTimerFn, 0
@@ -529,6 +601,71 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
     if (IsObject(ws) && IsObject(state.obsWs) && ws != state.obsWs)
         return
     msg := (Type(rawMsg) == "Buffer") ? StrGet(rawMsg, "UTF-8") : String(rawMsg)
+
+    if (IsObject(candidate) && candidate.HasOwnProp("isBridge") && candidate.isBridge) {
+        ev := ParseHostBridgeWsEvent(msg)
+        if (!IsObject(ev))
+            return
+        if (ev.kind = "auth_ok") {
+            SetTimer state.reconnectTimerFn, 0
+            state.obsConnected := true
+            state.usingBridge := true
+            state.connStatus := "connected"
+            state.activeHost := candidate.raw
+            keepAliveMs := Max(10000, cfg.HeartbeatSeconds * 1000)
+            SetTimer state.heartbeatTimerFn, keepAliveMs
+            state.currentAlpha := GetRemoteEffectiveAlpha(state)
+            if (ev.hasMuted) {
+                state.isMuted := ev.isMuted
+                cfg.IsMuted := ev.isMuted
+                cfg.WriteBool("Settings", "IsMuted", ev.isMuted)
+            }
+            if IsObject(state.MicGui)
+                ApplyMicAppearance(cfg, state)
+            if (state.isMuted && cfg.ShowIndicator) {
+                state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
+                SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+            } else {
+                SetTimer state.breathTimerFn, 0
+            }
+            state.NotifyTrayStatus()
+        } else if (ev.kind = "auth_error") {
+            state.connStatus := "auth_failed"
+            state.obsConnected := false
+            state.usingBridge := false
+            SetTimer state.reconnectTimerFn, 0
+            SetTimer state.heartbeatTimerFn, 0
+            SetTimer state.breathTimerFn, 0
+            if IsObject(ws)
+                SafeCloseWebSocketDeferred(ws)
+            if (state.obsWs == ws)
+                state.obsWs := ""
+            if (IsObject(state.MicGui)) {
+                state.currentAlpha := GetRemoteEffectiveAlpha(state)
+                ApplyMicAppearance(cfg, state)
+            }
+            state.NotifyTrayStatus()
+            TrayTip("Host Bridge authentication failed (" (ev.reason != "" ? ev.reason : "Invalid code/token") "). Re-pair in Change OBS Connection.", "PresenterSync Remote", 3)
+        } else if (ev.kind = "mute_state") {
+            if (!state.obsConnected || state.connStatus != "connected") {
+                state.obsConnected := true
+                state.usingBridge := true
+                state.connStatus := "connected"
+                state.activeHost := candidate.raw
+                state.currentAlpha := GetRemoteEffectiveAlpha(state)
+                if IsObject(state.MicGui)
+                    ApplyMicAppearance(cfg, state)
+                state.NotifyTrayStatus()
+            }
+            SyncRemoteMuteState(cfg, state, ev.isMuted)
+        } else if (ev.kind = "close_remote") {
+            if (state.HasOwnProp("onRemoteCloseSignal") && IsObject(state.onRemoteCloseSignal))
+                state.onRemoteCloseSignal.Call()
+            else
+                ExitApp()
+        }
+        return
+    }
 
     pkt := ParseRelayPacket(msg)
     if IsObject(pkt) {
@@ -690,6 +827,10 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
 RemoteHeartbeatTick(cfg, state) {
     if (!state.obsConnected || !IsObject(state.obsWs))
         return
+    if (IsRemoteUsingBridgeChannel(cfg, state)) {
+        TrySendWsText(state.obsWs, BuildRemoteBridgePingJson())
+        return
+    }
     if (IsRemoteUsingInternetChannel(cfg, state)) {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
         authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
@@ -825,7 +966,8 @@ InitRemoteHUD(cfg, state) {
     state.currentAlpha := GetRemoteEffectiveAlpha(state)
 
     ; Only create a single layered GDI+ window for the Mic HUD
-    state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+    hudTitle := "PresenterSync Remote HUD" (cfg.HasOwnProp("InstanceName") && cfg.InstanceName != "" ? " [" cfg.InstanceName "]" : "")
+    state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale", hudTitle)
     ApplyMicAppearance(cfg, state)
 
     if (cfg.ShowIndicator) {
@@ -1305,7 +1447,9 @@ BuildRemoteHelpStatusLine(cfg, state) {
     clickerText := FormatHK(cfg.HwMuteHotkey) (cfg.EnablePointerMute ? "" : " (Disabled)")
     hostText := IsRemoteUsingInternetChannel(cfg, state)
         ? (((state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback) ? "Relay Bridge (" : "Internet (") (cfg.InternetPairingCode != "" ? cfg.InternetPairingCode : "Not Set") ")")
-        : ((cfg.HostAddress != "" ? cfg.HostAddress : "(Not Set)") ":" cfg.HostPort)
+        : (IsRemoteUsingBridgeChannel(cfg, state)
+            ? ("Host Bridge (" (cfg.SessionPairingCode != "" ? cfg.SessionPairingCode " @ " : "") state.activeHost ")")
+            : ((cfg.HostAddress != "" ? cfg.HostAddress : "(Not Set)") ":" cfg.HostPort))
     scText := "Toggle Mute: " FormatHK(cfg.PptHotkey) "  |  Exit: " FormatHK(cfg.ExitHotkey)
     return "Current Status: " connState "  |  Clicker Key: " clickerText "  |  Host: " hostText "  |  " scText
 }
@@ -1601,6 +1745,20 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     Theme.RegisterControl(dlg, ddlNetMode, "DropDownList")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
+    lblSession := dlg.Add("Text", "xm w360 y+10", "Host Bridge Session Code (Multi-Remote / Auto-Find):")
+    Theme.RegisterControl(dlg, lblSession, "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    editSession := dlg.Add("Edit", "xm w170", cfg.SessionPairingCode)
+    Theme.RegisterControl(dlg, editSession, "Edit")
+    DllCall("SendMessage", "Ptr", editSession.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "e.g. K7M-9P2")
+    editBridgePort := dlg.Add("Edit", "x+8 yp w54", cfg.BridgePort)
+    Theme.RegisterControl(dlg, editBridgePort, "Edit")
+    btnPairCode := dlg.Add("Button", "x+8 yp w120 h24", "Pair by Code")
+    Theme.RegisterControl(dlg, btnPairCode, "Button")
+    dlg._pairedToken := cfg.SessionToken
+    dlg._pairedCode := cfg.SessionPairingCode
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
     lblPair := dlg.Add("Text", "xm w360 y+10", "Internet Pairing Code (Optional Fallback / WAN):")
     Theme.RegisterControl(dlg, lblPair, "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
@@ -1629,6 +1787,10 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
 
     UpdateModeFields(*) {
         isInternet := (ddlNetMode.Value == 2)
+        lblSession.Enabled := !isInternet
+        editSession.Enabled := !isInternet
+        editBridgePort.Enabled := !isInternet
+        btnPairCode.Enabled := !isInternet
         lblPair.Enabled := true
         editPair.Enabled := true
         lblHost.Enabled := !isInternet
@@ -1639,8 +1801,44 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     ddlNetMode.OnEvent("Change", UpdateModeFields)
     UpdateModeFields()
 
-    statusTxt := dlg.Add("Text", "xm w360 y+10 Center", "Status: Ready to test or connect")
+    statusTxt := dlg.Add("Text", "xm w360 y+10 Center", "Status: Ready to pair, test, or connect")
     Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
+
+    ApplyPairResultToDialog(pairRes) {
+        if (pairRes.HasOwnProp("hostsCsv") && pairRes.hostsCsv != "")
+            editHost.Value := pairRes.hostsCsv
+        editBridgePort.Value := pairRes.bridgePort
+        if (pairRes.obsPort != "")
+            editPort.Value := pairRes.obsPort
+        if (pairRes.obsPassword != "")
+            editPw.Value := pairRes.obsPassword
+        if (pairRes.targetMicName != "")
+            editMic.Value := pairRes.targetMicName
+        if (pairRes.internetPairingCode != "")
+            editPair.Value := pairRes.internetPairingCode
+        editSession.Value := pairRes.sessionCode
+        dlg._pairedToken := pairRes.sessionToken
+        dlg._pairedCode := pairRes.sessionCode
+    }
+
+    PairByCodeAction(*) {
+        bpIn := Trim(editBridgePort.Value)
+        if (!IsInteger(bpIn) || Integer(bpIn) < 1 || Integer(bpIn) > 65535)
+            bpIn := "4456"
+        btnPairCode.Enabled := false
+        statusTxt.Value := "Discovering Primary Host & pairing..."
+        pairRes := PairRemoteWithHostBridge(Trim(editHost.Value), bpIn, Trim(editSession.Value), cfg.DeviceId, GetRemoteDisplayDeviceName(cfg))
+        btnPairCode.Enabled := true
+        if (!pairRes.ok) {
+            statusTxt.Value := "✕ " pairRes.error
+            return
+        }
+        ApplyPairResultToDialog(pairRes)
+        ddlNetMode.Choose(1)
+        UpdateModeFields()
+        statusTxt.Value := "✓ Paired to " (pairRes.hostName != "" ? pairRes.hostName : pairRes.host) " (" pairRes.host ":" pairRes.bridgePort ")!"
+    }
+    btnPairCode.OnEvent("Click", PairByCodeAction)
 
     btnTest := dlg.Add("Button", "xm w230 h30 y+8", "Test Connection")
     btnGuide := dlg.Add("Button", "x+10 yp w120 h30", "Setup Guide")
@@ -1675,6 +1873,10 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
 
     SaveAndConnect(*) {
         selMode := (ddlNetMode.Value == 2) ? "Internet" : "LAN"
+        sessVal := Trim(editSession.Value)
+        bpVal := Trim(editBridgePort.Value)
+        if (!IsInteger(bpVal) || Integer(bpVal) < 1 || Integer(bpVal) > 65535)
+            bpVal := "4456"
         pairVal := Trim(editPair.Value)
         h := Trim(editHost.Value)
         p := Trim(editPort.Value)
@@ -1696,9 +1898,26 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
             if (!IsInteger(p) || Integer(p) < 1 || Integer(p) > 65535)
                 p := "4455"
         } else {
+            if (sessVal != "" && (h = "" || NormalizePairingCode(sessVal) != NormalizePairingCode(dlg._pairedCode) || dlg._pairedToken = "")) {
+                statusTxt.Value := "Pairing with Primary Host (" sessVal ")..."
+                autoPair := PairRemoteWithHostBridge(h, bpVal, sessVal, cfg.DeviceId, GetRemoteDisplayDeviceName(cfg))
+                if (autoPair.ok) {
+                    ApplyPairResultToDialog(autoPair)
+                    h := Trim(editHost.Value)
+                    bpVal := Trim(editBridgePort.Value)
+                    p := Trim(editPort.Value)
+                    m := Trim(editMic.Value)
+                    pairVal := Trim(editPair.Value)
+                    sessVal := Trim(editSession.Value)
+                } else if (h = "") {
+                    dlg.Opt("+OwnDialogs")
+                    MsgBox("Session Code pairing failed: " autoPair.error "`n`nVerify the code from Primary Host -> Remote Companion Info, or enter a LAN Host Address.", "Pairing Failed", "Icon!")
+                    return
+                }
+            }
             if (h = "" || p = "") {
                 dlg.Opt("+OwnDialogs")
-                MsgBox("Host Address, Port, and Audio Source cannot be empty.", "Error", "Icon!")
+                MsgBox("Please enter a Host Bridge Session Code or LAN Host Address.", "Error", "Icon!")
                 return
             }
             if (!IsInteger(p) || Integer(p) < 1 || Integer(p) > 65535) {
@@ -1709,6 +1928,9 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         }
 
         cfg.NetworkMode := selMode
+        cfg.SessionPairingCode := sessVal
+        cfg.BridgePort := String(Integer(bpVal))
+        cfg.SessionToken := (sessVal = "") ? "" : ((NormalizePairingCode(sessVal) = NormalizePairingCode(dlg._pairedCode)) ? dlg._pairedToken : "")
         cfg.InternetPairingCode := pairVal
         cfg.HostAddress := h
         cfg.HostPort := String(Integer(p))
@@ -1716,13 +1938,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         cfg.TargetMicName := m
         cfg.FirstRun := false
 
-        cfg.Write("Connection", "NetworkMode", cfg.NetworkMode)
-        cfg.Write("Connection", "InternetPairingCode", cfg.InternetPairingCode)
-        cfg.Write("Connection", "HostAddress", cfg.HostAddress)
-        cfg.Write("Connection", "HostPort", cfg.HostPort)
-        cfg.Write("Connection", "ObsPassword", cfg.ObsPassword)
-        cfg.Write("Connection", "TargetMicName", cfg.TargetMicName)
-        cfg.WriteBool("Settings", "FirstRun", false)
+        SaveRemoteConnectionSettingsToIni(cfg)
 
         CleanupDialog(false)
 
@@ -1736,6 +1952,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
             state.obsWs := ""
         }
         state.obsConnected := false
+        state.usingBridge := false
         state.connStatus := "searching"
         state.activeHost := ""
         state.candidateIndex := 1

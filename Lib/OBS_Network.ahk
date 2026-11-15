@@ -191,6 +191,49 @@ ShouldRemoteFallbackToRelay(cfg, state := "") {
     return true
 }
 
+IsRemoteUsingBridgeChannel(cfg, state := "") {
+    return IsObject(state) && state.HasOwnProp("usingBridge") && state.usingBridge && state.HasOwnProp("obsConnected") && state.obsConnected && IsObject(state.obsWs)
+}
+
+DispatchRemoteSetMute(cfg, state, targetMuted) {
+    valStr := targetMuted ? "1" : "0"
+    if (IsRemoteUsingInternetChannel(cfg, state)) {
+        topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+        mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+        if (!PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "set_mute", valStr, authTok), "https://ntfy.sh", mockWs)) {
+            ToolTip "PresenterSync Remote: Internet Relay unreachable"
+            SetTimer () => ToolTip(), -2000
+            return false
+        }
+        return true
+    }
+
+    if (IsRemoteUsingBridgeChannel(cfg, state)) {
+        devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? EscapeJsonStr(cfg.DeviceId) : "win-default"
+        payload := '{"type":"set_mute","isMuted":' (targetMuted ? "true" : "false") ',"deviceId":"' devId '","source":"hud"}'
+        if (!TrySendWsText(state.obsWs, payload)) {
+            ToolTip "PresenterSync Remote: Host Bridge disconnected"
+            SetTimer () => ToolTip(), -2000
+            return false
+        }
+        return true
+    }
+
+    if (!IsObject(state) || !IsObject(state.obsWs)) {
+        ToolTip "PresenterSync Remote: Not connected to OBS host"
+        SetTimer () => ToolTip(), -2000
+        return false
+    }
+    escMic := EscapeJsonStr(cfg.TargetMicName)
+    if (!SendObsRequest(state.obsWs, "SetInputMute", "RemoteClickerSetMute", '{"inputName":"' escMic '","inputMuted":' (targetMuted ? "true" : "false") '}')) {
+        ToolTip "PresenterSync Remote: Not connected to OBS host"
+        SetTimer () => ToolTip(), -2000
+        return false
+    }
+    return true
+}
+
 DispatchRemoteMuteToggle(cfg, state) {
     if (IsRemoteUsingInternetChannel(cfg, state)) {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
@@ -198,6 +241,17 @@ DispatchRemoteMuteToggle(cfg, state) {
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
         if (!PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "toggle_mute", "1", authTok), "https://ntfy.sh", mockWs)) {
             ToolTip "PresenterSync Remote: Internet Relay unreachable"
+            SetTimer () => ToolTip(), -2000
+            return false
+        }
+        return true
+    }
+
+    if (IsRemoteUsingBridgeChannel(cfg, state)) {
+        devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? EscapeJsonStr(cfg.DeviceId) : "win-default"
+        payload := '{"type":"toggle_mute","deviceId":"' devId '","source":"clicker"}'
+        if (!TrySendWsText(state.obsWs, payload)) {
+            ToolTip "PresenterSync Remote: Host Bridge disconnected"
             SetTimer () => ToolTip(), -2000
             return false
         }

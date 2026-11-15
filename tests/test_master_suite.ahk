@@ -9,6 +9,7 @@
 
 #Include "..\Lib\WebSocket.ahk"
 #Include "..\Lib\Crypto.ahk"
+#Include "..\Lib\RemoteBridgeClient.ahk"
 #Include "..\Lib\Gdip.ahk"
 #Include "..\Lib\UIA.ahk"
 #Include "..\Lib\OBS_Network.ahk"
@@ -250,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active v5.x release", UIConstants.APP_VERSION == "5.2.0")
+Assert("APP_VERSION is active v5.x release", UIConstants.APP_VERSION == "5.3.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -2323,6 +2324,36 @@ tokSet := GetInternetRelayAuthToken(cfgSet.InternetPairingCode, cfgSet.ObsPasswo
 HandleHostRelayMessage(cfgSet, stSet, "", FormatRelayPacket("remote", "set_mute", "0", tokSet))
 setOk3 := (stSet.isMuted == false)
 Assert("ExecuteHostRemoteSetMute and relay set_mute are idempotent and state-accurate", setOk1 && setOk2 && setOk3)
+
+; ==============================================================================
+; SECTION 32: v5.3.0 MULTI-REMOTE BRIDGE CLIENT & CLI INSTANCE SUITE
+; ==============================================================================
+cliMulti := ParseRemoteCliArgs(["-Config", "C:\temp\rem2.ini", "-Instance", "BackupPC"])
+Assert("ParseRemoteCliArgs extracts -Config and -Instance",
+    cliMulti.configPath == "C:\temp\rem2.ini" && cliMulti.instanceName == "BackupPC")
+
+qBridgePref := BuildRemoteLanCandidateQueue({
+    HostAddress: "192.168.1.25",
+    HostPort: "4455",
+    BridgePort: "4456",
+    SessionPairingCode: "K7M-9P2",
+    SessionToken: ""
+})
+Assert("BuildRemoteLanCandidateQueue prefers HostBridge :4456/ws ahead of Direct OBS :4455",
+    qBridgePref.Length == 2 && qBridgePref[1].isBridge && qBridgePref[1].port == "4456" && !qBridgePref[2].isBridge)
+
+bSent := []
+mockBrWs := { sendText: (this, pkt) => bSent.Push(pkt) }
+bCfg := { NetworkMode: "LAN", DeviceId: "win-ci01", TargetMicName: "Mic/Aux", ObsPassword: "", InternetPairingCode: "" }
+bSt := { usingBridge: true, usingRelayFallback: false, obsConnected: true, obsWs: mockBrWs }
+Assert("DispatchRemoteMuteToggle & SetMute dispatch HostBridge JSON payloads",
+    DispatchRemoteMuteToggle(bCfg, bSt) && DispatchRemoteSetMute(bCfg, bSt, false)
+    && bSent.Length == 2 && InStr(bSent[1], '"type":"toggle_mute"') && InStr(bSent[2], '"isMuted":false'))
+
+mtxCi := AcquireRemoteInstanceMutex("MasterSuite_Inst_" A_TickCount)
+Assert("AcquireRemoteInstanceMutex acquires unique named instance handle cleanly",
+    mtxCi.handle != 0 && !mtxCi.alreadyExists)
+ReleaseRemoteInstanceMutex(mtxCi)
 
 ; Cleanup test ini
 if FileExist(testIni)

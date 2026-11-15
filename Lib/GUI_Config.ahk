@@ -9,7 +9,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "5.2.0"
+    static APP_VERSION := "5.3.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -3324,11 +3324,29 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     formatPairedList := (*) => _FormatHostBridgeDeviceText()
 
     dlg.SetFont("s8.5 w400", Theme.UiFont)
-    lblBridgeStatus := dlg.Add("Text", "xs w314 y+4", formatBridgeStatus.Call())
+    lastBridgeTxt := formatBridgeStatus.Call()
+    lastPairedTxt := formatPairedList.Call()
+    lblBridgeStatus := dlg.Add("Text", "xs w314 y+4", lastBridgeTxt)
     Theme.RegisterControl(dlg, lblBridgeStatus, "Text", "muted")
-    editPairedDevs := dlg.Add("Edit", "xs w314 h60 ReadOnly Multi -WantReturn y+4", formatPairedList.Call())
+    editPairedDevs := dlg.Add("Edit", "xs w314 h60 ReadOnly Multi -WantReturn y+4", lastPairedTxt)
     Theme.RegisterControl(dlg, editPairedDevs, "Edit")
     dlg.SetFont("s9 w400", Theme.UiFont)
+
+    RefreshBridgeDevices(*) {
+        if (dlg._closed || !WinExist("ahk_id " dlg.Hwnd))
+            return
+        curBridge := formatBridgeStatus.Call()
+        if (curBridge != lastBridgeTxt) {
+            lastBridgeTxt := curBridge
+            try lblBridgeStatus.Value := curBridge
+        }
+        curPaired := formatPairedList.Call()
+        if (curPaired != lastPairedTxt) {
+            lastPairedTxt := curPaired
+            try editPairedDevs.Value := curPaired
+        }
+    }
+    SetTimer(RefreshBridgeDevices, 1000)
 
     picQr := dlg.Add("Picture", "x346 ys w114 h114 +0x800000", hQrBmp ? ("HBITMAP:" hQrBmp) : "")
 
@@ -3352,6 +3370,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         RotateHostSessionPairingCode(cfg),
         editSession.Value := cfg.SessionPairingCode,
         RefreshQrBitmap(),
+        RefreshBridgeDevices(),
         TrayTip("Generated new Session Code & QR: " cfg.SessionPairingCode, "PresenterSync", 1)
     ))
 
@@ -3367,6 +3386,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         if (dlg._closed)
             return
         dlg._closed := true
+        SetTimer(RefreshBridgeDevices, 0)
         if (hQrBmp) {
             DllCall("DeleteObject", "Ptr", hQrBmp)
             hQrBmp := 0
