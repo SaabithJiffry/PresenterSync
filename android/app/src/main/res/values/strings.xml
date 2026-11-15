@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PresenterSync Remote</string>
+    <string name="fgs_channel_name">PresenterSync Remote Overlay</string>
+    <string name="fgs_channel_desc">Keeps the floating Mic HUD and OBS/Host WebSocket connection active over all apps.</string>
+</resources>
