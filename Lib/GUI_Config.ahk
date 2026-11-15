@@ -1172,6 +1172,8 @@ class Config {
 
     RemoteNetworkMode := "LAN"
     InternetPairingCode := ""
+    SessionPairingCode := ""
+    BridgePort := 4456
     ActiveProfile := "Default"
     StartWithWindows := false
 
@@ -1322,6 +1324,12 @@ class Config {
             this.InternetPairingCode := GenerateInternetPairingCode()
             this.Write("Settings", "InternetPairingCode", this.InternetPairingCode)
         }
+        this.BridgePort := this.ReadInt("Settings", "BridgePort", 4456)
+        if (this.BridgePort < 1 || this.BridgePort > 65535)
+            this.BridgePort := 4456
+        this.SessionPairingCode := Trim(this.Read("Settings", "SessionPairingCode", ""))
+        if (this.SessionPairingCode = "")
+            this.SessionPairingCode := GenerateSessionPairingCode()
         profName := this.NormalizeProfileName(this.Read("Settings", "ActiveProfile", "Default"))
         this.ActiveProfile := (profName != "") ? profName : "Default"
         this.StartWithWindows := this.ReadBool("Settings", "StartWithWindows", false)
@@ -3294,6 +3302,35 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         btnCopy.Text := "✓ Copied to Clipboard!",
         SetTimer(ResetCopyBtn, -1800),
         TrayTip("Universal connection string copied to clipboard.", "Copied!", 1)
+    ))
+
+    if (!cfg.HasOwnProp("SessionPairingCode") || cfg.SessionPairingCode = "")
+        cfg.SessionPairingCode := GenerateSessionPairingCode()
+
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+12", "Smart Board Session Code (LAN / No-Camera Pairing):"), "Text", "normal")
+    editSession := dlg.Add("Edit", "xm w200 h28 ReadOnly Center", cfg.SessionPairingCode)
+    Theme.RegisterControl(dlg, editSession, "Edit")
+    btnCopySession := dlg.Add("Button", "x+8 yp w72 h28", "Copy")
+    btnNewSession := dlg.Add("Button", "x+8 yp w72 h28", "New")
+    Theme.RegisterControl(dlg, btnCopySession, "Button")
+    Theme.RegisterControl(dlg, btnNewSession, "Button")
+
+    formatBridgeStatus := (*) => _FormatHostBridgeStatusLine(cfg)
+    formatPairedList := (*) => _FormatHostBridgeDeviceText()
+
+    lblBridgeStatus := dlg.Add("Text", "xm w360 y+8", formatBridgeStatus.Call())
+    Theme.RegisterControl(dlg, lblBridgeStatus, "Text", "muted")
+    editPairedDevs := dlg.Add("Edit", "xm w360 h46 ReadOnly Multi -WantReturn", formatPairedList.Call())
+    Theme.RegisterControl(dlg, editPairedDevs, "Edit")
+
+    btnCopySession.OnEvent("Click", (*) => (
+        A_Clipboard := cfg.SessionPairingCode,
+        TrayTip("Copied Session Code: " cfg.SessionPairingCode, "PresenterSync", 1)
+    ))
+    btnNewSession.OnEvent("Click", (*) => (
+        RotateHostSessionPairingCode(cfg),
+        editSession.Value := cfg.SessionPairingCode,
+        TrayTip("Generated new Session Code: " cfg.SessionPairingCode, "PresenterSync", 1)
     ))
 
     statusLine := "OBS Port: 4455  |  Password: " (cfg.obsPassword != "" ? "Configured" : "None") "  |  Mic: " cfg.targetMicName

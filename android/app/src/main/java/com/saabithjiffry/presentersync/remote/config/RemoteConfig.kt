@@ -38,6 +38,7 @@ data class RemoteConfig(
     val enableRelayFallback: Boolean = true,
     val internetPairingCode: String = "",
     val sessionPairingCode: String = "",
+    val sessionToken: String = "",
     val hostAddress: String = "127.0.0.1",
     val hostPort: Int = AppConstants.DEFAULT_OBS_PORT,
     val bridgePort: Int = AppConstants.DEFAULT_BRIDGE_PORT,
@@ -104,6 +105,7 @@ class RemoteConfigStore(context: Context) {
             enableRelayFallback = prefs.getBoolean("enableRelayFallback", true),
             internetPairingCode = prefs.getString("internetPairingCode", "").orEmpty().trim(),
             sessionPairingCode = prefs.getString("sessionPairingCode", "").orEmpty().trim(),
+            sessionToken = prefs.getString("sessionToken", "").orEmpty().trim(),
             hostAddress = prefs.getString("hostAddress", "127.0.0.1").orEmpty(),
             hostPort = validPort,
             bridgePort = validBridgePort,
@@ -174,6 +176,7 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("enableRelayFallback", c.enableRelayFallback)
             .putString("internetPairingCode", c.internetPairingCode)
             .putString("sessionPairingCode", c.sessionPairingCode)
+            .putString("sessionToken", c.sessionToken)
             .putString("hostAddress", c.hostAddress)
             .putInt("hostPort", c.hostPort)
             .putInt("bridgePort", c.bridgePort)

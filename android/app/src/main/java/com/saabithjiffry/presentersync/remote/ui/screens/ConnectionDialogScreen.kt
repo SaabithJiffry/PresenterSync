@@ -54,6 +54,7 @@ import com.saabithjiffry.presentersync.remote.config.NetworkMode
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
 import com.saabithjiffry.presentersync.remote.network.ConnectionManager
+import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import kotlinx.coroutines.launch
 
 @Composable
@@ -100,9 +101,11 @@ fun ConnectionSettingsForm(
     val scope = rememberCoroutineScope()
 
     var networkMode by remember(initialConfig) { mutableStateOf(initialConfig.networkMode) }
+    var sessionCodeInput by remember(initialConfig) { mutableStateOf(initialConfig.sessionPairingCode) }
     var pairingCode by remember(initialConfig) { mutableStateOf(initialConfig.internetPairingCode) }
     var hostAddress by remember(initialConfig) { mutableStateOf(initialConfig.hostAddress) }
     var hostPortStr by remember(initialConfig) { mutableStateOf(initialConfig.hostPort.toString()) }
+    var bridgePortStr by remember(initialConfig) { mutableStateOf(initialConfig.bridgePort.toString()) }
     var obsPassword by remember(initialConfig) { mutableStateOf(initialConfig.obsPassword) }
     var showPassword by remember { mutableStateOf(false) }
     var targetMicName by remember(initialConfig) { mutableStateOf(initialConfig.targetMicName) }
@@ -110,6 +113,7 @@ fun ConnectionSettingsForm(
     var enableRelayFallback by remember(initialConfig) { mutableStateOf(initialConfig.enableRelayFallback) }
 
     var testing by remember { mutableStateOf(false) }
+    var pairing by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("") }
     var validationError by remember { mutableStateOf<String?>(null) }
 
@@ -149,75 +153,156 @@ fun ConnectionSettingsForm(
                 .padding(horizontal = 20.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-
-        // Network mode chips
-        Text(
-            text = "Network Mode",
-            style = MaterialTheme.typography.labelLarge
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilterChip(
-                selected = networkMode == NetworkMode.LAN,
-                onClick = { networkMode = NetworkMode.LAN },
-                label = { Text("LAN (Direct IP / .local)") }
-            )
-            FilterChip(
-                selected = networkMode == NetworkMode.INTERNET,
-                onClick = { networkMode = NetworkMode.INTERNET },
-                label = { Text("Internet (Relay)") }
-            )
-        }
-
-        OutlinedTextField(
-            value = pairingCode,
-            onValueChange = { pairingCode = it },
-            label = {
-                Text(
-                    if (networkMode == NetworkMode.INTERNET) {
-                        "Internet Pairing Code (Required)"
-                    } else {
-                        "Internet Pairing Code (Optional / Fallback)"
+            // Easy Session Code Pairing (No-Camera Smart Board Flow)
+            ExplorerCard(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                borderColor = MaterialTheme.colorScheme.outline,
+                contentPadding = 14
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Quick Pair by Session Code (Smart Board)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Enter the 6-char Host Session Code (e.g. K7M-9P2) or Internet Code (PS-...) from PresenterSync on your PC.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = sessionCodeInput,
+                            onValueChange = { sessionCodeInput = it.uppercase() },
+                            label = { Text("Session / Relay Code") },
+                            placeholder = { Text("K7M-9P2") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                if (pairing || testing) return@Button
+                                validationError = null
+                                pairing = true
+                                statusText = "Pairing with Primary Host..."
+                                val bPort = bridgePortStr.trim().toIntOrNull()?.takeIf { it in 1..65535 }
+                                    ?: AppConstants.DEFAULT_BRIDGE_PORT
+                                scope.launch {
+                                    val msg = connectionManager.pairByCode(
+                                        codeInput = sessionCodeInput,
+                                        fallbackHostInput = hostAddress,
+                                        bridgePortInput = bPort,
+                                        onProgress = { statusText = it }
+                                    )
+                                    val updated = configStore.current
+                                    networkMode = updated.networkMode
+                                    sessionCodeInput = updated.sessionPairingCode
+                                    pairingCode = updated.internetPairingCode
+                                    hostAddress = updated.hostAddress
+                                    hostPortStr = updated.hostPort.toString()
+                                    bridgePortStr = updated.bridgePort.toString()
+                                    obsPassword = updated.obsPassword
+                                    targetMicName = updated.targetMicName
+                                    statusText = msg
+                                    pairing = false
+                                }
+                            },
+                            enabled = !pairing && !testing
+                        ) {
+                            if (pairing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text("Discover & Pair")
+                        }
                     }
+                }
+            }
+
+            // Network mode chips
+            Text(
+                text = "Manual Network & Host Settings",
+                style = MaterialTheme.typography.labelLarge
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(
+                    selected = networkMode == NetworkMode.LAN,
+                    onClick = { networkMode = NetworkMode.LAN },
+                    label = { Text("LAN (Bridge / Direct OBS)") }
                 )
-            },
-            placeholder = { Text("e.g. a1b2c3d4") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
+                FilterChip(
+                    selected = networkMode == NetworkMode.INTERNET,
+                    onClick = { networkMode = NetworkMode.INTERNET },
+                    label = { Text("Internet (Relay)") }
+                )
+            }
 
-        OutlinedTextField(
-            value = hostAddress,
-            onValueChange = { hostAddress = it },
-            label = { Text("OBS Host IP / Hostname Candidates") },
-            placeholder = { Text("e.g. 192.168.1.50, pc.local") },
-            supportingText = {
-                Text("Comma or semicolon separated for automatic failover.")
-            },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
+            OutlinedTextField(
+                value = pairingCode,
+                onValueChange = { pairingCode = it },
+                label = {
+                    Text(
+                        if (networkMode == NetworkMode.INTERNET) {
+                            "Internet Pairing Code (Required)"
+                        } else {
+                            "Internet Pairing Code (Optional / Fallback)"
+                        }
+                    )
+                },
+                placeholder = { Text("e.g. PS-A1B2-C3D4") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
             OutlinedTextField(
-                value = hostPortStr,
-                onValueChange = { hostPortStr = it.filter { ch -> ch.isDigit() } },
-                label = { Text("OBS Port") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                value = hostAddress,
+                onValueChange = { hostAddress = it },
+                label = { Text("OBS Host IP / Hostname Candidates") },
+                placeholder = { Text("e.g. 192.168.1.50, pc.local") },
+                supportingText = {
+                    Text("Comma or semicolon separated for automatic failover.")
+                },
                 singleLine = true,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.fillMaxWidth()
             )
-            OutlinedTextField(
-                value = heartbeatStr,
-                onValueChange = { heartbeatStr = it.filter { ch -> ch.isDigit() } },
-                label = { Text("Heartbeat (s)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-        }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = hostPortStr,
+                    onValueChange = { hostPortStr = it.filter { ch -> ch.isDigit() } },
+                    label = { Text("OBS Port") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = bridgePortStr,
+                    onValueChange = { bridgePortStr = it.filter { ch -> ch.isDigit() } },
+                    label = { Text("Bridge Port") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = heartbeatStr,
+                    onValueChange = { heartbeatStr = it.filter { ch -> ch.isDigit() } },
+                    label = { Text("Heartbeat (s)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
 
         OutlinedTextField(
             value = obsPassword,
@@ -348,6 +433,11 @@ fun ConnectionSettingsForm(
                         validationError = "OBS Port must be between 1 and 65535."
                         return@Button
                     }
+                    val bPort = bridgePortStr.trim().toIntOrNull()
+                    if (bPort == null || bPort !in 1..65535) {
+                        validationError = "Bridge Port must be between 1 and 65535."
+                        return@Button
+                    }
                     val hb = heartbeatStr.trim().toIntOrNull()
                     if (hb == null || hb !in 10..3600) {
                         validationError = "Heartbeat interval must be between 10 and 3600 seconds."
@@ -367,9 +457,11 @@ fun ConnectionSettingsForm(
                     configStore.update { prev ->
                         prev.copy(
                             networkMode = networkMode,
+                            sessionPairingCode = sessionCodeInput.trim(),
                             internetPairingCode = pairingCode.trim(),
                             hostAddress = hostAddress.trim(),
                             hostPort = port,
+                            bridgePort = bPort,
                             obsPassword = obsPassword,
                             targetMicName = cleanMic,
                             heartbeatSeconds = hb,

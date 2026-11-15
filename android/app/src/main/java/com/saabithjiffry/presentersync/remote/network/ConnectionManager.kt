@@ -46,6 +46,7 @@ data class ConnectionUiState(
     val connStatus: ConnStatus = ConnStatus.SEARCHING,
     val activeHost: String = "",
     val usingRelayFallback: Boolean = false,
+    val usingBridge: Boolean = false,
     val isMuted: Boolean = false,
     val serviceRunning: Boolean = false
 )
@@ -78,6 +79,7 @@ class ConnectionManager(
     val events: SharedFlow<RemoteEvent> = _events.asSharedFlow()
 
     private val generation = AtomicInteger(0)
+    private var bridgeClient: HostBridgeClient? = null
     private var obsClient: ObsWebSocketClient? = null
     private var relayClient: RelayClient? = null
     private var connectLoopJob: Job? = null
@@ -122,7 +124,7 @@ class ConnectionManager(
             reconnectNow()
         } else {
             // Probe live socket immediately; dead sockets fail fast instead of stalling until heartbeat
-            val ok = obsClient?.sendHeartbeat() == true || relayClient != null
+            val ok = bridgeClient?.sendPing() == true || obsClient?.sendHeartbeat() == true || relayClient != null
             if (!ok) {
                 reconnectNow()
             }
@@ -171,6 +173,8 @@ class ConnectionManager(
     }
 
     private fun closeActiveClients() {
+        bridgeClient?.close()
+        bridgeClient = null
         obsClient?.close()
         obsClient = null
         relayClient?.close()
@@ -203,6 +207,24 @@ class ConnectionManager(
                 } else {
                     cand.host
                 }
+
+                // Prefer Primary Host Companion Bridge (4456) when Session Code or Token is present
+                var bridgeAuthRejected = false
+                if (cfg.sessionToken.isNotBlank() || cfg.sessionPairingCode.isNotBlank()) {
+                    val bridgeUrl = "ws://$resolvedHost:${cfg.bridgePort}/ws"
+                    when (attemptBridgeSession(gen, cfg, "${cand.host}:${cfg.bridgePort}", bridgeUrl)) {
+                        SessionOutcome.CANCELLED -> {
+                            succeededOrStopped = true
+                            break
+                        }
+                        SessionOutcome.AUTH_FAILED -> {
+                            bridgeAuthRejected = true
+                        }
+                        SessionOutcome.DISCONNECTED -> Unit
+                    }
+                }
+                if (gen != generation.get()) return
+
                 val effectiveUrl = "${cand.scheme}://$resolvedHost:${cand.port}${cand.path}"
                 val outcome = attemptObsSession(gen, cfg, cand.raw, effectiveUrl)
                 when (outcome) {
@@ -214,7 +236,19 @@ class ConnectionManager(
                         succeededOrStopped = true
                         break
                     }
-                    SessionOutcome.DISCONNECTED -> Unit
+                    SessionOutcome.DISCONNECTED -> {
+                        if (bridgeAuthRejected && cfg.obsPassword.isBlank()) {
+                            _uiState.value = _uiState.value.copy(
+                                connected = false,
+                                connStatus = ConnStatus.AUTH_FAILED,
+                                activeHost = "",
+                                usingRelayFallback = false,
+                                usingBridge = false
+                            )
+                            authFailed = true
+                            break
+                        }
+                    }
                 }
             }
 
@@ -231,6 +265,78 @@ class ConnectionManager(
     }
 
     private enum class SessionOutcome { DISCONNECTED, AUTH_FAILED, CANCELLED }
+
+    private suspend fun attemptBridgeSession(
+        gen: Int,
+        cfg: RemoteConfig,
+        displayRaw: String,
+        wsUrl: String
+    ): SessionOutcome {
+        val done = kotlinx.coroutines.CompletableDeferred<SessionOutcome>()
+        val devId = SessionPairingClient.getOrCreateDeviceId(context)
+        val devName = android.os.Build.MODEL.orEmpty().trim().ifEmpty { "Smart Board" }
+        val client = HostBridgeClient(
+            httpClient = httpClient,
+            wsBaseUrl = wsUrl,
+            sessionToken = cfg.sessionToken,
+            sessionCode = cfg.sessionPairingCode,
+            deviceId = devId,
+            deviceName = devName,
+            callbacks = object : HostBridgeCallbacks {
+                override fun onBridgeConnected(hostName: String) {
+                    if (gen != generation.get()) return
+                    _uiState.value = _uiState.value.copy(
+                        connected = true,
+                        connStatus = ConnStatus.CONNECTED,
+                        activeHost = "$hostName ($displayRaw)",
+                        usingRelayFallback = false,
+                        usingBridge = true
+                    )
+                    startHeartbeat(gen, cfg.heartbeatSeconds)
+                }
+
+                override fun onBridgeAuthFailed(reason: String) {
+                    if (gen == generation.get()) {
+                        _events.tryEmit(RemoteEvent.ToastMessage("Host Bridge auth failed: $reason"))
+                    }
+                    done.complete(SessionOutcome.AUTH_FAILED)
+                }
+
+                override fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String) {
+                    if (gen != generation.get()) return
+                    applyNewMuteState(isMuted)
+                }
+
+                override fun onCloseRemoteSignal() {
+                    if (gen != generation.get()) return
+                    _events.tryEmit(RemoteEvent.CloseRemoteRequested)
+                }
+
+                override fun onBridgeDisconnected(reason: String) {
+                    heartbeatJob?.cancel()
+                    if (gen == generation.get() && _uiState.value.connStatus != ConnStatus.AUTH_FAILED) {
+                        _uiState.value = _uiState.value.copy(
+                            connected = false,
+                            connStatus = ConnStatus.SEARCHING,
+                            activeHost = "",
+                            usingBridge = false
+                        )
+                    }
+                    done.complete(SessionOutcome.DISCONNECTED)
+                }
+            }
+        )
+        bridgeClient = client
+        client.connect()
+
+        return try {
+            done.await()
+        } finally {
+            heartbeatJob?.cancel()
+            client.close()
+            if (bridgeClient === client) bridgeClient = null
+        }
+    }
 
     private suspend fun attemptObsSession(
         gen: Int,
@@ -410,6 +516,7 @@ class ConnectionManager(
             while (gen == generation.get()) {
                 delay(intervalMs)
                 if (gen != generation.get()) break
+                bridgeClient?.sendPing()
                 obsClient?.sendHeartbeat()
                 relayClient?.sendSyncRequest()
             }
@@ -425,11 +532,19 @@ class ConnectionManager(
         }
     }
 
-    fun toggleMuteFromHud(): Boolean {
+    fun toggleMuteFromHud(): Boolean = toggleMuteInternal("hud")
+
+    fun toggleMuteFromClicker(): Boolean = toggleMuteInternal("clicker")
+
+    private fun toggleMuteInternal(source: String): Boolean {
         val st = _uiState.value
         if (!st.connected) {
             _events.tryEmit(RemoteEvent.ToastMessage("PresenterSync Remote: Not connected to OBS host"))
             return false
+        }
+        val bridge = bridgeClient
+        if (bridge != null && bridge.sendToggleMute(source)) {
+            return true
         }
         val obs = obsClient
         if (obs != null) {
@@ -440,6 +555,87 @@ class ConnectionManager(
             return relay.sendToggleMute()
         }
         return false
+    }
+
+    fun setMuteFromClicker(targetMuted: Boolean): Boolean {
+        val st = _uiState.value
+        if (!st.connected) {
+            _events.tryEmit(RemoteEvent.ToastMessage("PresenterSync Remote: Not connected to OBS host"))
+            return false
+        }
+        val bridge = bridgeClient
+        if (bridge != null && bridge.sendSetMute(targetMuted)) {
+            return true
+        }
+        val obs = obsClient
+        if (obs != null) {
+            return obs.sendSetInputMute(targetMuted)
+        }
+        val relay = relayClient
+        if (relay != null && st.isMuted != targetMuted) {
+            return relay.sendToggleMute()
+        }
+        return st.isMuted == targetMuted
+    }
+
+    suspend fun pairByCode(
+        codeInput: String,
+        fallbackHostInput: String,
+        bridgePortInput: Int = AppConstants.DEFAULT_BRIDGE_PORT,
+        forceWanRelay: Boolean? = null,
+        onProgress: (String) -> Unit
+    ): String {
+        val cleanCode = codeInput.trim()
+        if (cleanCode.isEmpty()) return "Error: Enter a Session Code (e.g. K7M-9P2) or Internet Pairing Code (PS-...)."
+
+        val useWan = forceWanRelay ?: SessionPairingClient.isWanRelayCode(cleanCode)
+        if (useWan) {
+            configStore.update { prev ->
+                prev.copy(
+                    networkMode = NetworkMode.INTERNET,
+                    internetPairingCode = cleanCode,
+                    firstRun = false
+                )
+            }
+            reconnectNow()
+            return "✓ Configured Internet Relay code $cleanCode. Connecting..."
+        }
+
+        val devId = SessionPairingClient.getOrCreateDeviceId(context)
+        return when (val res = SessionPairingClient.discoverAndPairLan(
+            context = context,
+            httpClient = httpClient,
+            mdnsResolver = mdnsResolver,
+            sessionCode = cleanCode,
+            fallbackHostCandidates = fallbackHostInput,
+            bridgePort = bridgePortInput,
+            deviceId = devId,
+            onProgress = onProgress
+        )) {
+            is PairingResult.Success -> {
+                val b = res.bundle
+                val candidates = SessionPairingClient.buildCandidateAddressList(b.pairedIp, b)
+                    .ifBlank { fallbackHostInput.trim().ifBlank { b.pairedIp } }
+                configStore.update { prev ->
+                    prev.copy(
+                        networkMode = NetworkMode.LAN,
+                        sessionPairingCode = cleanCode.uppercase(),
+                        sessionToken = b.sessionToken,
+                        hostAddress = candidates,
+                        hostPort = b.obsPort,
+                        bridgePort = b.bridgePort,
+                        obsPassword = b.obsPassword,
+                        targetMicName = b.targetMicName,
+                        internetPairingCode = b.internetPairingCode.ifBlank { prev.internetPairingCode },
+                        isMuted = b.isMuted,
+                        firstRun = false
+                    )
+                }
+                reconnectNow()
+                "✓ Paired with ${b.hostName} (${b.pairedIp})! Connected via Bridge :${b.bridgePort}."
+            }
+            is PairingResult.Error -> "✕ ${res.message}"
+        }
     }
 
     suspend fun testConnection(

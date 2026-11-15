@@ -152,6 +152,13 @@ class ObsWebSocketClient(
         })
     }
 
+    fun sendSetInputMute(muted: Boolean): Boolean {
+        return sendRequest("SetInputMute", "RemoteClickerSetMute", JSONObject().apply {
+            put("inputName", targetMicName)
+            put("inputMuted", muted)
+        })
+    }
+
     fun sendHeartbeat(): Boolean {
         return sendRequest("GetVersion", "KeepAlive", null)
     }

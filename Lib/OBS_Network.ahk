@@ -6,6 +6,7 @@
 #Include "%A_LineFile%\..\WebSocket.ahk"
 #Include "%A_LineFile%\..\UIA.ahk"
 #Include "%A_LineFile%\..\Crypto.ahk"
+#Include "%A_LineFile%\..\HostBridge.ahk"
 
 FormatSendKey(hk) {
     if RegExMatch(hk, "^(.*?)([a-zA-Z0-9_]+)$", &m) {
@@ -368,6 +369,7 @@ PublishInternetRelayPacket(topic, packetStr, relayBaseUrl := "https://ntfy.sh", 
 BroadcastHostRelayMuteState(cfg, state) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
+    HostBridgeBroadcastMuteState(cfg, state)
     if (!ShouldEnableHostInternetRelay(cfg))
         return false
     topic := GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : "")
@@ -461,35 +463,42 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
     if (pkt.cmd = "sync_req") {
         BroadcastHostRelayMuteState(cfg, state)
     } else if (pkt.cmd = "toggle_mute") {
-        if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
-            return
-        obsOpen := WinExist("ahk_exe obs64.exe")
-        appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
-        confSpec := GetConferencingWindowSpec(appType)
-        confHk := GetActiveConferencingMuteHotkey(cfg)
-        zoomOpen := WinExist(confSpec)
-        if (cfg.AudioRoutingMode == 3 && (obsOpen || zoomOpen)) {
-            state.IsSyncing := true
-            if (state.HasOwnProp("syncSource"))
-                state.syncSource := "manual"
-            if (state.HasOwnProp("releaseSyncTimerFn") && state.releaseSyncTimerFn)
-                SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
-        }
-        if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "") {
-            SetKeyDelay -1, 30
-            try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
-            SetKeyDelay 50, 50
-        }
-        if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && zoomOpen && confHk != "" && confHk != "None") {
-            SetKeyDelay -1, 30
-            try ControlSend FormatSendKey(confHk), , confSpec
-            SetKeyDelay 50, 50
-        }
-        if (ShouldOptimisticallyFlipMute(cfg, state))
-            SyncUIState(cfg, state, !state.isMuted)
-        else
-            BroadcastHostRelayMuteState(cfg, state)
+        ExecuteHostRemoteToggleMute(cfg, state)
     }
+}
+
+ExecuteHostRemoteToggleMute(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+        return true
+    obsOpen := WinExist("ahk_exe obs64.exe")
+    appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
+    confSpec := GetConferencingWindowSpec(appType)
+    confHk := GetActiveConferencingMuteHotkey(cfg)
+    zoomOpen := WinExist(confSpec)
+    if (cfg.AudioRoutingMode == 3 && (obsOpen || zoomOpen)) {
+        state.IsSyncing := true
+        if (state.HasOwnProp("syncSource"))
+            state.syncSource := "manual"
+        if (state.HasOwnProp("releaseSyncTimerFn") && state.releaseSyncTimerFn)
+            SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
+    }
+    if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "") {
+        SetKeyDelay -1, 30
+        try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
+        SetKeyDelay 50, 50
+    }
+    if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && zoomOpen && confHk != "" && confHk != "None") {
+        SetKeyDelay -1, 30
+        try ControlSend FormatSendKey(confHk), , confSpec
+        SetKeyDelay 50, 50
+    }
+    if (ShouldOptimisticallyFlipMute(cfg, state))
+        SyncUIState(cfg, state, !state.isMuted)
+    else
+        BroadcastHostRelayMuteState(cfg, state)
+    return true
 }
 
 IsLoopbackHost(host) {
@@ -543,6 +552,7 @@ IsLocalTcpPortListening(port) {
 SendCloseRemoteSignal(cfg, state) {
     sentLan := false
     sentWan := false
+    sentBridge := (HostBridgeBroadcastCloseRemote() > 0)
 
     ; 1. Dispatch over active OBS WebSocket (LAN Mode)
     if (IsObject(state) && state.obsConnected && IsObject(state.obsWs)) {
@@ -591,7 +601,7 @@ SendCloseRemoteSignal(cfg, state) {
             sentWan := PublishInternetRelayPacket(topic, FormatRelayPacket("host", "close_remote", "1", auth), "https://ntfy.sh", mockWs)
     }
 
-    return (sentLan || sentWan)
+    return (sentLan || sentWan || sentBridge)
 }
 
 FormatPassthroughHook(hk) {
