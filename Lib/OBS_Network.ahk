@@ -294,6 +294,19 @@ SendObsBroadcastCloseRemote(ws, requestId := "ManualCloseRemote") {
     return SendObsRequest(ws, "BroadcastCustomEvent", requestId, '{"eventData":{"source":"PresenterSync","command":"CloseRemote"}}')
 }
 
+; Defer WebSocket shutdown past WinHTTP's synchronous read-callback frame so
+; context buffers remain valid until WINHTTP_STATUS_READ_WRITE_COMPLETE exits.
+SafeCloseWebSocketDeferred(ws, delayMs := 60) {
+    if (!IsObject(ws))
+        return
+    SetTimer(() => _TryShutdownWsDeferred(ws), -Max(15, Integer(delayMs)))
+}
+
+_TryShutdownWsDeferred(ws) {
+    if (IsObject(ws))
+        try ws.shutdown()
+}
+
 GenerateInternetPairingCode() {
     chars := "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
     p1 := "", p2 := ""
