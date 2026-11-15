@@ -2,6 +2,8 @@ package com.saabithjiffry.presentersync.remote.config
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.saabithjiffry.presentersync.remote.input.BubbleGestureAction
+import com.saabithjiffry.presentersync.remote.input.BubbleGestureConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,6 +49,7 @@ data class RemoteConfig(
     val heartbeatSeconds: Int = AppConstants.DEFAULT_HEARTBEAT_SECONDS,
 
     val hwMuteHotkey: String = "KEYCODE_B",
+    val enablePointerIntercept: Boolean = true,
     val enablePointerMute: Boolean = true,
     val enablePushToMute: Boolean = false,
     val toggleMuteShortcut: String = "Ctrl+F12",
@@ -63,6 +66,13 @@ data class RemoteConfig(
     val enableAudioCue: Boolean = false,
     val enableMuteToast: Boolean = false,
     val enableHudClickActions: Boolean = true,
+    val lockHudPosition: Boolean = false,
+    val singleTapAction: BubbleGestureAction = BubbleGestureAction.NONE,
+    val doubleTapAction: BubbleGestureAction = BubbleGestureAction.OPEN_QUICK_MENU,
+    val longPressAction: BubbleGestureAction = BubbleGestureAction.TOGGLE_MUTE,
+    val veryLongPressAction: BubbleGestureAction = BubbleGestureAction.NONE,
+    val longPressDurationMs: Int = 600,
+    val veryLongPressDurationMs: Int = 1400,
     val enableMagneticSnap: Boolean = true,
     val hudClickThrough: Boolean = false,
     val hudAutoDodge: Boolean = false,
@@ -77,7 +87,18 @@ data class RemoteConfig(
     val savedY: Int = -1,
     val savedXRatio: Float = -1f,
     val savedYRatio: Float = -1f
-)
+) {
+    fun toBubbleGestureConfig(): BubbleGestureConfig = BubbleGestureConfig(
+        enabled = enableHudClickActions,
+        lockPosition = lockHudPosition,
+        singleTapAction = singleTapAction,
+        doubleTapAction = doubleTapAction,
+        longPressAction = longPressAction,
+        veryLongPressAction = veryLongPressAction,
+        longPressDurationMs = longPressDurationMs.toLong(),
+        veryLongPressDurationMs = veryLongPressDurationMs.toLong()
+    )
+}
 
 class RemoteConfigStore(context: Context) {
     private val prefs: SharedPreferences =
@@ -103,6 +124,17 @@ class RemoteConfigStore(context: Context) {
         val mic = prefs.getString("targetMicName", AppConstants.DEFAULT_MIC_NAME)?.trim().orEmpty()
             .ifEmpty { AppConstants.DEFAULT_MIC_NAME }
 
+        val longMs = prefs.getInt("longPressDurationMs", 600).coerceIn(300, 2000)
+        val veryLongMs = prefs.getInt("veryLongPressDurationMs", 1400).coerceIn(longMs + 300, 4000)
+        val singleTap = prefs.getString("singleTapAction", null)?.let { BubbleGestureAction.fromRaw(it) }
+            ?: BubbleGestureAction.NONE
+        val doubleTap = prefs.getString("doubleTapAction", null)?.let { BubbleGestureAction.fromRaw(it) }
+            ?: BubbleGestureAction.OPEN_QUICK_MENU
+        val longPress = prefs.getString("longPressAction", null)?.let { BubbleGestureAction.fromRaw(it) }
+            ?: BubbleGestureAction.TOGGLE_MUTE
+        val veryLongPress = prefs.getString("veryLongPressAction", null)?.let { BubbleGestureAction.fromRaw(it) }
+            ?: BubbleGestureAction.NONE
+
         return RemoteConfig(
             networkMode = NetworkMode.fromRaw(prefs.getString("networkMode", "LAN")),
             enableRelayFallback = prefs.getBoolean("enableRelayFallback", true),
@@ -116,6 +148,7 @@ class RemoteConfigStore(context: Context) {
             targetMicName = mic,
             heartbeatSeconds = validHb,
             hwMuteHotkey = prefs.getString("hwMuteHotkey", "KEYCODE_B").orEmpty().ifBlank { "KEYCODE_B" },
+            enablePointerIntercept = prefs.getBoolean("enablePointerIntercept", true),
             enablePointerMute = prefs.getBoolean("enablePointerMute", true),
             enablePushToMute = prefs.getBoolean("enablePushToMute", false),
             toggleMuteShortcut = prefs.getString("toggleMuteShortcut", "Ctrl+F12").orEmpty().ifBlank { "Ctrl+F12" },
@@ -131,6 +164,13 @@ class RemoteConfigStore(context: Context) {
             enableAudioCue = prefs.getBoolean("enableAudioCue", false),
             enableMuteToast = prefs.getBoolean("enableMuteToast", false),
             enableHudClickActions = prefs.getBoolean("enableHudClickActions", true),
+            lockHudPosition = prefs.getBoolean("lockHudPosition", false),
+            singleTapAction = singleTap,
+            doubleTapAction = doubleTap,
+            longPressAction = longPress,
+            veryLongPressAction = veryLongPress,
+            longPressDurationMs = longMs,
+            veryLongPressDurationMs = veryLongMs,
             enableMagneticSnap = prefs.getBoolean("enableMagneticSnap", true),
             hudClickThrough = prefs.getBoolean("hudClickThrough", false),
             hudAutoDodge = prefs.getBoolean("hudAutoDodge", false),
@@ -183,6 +223,38 @@ class RemoteConfigStore(context: Context) {
         }
     }
 
+    fun applyGesturePreset(presetId: String) = update { prev ->
+        when (presetId) {
+            "hold_mute_unmute" -> prev.copy(
+                enableHudClickActions = true,
+                singleTapAction = BubbleGestureAction.NONE,
+                doubleTapAction = BubbleGestureAction.OPEN_QUICK_MENU,
+                longPressAction = BubbleGestureAction.MUTE_ONLY,
+                veryLongPressAction = BubbleGestureAction.UNMUTE_ONLY,
+                longPressDurationMs = 600,
+                veryLongPressDurationMs = 1400
+            )
+            "classic_tap" -> prev.copy(
+                enableHudClickActions = true,
+                singleTapAction = BubbleGestureAction.TOGGLE_MUTE,
+                doubleTapAction = BubbleGestureAction.NONE,
+                longPressAction = BubbleGestureAction.OPEN_QUICK_MENU,
+                veryLongPressAction = BubbleGestureAction.OPEN_SETTINGS,
+                longPressDurationMs = 550,
+                veryLongPressDurationMs = 1400
+            )
+            else -> prev.copy(
+                enableHudClickActions = true,
+                singleTapAction = BubbleGestureAction.NONE,
+                doubleTapAction = BubbleGestureAction.OPEN_QUICK_MENU,
+                longPressAction = BubbleGestureAction.TOGGLE_MUTE,
+                veryLongPressAction = BubbleGestureAction.NONE,
+                longPressDurationMs = 600,
+                veryLongPressDurationMs = 1400
+            )
+        }
+    }
+
     fun resetAppearance() = update {
         it.copy(
             showText = false,
@@ -192,6 +264,13 @@ class RemoteConfigStore(context: Context) {
             enableAudioCue = false,
             enableMuteToast = false,
             enableHudClickActions = true,
+            lockHudPosition = false,
+            singleTapAction = BubbleGestureAction.NONE,
+            doubleTapAction = BubbleGestureAction.OPEN_QUICK_MENU,
+            longPressAction = BubbleGestureAction.TOGGLE_MUTE,
+            veryLongPressAction = BubbleGestureAction.NONE,
+            longPressDurationMs = 600,
+            veryLongPressDurationMs = 1400,
             enableMagneticSnap = true,
             hudClickThrough = false,
             hudAutoDodge = false,
@@ -216,6 +295,7 @@ class RemoteConfigStore(context: Context) {
             .putString("targetMicName", c.targetMicName)
             .putInt("heartbeatSeconds", c.heartbeatSeconds)
             .putString("hwMuteHotkey", c.hwMuteHotkey)
+            .putBoolean("enablePointerIntercept", c.enablePointerIntercept)
             .putBoolean("enablePointerMute", c.enablePointerMute)
             .putBoolean("enablePushToMute", c.enablePushToMute)
             .putString("toggleMuteShortcut", c.toggleMuteShortcut)
@@ -231,6 +311,13 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("enableAudioCue", c.enableAudioCue)
             .putBoolean("enableMuteToast", c.enableMuteToast)
             .putBoolean("enableHudClickActions", c.enableHudClickActions)
+            .putBoolean("lockHudPosition", c.lockHudPosition)
+            .putString("singleTapAction", c.singleTapAction.rawValue)
+            .putString("doubleTapAction", c.doubleTapAction.rawValue)
+            .putString("longPressAction", c.longPressAction.rawValue)
+            .putString("veryLongPressAction", c.veryLongPressAction.rawValue)
+            .putInt("longPressDurationMs", c.longPressDurationMs)
+            .putInt("veryLongPressDurationMs", c.veryLongPressDurationMs)
             .putBoolean("enableMagneticSnap", c.enableMagneticSnap)
             .putBoolean("hudClickThrough", c.hudClickThrough)
             .putBoolean("hudAutoDodge", c.hudAutoDodge)

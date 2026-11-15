@@ -1,6 +1,8 @@
 package com.saabithjiffry.presentersync.remote.ui.overlay
 
 import android.content.Context
+import android.graphics.PathMeasure
+import com.saabithjiffry.presentersync.remote.input.BubbleHoldStage
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -165,6 +167,46 @@ class MicPillCanvasView(context: Context) : View(context) {
         }
 
         drawMicrophoneGlyph(canvas, iconCenterX, h / 2f, h * 0.56f, showSlash)
+        drawHoldProgressRing(canvas, cornerRadius, strokeW)
+    }
+
+    private var holdStage: BubbleHoldStage = BubbleHoldStage.IDLE
+    private var holdProgress: Float = 0f
+    private val holdOutlinePath = Path()
+    private val holdSegmentPath = Path()
+    private val holdMeasure = PathMeasure()
+    private val holdPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    fun setGestureFeedback(stage: BubbleHoldStage, progress: Float) {
+        val clamped = progress.coerceIn(0f, 1f)
+        if (holdStage == stage && kotlin.math.abs(holdProgress - clamped) < 0.01f) return
+        holdStage = stage
+        holdProgress = clamped
+        invalidate()
+    }
+
+    private fun drawHoldProgressRing(canvas: Canvas, cornerRadius: Float, baseStrokeW: Float) {
+        if (holdStage == BubbleHoldStage.IDLE || holdProgress <= 0f) return
+        val ringStroke = (baseStrokeW * 1.9f).coerceAtLeast(3f)
+        holdPaint.strokeWidth = ringStroke
+        holdPaint.color = when (holdStage) {
+            BubbleHoldStage.PROGRESS_LONG -> Color.parseColor("#F59E0B")
+            BubbleHoldStage.REACHED_LONG -> Color.parseColor("#FBBF24")
+            BubbleHoldStage.PROGRESS_VERY_LONG -> Color.parseColor("#38BDF8")
+            BubbleHoldStage.REACHED_VERY_LONG -> Color.parseColor("#60CDFF")
+            BubbleHoldStage.IDLE -> return
+        }
+        holdOutlinePath.reset()
+        holdOutlinePath.addRoundRect(pillRect, cornerRadius, cornerRadius, Path.Direction.CW)
+        holdMeasure.setPath(holdOutlinePath, false)
+        val total = holdMeasure.length
+        if (total <= 0f) return
+        holdSegmentPath.reset()
+        holdMeasure.getSegment(0f, total * holdProgress.coerceIn(0.02f, 1f), holdSegmentPath, true)
+        canvas.drawPath(holdSegmentPath, holdPaint)
     }
 
     private fun adjustBorderColor(baseColor: Int, isAuthErr: Boolean): Int {

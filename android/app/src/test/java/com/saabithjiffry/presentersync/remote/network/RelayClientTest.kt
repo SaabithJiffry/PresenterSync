@@ -46,6 +46,7 @@ class RelayClientTest {
         val connectedLatch = CountDownLatch(1)
         val syncPostLatch = CountDownLatch(1)
         val togglePostLatch = CountDownLatch(1)
+        val setMuteTrueLatch = CountDownLatch(1)
         val muteTrueLatch = CountDownLatch(1)
         val closeRemoteLatch = CountDownLatch(1)
         val wsRef = AtomicReference<WebSocket>()
@@ -73,6 +74,8 @@ class RelayClientTest {
                             togglePostLatch.countDown()
                             val closePkt = RelayCrypto.formatRelayPacket("host", "close_remote", "1", auth)
                             wsRef.get()?.send("""{"event":"message","message":"$closePkt"}""")
+                        } else if (pkt.cmd == "set_mute" && pkt.data == "1") {
+                            setMuteTrueLatch.countDown()
                         }
                     }
                     return MockResponse().setResponseCode(200).setBody("""{"id":"ok"}""")
@@ -107,6 +110,8 @@ class RelayClientTest {
         assertTrue(muteTrueLatch.await(3, TimeUnit.SECONDS))
         assertTrue(client.sendToggleMute())
         assertTrue(togglePostLatch.await(3, TimeUnit.SECONDS))
+        assertTrue(client.sendSetMute(true))
+        assertTrue(setMuteTrueLatch.await(3, TimeUnit.SECONDS))
         assertTrue(closeRemoteLatch.await(3, TimeUnit.SECONDS))
         wsRef.get()?.close(1000, "test done")
         client.close()

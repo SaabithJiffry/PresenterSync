@@ -60,7 +60,7 @@ class ClickerMuteController(
             }
         }
 
-        if (!config.enablePointerMute || config.hotkeysSuspended) {
+        if (!config.enablePointerIntercept || !config.enablePointerMute || config.hotkeysSuspended) {
             resetHoldState()
             return ClickerDecision.PASS_THROUGH
         }

@@ -134,7 +134,11 @@ class ClickerAccessibilityService : AccessibilityService() {
                 ClickerDecision.TRIGGER_TOGGLE_SHORTCUT -> "Shortcut -> Toggle Mute"
                 ClickerDecision.TRIGGER_EXIT_SHORTCUT -> "Shortcut -> Stop HUD"
                 ClickerDecision.CONSUME_NOOP -> "Consumed ($actionLabel / debounce)"
-                ClickerDecision.PASS_THROUGH -> "Passed Through to Slide App"
+                ClickerDecision.PASS_THROUGH -> if (!cfg.enablePointerIntercept) {
+                    "Passed Through (Pointer Intercept OFF)"
+                } else {
+                    "Passed Through to Slide App"
+                }
             }
             val diag = CapturedKeyEvent(
                 seq = eventSeq.incrementAndGet(),

@@ -250,13 +250,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 5.0.0", UIConstants.APP_VERSION == "5.0.0")
+Assert("APP_VERSION is active v5.x release", UIConstants.APP_VERSION == "5.2.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v5.0.0 and Remote Host",
-    InStr(summaryTxt, "v5.0.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes active version and Remote Host",
+    InStr(summaryTxt, "v" UIConstants.APP_VERSION) && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -2240,8 +2240,8 @@ for abCtrl in abGui {
     try abTextDump .= abCtrl.Text "`n"
 }
 WinClose("ahk_id " abGui.Hwnd)
-Assert("v5.0.0 Primary ShowAboutWindow displays full Primary Host capabilities without Snake leak",
-    InStr(abTextDump, "5.0.0") && InStr(abTextDump, "4-Tier Live HUD Stack") && InStr(abTextDump, "Remote Companion Host")
+Assert("Primary ShowAboutWindow displays full Primary Host capabilities without Snake leak",
+    InStr(abTextDump, UIConstants.APP_VERSION) && InStr(abTextDump, "4-Tier Live HUD Stack") && InStr(abTextDump, "Remote Companion Host")
     && !InStr(abTextDump, "Snake") && !InStr(abTextDump, "Easter"))
 
 ; Verify Help Window Shortcuts tab renders Alt + Ctrl + Shift + S playfully without leaking Snake
@@ -2307,6 +2307,23 @@ Assert("v4.5.0 HudSnake live non-headless canvas morphs, hides HUD, toggles Paus
     okLiveSnkStart && liveSnkHw != 0 && liveSnkVis == 1 && micHidSnk && morphAtStart && phasePausedSnk == "paused" && wrapOnSnk && micRestSnk,
     Format("start={} hw={} vis={} micHid={} morph={} phase={} wrap={} rest={}", okLiveSnkStart, liveSnkHw, liveSnkVis, micHidSnk, morphAtStart, phasePausedSnk, wrapOnSnk, micRestSnk))
 
+; Verify idempotent ExecuteHostRemoteSetMute & HandleHostRelayMessage set_mute (Mode 2 optimistic + relay)
+cfgSet := Config(testIni)
+cfgSet.AudioRoutingMode := 2
+cfgSet.InternetPairingCode := "PS-SETM-9999"
+cfgSet.ObsPassword := "secretPw"
+stSet := OverlayState(cfgSet)
+stSet.relayMockWs := {sendText: (*) => true}
+stSet.isMuted := false
+ExecuteHostRemoteSetMute(cfgSet, stSet, true)
+setOk1 := (stSet.isMuted == true)
+ExecuteHostRemoteSetMute(cfgSet, stSet, true) ; idempotent when already muted
+setOk2 := (stSet.isMuted == true)
+tokSet := GetInternetRelayAuthToken(cfgSet.InternetPairingCode, cfgSet.ObsPassword)
+HandleHostRelayMessage(cfgSet, stSet, "", FormatRelayPacket("remote", "set_mute", "0", tokSet))
+setOk3 := (stSet.isMuted == false)
+Assert("ExecuteHostRemoteSetMute and relay set_mute are idempotent and state-accurate", setOk1 && setOk2 && setOk3)
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -2314,7 +2331,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v5.0.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v" UIConstants.APP_VERSION ") ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

@@ -134,7 +134,7 @@ class ObsWebSocketClient(
                             callbacks.onMuteStateChanged(respData.optBoolean("inputMuted", false))
                         }
                     }
-                    "RemoteClickerMute" -> {
+                    "RemoteClickerMute", "RemoteClickerSetMute" -> {
                         if (!resultOk) {
                             callbacks.onMicError()
                         } else {
