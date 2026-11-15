@@ -10,7 +10,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "6.3.0"
+    static APP_VERSION := "6.4.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1182,6 +1182,8 @@ class Config {
     SessionPairingCode := ""
     BridgePort := 4456
     ActiveProfile := "Default"
+    EnableAutoProfileSwitch := false
+    AutoProfileRules := ""
     StartWithWindows := false
     AutoCheckUpdates := true
     LastUpdateCheckEpoch := 0
@@ -1345,6 +1347,8 @@ class Config {
         }
         profName := this.NormalizeProfileName(this.Read("Settings", "ActiveProfile", "Default"))
         this.ActiveProfile := (profName != "") ? profName : "Default"
+        this.EnableAutoProfileSwitch := this.ReadBool("Settings", "EnableAutoProfileSwitch", false)
+        this.AutoProfileRules := Trim(this.Read("Settings", "AutoProfileRules", ""))
         this.StartWithWindows := this.ReadBool("Settings", "StartWithWindows", false)
         this.AutoCheckUpdates := this.ReadBool("Settings", "AutoCheckUpdates", true)
         lastUpd := Trim(this.Read("Settings", "LastUpdateCheckEpoch", "0"))
@@ -1654,6 +1658,10 @@ class OverlayState {
     refreshHudFn := ""
     rebindHotkeysFn := ""
     triggerMuteFn := ""
+    autoProfileTimerFn := ""
+    _autoProfileBase := ""
+    _autoProfileMatched := ""
+    _autoProfileRuleProc := ""
 
     MicGui := ""
     RecGui := ""
@@ -2534,15 +2542,16 @@ ShowHelpWindow(cfg, state := "", *) {
     btnCycTheme := helpGui.Add("Button", "x426 y382 w186 h34", "Cycle Theme")
     btnResetPos := helpGui.Add("Button", "x624 y382 w186 h34", "Reset HUD Position")
 
-    btnRefreshStatus := helpGui.Add("Button", "x30 y428 w252 h34", "Refresh Status")
-    btnResetApp := helpGui.Add("Button", "x294 y428 w252 h34", "Reset Appearance")
-    btnOpenAbout := helpGui.Add("Button", "x558 y428 w252 h34", "About v" UIConstants.APP_VERSION)
+    btnRefreshStatus := helpGui.Add("Button", "x30 y428 w186 h34", "Refresh Status")
+    btnResetApp := helpGui.Add("Button", "x228 y428 w186 h34", "Reset Appearance")
+    btnExportDiag := helpGui.Add("Button", "x426 y428 w186 h34", "Export Diagnostics...")
+    btnOpenAbout := helpGui.Add("Button", "x624 y428 w186 h34", "About v" UIConstants.APP_VERSION)
 
     btnStatusWizard := helpGui.Add("Button", "x30 y474 w252 h34", "Run Audio Setup Wizard...")
     btnStatusMuteKey := helpGui.Add("Button", "x294 y474 w252 h34", "Change Mute Button...")
     btnStatusIntercepts := helpGui.Add("Button", "x558 y474 w252 h34", "Configure Intercepts...")
 
-    for bLive in [btnTogExtra, btnTogText, btnCycTheme, btnResetPos, btnRefreshStatus, btnResetApp, btnOpenAbout, btnStatusWizard, btnStatusMuteKey, btnStatusIntercepts]
+    for bLive in [btnTogExtra, btnTogText, btnCycTheme, btnResetPos, btnRefreshStatus, btnResetApp, btnExportDiag, btnOpenAbout, btnStatusWizard, btnStatusMuteKey, btnStatusIntercepts]
         Theme.RegisterControl(helpGui, bLive, "Button", "tabButton")
 
     RefreshHelpStatus(*) {
@@ -2600,6 +2609,7 @@ ShowHelpWindow(cfg, state := "", *) {
     btnResetPos.OnEvent("Click", OnHelpResetPos)
     btnRefreshStatus.OnEvent("Click", RefreshHelpStatus)
     btnResetApp.OnEvent("Click", OnHelpResetAppearance)
+    btnExportDiag.OnEvent("Click", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
     btnOpenAbout.OnEvent("Click", (*) => ShowAboutWindow(cfg, state))
     btnStatusWizard.OnEvent("Click", (*) => PromptForSetup(cfg, false))
     btnStatusMuteKey.OnEvent("Click", (*) => ChangeHwMuteHotkeyUI(cfg))
@@ -3552,12 +3562,14 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
     isRemoteOffline := (overrideMuted == "" && state.HasOwnProp("activeHost") && state.HasOwnProp("obsConnected") && !state.obsConnected)
 
     if (isRemoteOffline) {
-        isAuthErr := (state.HasOwnProp("connStatus") && state.connStatus = "auth_failed")
-        bgRgb := state.colors.recOff
-        brdBgr := isAuthErr ? state.colors.borderMuted : state.colors.recBorderOff
-        icHex := cfg.MonoIcon ? state.colors.recIconOff : "E5E7EB"
-        glyph := Chr(0xF781)
-        lbl := isAuthErr ? "AUTH ERR" : "OFFLINE"
+        connSt := state.HasOwnProp("connStatus") ? state.connStatus : ""
+        isPwReq := (connSt = "pw_required")
+        isAuthErr := (connSt = "auth_failed")
+        bgRgb := isPwReq ? "452809" : (isAuthErr ? "450A0A" : state.colors.recOff)
+        brdBgr := isPwReq ? UIConstants.RgbHexToBgrInt("F59E0B") : (isAuthErr ? state.colors.borderMuted : state.colors.recBorderOff)
+        icHex := cfg.MonoIcon ? state.colors.recIconOff : (isPwReq ? "FCD34D" : (isAuthErr ? "FCA5A5" : "E5E7EB"))
+        glyph := isPwReq ? Chr(0xE72E) : (isAuthErr ? Chr(0xE783) : Chr(0xF781))
+        lbl := isPwReq ? "PW REQ" : (isAuthErr ? "AUTH ERR" : "OFFLINE")
     } else {
         bgRgb := mutedState ? state.colors.muted : state.colors.live
         brdBgr := mutedState ? state.colors.borderMuted : state.colors.borderLive
@@ -4986,7 +4998,166 @@ WM_DPICHANGED(state, wParam, lParam, msg, hwnd) {
     UpdateHudLayout(state, newLeft, newTop)
 }
 
+ResetAutoProfileTracking(state) {
+    if (!IsObject(state))
+        return
+    state._autoProfileBase := ""
+    state._autoProfileMatched := ""
+    state._autoProfileRuleProc := ""
+}
+
+ParseAutoProfileRules(rawRules) {
+    out := []
+    seen := Map()
+    rawStr := StrReplace(StrReplace(String(rawRules), "`r", "`n"), ";", "|")
+    rawStr := StrReplace(StrReplace(rawStr, ",", "|"), "`n", "|")
+    for _, entry in StrSplit(rawStr, "|") {
+        trimmed := Trim(entry)
+        eqPos := InStr(trimmed, "=")
+        if (eqPos <= 1)
+            continue
+        rawProc := Trim(SubStr(trimmed, 1, eqPos - 1))
+        rawProf := Trim(SubStr(trimmed, eqPos + 1))
+        if (rawProc = "" || rawProf = "")
+            continue
+        SplitPath(rawProc, &procLeaf)
+        lowerProc := StrLower(Trim(procLeaf))
+        cleanProf := SubStr(Trim(RegExReplace(rawProf, '[\|\[\]=`r`n`t]', "")), 1, 48)
+        if (lowerProc = "" || cleanProf = "" || seen.Has(lowerProc))
+            continue
+        seen[lowerProc] := true
+        out.Push({proc: lowerProc, profile: cleanProf})
+    }
+    return out
+}
+
+FormatAutoProfileRules(rules) {
+    if (!IsObject(rules))
+        return ""
+    joined := ""
+    for _, item in rules {
+        if (!IsObject(item) || !item.HasOwnProp("proc") || !item.HasOwnProp("profile"))
+            continue
+        p := StrLower(Trim(String(item.proc)))
+        prof := Trim(String(item.profile))
+        if (p != "" && prof != "")
+            joined .= (joined != "" ? "|" : "") p "=" prof
+    }
+    return joined
+}
+
+MatchAutoProfileRule(cfg, activeProcName) {
+    if (!IsObject(cfg) || !cfg.HasOwnProp("AutoProfileRules") || Trim(cfg.AutoProfileRules) = "")
+        return ""
+    rawProc := Trim(String(activeProcName))
+    if (rawProc = "")
+        return ""
+    SplitPath(rawProc, &leafProc)
+    procLow := StrLower(Trim(leafProc))
+    if (procLow = "")
+        return ""
+    procStem := RegExReplace(procLow, "\.exe$", "")
+
+    rules := ParseAutoProfileRules(cfg.AutoProfileRules)
+    if (rules.Length == 0)
+        return ""
+    avail := cfg.GetProfileNames()
+
+    for _, rule in rules {
+        ruleStem := RegExReplace(rule.proc, "\.exe$", "")
+        if (rule.proc = procLow || ruleStem = procStem) {
+            for _, canonical in avail {
+                if (StrLower(canonical) = StrLower(rule.profile)) {
+                    if (StrLower(canonical) = "default" || cfg.Read("Profile:" canonical, "__Exists", "") = "1")
+                        return canonical
+                }
+            }
+        }
+    }
+    return ""
+}
+
+EvaluateAutoProfileTrigger(cfg, state, activeProcName) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return {changed: false, action: "invalid", target: "", baseProfile: ""}
+    if (!cfg.HasOwnProp("EnableAutoProfileSwitch") || !cfg.EnableAutoProfileSwitch)
+        return {changed: false, action: "disabled", target: cfg.ActiveProfile, baseProfile: ""}
+
+    matchedProf := MatchAutoProfileRule(cfg, activeProcName)
+    if (matchedProf != "") {
+        if (!state.HasOwnProp("_autoProfileMatched") || state._autoProfileMatched = "")
+            state._autoProfileBase := cfg.ActiveProfile
+        if (StrLower(cfg.ActiveProfile) != StrLower(matchedProf)) {
+            if (cfg.ApplyProfile(matchedProf, state)) {
+                state._autoProfileMatched := cfg.ActiveProfile
+                state._autoProfileRuleProc := StrLower(Trim(String(activeProcName)))
+                return {changed: true, action: "switched", target: cfg.ActiveProfile, baseProfile: state._autoProfileBase}
+            }
+            return {changed: false, action: "apply_failed", target: matchedProf, baseProfile: state._autoProfileBase}
+        }
+        state._autoProfileMatched := cfg.ActiveProfile
+        state._autoProfileRuleProc := StrLower(Trim(String(activeProcName)))
+        return {changed: false, action: "held", target: cfg.ActiveProfile, baseProfile: state._autoProfileBase}
+    }
+
+    if (state.HasOwnProp("_autoProfileMatched") && state._autoProfileMatched != "") {
+        prevBase := state.HasOwnProp("_autoProfileBase") ? state._autoProfileBase : ""
+        ResetAutoProfileTracking(state)
+        if (prevBase != "" && StrLower(cfg.ActiveProfile) != StrLower(prevBase)) {
+            if (cfg.ApplyProfile(prevBase, state))
+                return {changed: true, action: "restored", target: cfg.ActiveProfile, baseProfile: prevBase}
+        }
+    }
+    return {changed: false, action: "none", target: cfg.ActiveProfile, baseProfile: ""}
+}
+
+PollAutoProfileTrigger(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state) || !cfg.EnableAutoProfileSwitch)
+        return
+    try {
+        fgHwnd := WinExist("A")
+        if (!fgHwnd)
+            return
+        fgPid := WinGetPID("ahk_id " fgHwnd)
+        if (fgPid == DllCall("kernel32\GetCurrentProcessId", "UInt"))
+            return
+        procName := WinGetProcessName("ahk_id " fgHwnd)
+        res := EvaluateAutoProfileTrigger(cfg, state, procName)
+        if (res.changed) {
+            verb := (res.action = "restored") ? "Restored" : "Switched"
+            TrayTip("Auto-Profile " verb ": " res.target, "PresenterSync Profiles", 1)
+        }
+    }
+}
+
+UpdateAutoProfileTimer(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("autoProfileTimerFn") || !state.autoProfileTimerFn)
+        return
+    if (IsObject(cfg) && cfg.HasOwnProp("EnableAutoProfileSwitch") && cfg.EnableAutoProfileSwitch) {
+        SetTimer(state.autoProfileTimerFn, 900)
+    } else {
+        SetTimer(state.autoProfileTimerFn, 0)
+        ResetAutoProfileTracking(state)
+    }
+}
+
+ToggleAutoProfileSwitch(cfg, state, *) {
+    if (!IsObject(cfg))
+        return
+    cfg.EnableAutoProfileSwitch := !cfg.EnableAutoProfileSwitch
+    cfg.WriteBool("Settings", "EnableAutoProfileSwitch", cfg.EnableAutoProfileSwitch)
+    UpdateAutoProfileTimer(cfg, state)
+    if (IsObject(state)) {
+        if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+    }
+    TrayTip(cfg.EnableAutoProfileSwitch ? "App-Trigger Auto-Profile Switching enabled." : "App-Trigger Auto-Profile Switching disabled.", "PresenterSync Profiles", 1)
+}
+
 SwitchProfileAction(cfg, state, profileName, *) {
+    ResetAutoProfileTracking(state)
     if (cfg.ApplyProfile(profileName, state)) {
         TrayTip("Switched to Profile: " cfg.ActiveProfile, "PresenterSync Profiles", 1)
     }
@@ -5031,9 +5202,23 @@ ShowProfileManagerUI(cfg, state := "") {
     btnNew := dlg.Add("Button", "x+12 yp-2 w128 h28", "Save As New")
     Theme.RegisterControl(dlg, btnNew, "Button", "accent")
 
-    lblMsg := dlg.Add("Text", "xm w220 y+10", "Save presets for OBS, Zoom, Teams, or Meet.")
+    btnNew.GetPos(, &bnY,, &bnH)
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", Format("xm w360 y{}", bnY + bnH + 12), "App-Trigger Auto-Profile Switching:"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    chkAutoProf := dlg.Add("Checkbox", "xm w360 y+6" (cfg.EnableAutoProfileSwitch ? " Checked" : ""), "Auto-switch profile when matching app is active")
+    Theme.RegisterControl(dlg, chkAutoProf, "Checkbox")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+6", "Rules (proc.exe=Profile | ..., e.g. obs64.exe=OBS|Zoom.exe=Zoom):"), "Text", "muted")
+    editRules := dlg.Add("Edit", "xm w220 y+6", cfg.HasOwnProp("AutoProfileRules") ? cfg.AutoProfileRules : "")
+    Theme.RegisterControl(dlg, editRules, "Edit")
+    DllCall("SendMessage", "Ptr", editRules.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "obs64.exe=OBS|Zoom.exe=Zoom|ms-teams.exe=Teams")
+    btnSaveRules := dlg.Add("Button", "x+12 yp-2 w128 h28", "Save Auto Rules")
+    Theme.RegisterControl(dlg, btnSaveRules, "Button")
+
+    btnSaveRules.GetPos(, &srY,, &srH)
+    lblMsg := dlg.Add("Text", Format("xm w220 y{}", srY + srH + 14), "Save presets for OBS, Zoom, Teams, or Meet.")
     Theme.RegisterControl(dlg, lblMsg, "Text", "muted")
-    btnClose := dlg.Add("Button", "x+12 yp-4 w128 h30", "Close")
+    btnClose := dlg.Add("Button", Format("x+12 y{} w128 h30", srY + srH + 10), "Close")
     Theme.RegisterControl(dlg, btnClose, "Button")
 
     RefreshList(selectName := "") {
@@ -5051,6 +5236,7 @@ ShowProfileManagerUI(cfg, state := "") {
         lb.Choose(chooseIdx)
         lblActive.Value := "Active Profile: " cfg.ActiveProfile
         btnDel.Enabled := (StrLower(lb.Text) != "default")
+        chkAutoProf.Value := cfg.EnableAutoProfileSwitch ? 1 : 0
     }
     RefreshList(cfg.ActiveProfile)
 
@@ -5059,6 +5245,7 @@ ShowProfileManagerUI(cfg, state := "") {
             lblMsg.Value := "Select a profile first."
             return
         }
+        ResetAutoProfileTracking(state)
         if (cfg.ApplyProfile(lb.Text, state)) {
             RefreshList(cfg.ActiveProfile)
             lblMsg.Value := "Loaded profile: " cfg.ActiveProfile
@@ -5093,6 +5280,22 @@ ShowProfileManagerUI(cfg, state := "") {
         lblMsg.Value := "Created profile: " cfg.ActiveProfile
     }
 
+    OnSaveRulesClick(*) {
+        parsed := ParseAutoProfileRules(editRules.Value)
+        formatted := FormatAutoProfileRules(parsed)
+        cfg.EnableAutoProfileSwitch := !!chkAutoProf.Value
+        cfg.AutoProfileRules := formatted
+        editRules.Value := formatted
+        cfg.WriteBool("Settings", "EnableAutoProfileSwitch", cfg.EnableAutoProfileSwitch)
+        cfg.Write("Settings", "AutoProfileRules", formatted)
+        UpdateAutoProfileTimer(cfg, state)
+        if (IsObject(state) && state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+        lblMsg.Value := (cfg.EnableAutoProfileSwitch ? "Auto-switch ON" : "Auto-switch OFF") " (" parsed.Length " rule(s) saved)."
+    }
+
     OnDeleteClick(*) {
         if (StrLower(lb.Text) = "default") {
             lblMsg.Value := "Default profile is protected."
@@ -5113,6 +5316,8 @@ ShowProfileManagerUI(cfg, state := "") {
     btnLoad.OnEvent("Click", OnLoadClick)
     btnSave.OnEvent("Click", OnSaveClick)
     btnNew.OnEvent("Click", OnNewClick)
+    btnSaveRules.OnEvent("Click", OnSaveRulesClick)
+    chkAutoProf.OnEvent("Click", OnSaveRulesClick)
     btnDel.OnEvent("Click", OnDeleteClick)
 
     CloseProfileMgr(*) {
@@ -5945,6 +6150,172 @@ StartBackgroundUpdateChecker(cfg, targetAssetName := "", intervalSeconds := 8640
 
 CheckForUpdatesUI(currentVer := "", *) => CheckForUpdates(currentVer, "", false)
 
+_Diag_ShouldRedactKey(sectionName, keyName) {
+    sec := Trim(String(sectionName))
+    key := Trim(String(keyName))
+    if (RegExMatch(sec, "i)^HostBridgePairedDevices$"))
+        return true
+    if (RegExMatch(key, "i)(password|token|secret|pairingcode|sessioncode|apikey|bearer|auth)"))
+        return true
+    return false
+}
+
+SanitizeDiagnosticIniValue(sectionName, keyName, val) {
+    sec := Trim(String(sectionName))
+    v := String(val)
+    if (RegExMatch(sec, "i)^HostBridgePairedDevices$")) {
+        parts := StrSplit(v, "|")
+        if (parts.Length >= 4 && parts[1] = "v1") {
+            if (parts[4] != "")
+                parts[4] := "[REDACTED]"
+            out := ""
+            for idx, p in parts
+                out .= (idx > 1 ? "|" : "") p
+            return out
+        }
+        return (v != "") ? "[REDACTED]" : "(empty)"
+    }
+    if (_Diag_ShouldRedactKey(sec, keyName))
+        return (v != "") ? "[REDACTED]" : "(empty)"
+    return v
+}
+
+SanitizeIniTextForDiagnostics(rawIniText, explicitSecrets := "") {
+    curSec := ""
+    linesOut := []
+    for _, line in StrSplit(String(rawIniText), "`n", "`r") {
+        trimmed := Trim(line)
+        if (trimmed = "" || SubStr(trimmed, 1, 1) = ";") {
+            linesOut.Push(line)
+            continue
+        }
+        if (RegExMatch(trimmed, "^\[([^\]]+)\]$", &mSec)) {
+            curSec := Trim(mSec[1])
+            linesOut.Push("[" curSec "]")
+            continue
+        }
+        eqPos := InStr(trimmed, "=")
+        if (eqPos > 1) {
+            k := Trim(SubStr(trimmed, 1, eqPos - 1))
+            v := SubStr(trimmed, eqPos + 1)
+            linesOut.Push(k "=" SanitizeDiagnosticIniValue(curSec, k, v))
+        } else {
+            linesOut.Push(line)
+        }
+    }
+    joined := ""
+    for idx, l in linesOut
+        joined .= (idx > 1 ? "`r`n" : "") l
+    if (IsObject(explicitSecrets)) {
+        for _, secVal in explicitSecrets {
+            s := Trim(String(secVal))
+            if (StrLen(s) >= 4)
+                joined := StrReplace(joined, s, "[REDACTED]")
+        }
+    }
+    return joined
+}
+
+BuildSanitizedDiagnosticsReport(cfg, state := "", iniTextOverride := "") {
+    secrets := []
+    if IsObject(cfg) {
+        for _, propName in ["obsPassword", "ObsPassword", "InternetPairingCode", "SessionPairingCode", "SessionToken"] {
+            if (cfg.HasOwnProp(propName)) {
+                pv := Trim(String(cfg.%propName%))
+                if (pv != "")
+                    secrets.Push(pv)
+            }
+        }
+    }
+
+    epText := "(unavailable)"
+    try {
+        eps := GetLocalNetworkEndpoints()
+        if (IsObject(eps) && eps.HasOwnProp("ips"))
+            epText := eps.ips.Length " local IP(s), mDNS: " A_ComputerName ".local"
+    }
+
+    rawIni := ""
+    if (iniTextOverride != "") {
+        rawIni := String(iniTextOverride)
+    } else if (IsObject(cfg) && cfg.HasOwnProp("ConfigFile") && cfg.ConfigFile != "" && FileExist(cfg.ConfigFile)) {
+        try rawIni := FileRead(cfg.ConfigFile, "UTF-8")
+    }
+    safeIni := SanitizeIniTextForDiagnostics(rawIni, secrets)
+
+    autoState := "OFF"
+    if (IsObject(cfg) && cfg.HasOwnProp("EnableAutoProfileSwitch")) {
+        autoState := cfg.EnableAutoProfileSwitch ? "ON" : "OFF"
+        if (cfg.HasOwnProp("AutoProfileRules") && cfg.AutoProfileRules != "")
+            autoState .= " (" cfg.AutoProfileRules ")"
+    }
+
+    bridgeLine := "Inactive"
+    if (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasOwnProp("running") && g_HostCompanionBridge.running) {
+        bridgeLine := "Listening on TCP/UDP :" g_HostCompanionBridge.boundTcpPort " (Paired devices: " g_HostCompanionBridge.pairedDevices.Count ", Active WS clients: " g_HostCompanionBridge.clients.Count ")"
+    }
+
+    summarySec := IsObject(cfg) ? BuildLiveStatusSummary(cfg, state) : ("PresenterSync Version:   v" UIConstants.APP_VERSION)
+    rpt := "==============================================================================`r`n"
+        . "PresenterSync Sanitized Diagnostic Bundle (All Secrets Redacted)`r`n"
+        . "==============================================================================`r`n"
+        . "Generated Local : " FormatTime(, "yyyy-MM-dd HH:mm:ss") "`r`n"
+        . "Generated UTC   : " FormatTime(A_NowUTC, "yyyy-MM-dd HH:mm:ss") " UTC`r`n"
+        . "App Version     : v" UIConstants.APP_VERSION "`r`n"
+        . "AutoHotkey      : v" A_AhkVersion " (" (A_IsCompiled ? "Compiled EXE" : "Script") ")`r`n"
+        . "Windows OS      : " A_OSVersion " (Host: " A_ComputerName ")`r`n"
+        . "NetworkSummary  : " epText "`r`n"
+        . "Auto-Profile    : " autoState "`r`n"
+        . "Host Bridge     : " bridgeLine "`r`n`r`n"
+        . "--- LIVE STATUS SUMMARY ---`r`n"
+        . StrReplace(summarySec, "`n", "`r`n") "`r`n`r`n"
+        . "--- SANITIZED CONFIGURATION (.INI) ---`r`n"
+        . (safeIni != "" ? safeIni : "(no configuration file found)") "`r`n"
+
+    for _, secVal in secrets {
+        s := Trim(String(secVal))
+        if (StrLen(s) >= 4)
+            rpt := StrReplace(rpt, s, "[REDACTED]")
+    }
+    return rpt
+}
+
+ExportSanitizedDiagnostics(cfg, state := "", targetPath := "", showUi := true) {
+    outPath := Trim(String(targetPath))
+    defaultName := "PresenterSync_Diagnostics_" FormatTime(, "yyyyMMdd_HHmmss") ".txt"
+    if (outPath = "" && showUi) {
+        selected := FileSelect("S16", A_Desktop "\" defaultName, "Export Sanitized Diagnostics (Secrets Redacted)", "Diagnostic Bundle (*.txt)")
+        if (selected = "")
+            return {ok: false, cancelled: true, path: "", error: ""}
+        outPath := selected
+    }
+    if (outPath = "")
+        outPath := A_Temp "\" defaultName
+
+    report := BuildSanitizedDiagnosticsReport(cfg, state)
+    try {
+        SplitPath(outPath, , &outDir)
+        if (outDir != "" && !DirExist(outDir))
+            DirCreate(outDir)
+        if FileExist(outPath)
+            FileDelete(outPath)
+        f := FileOpen(outPath, "w", "UTF-8")
+        if (!IsObject(f))
+            return {ok: false, cancelled: false, path: outPath, error: "Could not open file for writing."}
+        f.Write(report)
+        f.Close()
+    } catch as e {
+        if (showUi)
+            MsgBox("Failed to export diagnostics:`n`n" e.Message, "Export Diagnostics", "Icon! 0x40000")
+        return {ok: false, cancelled: false, path: outPath, error: e.Message}
+    }
+
+    if (showUi) {
+        TrayTip("Sanitized diagnostics exported (secrets redacted): " outPath, "PresenterSync Diagnostics", 1)
+    }
+    return {ok: true, cancelled: false, path: outPath, report: report, error: ""}
+}
+
 _HotkeyValidatorGuard(*) => false
 _HotkeyValidatorNoop(*) => 0
 
@@ -6559,6 +6930,10 @@ ShowControlCenterWindow(cfg, state := "", *) {
     btnCheckUpd := ccGui.Add("Button", "x430 y252 w250 h30", "Check for GitHub Updates...")
     Theme.RegisterControl(ccGui, btnCheckUpd, "Button", "tabButton")
     btnCheckUpd.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))
+
+    btnExportDiagCC := ccGui.Add("Button", "x430 y288 w250 h30", "Export Sanitized Diagnostics...")
+    Theme.RegisterControl(ccGui, btnExportDiagCC, "Button", "tabButton")
+    btnExportDiagCC.OnEvent("Click", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
 
     tabs.UseTab()
 

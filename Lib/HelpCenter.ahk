@@ -105,7 +105,7 @@ GetRemoteHudAnatomyItems() {
             pillTitle: "Remote 1-Tier Mic Pill (LIVE / MUTED / Offline)",
             tier: "PresenterSync Remote (Dedicated Single-Pill Companion)",
             summary: "Displays real-time microphone mute state synchronized from your Primary streaming PC over LAN or the Internet Relay.",
-            states: "• Bright Green LIVE: Mic is open on host PC.`r`n• Red MUTED (Pulses): Mic is muted on host PC and pulses steadily.`r`n• Slate OFFLINE: Searching for host or LAN disconnected (uses your full chosen Transparency Level).`r`n• AUTH ERR (Red Border): Wrong OBS password (4009).",
+            states: "• Bright Green LIVE: Mic is open on host PC.`r`n• Red MUTED (Pulses): Mic is muted on host PC and pulses steadily.`r`n• Slate OFFLINE: Searching for host or LAN disconnected (uses your full chosen Transparency Level).`r`n• Amber PW REQ (Lock Icon): Host OBS WebSocket or Bridge requires a password (none configured yet).`r`n• Crimson AUTH ERR (Error Icon): Supplied password or pairing code was rejected (4009 / Bridge auth error).",
             actions: "• Press Pointer Mute Button (default b) or short-click the pill to toggle mic Mute/Unmute.`r`n• Toggle Pointer Mute Control ON/OFF with Ctrl+F12 (HUD still stays live when OFF).",
             configWhere: "• Tray -> Show Mute Indicator`r`n• Tray -> Pointer Controls -> Enable Pointer Mute`r`n• Tray -> Indicator Appearance -> Show Text Label / HUD Color Preset"
         },
@@ -534,6 +534,18 @@ GetHelpKnowledgeBase() {
         "REMOTE TRAY ITEM: Start with Windows`r`n`r`nWHAT IT DOES:`r`n• Strictly OFF by default so Smart Boards or secondary PCs never add startup entries silently.`r`n• When checked ON, registers PresenterSync Remote under HKCU\Software\Microsoft\Windows\CurrentVersion\Run to launch automatically on sign-in.",
         "remote start with windows autostart boot login registry run hkcu")
 
+    Add("rtray-shortcut", "Tray", "Remote Companion Tray Menu", "Create Desktop Shortcut for Instance...",
+        "Remote Tray > Create Desktop Shortcut for Instance...", "None", "Action Dialog",
+        "Generates a Windows Desktop .lnk shortcut pinned to -Instance <name> (and optional -Config path).",
+        "REMOTE TRAY ITEM: Create Desktop Shortcut for Instance...`r`n`r`nWHAT IT DOES:`r`n• Creates a 1-click Desktop .lnk launching PresenterSync_Remote.exe -Instance `"<name>`" so separate rooms, podiums, or Smart Boards maintain isolated INIs, HUD positions, and host targets.",
+        "remote desktop shortcut lnk instance multi instance room podium smart board")
+
+    Add("rfeat-auth-states", "Features", "Remote Clicker & Ergonomics", "Distinct OBS Password Required (PW REQ) vs Auth Failed (AUTH ERR)",
+        "Remote Mic HUD / Remote Tray / Change OBS Connection", "None", "Automatic status badge",
+        "Immediately distinguishes a missing blank OBS password (amber PW REQ) from a wrong/rejected password or pairing code (crimson AUTH ERR).",
+        "REMOTE AUTHENTICATION BADGES:`r`n• PW REQ (Amber Lock Badge): OBS WebSocket requires authentication and your password field is blank.`r`n• AUTH ERR (Crimson Error Badge): Supplied OBS password, Bridge code/token, or Internet Relay secret was rejected.`r`n• Both pause reconnect loops safely until you update credentials under Change OBS Connection...",
+        "remote pw req auth err 4009 password required failed lock badge status")
+
     Add("rtray-updates", "Tray", "Remote Companion Tray Menu", "Check for Updates...",
         "Remote Tray > Check for Updates...", "None", "Online GitHub check",
         "Checks GitHub Releases/Tags and reports if a newer PresenterSync / Remote version is available.",
@@ -633,11 +645,17 @@ GetHelpKnowledgeBase() {
         "EYES-FREE MUTE CONFIRMATION`r`n`r`n• Mute Audio Cue (Beep): Plays a distinct 2-tone rising chime when LIVE and a soft falling chime when MUTED—never blocking hotkey execution.`r`n• Mute Status Toast: Displays a crisp 1.5-second tooltip right near your cursor ('MIC MUTED' / 'MIC LIVE').`r`n• Both default to OFF so nothing changes unexpectedly until you turn them ON.",
         "audio cue beep toast eyes free chime tooltip confirmation")
 
-    Add("feat-profiles", "Features", "Profiles, Updates & Startup", "Persistent Named Configuration Profiles (.ini Snapshots)",
-        "Settings > Configuration Profiles / Control Center > Profiles & Sys", "1-click switch", "Default",
-        "Save distinct profiles for different rooms, workflows, or Smart Boards and switch in one click.",
-        "CONFIGURATION PROFILES`r`n`r`n• Create named snapshots such as 'Streaming Desk', 'Classroom Zoom', or 'Teams Webinar' stored cleanly inside MicOverlay_Config.ini.`r`n• Every profile remembers Audio Routing Mode, Conferencing App, Target Mic, Hotkeys, Pointer settings, HUD Theme, Color Preset, Scale, Opacity, and Screen Coordinates.`r`n• Loading a profile immediately reconfigures live telemetry backends, closes OBS sockets if moving to non-WS mode, updates hotkeys, and refreshes the HUD & Tray without restarting!",
-        "profiles save load switch delete manager snapshot presets classroom room")
+    Add("feat-profiles", "Features", "Profiles, Updates & Startup", "Persistent Named Configuration Profiles & App-Trigger Auto-Switch",
+        "Settings > Configuration Profiles / Manage Profiles & Auto Rules...", "1-click switch / Active App", "Default / Auto-Switch OFF",
+        "Save distinct profiles for different rooms or apps and optionally auto-switch whenever OBS, Zoom, or Teams becomes active.",
+        "CONFIGURATION PROFILES & APP-TRIGGER AUTO-SWITCH`r`n`r`n• Create named snapshots stored cleanly under [Profile:<Name>] in MicOverlay_Config.ini.`r`n• Optional App-Trigger Rules (e.g. obs64.exe=OBS|Zoom.exe=Zoom|ms-teams.exe=Teams): When enabled in Profile Manager or Tray -> Configuration Profiles -> Auto-Switch by Active App, PresenterSync switches automatically when a matching app focuses and restores your prior manual profile when focus leaves.",
+        "profiles save load switch delete manager snapshot presets classroom auto trigger obs64 zoom teams")
+
+    Add("feat-diagnostics", "Features", "Profiles, Updates & Startup", "One-Click Sanitized Diagnostics Export (Zero Secret Leakage)",
+        "Tray > Export Sanitized Diagnostics... / Help Status / Control Center", "None", "Redacts all passwords & tokens",
+        "Exports a troubleshooting report masking ObsPassword, PairingCodes, SessionToken, and Paired Device tokens.",
+        "SANITIZED DIAGNOSTICS EXPORT`r`n`r`n• Captures App/OS versions, Live Status summary, Host Bridge listener metrics, network endpoints, Auto-Profile state, and sanitized INI settings into a plain-text .txt file.`r`n• Automatically replaces all passwords, Internet/Session pairing codes, and device auth tokens with [REDACTED] before writing.",
+        "diagnostics export support bundle redact sanitize password token troubleshooting")
 
     Add("feat-system", "Features", "Profiles, Updates & Startup", "Control Center Dashboard, Start with Windows & Update Checker",
         "Tray > Control Center... / Settings > Start with Windows / Check for Updates...", "Auto-check manual only", "Startup OFF",
