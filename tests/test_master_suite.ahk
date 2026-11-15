@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v4.4.0
-;              and PresenterSync Remote v4.4.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v4.5.0
+;              and PresenterSync Remote v4.5.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -250,13 +250,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 4.4.0", UIConstants.APP_VERSION == "4.4.0")
+Assert("APP_VERSION updated to 4.5.0", UIConstants.APP_VERSION == "4.5.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v4.4.0 and Remote Host",
-    InStr(summaryTxt, "v4.4.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v4.5.0 and Remote Host",
+    InStr(summaryTxt, "v4.5.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -563,7 +563,7 @@ AuditDialogGeometry(dlgName, dlgObj, minClientW := 260, minClientH := 120) {
 }
 
 AuditDialogGeometry("HelpWindow", ShowHelpWindow(cfgScene, stScene), 650, 500)
-AuditDialogGeometry("AboutWindow", ShowAboutWindow(cfgScene, stScene), 340, 220)
+AuditDialogGeometry("AboutWindow", ShowAboutWindow(cfgScene, stScene), 460, 520)
 AuditDialogGeometry("ChangeAppHotkeysUI", ChangeAppHotkeysUI(cfgScene), 300, 220)
 AuditDialogGeometry("ChangeObsSettingsUI", ChangeObsSettingsUI(cfgScene), 280, 280)
 AuditDialogGeometry("ChangeZoomShortcutsUI", ChangeZoomShortcutsUI(cfgScene), 300, 180)
@@ -1226,7 +1226,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v4.4.0", "4.3.0") == 1
+    CompareSemVer("v4.5.0", "4.4.0") == 1
+    && CompareSemVer("v4.4.0", "4.3.0") == 1
     && CompareSemVer("v4.3.0", "4.1.1") == 1
     && CompareSemVer("v4.1.1", "4.1.0") == 1
     && CompareSemVer("v4.1.0", "4.0.1") == 1
@@ -2016,8 +2017,8 @@ HudSnake._W := savedW
 HudSnake._H := savedH
 HudSnake._dpi := savedDpi
 
-upd440 := CheckForUpdates("4.4.0", '{"tag_name":"v4.4.0","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v4.4.0"}', true)
-Assert("v4.4.0 CheckForUpdates recognizes current version 4.4.0 as up_to_date", upd440.status == "up_to_date")
+upd450 := CheckForUpdates("4.5.0", '{"tag_name":"v4.5.0","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v4.5.0"}', true)
+Assert("v4.5.0 CheckForUpdates recognizes current version 4.5.0 as up_to_date", upd450.status == "up_to_date")
 
 ; ==============================================================================
 ; SECTION 28: v4.3.0 REMOTE OFFLINE ALPHA, SCALING & VISUAL RENDER CHECKS
@@ -2160,6 +2161,152 @@ Assert("v4.4.0 HudSnake zero-displacement crash frame avoids duplicate corner ve
     zeroNoDupOk)
 HudSnake.Stop()
 
+; ==============================================================================
+; SECTION 30: v4.5.0 ENLARGED BONUS FRUIT, CENTERED OVERLAYS & PLAYFUL CHORD
+; ==============================================================================
+MeasureFoodSpan(kind) {
+    cfgF := Config(testIni)
+    cfgF.HideHud := false
+    cfgF.AppTheme := "dark"
+    stF := OverlayState(cfgF)
+    HudSnake.Start(cfgF, stF, true)
+    HudSnake._cell := 24.0
+    HudSnake._dpi := 1.0
+    HudSnake._gridOffX := 60.0 - 12.0
+    HudSnake._gridOffY := 60.0 - 12.0
+    nowU := HudSnake._NowUs()
+    HudSnake._food := { col: 0, row: 0, kind: kind, bornUs: nowU, ttlMs: (kind = "bonus" ? 9000 : 0), pts: (kind = "bonus" ? 30 : 10) }
+
+    pBmp := 0
+    DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", 120, "Int", 120, "Int", 0, "Int", 0x26200A, "Ptr", 0, "Ptr*", &pBmp)
+    pG := 0
+    DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", pBmp, "Ptr*", &pG)
+    DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pG, "Int", 4)
+    DllCall("gdiplus\GdipGraphicsClear", "Ptr", pG, "UInt", 0)
+    HudSnake._DrawFood(pG, HudSnake._GetActivePalette(), true, nowU)
+    DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pG)
+
+    minX := 999, maxX := -1, minY := 999, maxY := -1
+    loop 120 {
+        pxX := A_Index - 1
+        c1 := 0
+        DllCall("gdiplus\GdipBitmapGetPixel", "Ptr", pBmp, "Int", pxX, "Int", 60, "UInt*", &c1)
+        if ((c1 >> 24) & 0xFF) > 10 {
+            minX := Min(minX, pxX), maxX := Max(maxX, pxX)
+        }
+    }
+    loop 120 {
+        pxY := A_Index - 1
+        c2 := 0
+        DllCall("gdiplus\GdipBitmapGetPixel", "Ptr", pBmp, "Int", 60, "Int", pxY, "UInt*", &c2)
+        if ((c2 >> 24) & 0xFF) > 10 {
+            minY := Min(minY, pxY), maxY := Max(maxY, pxY)
+        }
+    }
+    DllCall("gdiplus\GdipDisposeImage", "Ptr", pBmp)
+    HudSnake.Stop()
+    return { w: (maxX >= minX ? maxX - minX + 1 : 0), h: (maxY >= minY ? maxY - minY + 1 : 0) }
+}
+
+normSpan := MeasureFoodSpan("normal")
+bonusSpan := MeasureFoodSpan("bonus")
+bonusAreaRatio := (normSpan.w > 0 && normSpan.h > 0) ? (Float(bonusSpan.w * bonusSpan.h) / Float(normSpan.w * normSpan.h)) : 0.0
+Assert("v4.5.0 HudSnake special bonus fruit is >= 2x wider/taller (~4x area) than normal fruit",
+    normSpan.w > 12 && bonusSpan.w >= (normSpan.w * 1.95) && bonusSpan.h >= (normSpan.h * 1.95) && bonusAreaRatio >= 3.8,
+    Format("norm={}x{} bonus={}x{} areaRatio={:.2f}", normSpan.w, normSpan.h, bonusSpan.w, bonusSpan.h, bonusAreaRatio))
+
+; Verify Help Center exposes Alt+Ctrl+Shift+S playfully as "Try at your own risk" without leaking "Snake" in visible copy
+riskHits := SearchHelpEntries("Try at your own risk", "All", false)
+hasSecretRisk := false, hasScRisk := false, visibleSnakeSpoil := false
+for rh in riskHits {
+    if (rh.id = "feat-easter-snake")
+        hasSecretRisk := true
+    if (rh.id = "sc-global")
+        hasScRisk := true
+    visTxt := rh.title " " rh.menuPath " " rh.defVal " " rh.summary " " rh.body
+    if (InStr(visTxt, "Snake") || InStr(visTxt, "Easter"))
+        visibleSnakeSpoil := true
+}
+Assert("v4.5.0 Help Search 'Try at your own risk' surfaces secret chord without visibly spoiling Snake",
+    hasSecretRisk && hasScRisk && !visibleSnakeSpoil,
+    Format("secret={} sc={} visSpoil={}", hasSecretRisk, hasScRisk, visibleSnakeSpoil))
+
+; Verify Primary ShowAboutWindow contains upgraded v4.5.0 capabilities text & zero Snake leaks
+cfgAb := Config(testIni)
+stAb := OverlayState(cfgAb)
+abGui := ShowAboutWindow(cfgAb, stAb)
+abTextDump := ""
+for abCtrl in abGui {
+    try abTextDump .= abCtrl.Text "`n"
+}
+WinClose("ahk_id " abGui.Hwnd)
+Assert("v4.5.0 Primary ShowAboutWindow displays full Primary Host capabilities without Snake leak",
+    InStr(abTextDump, "4.5.0") && InStr(abTextDump, "4-Tier Live HUD Stack") && InStr(abTextDump, "Remote Companion Host")
+    && !InStr(abTextDump, "Snake") && !InStr(abTextDump, "Easter"))
+
+; Verify Help Window Shortcuts tab renders Alt + Ctrl + Shift + S playfully without leaking Snake
+helpTabGui := ShowHelpWindow(cfgAb, stAb)
+helpTextDump := ""
+for hCtrl in helpTabGui {
+    try helpTextDump .= hCtrl.Text "`n"
+}
+WinClose("ahk_id " helpTabGui.Hwnd)
+Assert("v4.5.0 Help Shortcuts tab displays Alt + Ctrl + Shift + S playfully ('Try at your own risk')",
+    InStr(helpTextDump, "Alt + Ctrl + Shift + S") && InStr(helpTextDump, "Try at your own risk"))
+
+; Verify Snake Scoreboard & Status Banner render cleanly in Light & Dark modes without errors
+for themeName in ["dark", "light"] {
+    cfgOv := Config(testIni)
+    cfgOv.AppTheme := themeName
+    stOv := OverlayState(cfgOv)
+    HudSnake.Start(cfgOv, stOv, true)
+    HudSnake._W := 1200
+    HudSnake._H := 500
+    HudSnake._dpi := 1.0
+    HudSnake._score := 150
+    HudSnake._bestScore := 150
+    for phaseName in ["paused", "gameover"] {
+        HudSnake.Phase := phaseName
+        HudSnake._deathReason := "self"
+        pBmpOv := 0
+        DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", 1200, "Int", 500, "Int", 0, "Int", 0x26200A, "Ptr", 0, "Ptr*", &pBmpOv)
+        pGOv := 0
+        DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", pBmpOv, "Ptr*", &pGOv)
+        DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGOv, "Int", 4)
+        DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGOv, "Int", 5)
+        isDarkOv := (themeName = "dark")
+        palOv := HudSnake._GetActivePalette()
+        HudSnake._DrawScoreboard(pGOv, palOv, isDarkOv)
+        HudSnake._DrawStatusBanner(pGOv, palOv, isDarkOv)
+        DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGOv)
+        DllCall("gdiplus\GdipDisposeImage", "Ptr", pBmpOv)
+    }
+    HudSnake.Stop()
+}
+Assert("v4.5.0 HudSnake centered Scoreboard & Paused/GameOver banners render cleanly in Dark & Light themes", true)
+
+; Verify live non-headless HudSnake.Start(cfg, st, false) creates real layered canvas, hides HUD, toggles pause/edge, and restores HUD
+cfgLiveSnk := Config(testIni)
+stLiveSnk := OverlayState(cfgLiveSnk)
+InitHUD(cfgLiveSnk, stLiveSnk)
+okLiveSnkStart := HudSnake.Start(cfgLiveSnk, stLiveSnk, false)
+Sleep(80)
+liveSnkHw := IsObject(HudSnake._gui) ? HudSnake._gui.Hwnd : 0
+liveSnkVis := liveSnkHw ? DllCall("IsWindowVisible", "Ptr", liveSnkHw, "Int") : 0
+micHidSnk := (IsGuiValid(stLiveSnk.MicGui) && !DllCall("IsWindowVisible", "Ptr", stLiveSnk.MicGui.Hwnd, "Int"))
+morphAtStart := (HudSnake.Phase = "morph")
+Sleep(420) ; Allow 360ms pill morph transition to settle into active playing phase
+HudSnake.TogglePause()
+phasePausedSnk := HudSnake.Phase
+HudSnake.ToggleEdgeMode()
+wrapOnSnk := HudSnake._edgeWrap
+HudSnake.Stop()
+micRestSnk := (IsGuiValid(stLiveSnk.MicGui) && DllCall("IsWindowVisible", "Ptr", stLiveSnk.MicGui.Hwnd, "Int"))
+try stLiveSnk.DestroyAllHuds()
+Assert("v4.5.0 HudSnake live non-headless canvas morphs, hides HUD, toggles Pause/Edge, and restores HUD cleanly",
+    okLiveSnkStart && liveSnkHw != 0 && liveSnkVis == 1 && micHidSnk && morphAtStart && phasePausedSnk == "paused" && wrapOnSnk && micRestSnk,
+    Format("start={} hw={} vis={} micHid={} morph={} phase={} wrap={} rest={}", okLiveSnkStart, liveSnkHw, liveSnkVis, micHidSnk, morphAtStart, phasePausedSnk, wrapOnSnk, micRestSnk))
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -2167,7 +2314,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.4.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.5.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
