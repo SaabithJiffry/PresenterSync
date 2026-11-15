@@ -292,6 +292,12 @@ private fun RemoteDashboardScreen(
         app.apkSelfInstaller.startThrottledStartupCheck()
     }
 
+    LaunchedEffect(cfg.keepScreenOn) {
+        val win = (context as? android.app.Activity)?.window ?: return@LaunchedEffect
+        val flag = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        if (cfg.keepScreenOn) win.addFlags(flag) else win.clearFlags(flag)
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -539,7 +545,19 @@ private fun RemoteDashboardScreen(
                                     onOpenAbout = { showAboutDialog = true },
                                     onPptPrev = { app.connectionManager.sendPptPrev("status_card") },
                                     onPptNext = { app.connectionManager.sendPptNext("status_card") },
-                                    onToggleRecord = { app.connectionManager.sendToggleRecord("status_card") }
+                                    onToggleRecord = { app.connectionManager.sendToggleRecord("status_card") },
+                                    onSelectProfile = { pid ->
+                                        if (app.configStore.switchToProfile(pid) != null) {
+                                            if (conn.serviceRunning) {
+                                                FloatingHudForegroundService.startService(
+                                                    context,
+                                                    FloatingHudForegroundService.ACTION_RECONNECT
+                                                )
+                                            } else {
+                                                app.connectionManager.reconnectNow()
+                                            }
+                                        }
+                                    }
                                 )
 
                                 FormFactorOptimizationCard(
@@ -604,7 +622,19 @@ private fun RemoteDashboardScreen(
                             onOpenAbout = { showAboutDialog = true },
                             onPptPrev = { app.connectionManager.sendPptPrev("status_card") },
                             onPptNext = { app.connectionManager.sendPptNext("status_card") },
-                            onToggleRecord = { app.connectionManager.sendToggleRecord("status_card") }
+                            onToggleRecord = { app.connectionManager.sendToggleRecord("status_card") },
+                            onSelectProfile = { pid ->
+                                if (app.configStore.switchToProfile(pid) != null) {
+                                    if (conn.serviceRunning) {
+                                        FloatingHudForegroundService.startService(
+                                            context,
+                                            FloatingHudForegroundService.ACTION_RECONNECT
+                                        )
+                                    } else {
+                                        app.connectionManager.reconnectNow()
+                                    }
+                                }
+                            }
                         )
 
                         FormFactorOptimizationCard(
@@ -697,7 +727,8 @@ private fun StatusAndActionsCard(
     onOpenAbout: () -> Unit,
     onPptPrev: () -> Unit = {},
     onPptNext: () -> Unit = {},
-    onToggleRecord: () -> Unit = {}
+    onToggleRecord: () -> Unit = {},
+    onSelectProfile: (String) -> Unit = {}
 ) {
     val statusColor = when {
         conn.connStatus == ConnStatus.AUTH_FAILED -> Color(0xFFDC2626)
@@ -902,6 +933,28 @@ private fun StatusAndActionsCard(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("Next ▶", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+
+            if (cfg.savedProfiles.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Saved Rooms / Host Profiles",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        cfg.savedProfiles.forEach { prof ->
+                            FilterChip(
+                                selected = cfg.activeProfileId == prof.id,
+                                onClick = { onSelectProfile(prof.id) },
+                                label = { Text(prof.name, maxLines = 1, softWrap = false) }
+                            )
+                        }
                     }
                 }
             }

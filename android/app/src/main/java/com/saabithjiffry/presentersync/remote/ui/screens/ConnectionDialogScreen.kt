@@ -125,6 +125,13 @@ fun ConnectionSettingsForm(
     var targetMicName by remember(initialConfig) { mutableStateOf(initialConfig.targetMicName) }
     var heartbeatStr by remember(initialConfig) { mutableStateOf(initialConfig.heartbeatSeconds.toString()) }
     var enableRelayFallback by remember(initialConfig) { mutableStateOf(initialConfig.enableRelayFallback) }
+    var savedProfiles by remember(initialConfig) { mutableStateOf(initialConfig.savedProfiles) }
+    var selectedProfileId by remember(initialConfig) { mutableStateOf(initialConfig.activeProfileId) }
+    var profileNameInput by remember(initialConfig) {
+        mutableStateOf(
+            initialConfig.savedProfiles.firstOrNull { it.id == initialConfig.activeProfileId }?.name.orEmpty()
+        )
+    }
 
     var testing by remember { mutableStateOf(false) }
     var pairing by remember { mutableStateOf(false) }
@@ -312,6 +319,111 @@ fun ConnectionSettingsForm(
                                     Spacer(Modifier.width(6.dp))
                                 }
                                 Text("Discover & Pair", maxLines = 1, softWrap = false)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Saved Room / Host Profiles Switcher
+            ExplorerCard(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                borderColor = MaterialTheme.colorScheme.outline,
+                contentPadding = 14
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Saved Rooms & Host Profiles",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (savedProfiles.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            savedProfiles.forEach { prof ->
+                                FilterChip(
+                                    selected = selectedProfileId == prof.id,
+                                    onClick = {
+                                        selectedProfileId = prof.id
+                                        profileNameInput = prof.name
+                                        networkMode = prof.networkMode
+                                        hostAddress = prof.hostAddress
+                                        hostPortStr = prof.hostPort.toString()
+                                        bridgePortStr = prof.bridgePort.toString()
+                                        obsPassword = prof.obsPassword
+                                        pairingCode = prof.internetPairingCode
+                                        sessionCodeInput = prof.sessionPairingCode
+                                        targetMicName = prof.targetMicName
+                                        heartbeatStr = prof.heartbeatSeconds.toString()
+                                        configStore.switchToProfile(prof.id)
+                                        statusText = "Loaded room profile '${prof.name}'"
+                                    },
+                                    label = { Text(prof.name, maxLines = 1, softWrap = false) }
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "Save room IPs & codes once, then switch halls in one tap.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = profileNameInput,
+                            onValueChange = { profileNameInput = it },
+                            label = { Text("Room / Host Name") },
+                            placeholder = { Text("e.g. Lecture Hall 201") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                val hPort = hostPortStr.trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: AppConstants.DEFAULT_OBS_PORT
+                                val bPort = bridgePortStr.trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: AppConstants.DEFAULT_BRIDGE_PORT
+                                val hb = heartbeatStr.trim().toIntOrNull()?.takeIf { it in 10..3600 } ?: AppConstants.DEFAULT_HEARTBEAT_SECONDS
+                                val cleanMic = targetMicName.trim().ifEmpty { AppConstants.DEFAULT_MIC_NAME }
+                                configStore.update { prev ->
+                                    prev.copy(
+                                        networkMode = networkMode,
+                                        sessionPairingCode = sessionCodeInput.trim(),
+                                        internetPairingCode = pairingCode.trim(),
+                                        hostAddress = hostAddress.trim(),
+                                        hostPort = hPort,
+                                        bridgePort = bPort,
+                                        obsPassword = obsPassword,
+                                        targetMicName = cleanMic,
+                                        heartbeatSeconds = hb
+                                    )
+                                }
+                                val saved = configStore.saveCurrentAsProfile(profileNameInput)
+                                savedProfiles = configStore.current.savedProfiles
+                                selectedProfileId = saved.id
+                                profileNameInput = saved.name
+                                statusText = "✓ Saved room '${saved.name}'"
+                            },
+                            contentPadding = CompactExplorerButtonPadding
+                        ) {
+                            Text("Save Room", maxLines = 1, softWrap = false)
+                        }
+                        if (selectedProfileId.isNotEmpty() && savedProfiles.any { it.id == selectedProfileId }) {
+                            IconButton(
+                                onClick = {
+                                    configStore.deleteSavedProfile(selectedProfileId)
+                                    savedProfiles = configStore.current.savedProfiles
+                                    selectedProfileId = ""
+                                    profileNameInput = ""
+                                    statusText = "Deleted saved room profile."
+                                }
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Delete room profile")
                             }
                         }
                     }

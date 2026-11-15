@@ -7,6 +7,8 @@ import com.saabithjiffry.presentersync.remote.input.BubbleGestureConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class NetworkMode(val label: String) {
     LAN("LAN"),
@@ -32,6 +34,82 @@ enum class ThemeMode(val label: String) {
                 else -> SYSTEM
             }
         }
+    }
+}
+
+data class SavedHostProfile(
+    val id: String,
+    val name: String,
+    val networkMode: NetworkMode = NetworkMode.LAN,
+    val hostAddress: String = "127.0.0.1",
+    val hostPort: Int = AppConstants.DEFAULT_OBS_PORT,
+    val bridgePort: Int = AppConstants.DEFAULT_BRIDGE_PORT,
+    val obsPassword: String = "",
+    val internetPairingCode: String = "",
+    val sessionToken: String = "",
+    val sessionPairingCode: String = "",
+    val targetMicName: String = AppConstants.DEFAULT_MIC_NAME,
+    val heartbeatSeconds: Int = AppConstants.DEFAULT_HEARTBEAT_SECONDS
+)
+
+object SavedHostProfileCodec {
+    fun toJsonString(profiles: List<SavedHostProfile>): String {
+        val arr = JSONArray()
+        for (p in profiles) {
+            val obj = JSONObject()
+                .put("id", p.id)
+                .put("name", p.name)
+                .put("networkMode", p.networkMode.label)
+                .put("hostAddress", p.hostAddress)
+                .put("hostPort", p.hostPort)
+                .put("bridgePort", p.bridgePort)
+                .put("obsPassword", p.obsPassword)
+                .put("internetPairingCode", p.internetPairingCode)
+                .put("sessionToken", p.sessionToken)
+                .put("sessionPairingCode", p.sessionPairingCode)
+                .put("targetMicName", p.targetMicName)
+                .put("heartbeatSeconds", p.heartbeatSeconds)
+            arr.put(obj)
+        }
+        return arr.toString()
+    }
+
+    fun fromJsonString(raw: String): List<SavedHostProfile> {
+        if (raw.isBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            val list = ArrayList<SavedHostProfile>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val id = obj.optString("id", "").trim()
+                val name = obj.optString("name", "").trim()
+                if (id.isEmpty() || name.isEmpty()) continue
+                val hPort = obj.optInt("hostPort", AppConstants.DEFAULT_OBS_PORT)
+                    .let { if (it in 1..65535) it else AppConstants.DEFAULT_OBS_PORT }
+                val bPort = obj.optInt("bridgePort", AppConstants.DEFAULT_BRIDGE_PORT)
+                    .let { if (it in 1..65535) it else AppConstants.DEFAULT_BRIDGE_PORT }
+                val hb = obj.optInt("heartbeatSeconds", AppConstants.DEFAULT_HEARTBEAT_SECONDS)
+                    .let { if (it in 10..3600) it else AppConstants.DEFAULT_HEARTBEAT_SECONDS }
+                list.add(
+                    SavedHostProfile(
+                        id = id,
+                        name = name,
+                        networkMode = NetworkMode.fromRaw(obj.optString("networkMode", "LAN")),
+                        hostAddress = obj.optString("hostAddress", "127.0.0.1"),
+                        hostPort = hPort,
+                        bridgePort = bPort,
+                        obsPassword = obj.optString("obsPassword", ""),
+                        internetPairingCode = obj.optString("internetPairingCode", "").trim(),
+                        sessionToken = obj.optString("sessionToken", "").trim(),
+                        sessionPairingCode = obj.optString("sessionPairingCode", "").trim(),
+                        targetMicName = obj.optString("targetMicName", AppConstants.DEFAULT_MIC_NAME)
+                            .trim().ifEmpty { AppConstants.DEFAULT_MIC_NAME },
+                        heartbeatSeconds = hb
+                    )
+                )
+            }
+            list
+        }.getOrDefault(emptyList())
     }
 }
 
@@ -86,6 +164,10 @@ data class RemoteConfig(
     val lastUpdateCheckMs: Long = 0L,
     val skippedUpdateVersion: String = "",
     val deviceProfileMode: DeviceProfileMode = DeviceProfileMode.AUTO,
+    val keepScreenOn: Boolean = false,
+    val idleDimAfterSec: Int = 0,
+    val savedProfiles: List<SavedHostProfile> = emptyList(),
+    val activeProfileId: String = "",
     val savedX: Int = -1,
     val savedY: Int = -1,
     val savedXRatio: Float = -1f,
@@ -186,6 +268,10 @@ class RemoteConfigStore(context: Context) {
             lastUpdateCheckMs = prefs.getLong("lastUpdateCheckMs", 0L).coerceAtLeast(0L),
             skippedUpdateVersion = prefs.getString("skippedUpdateVersion", "").orEmpty().trim(),
             deviceProfileMode = DeviceProfileMode.fromRaw(prefs.getString("deviceProfileMode", "Auto")),
+            keepScreenOn = prefs.getBoolean("keepScreenOn", false),
+            idleDimAfterSec = prefs.getInt("idleDimAfterSec", 0).coerceIn(0, 600),
+            savedProfiles = SavedHostProfileCodec.fromJsonString(prefs.getString("savedProfilesJson", "").orEmpty()),
+            activeProfileId = prefs.getString("activeProfileId", "").orEmpty().trim(),
             savedX = prefs.getInt("savedX", -1),
             savedY = prefs.getInt("savedY", -1),
             savedXRatio = prefs.getFloat("savedXRatio", -1f).let { if (it in 0f..1f) it else -1f },
@@ -287,11 +373,83 @@ class RemoteConfigStore(context: Context) {
             enableMagneticSnap = true,
             hudClickThrough = false,
             hudAutoDodge = false,
+            keepScreenOn = false,
+            idleDimAfterSec = 0,
             opacityLevel = AppConstants.OPACITY_FROSTED,
             indicatorScale = 1.0f,
             themeMode = ThemeMode.SYSTEM,
             hudColorPreset = "Standard"
         )
+    }
+
+    @Synchronized
+    fun saveCurrentAsProfile(profileName: String): SavedHostProfile {
+        val prev = current
+        val fallbackName = prev.hostAddress
+            .split(",", ";")
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?: "Room ${prev.savedProfiles.size + 1}"
+        val cleanName = profileName.trim().ifEmpty { fallbackName }
+        val existing = prev.savedProfiles.firstOrNull {
+            (prev.activeProfileId.isNotEmpty() && it.id == prev.activeProfileId && it.name.equals(cleanName, ignoreCase = true)) ||
+                it.name.equals(cleanName, ignoreCase = true)
+        }
+        val profileId = existing?.id ?: "prof-${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(6)}"
+        val entry = SavedHostProfile(
+            id = profileId,
+            name = cleanName,
+            networkMode = prev.networkMode,
+            hostAddress = prev.hostAddress,
+            hostPort = prev.hostPort,
+            bridgePort = prev.bridgePort,
+            obsPassword = prev.obsPassword,
+            internetPairingCode = prev.internetPairingCode,
+            sessionToken = prev.sessionToken,
+            sessionPairingCode = prev.sessionPairingCode,
+            targetMicName = prev.targetMicName,
+            heartbeatSeconds = prev.heartbeatSeconds
+        )
+        val updatedList = prev.savedProfiles.filterNot { it.id == profileId } + entry
+        update {
+            it.copy(
+                savedProfiles = updatedList,
+                activeProfileId = profileId
+            )
+        }
+        return entry
+    }
+
+    @Synchronized
+    fun switchToProfile(profileId: String): SavedHostProfile? {
+        val target = current.savedProfiles.firstOrNull { it.id == profileId } ?: return null
+        update {
+            it.copy(
+                networkMode = target.networkMode,
+                hostAddress = target.hostAddress,
+                hostPort = target.hostPort,
+                bridgePort = target.bridgePort,
+                obsPassword = target.obsPassword,
+                internetPairingCode = target.internetPairingCode,
+                sessionToken = target.sessionToken,
+                sessionPairingCode = target.sessionPairingCode,
+                targetMicName = target.targetMicName,
+                heartbeatSeconds = target.heartbeatSeconds,
+                activeProfileId = target.id,
+                firstRun = false
+            )
+        }
+        return target
+    }
+
+    @Synchronized
+    fun deleteSavedProfile(profileId: String) {
+        update { prev ->
+            prev.copy(
+                savedProfiles = prev.savedProfiles.filterNot { it.id == profileId },
+                activeProfileId = if (prev.activeProfileId == profileId) "" else prev.activeProfileId
+            )
+        }
     }
 
     private fun saveToPrefs(c: RemoteConfig) {
@@ -343,6 +501,10 @@ class RemoteConfigStore(context: Context) {
             .putLong("lastUpdateCheckMs", c.lastUpdateCheckMs)
             .putString("skippedUpdateVersion", c.skippedUpdateVersion)
             .putString("deviceProfileMode", c.deviceProfileMode.rawValue)
+            .putBoolean("keepScreenOn", c.keepScreenOn)
+            .putInt("idleDimAfterSec", c.idleDimAfterSec)
+            .putString("savedProfilesJson", SavedHostProfileCodec.toJsonString(c.savedProfiles))
+            .putString("activeProfileId", c.activeProfileId)
             .putInt("savedX", c.savedX)
             .putInt("savedY", c.savedY)
             .putFloat("savedXRatio", c.savedXRatio)

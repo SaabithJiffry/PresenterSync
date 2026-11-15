@@ -10,6 +10,7 @@ import java.io.File
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
 import com.saabithjiffry.presentersync.remote.service.FloatingHudForegroundService
 import com.saabithjiffry.presentersync.remote.ui.overlay.ScreenBoundsCalculator
 import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
@@ -94,5 +95,52 @@ class OverlayAndLifecycleInstrumentationTest {
         } finally {
             dummyApk.delete()
         }
+    }
+
+    @Test
+    fun m3SmartBoardProfilesKeepScreenOnAndAutoDimPersist() {
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
+        val store = RemoteConfigStore(ctx)
+
+        store.update {
+            it.copy(
+                hostAddress = "192.168.50.10",
+                targetMicName = "Hall A Mic",
+                keepScreenOn = true,
+                idleDimAfterSec = 30,
+                longPressDurationMs = 900,
+                veryLongPressDurationMs = 1900,
+                firstRun = false
+            )
+        }
+        val hallA = store.saveCurrentAsProfile("Lecture Hall A")
+
+        store.update { it.copy(hostAddress = "192.168.60.20", targetMicName = "Lab B Mic") }
+        val labB = store.saveCurrentAsProfile("Science Lab B")
+
+        val reloaded = RemoteConfigStore(ctx)
+        assertTrue(reloaded.current.keepScreenOn)
+        assertEquals(30, reloaded.current.idleDimAfterSec)
+        assertEquals(900, reloaded.current.longPressDurationMs)
+        assertEquals(1900, reloaded.current.veryLongPressDurationMs)
+        assertTrue(reloaded.current.savedProfiles.any { it.id == hallA.id && it.name == "Lecture Hall A" })
+        assertTrue(reloaded.current.savedProfiles.any { it.id == labB.id && it.name == "Science Lab B" })
+
+        val switched = reloaded.switchToProfile(hallA.id)
+        assertEquals("192.168.50.10", switched?.hostAddress)
+        assertEquals("192.168.50.10", reloaded.current.hostAddress)
+        assertEquals("Hall A Mic", reloaded.current.targetMicName)
+        assertEquals(hallA.id, reloaded.current.activeProfileId)
+
+        reloaded.resetAppearance()
+        assertFalse(reloaded.current.keepScreenOn)
+        assertEquals(0, reloaded.current.idleDimAfterSec)
+        assertEquals(600, reloaded.current.longPressDurationMs)
+        assertEquals(1400, reloaded.current.veryLongPressDurationMs)
+        assertTrue("resetAppearance must preserve saved room profiles", reloaded.current.savedProfiles.size >= 2)
+
+        reloaded.deleteSavedProfile(hallA.id)
+        reloaded.deleteSavedProfile(labB.id)
+        assertFalse(reloaded.current.savedProfiles.any { it.id == hallA.id || it.id == labB.id })
     }
 }
