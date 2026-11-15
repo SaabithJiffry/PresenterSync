@@ -157,16 +157,16 @@ class FloatingMicOverlayManager(
         val w = view.computeTargetWidthPx()
         val h = view.computeTargetHeightPx()
 
-        val screen = getScreenSizePx()
-        val defaultX = (screen.first - w - (AppConstants.SCREEN_MARGIN_X * density).roundToInt()).coerceAtLeast(0)
-        val defaultY = (screen.second - h - (AppConstants.SCREEN_MARGIN_Y * density).roundToInt()).coerceAtLeast(0)
-
-        val startX = if (currentConfig.savedX >= 0) {
-            currentConfig.savedX.coerceIn(0, (screen.first - w).coerceAtLeast(0))
-        } else defaultX
-        val startY = if (currentConfig.savedY >= 0) {
-            currentConfig.savedY.coerceIn(0, (screen.second - h).coerceAtLeast(0))
-        } else defaultY
+        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+        val pos = ScreenBoundsCalculator.resolvePosition(
+            savedX = currentConfig.savedX,
+            savedY = currentConfig.savedY,
+            bounds = bounds,
+            viewWidthPx = w,
+            viewHeightPx = h,
+            marginXPx = (AppConstants.SCREEN_MARGIN_X * density).roundToInt(),
+            marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt()
+        )
 
         val params = WindowManager.LayoutParams(
             w,
@@ -176,8 +176,8 @@ class FloatingMicOverlayManager(
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = startX
-            y = startY
+            x = pos.x
+            y = pos.y
         }
 
         setupTouchHandling(view, params)
@@ -192,13 +192,22 @@ class FloatingMicOverlayManager(
         }
     }
 
+    fun onDisplayConfigurationChanged() {
+        handler.post {
+            if (attached) {
+                updateDimensionsAndPosition()
+            }
+        }
+    }
+
     private fun updateDimensionsAndPosition() {
         val view = pillView ?: return
         val params = layoutParams ?: return
         view.updateRenderState(currentConfig, currentConn, currentAlpha)
         val newW = view.computeTargetWidthPx()
         val newH = view.computeTargetHeightPx()
-        val screen = getScreenSizePx()
+        val density = context.resources.displayMetrics.density
+        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
 
         var changed = false
         if (params.width != newW || params.height != newH) {
@@ -207,22 +216,19 @@ class FloatingMicOverlayManager(
             changed = true
         }
 
-        val targetX = if (currentConfig.savedX >= 0) {
-            currentConfig.savedX.coerceIn(0, (screen.first - newW).coerceAtLeast(0))
-        } else {
-            val density = context.resources.displayMetrics.density
-            (screen.first - newW - (AppConstants.SCREEN_MARGIN_X * density).roundToInt()).coerceAtLeast(0)
-        }
-        val targetY = if (currentConfig.savedY >= 0) {
-            currentConfig.savedY.coerceIn(0, (screen.second - newH).coerceAtLeast(0))
-        } else {
-            val density = context.resources.displayMetrics.density
-            (screen.second - newH - (AppConstants.SCREEN_MARGIN_Y * density).roundToInt()).coerceAtLeast(0)
-        }
+        val target = ScreenBoundsCalculator.resolvePosition(
+            savedX = currentConfig.savedX,
+            savedY = currentConfig.savedY,
+            bounds = bounds,
+            viewWidthPx = newW,
+            viewHeightPx = newH,
+            marginXPx = (AppConstants.SCREEN_MARGIN_X * density).roundToInt(),
+            marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt()
+        )
 
-        if (!isDragging && (params.x != targetX || params.y != targetY)) {
-            params.x = targetX
-            params.y = targetY
+        if (!isDragging && (params.x != target.x || params.y != target.y)) {
+            params.x = target.x
+            params.y = target.y
             changed = true
         }
 
@@ -277,9 +283,13 @@ class FloatingMicOverlayManager(
                         stopBreathing()
                     }
                     if (movedPastSlop) {
-                        val screen = getScreenSizePx()
-                        params.x = (startParamX + dx.roundToInt()).coerceIn(0, (screen.first - params.width).coerceAtLeast(0))
-                        params.y = (startParamY + dy.roundToInt()).coerceIn(0, (screen.second - params.height).coerceAtLeast(0))
+                        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+                        val minX = bounds.left
+                        val maxX = (bounds.right - params.width).coerceAtLeast(minX)
+                        val minY = bounds.top
+                        val maxY = (bounds.bottom - params.height).coerceAtLeast(minY)
+                        params.x = (startParamX + dx.roundToInt()).coerceIn(minX, maxX)
+                        params.y = (startParamY + dy.roundToInt()).coerceIn(minY, maxY)
                         try {
                             windowManager.updateViewLayout(view, params)
                         } catch (_: Exception) {
@@ -321,11 +331,6 @@ class FloatingMicOverlayManager(
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         context.startActivity(intent)
-    }
-
-    private fun getScreenSizePx(): Pair<Int, Int> {
-        val dm = context.resources.displayMetrics
-        return dm.widthPixels to dm.heightPixels
     }
 
     private fun startBreathing() {

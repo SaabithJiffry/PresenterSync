@@ -82,6 +82,7 @@ class ConnectionManager(
     private var relayClient: RelayClient? = null
     private var connectLoopJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var networkDebounceJob: Job? = null
     private var networkCallbackRegistered = false
 
     private val connectivityManager =
@@ -89,8 +90,40 @@ class ConnectionManager(
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            scheduleNetworkReconnect()
+        }
+
+        override fun onLost(network: Network) {
+            scheduleNetworkReconnect()
+        }
+
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
             val st = _uiState.value
             if (st.serviceRunning && !st.connected && st.connStatus != ConnStatus.AUTH_FAILED) {
+                scheduleNetworkReconnect()
+            }
+        }
+    }
+
+    private fun scheduleNetworkReconnect() {
+        val st = _uiState.value
+        if (!st.serviceRunning || st.connStatus == ConnStatus.AUTH_FAILED) return
+        networkDebounceJob?.cancel()
+        networkDebounceJob = scope.launch {
+            delay(350L)
+            verifyOrReconnect()
+        }
+    }
+
+    fun verifyOrReconnect() {
+        val st = _uiState.value
+        if (!st.serviceRunning || st.connStatus == ConnStatus.AUTH_FAILED) return
+        if (!st.connected) {
+            reconnectNow()
+        } else {
+            // Probe live socket immediately; dead sockets fail fast instead of stalling until heartbeat
+            val ok = obsClient?.sendHeartbeat() == true || relayClient != null
+            if (!ok) {
                 reconnectNow()
             }
         }
@@ -107,6 +140,7 @@ class ConnectionManager(
 
     fun stop() {
         generation.incrementAndGet()
+        networkDebounceJob?.cancel()
         connectLoopJob?.cancel()
         heartbeatJob?.cancel()
         closeActiveClients()
