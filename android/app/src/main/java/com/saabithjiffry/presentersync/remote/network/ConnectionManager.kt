@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.util.Log
 import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.NetworkMode
 import com.saabithjiffry.presentersync.remote.config.ParsedConnectionPayload
@@ -223,6 +224,7 @@ class ConnectionManager(
                 var bridgeAuthRejected = false
                 if (cfg.sessionToken.isNotBlank() || cfg.sessionPairingCode.isNotBlank()) {
                     val bridgeUrl = "ws://$resolvedHost:${cfg.bridgePort}/ws"
+                    Log.i("PresenterSync", "Attempting Host Bridge WebSocket: $bridgeUrl (hasToken=${cfg.sessionToken.isNotBlank()})")
                     when (attemptBridgeSession(gen, cfg, "${cand.host}:${cfg.bridgePort}", bridgeUrl)) {
                         SessionOutcome.CANCELLED -> {
                             succeededOrStopped = true
@@ -324,6 +326,7 @@ class ConnectionManager(
                 }
 
                 override fun onBridgeDisconnected(reason: String) {
+                    Log.w("PresenterSync", "Host Bridge disconnected ($wsUrl): $reason")
                     heartbeatJob?.cancel()
                     if (gen == generation.get() && _uiState.value.connStatus != ConnStatus.AUTH_FAILED) {
                         _uiState.value = _uiState.value.copy(
@@ -646,6 +649,14 @@ class ConnectionManager(
                 "✓ Paired with ${b.hostName} (${b.pairedIp})! Connected via Bridge :${b.bridgePort}."
             }
             is PairingResult.Error -> "✕ ${res.message}"
+        }
+    }
+
+    fun applyDeepLinkAsync(payload: ParsedConnectionPayload) {
+        scope.launch {
+            val msg = applyDeepLinkPayload(payload)
+            Log.i("PresenterSync", "Deep link applied: $msg")
+            _events.tryEmit(RemoteEvent.ToastMessage(msg))
         }
     }
 

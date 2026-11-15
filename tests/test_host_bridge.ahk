@@ -85,6 +85,7 @@ st := {
 }
 
 if (serveMode) {
+    SetTimer(BridgeTestWatchdog, 0)
     Persistent(true)
     ; Expose small HTTP/OBS switch test setup on ephemeral port 0
     bridge := StartHostCompanionBridge(cfg, st, 0, 0)
