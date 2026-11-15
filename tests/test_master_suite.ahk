@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active v6.x release", UIConstants.APP_VERSION == "6.0.0")
+Assert("APP_VERSION is active v6.x release", UIConstants.APP_VERSION == "6.1.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -1497,8 +1497,8 @@ ccAuditLight := ShowControlCenterWindow(cfgAudit, stAudit)
 PostMessage(0x0010, 0, 0, ccAuditLight.Hwnd)
 Sleep(50)
 Theme.SetMode("System")
-Assert("Control Center registers all 25 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
-    ccChkTabCount == 25 && ccUiOk && Theme.SuspendLockCount == 0)
+Assert("Control Center registers all 26 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
+    ccChkTabCount == 26 && ccUiOk && Theme.SuspendLockCount == 0)
 
 ; 21.6 Scope Guard: PresenterSync_Remote remains strictly 1-tier Mic HUD (no multi-tier GUIs)
 remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
@@ -2354,6 +2354,77 @@ mtxCi := AcquireRemoteInstanceMutex("MasterSuite_Inst_" A_TickCount)
 Assert("AcquireRemoteInstanceMutex acquires unique named instance handle cleanly",
     mtxCi.handle != 0 && !mtxCi.alreadyExists)
 ReleaseRemoteInstanceMutex(mtxCi)
+
+; ==============================================================================
+; SECTION 33: v6.1.0 SELF-UPDATER (SHA-256 FILE HASH, RELEASE ASSETS & ATOMIC SWAP)
+; ==============================================================================
+cliCleanup := ParseRemoteCliArgs(["-Config", "C:\cfg.ini", "-Instance", "Stage2", "--cleanup-old-exe", "C:\old.exe"])
+Assert("ParseRemoteCliArgs recognizes --cleanup-old-exe alongside -Config and -Instance",
+    cliCleanup.configPath == "C:\cfg.ini" && cliCleanup.instanceName == "Stage2" && cliCleanup.cleanupOldExe == "C:\old.exe")
+
+relaunchArgs := BuildUpdaterRelaunchArgs(["-Config", "C:\cfg.ini", "-Instance", "Stage 2", "--cleanup-old-exe", "C:\stale.old"], "C:\PresenterSync_Remote.exe.old")
+Assert("BuildUpdaterRelaunchArgs preserves Config/Instance and replaces stale cleanup path",
+    InStr(relaunchArgs, '-Config "C:\cfg.ini"') && InStr(relaunchArgs, '-Instance "Stage 2"')
+    && InStr(relaunchArgs, '--cleanup-old-exe "C:\PresenterSync_Remote.exe.old"')
+    && !InStr(relaunchArgs, "stale.old"))
+
+updTmpDir := A_Temp "\ps_upd_test_" A_TickCount
+DirCreate(updTmpDir)
+try {
+    sampleBin := updTmpDir "\sample.bin"
+    FileAppend("MZ_PRESENTERSYNC_TEST_PAYLOAD", sampleBin, "UTF-8-RAW")
+    fileSha := HashFileSHA256_Hex(sampleBin)
+    strSha := HashSHA256_Hex("MZ_PRESENTERSYNC_TEST_PAYLOAD")
+    emptyFile := updTmpDir "\empty.bin"
+    FileOpen(emptyFile, "w").Close()
+    Assert("HashFileSHA256_Hex matches HashSHA256_Hex and empty-file NIST digest",
+        fileSha == strSha && StrLen(fileSha) == 64
+        && HashFileSHA256_Hex(emptyFile) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+
+    nestedJson := '{"tag_name":"v6.2.0","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v6.2.0","body":"Hello\nNotes","assets":[{"name":"PresenterSync.exe","size":222,"uploader":{"login":"bot"},"browser_download_url":"https://dl/PresenterSync.exe"},{"name":"PresenterSync_Remote.exe","size":333,"browser_download_url":"https://dl/PresenterSync_Remote.exe"},{"name":"SHA256SUMS.txt","size":99,"browser_download_url":"https://dl/SHA256SUMS.txt"}]}'
+    detHost := ParseGitHubReleaseDetails(nestedJson, "PresenterSync.exe")
+    detRem := ParseGitHubReleaseDetails(nestedJson, "PresenterSync_Remote.exe")
+    Assert("ParseGitHubReleaseDetails handles nested uploader objects & selects matching EXE + SHA256SUMS.txt",
+        detHost.version == "6.2.0" && detHost.assetName == "PresenterSync.exe" && detHost.assetSize == 222
+        && detHost.assetUrl == "https://dl/PresenterSync.exe" && detHost.sha256Url == "https://dl/SHA256SUMS.txt"
+        && detRem.assetName == "PresenterSync_Remote.exe" && detRem.assetSize == 333)
+
+    sumsManifest := StrUpper(fileSha) " *release-upload/PresenterSync.exe`n" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  PresenterSync_Remote.apk`n"
+    Assert("ParseSha256SumsText parses GNU asterisk/plain checksum formats accurately",
+        ParseSha256SumsText(sumsManifest, "PresenterSync.exe") == fileSha
+        && ParseSha256SumsText(sumsManifest, "Missing.exe") == "")
+
+    htmlSpoof := updTmpDir "\spoof.exe"
+    FileAppend("<html>404</html>", htmlSpoof, "UTF-8-RAW")
+    badPeRes := VerifyStagedExecutable(htmlSpoof)
+    Assert("VerifyStagedExecutable rejects & deletes HTML/non-MZ files", !badPeRes.ok && !FileExist(htmlSpoof))
+
+    goodStaged := updTmpDir "\staged.exe"
+    FileAppend("MZ_VALID_NEW_VERSION", goodStaged, "UTF-8-RAW")
+    goodSz := FileGetSize(goodStaged)
+    goodSha := HashFileSHA256_Hex(goodStaged)
+    badHashStaged := updTmpDir "\badhash.exe"
+    FileAppend("MZ_VALID_NEW_VERSION", badHashStaged, "UTF-8-RAW")
+    badHashRes := VerifyStagedExecutable(badHashStaged, goodSz, "0000000000000000000000000000000000000000000000000000000000000000")
+    Assert("VerifyStagedExecutable rejects & deletes payload on SHA-256 mismatch", !badHashRes.ok && !FileExist(badHashStaged))
+
+    goodRes := VerifyStagedExecutable(goodStaged, goodSz, goodSha)
+    Assert("VerifyStagedExecutable accepts valid MZ binary with matching size & SHA-256", goodRes.ok && goodRes.shaVerified)
+
+    liveExe := updTmpDir "\PresenterSync_Mock.exe"
+    FileAppend("MZ_OLD_VERSION", liveExe, "UTF-8-RAW")
+    beforeBox := { called: false }
+    swapRes := PerformAtomicExeSwapAndRelaunch(liveExe, goodStaged, ["-Instance", "CI"], false, false, (*) => (beforeBox.called := true))
+    Assert("PerformAtomicExeSwapAndRelaunch atomically moves current -> .old and staged -> current",
+        swapRes.ok && beforeBox.called && FileExist(liveExe) && HashFileSHA256_Hex(liveExe) == goodSha
+        && FileExist(liveExe ".old") && !FileExist(goodStaged))
+
+    leftCnt := ProcessSelfUpdateStartupCleanup(["--cleanup-old-exe", liveExe ".old"], liveExe)
+    Assert("ProcessSelfUpdateStartupCleanup deletes .old artifact cleanly",
+        leftCnt == 0 && !FileExist(liveExe ".old"))
+} finally {
+    try DirDelete(updTmpDir, true)
+}
 
 ; Cleanup test ini
 if FileExist(testIni)

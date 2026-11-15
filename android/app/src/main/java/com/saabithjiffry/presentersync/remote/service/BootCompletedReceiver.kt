@@ -27,8 +27,10 @@ class BootCompletedReceiver : BroadcastReceiver() {
         }
 
         val appCtx = context.applicationContext
-        val cfg = RemoteConfigStore(appCtx).current
-        if (!cfg.startOnBoot) return
+        val store = RemoteConfigStore(appCtx)
+        val cfg = store.current
+        val shouldRestoreAfterUpdate = action == Intent.ACTION_MY_PACKAGE_REPLACED && store.wasHudActive()
+        if (!cfg.startOnBoot && !shouldRestoreAfterUpdate) return
         if (!Settings.canDrawOverlays(appCtx)) return
 
         val started = FloatingHudForegroundService.startService(appCtx)

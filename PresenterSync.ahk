@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 6.0.0
+; Version: 6.1.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 6.0.0.0
+;@Ahk2Exe-SetVersion 6.1.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -24,6 +24,8 @@ SetKeyDelay 50, 50
 #Include <HudSnakeGame>
 
 Gdip.Startup()
+ProcessSelfUpdateStartupCleanup(A_Args)
+RegisterSelfUpdateBeforeRelaunch((*) => (StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 OnExit((*) => (StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSync.ico"))
@@ -61,6 +63,7 @@ if (AppConfig.EnableWS)
 UpdateZoomMonitorTimer(AppConfig, AppState)
 UpdateHostInternetRelay(AppConfig, AppState)
 StartHostCompanionBridge(AppConfig, AppState, AppConfig.BridgePort)
+StartBackgroundUpdateChecker(AppConfig, "PresenterSync.exe")
 
 ; --- CUSTOM TRAY MENU ---
 BuildTrayMenu(cfg, state) {
@@ -267,7 +270,7 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Start with Windows", ToggleStartWithWindows.Bind(cfg, state))
     if (cfg.StartWithWindows)
         SettingsMenu.Check("Start with Windows")
-    SettingsMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
+    SettingsMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))
 
     A_TrayMenu.Add("Control Center...", ShowControlCenterWindow.Bind(cfg, state))
     A_TrayMenu.Add("Settings", SettingsMenu)
@@ -275,7 +278,7 @@ BuildTrayMenu(cfg, state) {
     ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg, state))
     A_TrayMenu.Add("About PresenterSync", ShowAboutWindow.Bind(cfg, state))
-    A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
+    A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))
     A_TrayMenu.Add()
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
     if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)

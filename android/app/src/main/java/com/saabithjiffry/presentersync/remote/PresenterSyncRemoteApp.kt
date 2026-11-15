@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
+import com.saabithjiffry.presentersync.remote.network.ApkSelfInstaller
 import com.saabithjiffry.presentersync.remote.network.ConnectionManager
 
 class PresenterSyncRemoteApp : Application() {
@@ -11,11 +12,15 @@ class PresenterSyncRemoteApp : Application() {
         private set
     lateinit var connectionManager: ConnectionManager
         private set
+    lateinit var apkSelfInstaller: ApkSelfInstaller
+        private set
 
     override fun onCreate() {
         super.onCreate()
         configStore = RemoteConfigStore(this)
         connectionManager = ConnectionManager(this, configStore)
+        apkSelfInstaller = ApkSelfInstaller(this, configStore, connectionManager.sharedHttpClient)
+        apkSelfInstaller.clearStaleUpdateCache()
         createNotificationChannel()
     }
 

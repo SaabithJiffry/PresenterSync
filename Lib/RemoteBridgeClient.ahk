@@ -6,7 +6,7 @@
 ; ==============================================================================
 
 ParseRemoteCliArgs(args) {
-    out := { configPath: "", instanceName: "", pairingUri: "" }
+    out := { configPath: "", instanceName: "", pairingUri: "", cleanupOldExe: "" }
     if (!IsObject(args))
         return out
 
@@ -37,6 +37,16 @@ ParseRemoteCliArgs(args) {
         if ((low = "-uri" || low = "--uri") && i < args.Length) {
             out.pairingUri := Trim(String(args[i + 1]))
             i += 2
+            continue
+        }
+        if ((low = "--cleanup-old-exe" || low = "-cleanup-old-exe") && i < args.Length) {
+            out.cleanupOldExe := Trim(String(args[i + 1]))
+            i += 2
+            continue
+        }
+        if (RegExMatch(arg, "i)^--?cleanup-old-exe=(.+)$", &mOld)) {
+            out.cleanupOldExe := Trim(mOld[1])
+            i += 1
             continue
         }
         if (InStr(low, "presentersync://") = 1) {

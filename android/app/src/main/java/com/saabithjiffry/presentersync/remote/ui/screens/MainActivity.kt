@@ -288,6 +288,10 @@ private fun RemoteDashboardScreen(
         hasNotifPerm = granted || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
     }
 
+    LaunchedEffect(Unit) {
+        app.apkSelfInstaller.startThrottledStartupCheck()
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -297,6 +301,7 @@ private fun RemoteDashboardScreen(
                         context,
                         Manifest.permission.POST_NOTIFICATIONS
                     ) == PackageManager.PERMISSION_GRANTED
+                app.apkSelfInstaller.resumeAfterUnknownSourcesCheck()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -473,6 +478,8 @@ private fun RemoteDashboardScreen(
                         .padding(formFactor.outerPaddingDp.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
+                    UpdateReadyInlineBanner(app = app)
+
                     if (!hasOverlayPerm) {
                         PermissionWarningCard(
                             icon = Icons.Default.Layers,
@@ -662,7 +669,7 @@ private fun RemoteDashboardScreen(
 
     if (showAboutDialog) {
         AboutUpdateDialog(
-            httpClient = app.connectionManager.sharedHttpClient,
+            app = app,
             onDismiss = { showAboutDialog = false }
         )
     }

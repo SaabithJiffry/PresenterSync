@@ -200,13 +200,15 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Stage flat release binaries
+      - name: Stage flat release binaries & SHA256SUMS.txt
         run: |
           mkdir -p release-upload
           find release-assets -type f \( -name "*.exe" -o -name "*.apk" \) -exec cp {} release-upload/ \;
+          (cd release-upload && sha256sum PresenterSync.exe PresenterSync_Remote.exe PresenterSync_Remote.apk > SHA256SUMS.txt)
+          cat release-upload/SHA256SUMS.txt
           ls -la release-upload
 
-      - name: Create GitHub Release with all 3 binaries
+      - name: Create GitHub Release with all 3 binaries & checksums
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -214,3 +216,4 @@ jobs:
             release-upload/PresenterSync.exe
             release-upload/PresenterSync_Remote.exe
             release-upload/PresenterSync_Remote.apk
+            release-upload/SHA256SUMS.txt

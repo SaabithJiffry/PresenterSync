@@ -53,6 +53,7 @@ class FloatingHudForegroundService : LifecycleService() {
         audioCuePlayer = AudioCuePlayer()
         acquireWifiLock()
         registerWakeReceiver()
+        app.configStore.setHudWasActive(true)
         promoteToForeground(buildNotification(app.configStore.current, app.connectionManager.uiState.value))
 
         app.connectionManager.start()
@@ -109,6 +110,7 @@ class FloatingHudForegroundService : LifecycleService() {
     }
 
     private fun stopRemoteCleanly() {
+        app.configStore.setHudWasActive(false)
         toastBannerManager.hide()
         overlayManager.hide()
         audioCuePlayer.release()

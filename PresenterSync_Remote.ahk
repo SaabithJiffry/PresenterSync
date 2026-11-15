@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 6.0.0
+; Version: 6.1.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 6.0.0.0
+;@Ahk2Exe-SetVersion 6.1.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -32,6 +32,8 @@ if (g_RemoteMutex.alreadyExists) {
 }
 
 Gdip.Startup()
+ProcessSelfUpdateStartupCleanup(A_Args)
+RegisterSelfUpdateBeforeRelaunch((*) => (ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
 OnExit((*) => (ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico"))
@@ -79,6 +81,9 @@ class RemoteConfig {
     FirstRun := true
     IsMuted := false
     StartWithWindows := false
+    AutoCheckUpdates := true
+    LastUpdateCheckEpoch := 0
+    SkippedUpdateVersion := ""
 
     savedX := "Default"
     savedY := "Default"
@@ -202,6 +207,10 @@ class RemoteConfig {
         this.FirstRun := this.ReadBool("Settings", "FirstRun", 1)
         this.IsMuted := this.ReadBool("Settings", "IsMuted", 0)
         this.StartWithWindows := this.ReadBool("Settings", "StartWithWindows", 0)
+        this.AutoCheckUpdates := this.ReadBool("Settings", "AutoCheckUpdates", 1)
+        lastUpd := Trim(this.Read("Settings", "LastUpdateCheckEpoch", "0"))
+        this.LastUpdateCheckEpoch := IsInteger(lastUpd) ? Integer(lastUpd) : 0
+        this.SkippedUpdateVersion := Trim(this.Read("Settings", "SkippedUpdateVersion", ""))
 
         this.savedX := this.Read("Position", "X", "Default")
         this.savedY := this.Read("Position", "Y", "Default")
@@ -373,6 +382,7 @@ InitRemoteHUD(AppConfig, AppState)
 BuildRemoteTrayMenu(AppConfig, AppState)
 RegisterRemotePointerHotkey(AppConfig, AppState)
 RegisterRemoteAppHotkeys(AppConfig, AppState)
+StartBackgroundUpdateChecker(AppConfig, "PresenterSync_Remote.exe")
 
 ; === FIRST-RUN / CONNECTION PROMPT ===
 if (g_RemoteCli.pairingUri != "") {
@@ -1281,7 +1291,7 @@ BuildRemoteTrayMenu(cfg, state) {
     ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
     A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI(cfg, state))
-    A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
+    A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync_Remote.exe", cfg))
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
     if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
         A_TrayMenu.Check("Suspend All Hotkeys")
@@ -1688,7 +1698,7 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
 
     updBtn := aboutGui.Add("Button", "x242 y440 w208 h30", "Check for Updates")
     Theme.RegisterControl(aboutGui, updBtn, "Button")
-    updBtn.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
+    updBtn.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync_Remote.exe", cfg))
 
     helpBtn := aboutGui.Add("Button", "x20 y478 w208 h30", "Open Help Guide")
     Theme.RegisterControl(aboutGui, helpBtn, "Button")

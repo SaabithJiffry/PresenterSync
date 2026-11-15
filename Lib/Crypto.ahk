@@ -49,12 +49,53 @@ HashSHA1_Base64(stringToHash) {
     return _BytesToBase64(hashBuf, 20)
 }
 
+_BytesToHexLower(buf, byteLen) {
+    hex := ""
+    Loop byteLen
+        hex .= Format("{:02x}", NumGet(buf, A_Index - 1, "UChar"))
+    return hex
+}
+
 HashSHA256_Hex(stringToHash) {
     hashBuf := _HashCryptRaw("SHA256", 32, stringToHash)
-    hex := ""
-    Loop 32
-        hex .= Format("{:02x}", NumGet(hashBuf, A_Index - 1, "UChar"))
-    return hex
+    return _BytesToHexLower(hashBuf, 32)
+}
+
+HashFileSHA256_Hex(filePath) {
+    if (!FileExist(filePath))
+        return ""
+    f := ""
+    hAlg := 0
+    hHash := 0
+    try {
+        f := FileOpen(filePath, "r")
+        if (!IsObject(f))
+            return ""
+        if (DllCall("bcrypt\BCryptOpenAlgorithmProvider", "Ptr*", &hAlg, "Str", "SHA256", "Ptr", 0, "UInt", 0) != 0)
+            return ""
+        if (DllCall("bcrypt\BCryptCreateHash", "Ptr", hAlg, "Ptr*", &hHash, "Ptr", 0, "UInt", 0, "Ptr", 0, "UInt", 0, "UInt", 0) != 0)
+            return ""
+
+        buf := Buffer(65536, 0)
+        while ((bytesRead := f.RawRead(buf, 65536)) > 0) {
+            if (DllCall("bcrypt\BCryptHashData", "Ptr", hHash, "Ptr", buf, "UInt", bytesRead, "UInt", 0) != 0)
+                return ""
+        }
+
+        hashBuf := Buffer(32, 0)
+        if (DllCall("bcrypt\BCryptFinishHash", "Ptr", hHash, "Ptr", hashBuf, "UInt", 32, "UInt", 0) != 0)
+            return ""
+        return _BytesToHexLower(hashBuf, 32)
+    } catch {
+        return ""
+    } finally {
+        if (IsObject(f))
+            try f.Close()
+        if (hHash)
+            try DllCall("bcrypt\BCryptDestroyHash", "Ptr", hHash)
+        if (hAlg)
+            try DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+    }
 }
 
 GenerateRandomBytes(byteCount) {

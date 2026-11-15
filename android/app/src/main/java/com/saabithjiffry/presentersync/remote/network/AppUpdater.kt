@@ -14,6 +14,9 @@ data class UpdateCheckResult(
     val releaseNotes: String,
     val releaseHtmlUrl: String,
     val apkDownloadUrl: String?,
+    val apkAssetName: String? = null,
+    val apkSizeBytes: Long = -1L,
+    val sha256SumsUrl: String? = null,
     val errorMessage: String? = null
 )
 
@@ -68,16 +71,24 @@ object AppUpdater {
         }
 
         var apkUrl: String? = null
+        var apkName: String? = null
+        var apkSize = -1L
+        var shaUrl: String? = null
         val assets = json.optJSONArray("assets")
         if (assets != null) {
             for (i in 0 until assets.length()) {
                 val asset = assets.optJSONObject(i) ?: continue
-                val name = asset.optString("name", "")
-                val dl = asset.optString("browser_download_url", "")
-                if (name.endsWith(".apk", ignoreCase = true) && dl.isNotBlank()) {
-                    apkUrl = dl
-                    if (name.contains("PresenterSync_Remote", ignoreCase = true)) {
-                        break
+                val name = asset.optString("name", "").trim()
+                val dl = asset.optString("browser_download_url", "").trim()
+                if (dl.isBlank()) continue
+                if (name.equals("SHA256SUMS.txt", ignoreCase = true)) {
+                    shaUrl = dl
+                } else if (name.endsWith(".apk", ignoreCase = true)) {
+                    val isPreferred = name.contains("PresenterSync_Remote", ignoreCase = true)
+                    if (apkUrl == null || isPreferred) {
+                        apkUrl = dl
+                        apkName = name
+                        apkSize = asset.optLong("size", -1L)
                     }
                 }
             }
@@ -91,8 +102,28 @@ object AppUpdater {
             releaseNotes = notes,
             releaseHtmlUrl = htmlUrl,
             apkDownloadUrl = apkUrl,
+            apkAssetName = apkName,
+            apkSizeBytes = apkSize,
+            sha256SumsUrl = shaUrl,
             errorMessage = null
         )
+    }
+
+    /**
+     * Parses a GNU coreutils SHA256SUMS.txt manifest (`<hex>  <filename>`) for the matching artifact.
+     */
+    fun parseSha256Sums(sumsText: String, targetFileName: String = "PresenterSync_Remote.apk"): String? {
+        val wanted = targetFileName.trim().lowercase()
+        val regex = Regex("""^\s*([0-9a-fA-F]{64})\s+[* ]?(.+?)\s*$""")
+        for (line in sumsText.lineSequence()) {
+            val match = regex.matchEntire(line) ?: continue
+            val digest = match.groupValues[1].lowercase()
+            val rawName = match.groupValues[2].trim().substringAfterLast('/').substringAfterLast('\\').lowercase()
+            if (rawName == wanted) {
+                return digest
+            }
+        }
+        return null
     }
 
     /**
