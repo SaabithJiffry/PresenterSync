@@ -536,7 +536,10 @@ private fun RemoteDashboardScreen(
                                     },
                                     onOpenQr = { showQuickQrScanner = true },
                                     onOpenHelp = { showHelpDialog = true },
-                                    onOpenAbout = { showAboutDialog = true }
+                                    onOpenAbout = { showAboutDialog = true },
+                                    onPptPrev = { app.connectionManager.sendPptPrev("status_card") },
+                                    onPptNext = { app.connectionManager.sendPptNext("status_card") },
+                                    onToggleRecord = { app.connectionManager.sendToggleRecord("status_card") }
                                 )
 
                                 FormFactorOptimizationCard(
@@ -598,7 +601,10 @@ private fun RemoteDashboardScreen(
                             },
                             onOpenQr = { showQuickQrScanner = true },
                             onOpenHelp = { showHelpDialog = true },
-                            onOpenAbout = { showAboutDialog = true }
+                            onOpenAbout = { showAboutDialog = true },
+                            onPptPrev = { app.connectionManager.sendPptPrev("status_card") },
+                            onPptNext = { app.connectionManager.sendPptNext("status_card") },
+                            onToggleRecord = { app.connectionManager.sendToggleRecord("status_card") }
                         )
 
                         FormFactorOptimizationCard(
@@ -688,7 +694,10 @@ private fun StatusAndActionsCard(
     onReconnect: () -> Unit,
     onOpenQr: () -> Unit,
     onOpenHelp: () -> Unit,
-    onOpenAbout: () -> Unit
+    onOpenAbout: () -> Unit,
+    onPptPrev: () -> Unit = {},
+    onPptNext: () -> Unit = {},
+    onToggleRecord: () -> Unit = {}
 ) {
     val statusColor = when {
         conn.connStatus == ConnStatus.AUTH_FAILED -> Color(0xFFDC2626)
@@ -759,6 +768,61 @@ private fun StatusAndActionsCard(
                 }
             }
 
+            if (conn.connected) {
+                val recText = when (conn.recState) {
+                    1 -> "● REC ${conn.formattedRecElapsed()}"
+                    2 -> "❚❚ PAUSED ${conn.formattedRecElapsed()}"
+                    else -> "REC: OFF"
+                }
+                val recTint = when (conn.recState) {
+                    1 -> Color(0xFFDC2626)
+                    2 -> Color(0xFFD97706)
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                val streamText = if (conn.streamDropWarn) "⚠ STREAM DROP WARN" else "Stream OK"
+                val streamTint = if (conn.streamDropWarn) Color(0xFFDC2626) else Color(0xFF10B981)
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = recText,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = recTint
+                            )
+                            Text(
+                                text = streamText,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = streamTint
+                            )
+                        }
+                        if (conn.voiceWhileMuted && conn.isMuted) {
+                            Text(
+                                text = "⚠ You're on mute — mic signal detected on Host",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFD97706)
+                            )
+                        }
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -804,6 +868,40 @@ private fun StatusAndActionsCard(
                         Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Stop HUD", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+
+            if (conn.connected && conn.usingBridge) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onPptPrev,
+                        contentPadding = CompactExplorerButtonPadding,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("◀ Prev", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    }
+                    OutlinedButton(
+                        onClick = onToggleRecord,
+                        contentPadding = CompactExplorerButtonPadding,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            if (conn.recState == 1) "⏹ Stop Rec" else "⏺ Rec",
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onPptNext,
+                        contentPadding = CompactExplorerButtonPadding,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Next ▶", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }

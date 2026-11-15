@@ -128,4 +128,76 @@ class HostBridgeClientTest {
         assertTrue(authFailLatch.await(3, TimeUnit.SECONDS))
         client.close()
     }
+
+    @Test
+    fun parsesTelemetryAndSendsDeckActions() {
+        val telemetryLatch = CountDownLatch(1)
+        val deckLatch = CountDownLatch(3)
+        val receivedTelemetry = java.util.concurrent.atomic.AtomicReference<BridgeTelemetryState>()
+        val serverActions = java.util.concurrent.CopyOnWriteArrayList<String>()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send(JSONObject().put("type", "auth_ok").put("hostName", "HOST-PC").toString())
+                webSocket.send(
+                    JSONObject()
+                        .put("type", "mute_state")
+                        .put("isMuted", true)
+                        .put("routingMode", 2)
+                        .put("targetMicName", "Studio Mic")
+                        .put("recState", 1)
+                        .put("recSeconds", 95)
+                        .put("streamDropWarn", true)
+                        .put("voiceWhileMuted", true)
+                        .toString()
+                )
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val obj = JSONObject(text)
+                val type = obj.optString("type")
+                if (type == "ppt_next" || type == "ppt_prev" || type == "toggle_record") {
+                    serverActions.add(type)
+                    deckLatch.countDown()
+                }
+            }
+        }))
+
+        val wsUrl = server.url("/ws").toString().replaceFirst("http://", "ws://")
+        val client = HostBridgeClient(
+            httpClient = httpClient,
+            wsBaseUrl = wsUrl,
+            sessionToken = "tok_test_2",
+            sessionCode = "",
+            deviceId = "and-test-2",
+            deviceName = "Board 75",
+            callbacks = object : HostBridgeCallbacks {
+                override fun onBridgeConnected(hostName: String) = Unit
+                override fun onBridgeAuthFailed(reason: String) = Unit
+                override fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String) = Unit
+                override fun onTelemetryChanged(telemetry: BridgeTelemetryState) {
+                    if (telemetry.recState == 1 && telemetry.recSeconds == 95) {
+                        receivedTelemetry.set(telemetry)
+                        telemetryLatch.countDown()
+                    }
+                }
+                override fun onCloseRemoteSignal() = Unit
+                override fun onBridgeDisconnected(reason: String) = Unit
+            }
+        )
+        client.connect()
+        assertTrue(telemetryLatch.await(3, TimeUnit.SECONDS))
+        val t = receivedTelemetry.get()
+        assertEquals(1, t.recState)
+        assertEquals(95, t.recSeconds)
+        assertTrue(t.streamDropWarn)
+        assertTrue(t.voiceWhileMuted)
+
+        assertTrue(client.sendPptNext())
+        assertTrue(client.sendPptPrev())
+        assertTrue(client.sendToggleRecord())
+        assertTrue(deckLatch.await(3, TimeUnit.SECONDS))
+        assertEquals(listOf("ppt_next", "ppt_prev", "toggle_record"), serverActions.toList())
+        client.close()
+    }
 }

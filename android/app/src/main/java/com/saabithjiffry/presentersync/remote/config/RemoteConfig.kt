@@ -64,6 +64,7 @@ data class RemoteConfig(
     val aggressivePulse: Boolean = false,
     val enableAudioCue: Boolean = false,
     val enableMuteToast: Boolean = false,
+    val enableVoiceWhileMutedAlert: Boolean = true,
     val enableHudClickActions: Boolean = true,
     val lockHudPosition: Boolean = false,
     val singleTapAction: BubbleGestureAction = BubbleGestureAction.NONE,
@@ -164,6 +165,7 @@ class RemoteConfigStore(context: Context) {
             aggressivePulse = prefs.getBoolean("aggressivePulse", false),
             enableAudioCue = prefs.getBoolean("enableAudioCue", false),
             enableMuteToast = prefs.getBoolean("enableMuteToast", false),
+            enableVoiceWhileMutedAlert = prefs.getBoolean("enableVoiceWhileMutedAlert", true),
             enableHudClickActions = prefs.getBoolean("enableHudClickActions", true),
             lockHudPosition = prefs.getBoolean("lockHudPosition", false),
             singleTapAction = singleTap,
@@ -273,6 +275,7 @@ class RemoteConfigStore(context: Context) {
             aggressivePulse = false,
             enableAudioCue = false,
             enableMuteToast = false,
+            enableVoiceWhileMutedAlert = true,
             enableHudClickActions = true,
             lockHudPosition = false,
             singleTapAction = BubbleGestureAction.NONE,
@@ -319,6 +322,7 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("aggressivePulse", c.aggressivePulse)
             .putBoolean("enableAudioCue", c.enableAudioCue)
             .putBoolean("enableMuteToast", c.enableMuteToast)
+            .putBoolean("enableVoiceWhileMutedAlert", c.enableVoiceWhileMutedAlert)
             .putBoolean("enableHudClickActions", c.enableHudClickActions)
             .putBoolean("lockHudPosition", c.lockHudPosition)
             .putString("singleTapAction", c.singleTapAction.rawValue)

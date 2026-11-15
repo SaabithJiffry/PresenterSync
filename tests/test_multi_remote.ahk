@@ -183,6 +183,64 @@ StopHostCompanionBridge()
 if FileExist(testIni)
     FileDelete(testIni)
 
+; --- 6. Host Bridge 2.0 Persistent Paired Devices, Rename/Unpair/Revoke & Deck Helpers ---
+deckNext := BuildRemoteBridgeDeckJson({ DeviceId: "win-1", InstanceName: "Desk" }, "ppt_next")
+deckRec := BuildRemoteBridgeDeckJson({ DeviceId: "win-1", InstanceName: "Desk" }, "toggle_record")
+Assert("BuildRemoteBridgeDeckJson emits ppt_next and toggle_record payloads",
+    InStr(deckNext, '"type":"ppt_next"') && InStr(deckRec, '"type":"toggle_record"'))
+
+evTel := ParseHostBridgeWsEvent('{"type":"mute_state","isMuted":true,"routingMode":2,"targetMicName":"Studio","recState":1,"recSeconds":125,"streamDropWarn":true,"voiceWhileMuted":true}')
+evAck := ParseHostBridgeWsEvent('{"type":"ack","action":"ppt_prev","ok":true}')
+Assert("ParseHostBridgeWsEvent parses v6.2.0 telemetry and ack packets",
+    IsObject(evTel) && evTel.recState == 1 && evTel.recSeconds == 125 && evTel.streamDropWarn && evTel.voiceWhileMuted
+    && IsObject(evAck) && evAck.kind == "ack" && evAck.action == "ppt_prev" && evAck.ok)
+
+persistIni := A_ScriptDir "\test_multi_persist.ini"
+if FileExist(persistIni)
+    FileDelete(persistIni)
+pCfg1 := Config(persistIni)
+pCfg1.SessionPairingCode := "A1B-2C3"
+pCfg1.Write("Settings", "SessionPairingCode", "A1B-2C3")
+pSt := { isMuted: false, obsConnected: false, obsWs: "", zoomConnected: false, relayConnected: false, relayWs: "" }
+
+pb1 := StartHostCompanionBridge(pCfg1, pSt, 0, -1)
+pRes1 := HttpPostBridgePair("127.0.0.1", String(pb1.boundTcpPort), "A1B-2C3", "and-board-persist", "Auto Board")
+Assert("Persist sub-test /pair succeeded", IsObject(pRes1) && pRes1.ok && pb1.pairedDevices.Has("and-board-persist"))
+Assert("RenameHostPairedDevice updates name and sets customName",
+    RenameHostPairedDevice("and-board-persist", "Lecture Hall 75")
+    && pb1.pairedDevices["and-board-persist"].deviceName == "Lecture Hall 75"
+    && pb1.pairedDevices["and-board-persist"].customName)
+savedTok := pb1.pairedDevices["and-board-persist"].token
+StopHostCompanionBridge()
+
+pCfg2 := Config(persistIni)
+pb2 := StartHostCompanionBridge(pCfg2, pSt, 0, -1)
+Assert("Restarted HostCompanionBridge reloads paired device, token & custom nickname from INI",
+    pb2.pairedDevices.Has("and-board-persist")
+    && pb2.pairedDevices["and-board-persist"].deviceName == "Lecture Hall 75"
+    && pb2.pairedDevices["and-board-persist"].customName
+    && pb2.validTokens.Has(savedTok))
+
+; Re-pair same device should keep custom nickname instead of overwriting with incoming deviceName
+pRes2 := HttpPostBridgePair("127.0.0.1", String(pb2.boundTcpPort), "A1B-2C3", "and-board-persist", "Generic Default")
+Assert("Re-pairing device preserves custom nickname on Host",
+    IsObject(pRes2) && pRes2.ok && pb2.pairedDevices["and-board-persist"].deviceName == "Lecture Hall 75")
+
+RotateHostSessionPairingCode(pCfg2, false)
+Assert("Rotate code without revoke retains paired devices", pb2.pairedDevices.Has("and-board-persist"))
+Assert("UnpairHostPairedDevice removes targeted device & token cleanly",
+    UnpairHostPairedDevice("and-board-persist") && !pb2.pairedDevices.Has("and-board-persist") && !pb2.validTokens.Has(savedTok))
+
+pb2.pairedDevices["temp-d"] := { deviceId: "temp-d", deviceName: "Temp", customName: false, platform: "Windows", token: "tok_temp_1", ip: "127.0.0.1", pairedAt: "10:00", transport: "HTTP", lastSeenTick: 1, connected: false }
+pb2.validTokens["tok_temp_1"] := "temp-d"
+RotateHostSessionPairingCode(pCfg2, true)
+Assert("RotateHostSessionPairingCode(revokeAll:=true) wipes all paired devices & tokens",
+    pb2.pairedDevices.Count == 0 && pb2.validTokens.Count == 0)
+
+StopHostCompanionBridge()
+if FileExist(persistIni)
+    FileDelete(persistIni)
+
 report := "=== PRESENTER SYNC MULTI-REMOTE TEST REPORT ===`n"
 report .= "Passed: " PassCount "  Failed: " FailCount "`n`n"
 for item in results

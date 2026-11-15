@@ -8,10 +8,18 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 
+data class BridgeTelemetryState(
+    val recState: Int = 0,
+    val recSeconds: Int = 0,
+    val streamDropWarn: Boolean = false,
+    val voiceWhileMuted: Boolean = false
+)
+
 interface HostBridgeCallbacks {
     fun onBridgeConnected(hostName: String)
     fun onBridgeAuthFailed(reason: String)
     fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String)
+    fun onTelemetryChanged(telemetry: BridgeTelemetryState) {}
     fun onCloseRemoteSignal()
     fun onBridgeDisconnected(reason: String)
 }
@@ -90,7 +98,14 @@ class HostBridgeClient(
                         val muted = obj.optBoolean("isMuted", false)
                         val mode = obj.optInt("routingMode", 0)
                         val mic = obj.optString("targetMicName", "")
+                        val telemetry = BridgeTelemetryState(
+                            recState = obj.optInt("recState", 0),
+                            recSeconds = obj.optInt("recSeconds", 0).coerceAtLeast(0),
+                            streamDropWarn = obj.optBoolean("streamDropWarn", false),
+                            voiceWhileMuted = obj.optBoolean("voiceWhileMuted", false)
+                        )
                         callbacks.onMuteStateChanged(muted, mode, mic)
+                        callbacks.onTelemetryChanged(telemetry)
                     }
                     "close_remote" -> {
                         callbacks.onCloseRemoteSignal()
@@ -129,11 +144,19 @@ class HostBridgeClient(
         ws.send(payload)
     }
 
-    fun sendToggleMute(source: String = "clicker"): Boolean {
+    fun sendToggleMute(source: String = "clicker"): Boolean = sendDeviceAction("toggle_mute", source)
+
+    fun sendPptNext(source: String = "quick_menu"): Boolean = sendDeviceAction("ppt_next", source)
+
+    fun sendPptPrev(source: String = "quick_menu"): Boolean = sendDeviceAction("ppt_prev", source)
+
+    fun sendToggleRecord(source: String = "quick_menu"): Boolean = sendDeviceAction("toggle_record", source)
+
+    private fun sendDeviceAction(type: String, source: String): Boolean {
         if (!authenticated) return false
         val ws = webSocket ?: return false
         val payload = JSONObject().apply {
-            put("type", "toggle_mute")
+            put("type", type)
             put("deviceId", deviceId)
             put("source", source)
         }.toString()

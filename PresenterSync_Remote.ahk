@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 6.1.0
+; Version: 6.2.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 6.1.0.0
+;@Ahk2Exe-SetVersion 6.2.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -72,6 +72,7 @@ class RemoteConfig {
     AggressivePulse := false
     EnableAudioCue := false
     EnableMuteToast := false
+    EnableVoiceWhileMutedAlert := true
     EnableHudClickActions := true
     EnableMagneticSnap := true
     HudClickThrough := false
@@ -192,6 +193,7 @@ class RemoteConfig {
         this.AggressivePulse := this.ReadBool("Appearance", "AggressivePulse", 0)
         this.EnableAudioCue := this.ReadBool("Appearance", "EnableAudioCue", 0)
         this.EnableMuteToast := this.ReadBool("Appearance", "EnableMuteToast", 0)
+        this.EnableVoiceWhileMutedAlert := this.ReadBool("Appearance", "EnableVoiceWhileMutedAlert", 1)
         this.EnableHudClickActions := this.ReadBool("Appearance", "EnableHudClickActions", 1)
         this.EnableMagneticSnap := this.ReadBool("Appearance", "EnableMagneticSnap", 1)
         this.HudClickThrough := this.ReadBool("Appearance", "HudClickThrough", 0)
@@ -246,6 +248,7 @@ class RemoteConfig {
         this.WriteBool("Appearance", "AggressivePulse", false)
         this.WriteBool("Appearance", "EnableAudioCue", false)
         this.WriteBool("Appearance", "EnableMuteToast", false)
+        this.WriteBool("Appearance", "EnableVoiceWhileMutedAlert", true)
         this.WriteBool("Appearance", "EnableHudClickActions", true)
         this.WriteBool("Appearance", "EnableMagneticSnap", true)
         this.WriteBool("Appearance", "HudClickThrough", false)
@@ -268,6 +271,11 @@ class RemoteState {
     usingBridge := false
 
     isMuted := false
+    recState := 0
+    recSeconds := 0
+    streamDropWarn := false
+    voiceWhileMuted := false
+    _lastVoiceWarnTick := 0
     baseAlpha := 220
     currentAlpha := 220
     breathDir := -5
@@ -583,6 +591,10 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     state.obsConnected := false
     state.usingBridge := false
     state.activeHost := ""
+    state.recState := 0
+    state.recSeconds := 0
+    state.streamDropWarn := false
+    state.voiceWhileMuted := false
     SetTimer state.heartbeatTimerFn, 0
     SetTimer state.breathTimerFn, 0
     state.animSeq += 1
@@ -668,6 +680,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.NotifyTrayStatus()
             }
             SyncRemoteMuteState(cfg, state, ev.isMuted)
+            SyncRemoteBridgeTelemetry(cfg, state, ev)
         } else if (ev.kind = "close_remote") {
             if (state.HasOwnProp("onRemoteCloseSignal") && IsObject(state.onRemoteCloseSignal))
                 state.onRemoteCloseSignal.Call()
@@ -857,12 +870,47 @@ SyncRemoteMuteState(cfg, state, newMuted) {
         state.isMuted := newMuted
         cfg.IsMuted := newMuted
         cfg.WriteBool("Settings", "IsMuted", newMuted)
+        if (!newMuted)
+            state.voiceWhileMuted := false
         PlayMuteAnimation(cfg, state)
         if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
             PlayMuteAudioCue(newMuted)
         if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
             ShowMuteToast(newMuted)
     }
+}
+
+SyncRemoteBridgeTelemetry(cfg, state, ev) {
+    if (!IsObject(state) || !IsObject(ev))
+        return
+    prevRec := state.recState
+    prevWarn := state.streamDropWarn
+    prevVoiceWarn := state.voiceWhileMuted
+
+    state.recState := ev.HasOwnProp("recState") ? ev.recState : 0
+    state.recSeconds := ev.HasOwnProp("recSeconds") ? Max(0, ev.recSeconds) : 0
+    state.streamDropWarn := ev.HasOwnProp("streamDropWarn") ? !!ev.streamDropWarn : false
+    state.voiceWhileMuted := (state.isMuted && ev.HasOwnProp("voiceWhileMuted")) ? !!ev.voiceWhileMuted : false
+
+    if (state.voiceWhileMuted && !prevVoiceWarn && (!cfg.HasOwnProp("EnableVoiceWhileMutedAlert") || cfg.EnableVoiceWhileMutedAlert)) {
+        if ((A_TickCount - state._lastVoiceWarnTick) >= 5000) {
+            state._lastVoiceWarnTick := A_TickCount
+            ToolTip("⚠ You're on mute — mic signal detected on Host")
+            SetTimer(RemoveToolTip, -2800)
+        }
+    }
+
+    if (prevRec != state.recState || prevWarn != state.streamDropWarn || prevVoiceWarn != state.voiceWhileMuted || state.recState > 0)
+        state.NotifyTrayStatus()
+}
+
+SendRemoteBridgeDeckCommand(cfg, state, actionType) {
+    if (!IsRemoteUsingBridgeChannel(cfg, state)) {
+        TrayTip("Slide & Record Deck commands require an active Primary Host Bridge LAN connection.", "PresenterSync Remote", 2)
+        return false
+    }
+    payload := BuildRemoteBridgeDeckJson(cfg, actionType)
+    return TrySendWsText(state.obsWs, payload)
 }
 
 ; --- REMOTE CLICKER MUTE TRANSMISSION ---
@@ -1124,8 +1172,18 @@ GetRemoteTrayStatusText(state) {
         return "✕ Auth Failed (Check Password)"
     else if (state.obsConnected && state.connStatus = "mic_error")
         return "⚠ Connected (Mic Not Found): " state.activeHost
-    else if (state.obsConnected)
-        return "● Connected: " state.activeHost
+    else if (state.obsConnected) {
+        txt := "● Connected: " state.activeHost
+        if (state.recState == 1)
+            txt .= " | REC " FormatElapsedShort(state.recSeconds)
+        else if (state.recState == 2)
+            txt .= " | PAUSED " FormatElapsedShort(state.recSeconds)
+        if (state.streamDropWarn)
+            txt .= " | ⚠ STREAM WARN"
+        if (state.voiceWhileMuted && state.isMuted)
+            txt .= " | ⚠ MIC SIGNAL"
+        return txt
+    }
     return "○ Searching for OBS Host..."
 }
 
@@ -1193,6 +1251,10 @@ BuildRemoteTrayMenu(cfg, state) {
     AppearanceMenu.Add("Mute Status Toast", ToggleMuteToast.Bind(cfg, state))
     if (cfg.EnableMuteToast)
         AppearanceMenu.Check("Mute Status Toast")
+
+    AppearanceMenu.Add("Voice-While-Muted Alert", (*) => ToggleBoolSetting(cfg, state, "EnableVoiceWhileMutedAlert"))
+    if (cfg.EnableVoiceWhileMutedAlert)
+        AppearanceMenu.Check("Voice-While-Muted Alert")
 
     AppearanceMenu.Add("Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"))
     if (cfg.EnableHudClickActions)
@@ -1267,6 +1329,11 @@ BuildRemoteTrayMenu(cfg, state) {
     AppearanceMenu.Add("Restore Default Appearance", ResetRemoteAppearanceAction.Bind(cfg, state))
 
     A_TrayMenu.Add("Indicator Appearance", AppearanceMenu)
+    DeckMenu := Menu()
+    DeckMenu.Add("Next Slide (Host PowerPoint)", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_next"))
+    DeckMenu.Add("Previous Slide (Host PowerPoint)", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_prev"))
+    DeckMenu.Add("Start / Stop Host Recording", (*) => SendRemoteBridgeDeckCommand(cfg, state, "toggle_record"))
+    A_TrayMenu.Add("Host Deck Control (Bridge)", DeckMenu)
     A_TrayMenu.Add()
 
     ; 4. POINTER & CONNECTION SETTINGS

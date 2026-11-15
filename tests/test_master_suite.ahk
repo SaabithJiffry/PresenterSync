@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active v6.x release", UIConstants.APP_VERSION == "6.1.0")
+Assert("APP_VERSION is active release v6.2.0", UIConstants.APP_VERSION == "6.2.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -2425,6 +2425,53 @@ try {
 } finally {
     try DirDelete(updTmpDir, true)
 }
+
+; ==============================================================================
+; SECTION 22: v6.2.0 HOST BRIDGE 2.0 - VOICE-WHILE-MUTED & SHARED DECK HANDLERS
+; ==============================================================================
+cfgVwm := Config(testIni)
+Assert("EnableVoiceWhileMutedAlert defaults to true", cfgVwm.EnableVoiceWhileMutedAlert == true)
+stVwm := OverlayState(cfgVwm)
+stVwm.isMuted := false
+Assert("EvaluateMutedVoiceAlert ignores speech when unmuted",
+    !EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.85, 1000) && !stVwm.voiceWhileMuted)
+
+stVwm.isMuted := true
+Assert("EvaluateMutedVoiceAlert ignores quiet ambient floor",
+    !EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.04, 1000) && !stVwm.voiceWhileMuted)
+Assert("EvaluateMutedVoiceAlert does not trigger before sustained 1500ms",
+    !EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.40, 1000)
+    && !EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.45, 2200) && !stVwm.voiceWhileMuted)
+Assert("EvaluateMutedVoiceAlert triggers after 1500ms sustained speech while muted",
+    EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.45, 2550) && stVwm.voiceWhileMuted)
+Assert("EvaluateMutedVoiceAlert holds alert during brief quiet gap (<1500ms)",
+    !EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.01, 3000) && stVwm.voiceWhileMuted)
+Assert("EvaluateMutedVoiceAlert clears after 1500ms sustained silence",
+    EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.01, 4550) && !stVwm.voiceWhileMuted)
+
+EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.50, 5000)
+EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.50, 6600)
+stVwm.isMuted := false
+Assert("EvaluateMutedVoiceAlert clears immediately upon unmuting",
+    EvaluateMutedVoiceAlert(cfgVwm, stVwm, 0.50, 6700) && !stVwm.voiceWhileMuted)
+
+pptLog := []
+mockObsDeck := []
+stDeck := {
+    EnableWS: true,
+    obsConnected: true,
+    obsWs: { sendText: (this, pkt) => mockObsDeck.Push(pkt) },
+    pptNextFn: (*) => (pptLog.Push("N"), true),
+    pptPrevFn: (*) => (pptLog.Push("P"), true)
+}
+cfgDeck := Config(testIni)
+cfgDeck.EnableWS := true
+Assert("ExecuteHostRemotePptCommand invokes Next and Prev handlers cleanly",
+    ExecuteHostRemotePptCommand(cfgDeck, stDeck, "next")
+    && ExecuteHostRemotePptCommand(cfgDeck, stDeck, "prev")
+    && pptLog.Length == 2 && pptLog[1] == "N" && pptLog[2] == "P")
+Assert("ExecuteHostToggleRecord sends ToggleRecord to OBS when connected",
+    ExecuteHostToggleRecord(cfgDeck, stDeck) && mockObsDeck.Length == 1 && InStr(mockObsDeck[1], "ToggleRecord"))
 
 ; Cleanup test ini
 if FileExist(testIni)

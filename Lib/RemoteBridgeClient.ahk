@@ -519,6 +519,11 @@ BuildRemoteBridgePingJson() {
     return '{"type":"ping"}'
 }
 
+BuildRemoteBridgeDeckJson(cfg, actionType) {
+    devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
+    return '{"type":"' _RBC_JsonEscape(actionType) '","deviceId":"' _RBC_JsonEscape(devId) '","source":"tray"}'
+}
+
 ParseHostBridgeWsEvent(rawText) {
     t := _RBC_JsonGetStr(rawText, "type")
     if (t = "")
@@ -529,8 +534,14 @@ ParseHostBridgeWsEvent(rawText) {
         isMuted: _RBC_JsonGetBool(rawText, "isMuted", false),
         routingMode: _RBC_JsonGetInt(rawText, "routingMode", 1),
         targetMicName: _RBC_JsonGetStr(rawText, "targetMicName"),
+        recState: _RBC_JsonGetInt(rawText, "recState", 0),
+        recSeconds: _RBC_JsonGetInt(rawText, "recSeconds", 0),
+        streamDropWarn: _RBC_JsonGetBool(rawText, "streamDropWarn", false),
+        voiceWhileMuted: _RBC_JsonGetBool(rawText, "voiceWhileMuted", false),
         hostName: _RBC_JsonGetStr(rawText, "hostName"),
-        reason: _RBC_JsonGetStr(rawText, "reason")
+        reason: _RBC_JsonGetStr(rawText, "reason"),
+        action: _RBC_JsonGetStr(rawText, "action"),
+        ok: _RBC_JsonGetBool(rawText, "ok", false)
     }
 }
 
