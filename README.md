@@ -27,7 +27,7 @@ PresenterSync is a lightweight, standalone Windows utility designed for live str
     *   **Adaptive Smart Board & Phone Layouts:** Automatic form-factor detection (`Auto`, `Smart Board`, `Mobile Phone`) keeps controls crisp from compact 360dp portrait phones (`Android 12+`) up to 65"+ 4K landscape Smart Boards (`Android 14+`) with floating pill scales from `0.25x` up to `5.0x`.
     *   **Triple-Method Pairing (QR, Session Code, WAN Relay):** Scan the host's live QR code (`presentersync://connect?...`) in Android, enter the 6-character LAN **Session Code (`XXX-XXX`)** on camera-less Smart Boards or Windows Remote via Host Bridge port `4456`, use **WAN Relay (`PS-XXXX-XXXX`)** across separate networks/hotspots, or enter manual Host/Port directly.
     *   **Customizable Floating Bubble Multi-Gestures & Position Lock:** Configure **Single Tap**, **Double Tap**, **Long Press** (`600ms`), and **Very Long Press** (`1400ms`) independently—defaulting to Single Tap disabled (`None`) to prevent accidental Smart Board touches, `Long Press` to Toggle Mute (with animated progress arc), and `Double Tap` for Quick Menu—plus optional split Hold Mute / Very Long Unmute and **Lock Pill Position**.
-    *   **Optional Hardware Pointer Keystroke Intercept (`ON/OFF`):** Toggle pointer intercept ON in Android (`ClickerAccessibilityService`) or Windows when the clicker USB/BT receiver is plugged into the remote device, or turn it OFF when plugged into the Primary PC while keeping the live Mic HUD and bubble gestures active.
+    *   **Play Protect-Safe Touch + PC Clicker Architecture:** Android keeps a minimal permission footprint (no `BIND_ACCESSIBILITY_SERVICE`), avoiding Play Protect sideload blocks cleanly. Keep your presenter clicker plugged into the Primary Windows PC (which syncs live mute status to Android) or control mute straight from the Android floating bubble gestures (`Long Press` / `Double Tap`).
     *   **Safe Manual Remote Shutdown:** Use **Close Remote Companion...** in the Primary system tray (or **Remote Companion Info...**) to shut down all connected Windows or Android companions safely.
     *   **Touchscreen Drag, Scale & Safety:** Magnetic screen-edge/center snapping, hover Auto-Dodge, Click-Through Mode (with persistent notification & Quick Tile unlock), two-tone acoustic chime, and 5 color presets.
 
@@ -66,14 +66,21 @@ If you prefer to run the raw script or compile it yourself:
 4. Run `PresenterSync.ahk` on the primary streaming laptop.
 5. Run `PresenterSync_Remote.ahk` on the smart board / secondary laptop.
 
-### Option C: 1-Click Portable Executable Build
-You can build standalone, zero-dependency `.exe` binaries for both the primary and remote apps:
+### Option C: 1-Click Portable Executable & APK Build
+You can build standalone, zero-dependency `.exe` binaries for both Windows apps (or `build_android.bat` for the signed Android APK):
 1. Ensure AutoHotkey v2 with compiler tools is installed.
-2. Double-click **`build.bat`**.
+2. Double-click **`build.bat`** (outputs to `dist\`).
 3. It compiles:
-   * **`PresenterSync.exe`** (Primary Streaming Host)
-   * **`PresenterSync_Remote.exe`** (Smart Board Companion)
-4. Copy `PresenterSync_Remote.exe` to a USB drive or smart board OPS module and run it portably without any installation!
+   * **`dist\PresenterSync.exe`** (Primary Streaming Host)
+   * **`dist\PresenterSync_Remote.exe`** (Smart Board Companion)
+4. Copy `dist\PresenterSync_Remote.exe` to a USB drive or smart board OPS module and run it portably without any installation! (Or install `dist\PresenterSync_Remote.apk` on Android Smart Boards & phones.)
+
+## 📁 Repository Layout
+* `PresenterSync.ahk`, `PresenterSync_Remote.ahk` — Primary Host & Remote Companion AutoHotkey v2 entrypoints (`Lib\` holds shared modules)
+* `android/` — Native Kotlin/Compose Android Smart Board & Phone Remote project (`build_android.bat`)
+* `assets/` — Application icon files (`PresenterSync.ico`, `PresenterSyncRemote.ico`)
+* `dist/` — Built release binaries (`PresenterSync.exe`, `PresenterSync_Remote.exe`, `PresenterSync_Remote.apk`)
+* `tests/` — Automated AutoHotkey & Python regression/E2E suites
 
 ## 📡 Multi-Remote Smart Board & Phone Setup
 1. **Host Firewall & Companion Bridge:** Enable OBS Studio WebSocket v5 (`Tools` > `WebSocket Server Settings`, port `4455`) if using OBS (Mode 1/3)—Mode 2 Zoom/Teams/Meet works without OBS via Host Bridge—and allow TCP ports `4455` & `4456` plus UDP `4456` on Private Firewall.
@@ -81,7 +88,7 @@ You can build standalone, zero-dependency `.exe` binaries for both the primary a
    * **Android (Phone / Smart Board):** Tap **Scan QR** in `PresenterSync_Remote.apk` or type the 6-character **Session Code (`XXX-XXX`)** -> **Pair Code** (works simultaneously on both your presenter phone and 65" Smart Board).
    * **Windows Remote (`PresenterSync_Remote.exe`):** Enter the **Session Code** in **Host Bridge Session Code** -> **Pair by Code**, or paste the **Universal Connection String**. Launch additional isolated Windows companions anytime using `-Instance <name>` (or `-Config <path.ini>`).
    * **Separate Networks (WAN Relay):** Enable **Different Networks (Internet)** and enter your `PS-XXXX-XXXX` code on any remote.
-3. **Customize Controls Per Device:** On Android Smart Boards, leave **Single Tap = None** and use **Long Press** / **Very Long Press** gestures (or split Mute / Unmute holds) plus **Lock Pill Position** so interactive board taps don't accidentally toggle mute. Toggle **Pointer Keystroke Intercept** ON only on devices where the clicker dongle is connected.
+3. **Customize Controls Per Device:** On Android Smart Boards, leave **Single Tap = None** and use **Long Press** / **Very Long Press** gestures (or split Mute / Unmute holds) plus **Lock Pill Position** so interactive board taps don't accidentally toggle mute. Connect your presenter clicker to the Primary Windows PC to sync mute state across all screens cleanly.
 4. **Live Connected Roster:** Watch all paired/live Windows & Android remotes update live inside **Remote Companion Info...**, or safely shut them down together with **Close Remote Companion...**.
 
 ## 🎮 How It Works

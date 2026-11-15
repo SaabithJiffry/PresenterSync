@@ -3,7 +3,5 @@
     <string name="app_name">PresenterSync Remote</string>
     <string name="fgs_channel_name">PresenterSync Remote Overlay</string>
     <string name="fgs_channel_desc">Keeps the floating Mic HUD and OBS/Host WebSocket connection active over all apps.</string>
-    <string name="accessibility_service_label">PresenterSync Hardware Clicker Filter</string>
-    <string name="accessibility_service_desc">Captures only your configured Smart Board presenter mute key globally over presentations and whiteboards.</string>
     <string name="qs_tile_label">PresenterSync Mic</string>
 </resources>

@@ -75,7 +75,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
-import com.saabithjiffry.presentersync.remote.service.ClickerAccessibilityService
 import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 
@@ -182,21 +181,15 @@ private val HELP_TOPICS = listOf(
     ),
     HelpTopic(
         "Pointer & Clicker",
-        "Pointer Keystroke Intercept: ON vs OFF",
-        "Choose where your wireless presenter dongle is plugged in.",
-        "Keep Pointer Intercept OFF when the clicker USB receiver is plugged directly into the Primary Windows PC and use Bubble Long-Press gestures on the Smart Board / Phone. Turn Pointer Intercept ON in Pointer & Keys (or Quick Menu) only when the clicker is connected directly to Android via USB/Bluetooth."
+        "Play Protect-Safe Smart Board & Phone Control",
+        "Zero Accessibility permissions required — install directly with Play Protect enabled.",
+        "PresenterSync Remote intentionally omits background Accessibility services so sideloaded APK installs aren't blocked. Keep your presenter clicker dongle plugged into the Primary Windows PC (which syncs live to Android) and control mute from Android using Floating Bubble Gestures (Long Press / Double Tap)."
     ),
     HelpTopic(
         "Pointer & Clicker",
-        "Global Presenter Clicker Over Third-Party Apps",
-        "Capture USB/BT pointer Mute button (default B) without stealing whiteboard focus.",
-        "Open Pointer & Keys tab -> tap 'Enable Service' -> enable 'PresenterSync Hardware Clicker Filter' under Android Accessibility Settings. Slide navigation keys pass straight through to your presentation app."
-    ),
-    HelpTopic(
-        "Troubleshooting",
-        "Android 13/14/15 'Restricted Setting' Blocked Accessibility",
-        "Built-in Android security blocks Accessibility for sideloaded APKs until approved once.",
-        "1. Open Android Settings -> Apps -> PresenterSync Remote.\n2. Tap the 3-dot overflow menu at top-right -> 'Allow restricted settings'.\n3. Return to Accessibility Settings and toggle PresenterSync Hardware Clicker Filter ON."
+        "Focused-Window Clicker & Keyboard Tester",
+        "Test clicker keycodes or trigger shortcuts while PresenterSync Remote is open.",
+        "Open Pointer & Keys tab to test USB/BT presenter keycodes in-app or configure focused-window mute & cough-hold keys."
     ),
     HelpTopic(
         "Troubleshooting",
@@ -435,7 +428,7 @@ private fun HelpOverviewTab(
             Text(
                 text = "1. On Windows Host PC, open Tray -> Settings -> Remote Companion Info...\n" +
                     "2. In Android Remote, tap Settings -> Scan QR (or enter the 6-char Session Code / Manual IP).\n" +
-                    "3. Grant Display Over Other Apps + Accessibility Filter (allow Restricted Settings once on Android 13+).",
+                    "3. Grant Display Over Other Apps (and Notifications on Android 13+) — no Accessibility permission required.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -509,7 +502,6 @@ private fun HelpDiagnosticsTab(
     conn: com.saabithjiffry.presentersync.remote.network.ConnectionUiState
 ) {
     val overlayOk = Settings.canDrawOverlays(context)
-    val a11yOk = ClickerAccessibilityService.isServiceEnabled(context)
     val notifOk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
@@ -530,11 +522,6 @@ private fun HelpDiagnosticsTab(
                     )
                 }
             }
-            DiagnosticStatusRow("Accessibility Clicker Filter", a11yOk) {
-                runCatching {
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
-            }
             DiagnosticStatusRow("Notifications Permission", notifOk) {
                 runCatching {
                     context.startActivity(
@@ -543,6 +530,7 @@ private fun HelpDiagnosticsTab(
                     )
                 }
             }
+            DiagnosticStatusRow("Play Protect-Safe (No Accessibility)", true) {}
         }
     }
 
@@ -565,7 +553,7 @@ private fun HelpDiagnosticsTab(
                 onClick = {
                     val summary = buildString {
                         appendLine("PresenterSync Remote v${AppConstants.APP_VERSION} (API ${Build.VERSION.SDK_INT} / ${Build.MODEL})")
-                        appendLine("Overlay=$overlayOk | A11y=$a11yOk | Notif=$notifOk")
+                        appendLine("Overlay=$overlayOk | Notif=$notifOk | PlayProtectSafe=true")
                         appendLine("Status=${conn.connStatus} | Connected=${conn.connected} | Host=${conn.activeHost} | Transport=${conn.transportName}")
                         appendLine("Mic=${if (conn.isMuted) "MUTED" else "LIVE"} | Source=${cfg.targetMicName} | Mode=${cfg.networkMode}")
                         appendLine("Key=${cfg.hwMuteHotkey} | PointerMute=${cfg.enablePointerMute} | Cough=${cfg.enablePushToMute}")

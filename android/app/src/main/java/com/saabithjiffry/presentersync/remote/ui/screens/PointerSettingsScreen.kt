@@ -1,8 +1,5 @@
 package com.saabithjiffry.presentersync.remote.ui.screens
 
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -23,15 +20,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PauseCircle
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -54,23 +49,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.config.ResolvedFormFactor
 import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
+import com.saabithjiffry.presentersync.remote.input.CapturedKeyEvent
 import com.saabithjiffry.presentersync.remote.input.ClickerMuteController
-import com.saabithjiffry.presentersync.remote.service.CapturedKeyEvent
-import com.saabithjiffry.presentersync.remote.service.ClickerAccessibilityService
+import com.saabithjiffry.presentersync.remote.input.InAppKeyMonitor
 import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import com.saabithjiffry.presentersync.remote.ui.theme.ResponsiveExplorerActionRow
@@ -90,40 +81,23 @@ private val QUICK_CLICKER_KEYS = listOf(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PointerSettingsScreen(
-    app: PresenterSyncRemoteApp
+    app: PresenterSyncRemoteApp,
+    onOpenHudStyle: () -> Unit = {}
 ) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
     val cfg by app.configStore.config.collectAsStateWithLifecycle()
     val formFactor = rememberFormFactor(cfg.deviceProfileMode)
 
-    val serviceConnectedFlow by ClickerAccessibilityService.serviceActive.collectAsStateWithLifecycle()
-    val testerEvents by ClickerAccessibilityService.testerEvents.collectAsStateWithLifecycle()
-    val lastCapturedKey by ClickerAccessibilityService.lastCapturedKey.collectAsStateWithLifecycle()
+    val testerEvents by InAppKeyMonitor.testerEvents.collectAsStateWithLifecycle()
+    val lastCapturedKey by InAppKeyMonitor.lastCapturedKey.collectAsStateWithLifecycle()
 
-    var a11yEnabled by remember {
-        mutableStateOf(serviceConnectedFlow || ClickerAccessibilityService.isServiceEnabled(context))
-    }
     var showCaptureDialog by remember { mutableStateOf(false) }
-    var showRestrictedGuideDialog by remember { mutableStateOf(false) }
     var testerOpen by remember { mutableStateOf(false) }
     var showShortcutDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(serviceConnectedFlow) {
-        a11yEnabled = serviceConnectedFlow || ClickerAccessibilityService.isServiceEnabled(context)
-    }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                a11yEnabled = ClickerAccessibilityService.isServiceEnabled(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
+    DisposableEffect(Unit) {
         onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            ClickerAccessibilityService.testerMode.set(false)
-            ClickerAccessibilityService.captureNextKeyMode.set(false)
+            InAppKeyMonitor.testerMode.set(false)
+            InAppKeyMonitor.captureNextKeyMode.set(false)
         }
     }
 
@@ -135,11 +109,11 @@ fun PointerSettingsScreen(
             .padding(formFactor.outerPaddingDp.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. Hardware Pointer Global Service Status Card
-        val badgeColor = if (a11yEnabled) Color(0xFF10B981) else Color(0xFFD97706)
+        // 1. Play Protect-Safe Architecture Status Card
+        val safeGreen = Color(0xFF10B981)
         ExplorerCard(
             contentPadding = formFactor.cardPaddingDp,
-            borderColor = if (a11yEnabled) MaterialTheme.colorScheme.outline else badgeColor.copy(alpha = 0.55f)
+            borderColor = safeGreen.copy(alpha = 0.45f)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(
@@ -150,32 +124,24 @@ fun PointerSettingsScreen(
                         modifier = Modifier
                             .size(42.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(badgeColor.copy(alpha = 0.14f)),
+                            .background(safeGreen.copy(alpha = 0.14f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (a11yEnabled) Icons.Default.CheckCircle else Icons.Default.AccessibilityNew,
+                            imageVector = Icons.Default.VerifiedUser,
                             contentDescription = null,
-                            tint = badgeColor
+                            tint = safeGreen
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (a11yEnabled) {
-                                "Hardware Clicker Service Active"
-                            } else {
-                                "Enable Hardware Clicker Service"
-                            },
+                            text = "Play Protect-Safe Smart Board & Phone Mode",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (a11yEnabled) MaterialTheme.colorScheme.onSurface else badgeColor
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (a11yEnabled) {
-                                "Global key filter captures only your mute button; slide keys pass through cleanly."
-                            } else {
-                                "Required so USB/Bluetooth presenter clickers work globally over slides, PDFs & whiteboards."
-                            },
+                            text = "Background Accessibility Service was removed so direct APK downloads install cleanly without Play Protect blocks. Use Floating Bubble Gestures on Android or keep your clicker receiver plugged into the Primary Windows PC.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -188,30 +154,13 @@ fun PointerSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                            }
-                        },
+                        onClick = onOpenHudStyle,
                         contentPadding = CompactExplorerButtonPadding
                     ) {
-                        Icon(Icons.Default.AccessibilityNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            if (a11yEnabled) "Accessibility Settings" else "Enable Service",
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = { showRestrictedGuideDialog = true },
-                        contentPadding = CompactExplorerButtonPadding
-                    ) {
-                        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            "Android 13+ Guide",
+                            "Configure Bubble Gestures",
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis
@@ -221,11 +170,11 @@ fun PointerSettingsScreen(
             }
         }
 
-        // 2. Clicker Behavior & Mute Button Configuration Card
+        // 2. Focused-Window Clicker & Keyboard Configuration Card
         ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "Hardware Clicker Controls",
+                    text = "Focused-Window Key Controls",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -237,49 +186,15 @@ fun PointerSettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Enable In-App Pointer Mute Key", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         Text(
-                            "Enable Hardware Pointer Keystroke Intercept",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            "Intercept presenter clicker keys when USB/Bluetooth receiver is paired to this Android device. Turn OFF if the receiver is plugged into the Windows PC.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = cfg.enablePointerIntercept,
-                        onCheckedChange = { enabled ->
-                            app.configStore.update { it.copy(enablePointerIntercept = enabled) }
-                        }
-                    )
-                }
-                if (!cfg.enablePointerIntercept) {
-                    Text(
-                        text = "Pointer key interception is OFF — clicker keys pass cleanly to Android apps. Use Floating Bubble Gestures (Long Press / Double Tap) in HUD Style to mute/unmute anytime.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text("Enable Pointer Mute Button", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        Text(
-                            "Allow assigned clicker mute button to toggle OBS/Host mic",
+                            "Allow assigned clicker mute button to toggle OBS/Host mic while PresenterSync Remote is in focus",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Switch(
                         checked = cfg.enablePointerMute,
-                        enabled = cfg.enablePointerIntercept,
                         onCheckedChange = { enabled ->
                             app.configStore.update { it.copy(enablePointerMute = enabled) }
                         }
@@ -302,7 +217,6 @@ fun PointerSettingsScreen(
                     }
                     Switch(
                         checked = cfg.enablePushToMute,
-                        enabled = cfg.enablePointerIntercept,
                         onCheckedChange = { enabled ->
                             app.configStore.update { it.copy(enablePushToMute = enabled) }
                         }
@@ -316,9 +230,9 @@ fun PointerSettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text("Suspend All Hotkeys & Clicker", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text("Suspend In-App Hotkeys", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         Text(
-                            "Temporarily pause hardware mute keys & shortcuts without disconnecting HUD",
+                            "Temporarily pause focused-window mute keys & shortcuts without disconnecting HUD",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -351,12 +265,12 @@ fun PointerSettingsScreen(
             }
         }
 
-        // 3. Global Shortcuts Card
+        // 3. In-App Keyboard Shortcuts Card
         ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 ResponsiveExplorerActionRow(
                     title = "Keyboard Shortcuts (USB/BT Keyboard)",
-                    subtitle = "Active globally when Accessibility Service is enabled and not suspended.",
+                    subtitle = "Active while PresenterSync Remote window is focused and not suspended.",
                     isTightWidth = formFactor.isTightWidth
                 ) {
                     OutlinedButton(
@@ -394,18 +308,18 @@ fun PointerSettingsScreen(
                 ResponsiveExplorerActionRow(
                     title = "Live Clicker Diagnostic Tester",
                     subtitle = if (testerOpen) {
-                        "Listening... Press any presenter clicker button to inspect Android KeyCode & filtering."
+                        "Listening while this window is open... Press any clicker key to inspect Android KeyCode."
                     } else {
-                        "Verify your USB/Bluetooth presenter buttons before presenting."
+                        "Inspect USB/Bluetooth clicker keycodes inside the focused app window."
                     },
                     isTightWidth = formFactor.isTightWidth
                 ) {
                     Button(
                         onClick = {
                             testerOpen = !testerOpen
-                            ClickerAccessibilityService.testerMode.set(testerOpen)
+                            InAppKeyMonitor.testerMode.set(testerOpen)
                             if (testerOpen) {
-                                ClickerAccessibilityService.clearTesterEvents()
+                                InAppKeyMonitor.clearTesterEvents()
                             }
                         },
                         contentPadding = CompactExplorerButtonPadding
@@ -420,13 +334,6 @@ fun PointerSettingsScreen(
 
                 if (testerOpen) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    if (!a11yEnabled) {
-                        Text(
-                            text = "Note: Global Accessibility capture is currently OFF — only Activity focus keys or enabled Accessibility Service will appear.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFFD97706)
-                        )
-                    }
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -479,34 +386,14 @@ fun PointerSettingsScreen(
             currentKey = cfg.hwMuteHotkey,
             lastCaptured = lastCapturedKey,
             onKeySelected = { keyCodeName ->
-                ClickerAccessibilityService.captureNextKeyMode.set(false)
+                InAppKeyMonitor.captureNextKeyMode.set(false)
                 app.configStore.update { it.copy(hwMuteHotkey = keyCodeName) }
                 showCaptureDialog = false
             },
             onDismiss = {
-                ClickerAccessibilityService.captureNextKeyMode.set(false)
+                InAppKeyMonitor.captureNextKeyMode.set(false)
                 showCaptureDialog = false
             }
-        )
-    }
-
-    if (showRestrictedGuideDialog) {
-        RestrictedSettingsGuideDialog(
-            packageName = context.packageName,
-            onOpenAppInfo = {
-                runCatching {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = Uri.parse("package:${context.packageName}")
-                    }
-                    context.startActivity(intent)
-                }
-            },
-            onOpenAccessibility = {
-                runCatching {
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                }
-            },
-            onDismiss = { showRestrictedGuideDialog = false }
         )
     }
 
@@ -540,9 +427,9 @@ private fun CaptureClickerButtonDialog(
     val startSeq = remember { lastCaptured?.seq ?: 0L }
 
     DisposableEffect(Unit) {
-        ClickerAccessibilityService.captureNextKeyMode.set(true)
+        InAppKeyMonitor.captureNextKeyMode.set(true)
         onDispose {
-            ClickerAccessibilityService.captureNextKeyMode.set(false)
+            InAppKeyMonitor.captureNextKeyMode.set(false)
         }
     }
 
@@ -652,109 +539,6 @@ private fun CaptureClickerButtonDialog(
                 ) {
                     OutlinedButton(onClick = onDismiss) {
                         Text("Cancel")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RestrictedSettingsGuideDialog(
-    packageName: String,
-    onOpenAppInfo: () -> Unit,
-    onOpenAccessibility: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val formFactor = rememberFormFactor(com.saabithjiffry.presentersync.remote.config.DeviceProfileMode.AUTO)
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .widthIn(max = 580.dp)
-                .fillMaxWidth(formFactor.dialogWidthFraction)
-                .heightIn(max = (formFactor.heightDp * formFactor.dialogMaxHeightFraction).dp)
-                .padding(vertical = if (formFactor.isCompactHeight) 6.dp else 14.dp),
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text(
-                            text = "Android 13/14+ Accessibility Setup",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
-                    }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "When installing via sideloaded APK on Android 13, 14, or 15, Android locks Accessibility Services with \"Restricted setting\" until unlocked once:",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text("1. Tap \"Open App Info\" below.", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                            Text("2. Tap the 3-dots menu (⋮) in the top-right corner.", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                            Text("3. Select \"Allow restricted settings\" and confirm.", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                            Text("4. Return and tap \"Open Accessibility\" -> Enable \"PresenterSync Hardware Clicker Filter\".", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                        }
-                    }
-                    Text(
-                        text = "IT / MDM Note: Or grant once over USB ADB: appops set $packageName ACCESS_RESTRICTED_SETTINGS allow",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    OutlinedButton(onClick = onOpenAppInfo, modifier = Modifier.weight(1f)) {
-                        Text("1. Open App Info")
-                    }
-                    Button(onClick = onOpenAccessibility, modifier = Modifier.weight(1f)) {
-                        Text("2. Open Accessibility")
                     }
                 }
             }

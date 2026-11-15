@@ -10,7 +10,7 @@
 
 #Requires AutoHotkey v2.0
 #SingleInstance Off
-;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
+;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
 ;@Ahk2Exe-SetVersion 5.4.0.0
@@ -34,8 +34,8 @@ if (g_RemoteMutex.alreadyExists) {
 Gdip.Startup()
 OnExit((*) => (ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
 
-if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSyncRemote.ico"))
-    try TraySetIcon(A_ScriptDir "\PresenterSyncRemote.ico")
+if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico"))
+    try TraySetIcon(A_ScriptDir "\assets\PresenterSyncRemote.ico")
 A_IconTip := "PresenterSync Remote v" UIConstants.APP_VERSION (g_RemoteCli.instanceName != "" ? " [" g_RemoteCli.instanceName "]" : "")
 
 ; === CONFIGURATION & STATE ===
@@ -1650,7 +1650,7 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
     Theme.ApplyToWindow(aboutGui)
     Theme.NamedWindows["AboutRemoteWindow"] := aboutGui
 
-    iconSource := A_IsCompiled ? A_ScriptFullPath : (FileExist(A_ScriptDir "\PresenterSyncRemote.ico") ? A_ScriptDir "\PresenterSyncRemote.ico" : A_ScriptDir "\..\PresenterSyncRemote.ico")
+    iconSource := A_IsCompiled ? A_ScriptFullPath : (FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico") ? A_ScriptDir "\assets\PresenterSyncRemote.ico" : A_ScriptDir "\..\assets\PresenterSyncRemote.ico")
     if FileExist(iconSource)
         aboutGui.Add("Picture", "x203 y16 w64 h64", iconSource)
 

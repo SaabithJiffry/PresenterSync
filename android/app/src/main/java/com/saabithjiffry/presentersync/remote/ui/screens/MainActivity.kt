@@ -98,11 +98,13 @@ import com.saabithjiffry.presentersync.remote.config.NetworkMode
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.config.ResolvedFormFactor
 import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
+import com.saabithjiffry.presentersync.remote.input.CapturedKeyEvent
+import com.saabithjiffry.presentersync.remote.input.ClickerDecision
 import com.saabithjiffry.presentersync.remote.input.ClickerMuteController
+import com.saabithjiffry.presentersync.remote.input.InAppKeyMonitor
+import com.saabithjiffry.presentersync.remote.input.KeyAction
 import com.saabithjiffry.presentersync.remote.network.ConnStatus
 import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
-import com.saabithjiffry.presentersync.remote.service.CapturedKeyEvent
-import com.saabithjiffry.presentersync.remote.service.ClickerAccessibilityService
 import com.saabithjiffry.presentersync.remote.service.FloatingHudForegroundService
 import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
@@ -113,6 +115,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     private var pendingDeepLink by mutableStateOf<Pair<Long, String>?>(null)
+    private val focusedKeyController = ClickerMuteController()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -177,9 +180,11 @@ class MainActivity : ComponentActivity() {
         val navIgnored = event.keyCode == KeyEvent.KEYCODE_BACK ||
             event.keyCode == KeyEvent.KEYCODE_HOME ||
             event.keyCode == KeyEvent.KEYCODE_POWER
-        if (!navIgnored && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            if (ClickerAccessibilityService.captureNextKeyMode.getAndSet(false)) {
-                ClickerAccessibilityService.recordUiCapturedEvent(
+        val app = application as PresenterSyncRemoteApp
+        val cfg = app.configStore.current
+        if (!navIgnored && (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && InAppKeyMonitor.captureNextKeyMode.getAndSet(false)) {
+                InAppKeyMonitor.recordUiCapturedEvent(
                     CapturedKeyEvent(
                         seq = System.nanoTime(),
                         keyCode = event.keyCode,
@@ -195,11 +200,10 @@ class MainActivity : ComponentActivity() {
                 )
                 return true
             }
-            if (ClickerAccessibilityService.testerMode.get()) {
-                val cfg = (application as PresenterSyncRemoteApp).configStore.current
+            if (InAppKeyMonitor.testerMode.get() && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 val matched = ClickerMuteController.normalizeKeyCodeName(cfg.hwMuteHotkey) ==
                     ClickerMuteController.normalizeKeyCodeName(keyName)
-                ClickerAccessibilityService.recordUiCapturedEvent(
+                InAppKeyMonitor.recordUiCapturedEvent(
                     CapturedKeyEvent(
                         seq = System.nanoTime(),
                         keyCode = event.keyCode,
@@ -213,6 +217,38 @@ class MainActivity : ComponentActivity() {
                         timestampMs = System.currentTimeMillis()
                     )
                 )
+            } else {
+                val action = if (event.action == KeyEvent.ACTION_DOWN) KeyAction.DOWN else KeyAction.UP
+                val decision = focusedKeyController.onKeyEvent(
+                    keyCodeName = keyName,
+                    action = action,
+                    isCtrl = event.isCtrlPressed,
+                    isAlt = event.isAltPressed,
+                    isShift = event.isShiftPressed,
+                    repeatCount = event.repeatCount,
+                    config = cfg
+                )
+                when (decision) {
+                    ClickerDecision.CONSUME_TOGGLE,
+                    ClickerDecision.TRIGGER_TOGGLE_SHORTCUT -> {
+                        app.connectionManager.toggleMuteFromClicker()
+                        return true
+                    }
+                    ClickerDecision.CONSUME_COUGH_HOLD_MUTE -> {
+                        app.connectionManager.setMuteFromClicker(true)
+                        return true
+                    }
+                    ClickerDecision.CONSUME_COUGH_RELEASE_UNMUTE -> {
+                        app.connectionManager.setMuteFromClicker(false)
+                        return true
+                    }
+                    ClickerDecision.TRIGGER_EXIT_SHORTCUT -> {
+                        FloatingHudForegroundService.startService(this, FloatingHudForegroundService.ACTION_STOP)
+                        return true
+                    }
+                    ClickerDecision.CONSUME_NOOP -> return true
+                    ClickerDecision.PASS_THROUGH -> Unit
+                }
             }
         }
         return super.dispatchKeyEvent(event)
@@ -423,7 +459,10 @@ private fun RemoteDashboardScreen(
             if (selectedTabIndex == 1) {
                 HudAppearanceScreen(app = app)
             } else if (selectedTabIndex == 2) {
-                PointerSettingsScreen(app = app)
+                PointerSettingsScreen(
+                    app = app,
+                    onOpenHudStyle = { selectedTabIndex = 1 }
+                )
             } else {
                 val maxContainerWidth = if (formFactor.isWideTwoColumn) 1140.dp else 760.dp
                 Column(

@@ -1,4 +1,6 @@
 # PresenterSync Remote Android ProGuard / R8 rules
+# Keep transparent non-obfuscated symbol names alongside dead-code shrinking (Play Protect friendly)
+-dontobfuscate
 
 # Keep Kotlin & Compose metadata, annotations, and stack trace line numbers
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,SourceFile,LineNumberTable
@@ -17,7 +19,6 @@
 -keep public class * extends android.app.Activity
 -keep public class * extends android.app.Service
 -keep public class * extends android.content.BroadcastReceiver
--keep public class * extends android.accessibilityservice.AccessibilityService
 -keep public class * extends android.service.quicksettings.TileService
 
 # Native JNI methods (AudioTrack / CameraX image processing / Compose graphics)

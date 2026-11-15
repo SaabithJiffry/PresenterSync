@@ -2628,7 +2628,7 @@ ShowAboutWindow(cfg := "", state := "", *) {
     Theme.ApplyToWindow(aboutGui)
     Theme.NamedWindows["AboutWindow"] := aboutGui
 
-    iconSource := A_IsCompiled ? A_ScriptFullPath : (FileExist(A_ScriptDir "\PresenterSync.ico") ? A_ScriptDir "\PresenterSync.ico" : A_LineFile "\..\..\PresenterSync.ico")
+    iconSource := A_IsCompiled ? A_ScriptFullPath : (FileExist(A_ScriptDir "\assets\PresenterSync.ico") ? A_ScriptDir "\assets\PresenterSync.ico" : A_LineFile "\..\..\assets\PresenterSync.ico")
     if FileExist(iconSource)
         aboutGui.Add("Picture", "x203 y16 w64 h64", iconSource)
 

@@ -8,7 +8,7 @@
 
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-;@Ahk2Exe-SetMainIcon PresenterSync.ico
+;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
 ;@Ahk2Exe-SetVersion 5.4.0.0
@@ -26,8 +26,8 @@ SetKeyDelay 50, 50
 Gdip.Startup()
 OnExit((*) => (StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
-if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSync.ico"))
-    try TraySetIcon(A_ScriptDir "\PresenterSync.ico")
+if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSync.ico"))
+    try TraySetIcon(A_ScriptDir "\assets\PresenterSync.ico")
 A_IconTip := "PresenterSync v" UIConstants.APP_VERSION
 
 ; === CONFIGURATION & STATE ===
