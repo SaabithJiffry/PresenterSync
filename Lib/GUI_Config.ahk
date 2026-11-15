@@ -9,7 +9,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "4.5.0"
+    static APP_VERSION := "5.0.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -2653,7 +2653,7 @@ ShowAboutWindow(cfg := "", state := "", *) {
         . "• 4-Tier Live HUD Stack: Mic + live CoreAudio VU bar, Rec, Conf Chat, Studio Mode, Scene, Stream & Virtual Cam pills with 0.25x-5.0x scale.`r`n"
         . "• 3 Audio Routing Modes: (1) Pro OBS VB-Cable, (2) Direct Mic Conferencing-Only, (3) Dual App Sync across Zoom, MS Teams & Google Meet.`r`n"
         . "• Hardware Clicker Control: Dedicated Mute Button routing, Cough Hold (>= 350ms), Mutual Exclusion Shield, PowerPoint forwarding & Tester.`r`n"
-        . "• Remote Companion Host: Streams synced HUD state to PresenterSync Remote via Same Router (LAN mDNS/failover) or Mode 2 Internet Relay.`r`n"
+        . "• Remote Companion Host: Streams synced HUD state to Windows & Android Smart Board companions via live QR code, LAN Session Code (:4456) or WAN Relay.`r`n"
         . "• Visuals & Ergonomics: Dark/Light/System themes, Solid/Frosted/Ghost opacity, 5 palettes, Mono icons, 14px Magnetic Snap, Auto-Dodge & Click-Through.`r`n"
         . "• Control Center & Profiles: Unified settings hub, interactive searchable Help Guide, saved workflow profiles & GitHub auto-update checker."
     AddHelpGuideEdit(aboutGui, 20, 214, 430, 224, primCapsText)

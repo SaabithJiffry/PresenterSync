@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v4.5.0
-;              and PresenterSync Remote v4.5.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v5.0.0
+;              and PresenterSync Remote v5.0.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -250,13 +250,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 4.5.0", UIConstants.APP_VERSION == "4.5.0")
+Assert("APP_VERSION updated to 5.0.0", UIConstants.APP_VERSION == "5.0.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v4.5.0 and Remote Host",
-    InStr(summaryTxt, "v4.5.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v5.0.0 and Remote Host",
+    InStr(summaryTxt, "v5.0.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -2240,8 +2240,8 @@ for abCtrl in abGui {
     try abTextDump .= abCtrl.Text "`n"
 }
 WinClose("ahk_id " abGui.Hwnd)
-Assert("v4.5.0 Primary ShowAboutWindow displays full Primary Host capabilities without Snake leak",
-    InStr(abTextDump, "4.5.0") && InStr(abTextDump, "4-Tier Live HUD Stack") && InStr(abTextDump, "Remote Companion Host")
+Assert("v5.0.0 Primary ShowAboutWindow displays full Primary Host capabilities without Snake leak",
+    InStr(abTextDump, "5.0.0") && InStr(abTextDump, "4-Tier Live HUD Stack") && InStr(abTextDump, "Remote Companion Host")
     && !InStr(abTextDump, "Snake") && !InStr(abTextDump, "Easter"))
 
 ; Verify Help Window Shortcuts tab renders Alt + Ctrl + Shift + S playfully without leaking Snake
@@ -2314,7 +2314,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.5.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v5.0.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
