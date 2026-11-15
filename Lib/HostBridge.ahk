@@ -160,6 +160,10 @@ class HostCompanionBridge {
     tcpMsgFn := ""
     udpMsgFn := ""
     maintTimerFn := ""
+    _tcpEventQueue := []
+    _tcpDispatching := false
+    cachedEndpoints := ""
+    cachedEndpointsTick := 0
     lastError := ""
 
     Start(cfg, state, tcpPort := 4456, udpPort := -1) {
@@ -180,13 +184,19 @@ class HostCompanionBridge {
         }
         this.wsaStarted := true
 
+        this._tcpEventQueue := []
+        this._tcpDispatching := false
+        this.cachedEndpoints := GetLocalNetworkEndpoints()
+        this.cachedEndpointsTick := A_TickCount
+
         this.msgGui := Gui("-Caption +ToolWindow", "PresenterSync_HostBridgeMsg")
         this.hwnd := this.msgGui.Hwnd
 
         this.tcpMsgFn := ObjBindMethod(this, "_OnTcpMessage")
         this.udpMsgFn := ObjBindMethod(this, "_OnUdpMessage")
-        OnMessage(this.wmTcp, this.tcpMsgFn)
-        OnMessage(this.wmUdp, this.udpMsgFn)
+        ; MaxThreads = 255 guarantees AHK never silently drops edge-triggered WSAAsyncSelect messages
+        OnMessage(this.wmTcp, this.tcpMsgFn, 255)
+        OnMessage(this.wmUdp, this.udpMsgFn, 255)
 
         ; 1) Bind TCP Listener (HTTP /pair + /health + RFC 6455 WS /ws)
         this.tcpListenSock := DllCall("ws2_32\socket", "Int", 2, "Int", 1, "Int", 6, "Ptr")
@@ -253,6 +263,8 @@ class HostCompanionBridge {
 
     Stop() {
         this.running := false
+        this._tcpEventQueue := []
+        this._tcpDispatching := false
         if (this.maintTimerFn) {
             try SetTimer(this.maintTimerFn, 0)
             this.maintTimerFn := ""
@@ -399,6 +411,10 @@ class HostCompanionBridge {
         }
         for cli in toClose
             this._CloseClient(cli)
+        if ((now - this.cachedEndpointsTick) >= 30000) {
+            this.cachedEndpoints := GetLocalNetworkEndpoints()
+            this.cachedEndpointsTick := A_TickCount
+        }
     }
 
     _OnUdpMessage(wParam, lParam, msg, hwnd) {
@@ -446,6 +462,24 @@ class HostCompanionBridge {
 
     _OnTcpMessage(wParam, lParam, msg, hwnd) {
         if (!this.running)
+            return 0
+        this._tcpEventQueue.Push({ w: wParam, l: lParam })
+        if (this._tcpDispatching)
+            return 0
+        this._tcpDispatching := true
+        try {
+            while (this.running && this._tcpEventQueue.Length > 0) {
+                evItem := this._tcpEventQueue.RemoveAt(1)
+                this._ProcessTcpEvent(evItem.w, evItem.l)
+            }
+        } finally {
+            this._tcpDispatching := false
+        }
+        return 0
+    }
+
+    _ProcessTcpEvent(wParam, lParam) {
+        if (!this.running)
             return
         sock := wParam
         ev := lParam & 0xFFFF
@@ -469,6 +503,7 @@ class HostCompanionBridge {
                         sendBuf: Buffer(4096, 0),
                         sendLen: 0,
                         closeAfterSend: false,
+                        peerClosed: false,
                         authenticated: false,
                         deviceId: "",
                         deviceName: "Smart Board",
@@ -480,7 +515,10 @@ class HostCompanionBridge {
                         fragLen: 0
                     }
                     ; FD_READ(1) | FD_WRITE(2) | FD_CLOSE(32) = 0x23
-                    DllCall("ws2_32\WSAAsyncSelect", "Ptr", clientSock, "Ptr", this.hwnd, "UInt", this.wmTcp, "Int", 0x23, "Int")
+                    if (DllCall("ws2_32\WSAAsyncSelect", "Ptr", clientSock, "Ptr", this.hwnd, "UInt", this.wmTcp, "Int", 0x23, "Int") != 0) {
+                        this.clients.Delete(key)
+                        try DllCall("ws2_32\closesocket", "Ptr", clientSock)
+                    }
                 }
             }
             return
@@ -495,6 +533,8 @@ class HostCompanionBridge {
             this._DrainRecv(cli)
             if (this.clients.Has(key))
                 this._ProcessClientBuffer(cli)
+            if (this.clients.Has(key) && cli.peerClosed && cli.sendLen = 0 && cli.recvLen = 0)
+                this._CloseClient(cli)
         }
         if (this.clients.Has(key) && (ev & 2)) { ; FD_WRITE
             this._FlushSendQueue(cli)
@@ -522,6 +562,7 @@ class HostCompanionBridge {
                 c.recvLen := res.len
                 c.lastRxTick := A_TickCount
             } else if (n = 0) {
+                c.peerClosed := true
                 return
             } else {
                 wsaErr := DllCall("ws2_32\WSAGetLastError", "Int")
@@ -768,7 +809,7 @@ class HostCompanionBridge {
             connected: false
         }
 
-        endpoints := GetLocalNetworkEndpoints()
+        endpoints := IsObject(this.cachedEndpoints) ? this.cachedEndpoints : GetLocalNetworkEndpoints()
         ipsJson := "["
         for idx, ipStr in endpoints.ips
             ipsJson .= (idx > 1 ? "," : "") '"' _HB_JsonEscape(ipStr) '"'

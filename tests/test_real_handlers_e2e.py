@@ -329,7 +329,9 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
 #Include "{lib_dir}\\Gdip.ahk"
 #Include "{lib_dir}\\OBS_Network.ahk"
 #Include "{lib_dir}\\GUI_Config.ahk"
+#Include "{lib_dir}\\RemoteBridgeClient.ahk"
 
+global g_RemoteCli := ParseRemoteCliArgs([])
 Gdip.Startup()
 OnExit((*) => (Theme.Shutdown(), Gdip.Shutdown()))
 
