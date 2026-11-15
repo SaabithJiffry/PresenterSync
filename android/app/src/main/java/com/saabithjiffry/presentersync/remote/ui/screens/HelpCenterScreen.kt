@@ -66,6 +66,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -73,7 +74,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.config.AppConstants
+import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
 import com.saabithjiffry.presentersync.remote.service.ClickerAccessibilityService
+import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 
 private data class HudCalloutItem(
@@ -188,6 +191,7 @@ fun HelpCenterDialog(
     val context = LocalContext.current
     val cfg by app.configStore.config.collectAsStateWithLifecycle()
     val conn by app.connectionManager.uiState.collectAsStateWithLifecycle()
+    val formFactor = rememberFormFactor(cfg.deviceProfileMode)
 
     var tabIdx by remember { mutableIntStateOf(0) }
     var selectedCalloutId by remember { mutableIntStateOf(1) }
@@ -200,10 +204,10 @@ fun HelpCenterDialog(
     ) {
         Surface(
             modifier = Modifier
-                .widthIn(max = 720.dp)
-                .fillMaxWidth(0.95f)
-                .heightIn(max = 680.dp)
-                .padding(vertical = 12.dp),
+                .widthIn(max = formFactor.dialogMaxWidthDp)
+                .fillMaxWidth(formFactor.dialogWidthFraction)
+                .heightIn(max = (formFactor.heightDp * formFactor.dialogMaxHeightFraction).dp)
+                .padding(vertical = if (formFactor.isCompactHeight) 6.dp else 12.dp),
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.background,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -262,11 +266,24 @@ fun HelpCenterDialog(
                         }
                     }
                 ) {
-                    listOf("Overview & Diagram", "Search Help", "Live Status").forEachIndexed { idx, title ->
+                    val tabLabels = if (formFactor.isTightWidth) {
+                        listOf("Overview", "Search", "Status")
+                    } else {
+                        listOf("Overview & Diagram", "Search Help", "Live Status")
+                    }
+                    tabLabels.forEachIndexed { idx, title ->
                         Tab(
                             selected = tabIdx == idx,
                             onClick = { tabIdx = idx },
-                            text = { Text(title, maxLines = 1, fontWeight = FontWeight.Medium) }
+                            text = {
+                                Text(
+                                    title,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         )
                     }
                 }
@@ -574,8 +591,8 @@ private fun DiagnosticStatusRow(
                 )
             }
         }
-        OutlinedButton(onClick = onAction) {
-            Text(if (ok) "Open" else "Fix", style = MaterialTheme.typography.labelMedium)
+        OutlinedButton(onClick = onAction, contentPadding = CompactExplorerButtonPadding) {
+            Text(if (ok) "Open" else "Fix", style = MaterialTheme.typography.labelMedium, maxLines = 1)
         }
     }
 }

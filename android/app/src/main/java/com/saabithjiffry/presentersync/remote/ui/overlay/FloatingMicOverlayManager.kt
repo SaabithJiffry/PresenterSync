@@ -221,13 +221,25 @@ class FloatingMicOverlayManager(
         attached = false
     }
 
+    private fun computeWindowAlpha(wantPassThrough: Boolean): Float {
+        if (!wantPassThrough) return 1.0f
+        // Android 12+ (API 31+) blocks touches passing through TYPE_APPLICATION_OVERLAY if window alpha > 0.80
+        val effective = if (isAutoDodged) {
+            min(currentAlpha, AppConstants.DODGE_ALPHA)
+        } else {
+            currentAlpha
+        }
+        return (effective / 255f).coerceIn(0.10f, AppConstants.MAX_PASS_THROUGH_ALPHA)
+    }
+
     private fun attachView() {
         val view = MicPillCanvasView(context)
         val density = context.resources.displayMetrics.density
-        val w = view.computeTargetWidthPx()
-        val h = view.computeTargetHeightPx()
-
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+        view.updateRenderState(currentConfig, currentConn, currentAlpha, maxContainerWidthPx = bounds.width)
+        val w = view.computeTargetWidthPx(bounds.width)
+        val h = view.computeTargetHeightPx(bounds.width)
+
         val pos = ScreenBoundsCalculator.resolvePosition(
             savedX = currentConfig.savedX,
             savedY = currentConfig.savedY,
@@ -235,12 +247,15 @@ class FloatingMicOverlayManager(
             viewWidthPx = w,
             viewHeightPx = h,
             marginXPx = (AppConstants.SCREEN_MARGIN_X * density).roundToInt(),
-            marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt()
+            marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt(),
+            savedXRatio = currentConfig.savedXRatio,
+            savedYRatio = currentConfig.savedYRatio
         )
 
+        val wantPassThrough = currentConfig.hudClickThrough || isAutoDodged
         var baseFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-        if (currentConfig.hudClickThrough || isAutoDodged) {
+        if (wantPassThrough) {
             baseFlags = baseFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
 
@@ -254,11 +269,12 @@ class FloatingMicOverlayManager(
             gravity = Gravity.TOP or Gravity.START
             x = pos.x
             y = pos.y
+            alpha = computeWindowAlpha(wantPassThrough)
         }
 
         setupTouchHandling(view, params)
         setupHoverDodgeHandling(view)
-        view.updateRenderState(currentConfig, currentConn, currentConfig.opacityLevel)
+        view.updateRenderState(currentConfig, currentConn, currentConfig.opacityLevel, maxContainerWidthPx = bounds.width)
 
         try {
             windowManager.addView(view, params)
@@ -275,20 +291,24 @@ class FloatingMicOverlayManager(
         if (!attached) return
 
         val wantPassThrough = currentConfig.hudClickThrough || isAutoDodged
+        val desiredWinAlpha = computeWindowAlpha(wantPassThrough)
         val hasFlag = (params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0
-        if (wantPassThrough != hasFlag) {
+        val alphaChanged = abs(params.alpha - desiredWinAlpha) > 0.01f
+        if (wantPassThrough != hasFlag || alphaChanged) {
             params.flags = if (wantPassThrough) {
                 params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             } else {
                 params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
+            params.alpha = desiredWinAlpha
             runCatching { windowManager.updateViewLayout(view, params) }
         }
     }
 
     private fun syncOverlayFlagsAndRender() {
+        val safeW = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager).width
         syncTouchableFlag()
-        pillView?.updateRenderState(currentConfig, currentConn, currentAlpha)
+        pillView?.updateRenderState(currentConfig, currentConn, currentAlpha, maxContainerWidthPx = safeW)
     }
 
     private fun setupHoverDodgeHandling(view: MicPillCanvasView) {
@@ -330,11 +350,11 @@ class FloatingMicOverlayManager(
     private fun updateDimensionsAndPosition() {
         val view = pillView ?: return
         val params = layoutParams ?: return
-        view.updateRenderState(currentConfig, currentConn, currentAlpha)
-        val newW = view.computeTargetWidthPx()
-        val newH = view.computeTargetHeightPx()
         val density = context.resources.displayMetrics.density
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+        view.updateRenderState(currentConfig, currentConn, currentAlpha, maxContainerWidthPx = bounds.width)
+        val newW = view.computeTargetWidthPx(bounds.width)
+        val newH = view.computeTargetHeightPx(bounds.width)
 
         var changed = false
         if (params.width != newW || params.height != newH) {
@@ -350,7 +370,9 @@ class FloatingMicOverlayManager(
             viewWidthPx = newW,
             viewHeightPx = newH,
             marginXPx = (AppConstants.SCREEN_MARGIN_X * density).roundToInt(),
-            marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt()
+            marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt(),
+            savedXRatio = currentConfig.savedXRatio,
+            savedYRatio = currentConfig.savedYRatio
         )
 
         if (!isDragging && (params.x != target.x || params.y != target.y)) {
@@ -445,7 +467,22 @@ class FloatingMicOverlayManager(
                     val elapsed = System.currentTimeMillis() - downTime
                     if (movedPastSlop) {
                         isDragging = false
-                        configStore.update { it.copy(savedX = params.x, savedY = params.y) }
+                        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+                        val (rx, ry) = ScreenBoundsCalculator.computePositionRatios(
+                            x = params.x,
+                            y = params.y,
+                            bounds = bounds,
+                            viewWidthPx = params.width,
+                            viewHeightPx = params.height
+                        )
+                        configStore.update {
+                            it.copy(
+                                savedX = params.x,
+                                savedY = params.y,
+                                savedXRatio = rx,
+                                savedYRatio = ry
+                            )
+                        }
                         if (currentConn.connected && currentConn.isMuted) {
                             startBreathing()
                         }
@@ -552,7 +589,9 @@ class FloatingMicOverlayManager(
             openSettingsActivity()
         }
 
-        val menuW = (240 * density).roundToInt()
+        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+        val maxMenuW = (bounds.width - (16 * density).roundToInt()).coerceAtLeast((180 * density).roundToInt())
+        val menuW = (240 * density).roundToInt().coerceAtMost(maxMenuW)
         container.measure(
             View.MeasureSpec.makeMeasureSpec(menuW, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
@@ -560,7 +599,6 @@ class FloatingMicOverlayManager(
         val menuH = container.measuredHeight.coerceAtLeast((180 * density).roundToInt())
 
         val (anchor, pillH) = currentAnchorForToast()
-        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
         val gap = (8 * density).roundToInt()
         val targetX = anchor.x.coerceIn(bounds.left, (bounds.right - menuW).coerceAtLeast(bounds.left))
         val preferAbove = anchor.y - menuH - gap

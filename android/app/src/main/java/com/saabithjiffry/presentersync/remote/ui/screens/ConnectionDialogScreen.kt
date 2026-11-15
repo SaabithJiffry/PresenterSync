@@ -3,10 +3,14 @@ package com.saabithjiffry.presentersync.remote.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -47,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -54,7 +59,10 @@ import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.NetworkMode
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
+import com.saabithjiffry.presentersync.remote.config.ResolvedFormFactor
+import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
 import com.saabithjiffry.presentersync.remote.network.ConnectionManager
+import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import kotlinx.coroutines.launch
 
@@ -66,15 +74,17 @@ fun ConnectionSettingsDialog(
     onDismiss: () -> Unit,
     onSaved: () -> Unit
 ) {
+    val formFactor = rememberFormFactor(initialConfig.deviceProfileMode)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
             modifier = Modifier
-                .widthIn(max = 680.dp)
-                .fillMaxWidth(0.92f)
-                .padding(vertical = 16.dp),
+                .widthIn(max = formFactor.dialogMaxWidthDp)
+                .fillMaxWidth(formFactor.dialogWidthFraction)
+                .heightIn(max = (formFactor.heightDp * formFactor.dialogMaxHeightFraction).dp)
+                .padding(vertical = if (formFactor.isCompactHeight) 6.dp else 14.dp),
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -84,6 +94,7 @@ fun ConnectionSettingsDialog(
                 initialConfig = initialConfig,
                 configStore = configStore,
                 connectionManager = connectionManager,
+                formFactor = formFactor,
                 onDismiss = onDismiss,
                 onSaved = onSaved
             )
@@ -91,11 +102,13 @@ fun ConnectionSettingsDialog(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ConnectionSettingsForm(
     initialConfig: RemoteConfig,
     configStore: RemoteConfigStore,
     connectionManager: ConnectionManager,
+    formFactor: ResolvedFormFactor = rememberFormFactor(initialConfig.deviceProfileMode),
     onDismiss: () -> Unit,
     onSaved: () -> Unit
 ) {
@@ -175,7 +188,8 @@ fun ConnectionSettingsForm(
                         )
                         OutlinedButton(
                             onClick = { showQrScanner = true },
-                            enabled = !pairing && !testing
+                            enabled = !pairing && !testing,
+                            contentPadding = CompactExplorerButtonPadding
                         ) {
                             Icon(
                                 Icons.Default.QrCodeScanner,
@@ -183,7 +197,7 @@ fun ConnectionSettingsForm(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text("Scan QR")
+                            Text("Scan QR", maxLines = 1, softWrap = false)
                         }
                     }
                     Text(
@@ -191,58 +205,114 @@ fun ConnectionSettingsForm(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = sessionCodeInput,
-                            onValueChange = { sessionCodeInput = it.uppercase() },
-                            label = { Text("Session / Relay Code") },
-                            placeholder = { Text("K7M-9P2") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Button(
-                            onClick = {
-                                if (pairing || testing) return@Button
-                                validationError = null
-                                pairing = true
-                                statusText = "Pairing with Primary Host..."
-                                val bPort = bridgePortStr.trim().toIntOrNull()?.takeIf { it in 1..65535 }
-                                    ?: AppConstants.DEFAULT_BRIDGE_PORT
-                                scope.launch {
-                                    val msg = connectionManager.pairByCode(
-                                        codeInput = sessionCodeInput,
-                                        fallbackHostInput = hostAddress,
-                                        bridgePortInput = bPort,
-                                        onProgress = { statusText = it }
+                    if (formFactor.isTightWidth) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = sessionCodeInput,
+                                onValueChange = { sessionCodeInput = it.uppercase() },
+                                label = { Text("Session / Relay Code") },
+                                placeholder = { Text("K7M-9P2") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Button(
+                                onClick = {
+                                    if (pairing || testing) return@Button
+                                    validationError = null
+                                    pairing = true
+                                    statusText = "Pairing with Primary Host..."
+                                    val bPort = bridgePortStr.trim().toIntOrNull()?.takeIf { it in 1..65535 }
+                                        ?: AppConstants.DEFAULT_BRIDGE_PORT
+                                    scope.launch {
+                                        val msg = connectionManager.pairByCode(
+                                            codeInput = sessionCodeInput,
+                                            fallbackHostInput = hostAddress,
+                                            bridgePortInput = bPort,
+                                            onProgress = { statusText = it }
+                                        )
+                                        val updated = configStore.current
+                                        networkMode = updated.networkMode
+                                        sessionCodeInput = updated.sessionPairingCode
+                                        pairingCode = updated.internetPairingCode
+                                        hostAddress = updated.hostAddress
+                                        hostPortStr = updated.hostPort.toString()
+                                        bridgePortStr = updated.bridgePort.toString()
+                                        obsPassword = updated.obsPassword
+                                        targetMicName = updated.targetMicName
+                                        statusText = msg
+                                        pairing = false
+                                    }
+                                },
+                                enabled = !pairing && !testing,
+                                contentPadding = CompactExplorerButtonPadding,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                if (pairing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary
                                     )
-                                    val updated = configStore.current
-                                    networkMode = updated.networkMode
-                                    sessionCodeInput = updated.sessionPairingCode
-                                    pairingCode = updated.internetPairingCode
-                                    hostAddress = updated.hostAddress
-                                    hostPortStr = updated.hostPort.toString()
-                                    bridgePortStr = updated.bridgePort.toString()
-                                    obsPassword = updated.obsPassword
-                                    targetMicName = updated.targetMicName
-                                    statusText = msg
-                                    pairing = false
+                                    Spacer(Modifier.width(6.dp))
                                 }
-                            },
-                            enabled = !pairing && !testing
-                        ) {
-                            if (pairing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                                Spacer(Modifier.width(6.dp))
+                                Text("Discover & Pair", maxLines = 1, softWrap = false)
                             }
-                            Text("Discover & Pair")
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = sessionCodeInput,
+                                onValueChange = { sessionCodeInput = it.uppercase() },
+                                label = { Text("Session / Relay Code") },
+                                placeholder = { Text("K7M-9P2") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = {
+                                    if (pairing || testing) return@Button
+                                    validationError = null
+                                    pairing = true
+                                    statusText = "Pairing with Primary Host..."
+                                    val bPort = bridgePortStr.trim().toIntOrNull()?.takeIf { it in 1..65535 }
+                                        ?: AppConstants.DEFAULT_BRIDGE_PORT
+                                    scope.launch {
+                                        val msg = connectionManager.pairByCode(
+                                            codeInput = sessionCodeInput,
+                                            fallbackHostInput = hostAddress,
+                                            bridgePortInput = bPort,
+                                            onProgress = { statusText = it }
+                                        )
+                                        val updated = configStore.current
+                                        networkMode = updated.networkMode
+                                        sessionCodeInput = updated.sessionPairingCode
+                                        pairingCode = updated.internetPairingCode
+                                        hostAddress = updated.hostAddress
+                                        hostPortStr = updated.hostPort.toString()
+                                        bridgePortStr = updated.bridgePort.toString()
+                                        obsPassword = updated.obsPassword
+                                        targetMicName = updated.targetMicName
+                                        statusText = msg
+                                        pairing = false
+                                    }
+                                },
+                                enabled = !pairing && !testing,
+                                contentPadding = CompactExplorerButtonPadding
+                            ) {
+                                if (pairing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text("Discover & Pair", maxLines = 1, softWrap = false)
+                            }
                         }
                     }
                 }
@@ -253,7 +323,10 @@ fun ConnectionSettingsForm(
                 text = "Manual Network & Host Settings",
                 style = MaterialTheme.typography.labelLarge
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 FilterChip(
                     selected = networkMode == NetworkMode.LAN,
                     onClick = { networkMode = NetworkMode.LAN },
@@ -413,7 +486,7 @@ fun ConnectionSettingsForm(
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             OutlinedButton(
                 onClick = {
@@ -435,6 +508,7 @@ fun ConnectionSettingsForm(
                     }
                 },
                 enabled = !testing,
+                contentPadding = CompactExplorerButtonPadding,
                 modifier = Modifier.weight(1f)
             ) {
                 if (testing) {
@@ -442,9 +516,14 @@ fun ConnectionSettingsForm(
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
                 }
-                Text("Test Connection")
+                Text(
+                    if (formFactor.isTightWidth) "Test" else "Test Connection",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
             Button(
@@ -493,9 +572,15 @@ fun ConnectionSettingsForm(
                     connectionManager.reconnectNow()
                     onSaved()
                 },
+                contentPadding = CompactExplorerButtonPadding,
                 modifier = Modifier.weight(1f)
             ) {
-                Text("Save & Reconnect")
+                Text(
+                    if (formFactor.isTightWidth) "Save" else "Save & Reconnect",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
         } // end pinned footer column

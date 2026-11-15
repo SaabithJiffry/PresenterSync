@@ -1,7 +1,7 @@
 package com.saabithjiffry.presentersync.remote.config
 
 object AppConstants {
-    const val APP_VERSION = "5.0.0"
+    const val APP_VERSION = "5.1.0"
 
     // Base HUD dimensions & layout ratios (matching GUI_Config.ahk UIConstants)
     const val BASE_WIDTH_TEXT = 168
@@ -53,4 +53,6 @@ object AppConstants {
     const val GITHUB_RELEASES_API = "https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest"
     const val GITHUB_RELEASES_URL = "https://github.com/SaabithJiffry/PresenterSync/releases"
     const val GITHUB_REPO_URL = "https://github.com/SaabithJiffry/PresenterSync/"
+    const val MAX_PASS_THROUGH_ALPHA = 0.78f
+    const val PILL_MAX_VIEWPORT_WIDTH_FRACTION = 0.86f
 }

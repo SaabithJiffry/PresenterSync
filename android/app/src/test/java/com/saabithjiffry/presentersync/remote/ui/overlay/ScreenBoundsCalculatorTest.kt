@@ -53,4 +53,60 @@ class ScreenBoundsCalculatorTest {
         assertFalse(free.snappedX)
         assertFalse(free.snappedY)
     }
+
+    @Test
+    fun ratioPreservesCornerAcrossPhonePortraitAndLandscapeRotation() {
+        val portraitBounds = SafeRectPx(left = 10, top = 60, right = 710, bottom = 1540)
+        val landscapeBounds = SafeRectPx(left = 60, top = 10, right = 1540, bottom = 710)
+        val pillW = 160
+        val pillH = 80
+
+        // Dock pill at bottom-right in portrait
+        val (rx, ry) = ScreenBoundsCalculator.computePositionRatios(
+            x = portraitBounds.right - pillW,
+            y = portraitBounds.bottom - pillH,
+            bounds = portraitBounds,
+            viewWidthPx = pillW,
+            viewHeightPx = pillH
+        )
+        assertEquals(1.0f, rx, 0.001f)
+        assertEquals(1.0f, ry, 0.001f)
+
+        // Resolve on rotated landscape phone
+        val rotatedPos = ScreenBoundsCalculator.resolvePosition(
+            savedX = portraitBounds.right - pillW,
+            savedY = portraitBounds.bottom - pillH,
+            bounds = landscapeBounds,
+            viewWidthPx = pillW,
+            viewHeightPx = pillH,
+            marginXPx = 20,
+            marginYPx = 20,
+            savedXRatio = rx,
+            savedYRatio = ry
+        )
+        assertEquals(landscapeBounds.right - pillW, rotatedPos.x)
+        assertEquals(landscapeBounds.bottom - pillH, rotatedPos.y)
+    }
+
+    @Test
+    fun boundedPillScalePreventsOverflowOnNarrowPhonesAndAllows5xOnSmartBoard() {
+        // Galaxy A07 portrait: 720px @ 2.0x density = 360dp; 168dp * 5.0x would exceed viewport
+        val phoneBounded = ScreenBoundsCalculator.computeBoundedPillScale(
+            requestedScale = 5.0f,
+            showText = true,
+            safeWidthPx = 700,
+            density = 2.0f
+        )
+        assertTrue("Expected phone scale clamped < 2.5x, was $phoneBounded", phoneBounded < 2.5f)
+        assertTrue(168f * phoneBounded * 2.0f <= 700f)
+
+        // 65" Smart Board: 1920px @ 1.5x density supports full 5.0x pill cleanly
+        val boardScale = ScreenBoundsCalculator.computeBoundedPillScale(
+            requestedScale = 5.0f,
+            showText = true,
+            safeWidthPx = 1900,
+            density = 1.5f
+        )
+        assertEquals(5.0f, boardScale, 0.001f)
+    }
 }

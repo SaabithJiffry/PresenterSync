@@ -1,10 +1,16 @@
 package com.saabithjiffry.presentersync.remote.service
 
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import androidx.core.app.NotificationCompat
+import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
+import com.saabithjiffry.presentersync.remote.R
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
+import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
 
 /**
  * Starts the floating HUD service automatically after device reboot ONLY if the user
@@ -20,12 +26,34 @@ class BootCompletedReceiver : BroadcastReceiver() {
             return
         }
 
-        val cfg = RemoteConfigStore(context.applicationContext).current
+        val appCtx = context.applicationContext
+        val cfg = RemoteConfigStore(appCtx).current
         if (!cfg.startOnBoot) return
-        if (!Settings.canDrawOverlays(context)) return
+        if (!Settings.canDrawOverlays(appCtx)) return
 
-        runCatching {
-            FloatingHudForegroundService.startService(context.applicationContext)
+        val started = FloatingHudForegroundService.startService(appCtx)
+        if (!started) {
+            val launchIntent = Intent(appCtx, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_AUTO_START_HUD, true)
+            }
+            val pi = PendingIntent.getActivity(
+                appCtx,
+                42,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notif = NotificationCompat.Builder(appCtx, PresenterSyncRemoteApp.HUD_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_stat_mic)
+                .setContentTitle("PresenterSync Remote Ready")
+                .setContentText("Tap to launch the floating Mic HUD on Android 12+")
+                .setAutoCancel(true)
+                .setContentIntent(pi)
+                .build()
+            runCatching {
+                appCtx.getSystemService(NotificationManager::class.java)
+                    ?.notify(FloatingHudForegroundService.NOTIFICATION_ID + 1, notif)
+            }
         }
     }
 
