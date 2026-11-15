@@ -1,4 +1,4 @@
-# PresenterSync v4.1.1 🎙️📊
+# PresenterSync v4.3.0 🎙️📊
 
 PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It bridges OBS Studio, Zoom / Microsoft Teams / Google Meet, and Microsoft PowerPoint, allowing you to control your slides, track recording/stream/vcam/studio/scene/chat telemetry, and manage your microphone without ever losing window focus or broadcasting a hot mic.
 
@@ -77,7 +77,7 @@ You can build standalone, zero-dependency `.exe` binaries for both the primary a
 2. **Copy Host Endpoints:** On the primary laptop, right-click the PresenterSync tray icon > **Settings** > **Remote Companion Info...** (or open the **Remote Setup** tab in **Help & Shortcuts**) and click **Copy Universal String to Clipboard** (contains your computer name `.local` and all active Ethernet/Wi-Fi IPs).
 3. **Connect Smart Board:** On the smart board, launch `PresenterSync_Remote` (script or `.exe`). Paste the connection string into **Host Address**, verify **Port** (`4455`), enter your OBS WebSocket password, match the exact **Audio Source Name** (default `Mic/Aux`), and click **Test Connection** before clicking **Connect & Start**.
 4. **In-App Help on Smart Board:** Right-click the Remote pill (or tray icon) and choose **Help & Setup Guide...**, or click **Setup Guide** directly in the connection dialog.
-5. **Present:** Plug your clicker into the smart board—pressing the mute button (default `b`) immediately toggles OBS mute on the host laptop, while the HUD dims automatically when disconnected.
+5. **Present:** Plug your clicker into the smart board—pressing the mute button (default `b`) immediately toggles OBS mute on the host laptop, while the HUD displays a crisp slate `OFFLINE` pill at your chosen transparency when disconnected.
 
 ## 🎮 How It Works
 

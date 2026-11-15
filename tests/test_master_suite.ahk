@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v4.1.1
-;              and PresenterSync Remote v4.1.1 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v4.3.0
+;              and PresenterSync Remote v4.3.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -250,13 +250,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 4.1.1", UIConstants.APP_VERSION == "4.1.1")
+Assert("APP_VERSION updated to 4.3.0", UIConstants.APP_VERSION == "4.3.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v4.1.1 and Remote Host",
-    InStr(summaryTxt, "v4.1.1") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v4.3.0 and Remote Host",
+    InStr(summaryTxt, "v4.3.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1226,7 +1226,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v4.1.1", "4.1.0") == 1
+    CompareSemVer("v4.3.0", "4.1.1") == 1
+    && CompareSemVer("v4.1.1", "4.1.0") == 1
     && CompareSemVer("v4.1.0", "4.0.1") == 1
     && CompareSemVer("v4.0.1", "4.0.0") == 1
     && CompareSemVer("v4.0.0", "3.2.0") == 1
@@ -2014,8 +2015,54 @@ HudSnake._W := savedW
 HudSnake._H := savedH
 HudSnake._dpi := savedDpi
 
-upd411 := CheckForUpdates("4.1.1", '{"tag_name":"v4.1.1","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v4.1.1"}', true)
-Assert("v4.1.1 CheckForUpdates recognizes current version 4.1.1 as up_to_date", upd411.status == "up_to_date")
+upd430 := CheckForUpdates("4.3.0", '{"tag_name":"v4.3.0","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v4.3.0"}', true)
+Assert("v4.3.0 CheckForUpdates recognizes current version 4.3.0 as up_to_date", upd430.status == "up_to_date")
+
+; ==============================================================================
+; SECTION 28: v4.3.0 REMOTE OFFLINE ALPHA, SCALING & VISUAL RENDER CHECKS
+; ==============================================================================
+cfgRemCos := Config(testIni)
+cfgRemCos.HideHud := false
+cfgRemCos.ShowText := true
+cfgRemCos.MonoIcon := false
+cfgRemCos.SleekCorners := true
+cfgRemCos.HudColorPreset := "Standard"
+for opVal in [255, 220, 127] {
+    cfgRemCos.OpacityLevel := opVal
+    for scVal in [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 5.0] {
+        cfgRemCos.IndicatorScale := scVal
+        stRemCos := OverlayState(cfgRemCos)
+        stRemCos.isMuted := false
+        stRemCos.isAutoDodged := false
+        stRemCos.obsConnected := false
+        stRemCos.activeHost := ""
+        stRemCos.connStatus := "searching"
+        stRemCos.baseAlpha := opVal
+        stRemCos.currentAlpha := opVal
+        stRemCos.hudDpiScale := 1.0
+        stRemCos.meterLevel := 0.75
+        stRemCos.meterActive := false
+        stRemCos.savedX := 100
+        stRemCos.savedY := 100
+        stRemCos.ComputeDimensions(cfgRemCos)
+        stRemCos.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+        stRemCos.MicGui.Show("x-10000 y-10000 w10 h10 NoActivate")
+        ApplyMicAppearance(cfgRemCos, stRemCos)
+        Assert("v4.3.0 Offline Mic Pill preserves full Transparency (" opVal ") at scale " scVal,
+            stRemCos.currentAlpha == opVal
+            && stRemCos.baseWidth == Round(UIConstants.BASE_WIDTH_TEXT * scVal)
+            && stRemCos.baseHeight == Round(UIConstants.BASE_HEIGHT * scVal))
+        stRemCos.obsConnected := true
+        stRemCos.activeHost := "127.0.0.1"
+        stRemCos.connStatus := "connected"
+        stRemCos.isAutoDodged := true
+        stRemCos.currentAlpha := Min(opVal, UIConstants.DODGE_ALPHA)
+        ApplyMicAppearance(cfgRemCos, stRemCos)
+        Assert("v4.3.0 Auto-Dodge caps alpha to DODGE_ALPHA at opacity " opVal " scale " scVal,
+            stRemCos.currentAlpha == Min(opVal, UIConstants.DODGE_ALPHA))
+        try stRemCos.MicGui.Destroy()
+    }
+}
 
 ; Cleanup test ini
 if FileExist(testIni)
@@ -2024,7 +2071,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.1.1) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.3.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

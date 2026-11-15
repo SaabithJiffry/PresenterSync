@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 4.1.1
+; Version: 4.3.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 4.1.1.0
+;@Ahk2Exe-SetVersion 4.3.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -237,8 +237,13 @@ class RemoteState {
     reconnectTimerFn := ""
     heartbeatTimerFn := ""
     rebuildTrayFn := ""
+    syncTrayStatusFn := ""
     refreshHelpFn := ""
     refreshHudFn := ""
+    _lastTrayStatusText := ""
+    _trayMenuOpen := false
+    _trayMenuCloseUntil := 0
+    _pendingTrayRebuild := false
     pointerHotIfFn := ""
     activePointerKey := ""
     activeToggleMuteHk := ""
@@ -289,6 +294,15 @@ class RemoteState {
         this.ComputeDimensions(cfg)
     }
 
+    NotifyTrayStatus() {
+        try {
+            if (IsObject(this.syncTrayStatusFn))
+                this.syncTrayStatusFn.Call()
+            else if (IsObject(this.rebuildTrayFn))
+                this.rebuildTrayFn.Call()
+        }
+    }
+
     ComputeDimensions(cfg) {
         this.colors := UIConstants.GetColorPalette(cfg.HasOwnProp("HudColorPreset") ? cfg.HudColorPreset : "Standard")
         this.baseWidth := Round((cfg.ShowText ? UIConstants.BASE_WIDTH_TEXT : UIConstants.BASE_WIDTH_ICON) * cfg.IndicatorScale)
@@ -316,6 +330,7 @@ AppConfig := RemoteConfig()
 Theme.Init(AppConfig.ThemeMode)
 AppState := RemoteState(AppConfig)
 AppState.rebuildTrayFn := BuildRemoteTrayMenu.Bind(AppConfig, AppState)
+AppState.syncTrayStatusFn := SyncRemoteTrayStatus.Bind(AppConfig, AppState)
 AppState.refreshHudFn := RefreshRemoteHudAppearance.Bind(AppConfig, AppState)
 
 ; === INITIALIZE HUD & HOTKEYS ===
@@ -335,7 +350,9 @@ if (AppConfig.FirstRun || (AppConfig.NetworkMode = "Internet" ? (AppConfig.Inter
 ; --- REMOTE NETWORKING ENGINE ---
 
 GetRemoteEffectiveAlpha(state) {
-    return state.obsConnected ? state.baseAlpha : Max(60, Round(state.baseAlpha * 0.4))
+    if (IsObject(state) && state.HasOwnProp("isAutoDodged") && state.isAutoDodged)
+        return Min(state.baseAlpha, UIConstants.DODGE_ALPHA)
+    return state.baseAlpha
 }
 
 ConnectToRemoteOBS(cfg, state) {
@@ -344,6 +361,11 @@ ConnectToRemoteOBS(cfg, state) {
 
     if (state.obsConnected)
         return
+
+    if ((state.HasOwnProp("_trayMenuOpen") && state._trayMenuOpen) || (state.HasOwnProp("_trayMenuCloseUntil") && A_TickCount < state._trayMenuCloseUntil)) {
+        SetTimer state.reconnectTimerFn, -400
+        return
+    }
 
     state.connStatus := "searching"
     state.activeHost := ""
@@ -356,8 +378,7 @@ ConnectToRemoteOBS(cfg, state) {
     if (IsRemoteUsingInternetChannel(cfg, state)) {
         pairCode := Trim(cfg.InternetPairingCode)
         if (pairCode = "") {
-            if (IsObject(state.rebuildTrayFn))
-                try state.rebuildTrayFn.Call()
+            state.NotifyTrayStatus()
             return
         }
         topic := GetInternetRelayTopic(pairCode)
@@ -381,7 +402,7 @@ ConnectToRemoteOBS(cfg, state) {
             state.activeHost := candidate.raw
             keepAliveMs := Max(10000, cfg.HeartbeatSeconds * 1000)
             SetTimer state.heartbeatTimerFn, keepAliveMs
-            state.currentAlpha := state.baseAlpha
+            state.currentAlpha := GetRemoteEffectiveAlpha(state)
             if IsObject(state.MicGui)
                 ApplyMicAppearance(cfg, state)
             if (state.isMuted && cfg.ShowIndicator) {
@@ -391,8 +412,7 @@ ConnectToRemoteOBS(cfg, state) {
             authTok := GetInternetRelayAuthToken(pairCode, cfg.ObsPassword)
             mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
             PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
-            if (IsObject(state.rebuildTrayFn))
-                try state.rebuildTrayFn.Call()
+            state.NotifyTrayStatus()
         } catch {
             state.obsWs := ""
             state.obsConnected := false
@@ -443,16 +463,14 @@ FailoverToNextCandidate(cfg, state) {
     if (cfg.NetworkMode = "Internet") {
         state.usingRelayFallback := false
         SetTimer state.reconnectTimerFn, -2500
-        if (IsObject(state.rebuildTrayFn))
-            try state.rebuildTrayFn.Call()
+        state.NotifyTrayStatus()
         return
     }
     if (state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback) {
         state.usingRelayFallback := false
         state.candidateIndex := 1
         SetTimer state.reconnectTimerFn, -2500
-        if (IsObject(state.rebuildTrayFn))
-            try state.rebuildTrayFn.Call()
+        state.NotifyTrayStatus()
         return
     }
     state.candidateIndex += 1
@@ -469,8 +487,7 @@ FailoverToNextCandidate(cfg, state) {
             SetTimer state.reconnectTimerFn, -2500
         }
     }
-    if (IsObject(state.rebuildTrayFn))
-        try state.rebuildTrayFn.Call()
+    state.NotifyTrayStatus()
 }
 
 HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
@@ -497,15 +514,13 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     if (!wasConnected && status == 4009) {
         state.connStatus := "auth_failed"
         SetTimer state.reconnectTimerFn, 0
-        if (IsObject(state.rebuildTrayFn))
-            try state.rebuildTrayFn.Call()
+        state.NotifyTrayStatus()
         TrayTip("OBS WebSocket authentication failed. Check password in Change OBS Connection.", "PresenterSync Remote", 3)
         return
     }
 
     state.connStatus := "searching"
-    if (IsObject(state.rebuildTrayFn))
-        try state.rebuildTrayFn.Call()
+    state.NotifyTrayStatus()
 
     FailoverToNextCandidate(cfg, state)
 }
@@ -527,15 +542,14 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             SetTimer state.heartbeatTimerFn, 0
             SetTimer state.breathTimerFn, 0
             if IsObject(ws)
-                try ws.shutdown()
+                SafeCloseWebSocketDeferred(ws)
             if (state.obsWs == ws)
                 state.obsWs := ""
             if (IsObject(state.MicGui)) {
                 state.currentAlpha := GetRemoteEffectiveAlpha(state)
                 ApplyMicAppearance(cfg, state)
             }
-            if (IsObject(state.rebuildTrayFn))
-                try state.rebuildTrayFn.Call()
+            state.NotifyTrayStatus()
             TrayTip("Internet Relay authentication failed. Check password in Change OBS Connection.", "PresenterSync Remote", 3)
             return
         }
@@ -544,11 +558,10 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.obsConnected := true
                 state.connStatus := "connected"
                 state.activeHost := candidate.raw
-                state.currentAlpha := state.baseAlpha
+                state.currentAlpha := GetRemoteEffectiveAlpha(state)
                 if IsObject(state.MicGui)
                     ApplyMicAppearance(cfg, state)
-                if (IsObject(state.rebuildTrayFn))
-                    try state.rebuildTrayFn.Call()
+                state.NotifyTrayStatus()
             }
             SyncRemoteMuteState(cfg, state, (pkt.data = "1" || pkt.data = "true"))
         } else if (pkt.cmd = "close_remote") {
@@ -601,14 +614,13 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         SetTimer state.heartbeatTimerFn, keepAliveMs
 
         ; Restore base alpha & query initial mic mute status
-        state.currentAlpha := state.baseAlpha
+        state.currentAlpha := GetRemoteEffectiveAlpha(state)
         if IsObject(state.MicGui)
             ApplyMicAppearance(cfg, state)
         escMic := EscapeJsonStr(cfg.TargetMicName)
         SendObsRequest(ws, "GetInputMute", "InitRemoteMute", '{"inputName":"' escMic '"}')
 
-        if (IsObject(state.rebuildTrayFn))
-            try state.rebuildTrayFn.Call()
+        state.NotifyTrayStatus()
     }
     else if (opCode == 5) {
         ; Op 5: Event payload
@@ -617,8 +629,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                     if (state.connStatus = "mic_error") {
                         state.connStatus := "connected"
-                        if (IsObject(state.rebuildTrayFn))
-                            try state.rebuildTrayFn.Call()
+                        state.NotifyTrayStatus()
                     }
                     isMutedNow := (matchMuted[1] == "true")
                     SyncRemoteMuteState(cfg, state, isMutedNow)
@@ -639,10 +650,9 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
                 state.connStatus := "mic_error"
                 SetTimer state.breathTimerFn, 0
-                state.currentAlpha := state.baseAlpha
+                state.currentAlpha := GetRemoteEffectiveAlpha(state)
                 ApplyMicAppearance(cfg, state)
-                if (IsObject(state.rebuildTrayFn))
-                    try state.rebuildTrayFn.Call()
+                state.NotifyTrayStatus()
                 TrayTip("Audio source '" cfg.TargetMicName "' was not found in OBS Studio.", "PresenterSync Remote", 2)
             } else if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                 state.connStatus := "connected"
@@ -650,7 +660,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.isMuted := isMutedNow
                 cfg.IsMuted := isMutedNow
                 cfg.WriteBool("Settings", "IsMuted", isMutedNow)
-                state.currentAlpha := state.baseAlpha
+                state.currentAlpha := GetRemoteEffectiveAlpha(state)
                 ApplyMicAppearance(cfg, state)
                 if (state.isMuted && cfg.ShowIndicator) {
                     state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
@@ -658,23 +668,20 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 } else {
                     SetTimer state.breathTimerFn, 0
                 }
-                if (IsObject(state.rebuildTrayFn))
-                    try state.rebuildTrayFn.Call()
+                state.NotifyTrayStatus()
             }
         }
         else if (InStr(msg, '"requestId":"RemoteClickerMute"') || InStr(msg, '"requestId": "RemoteClickerMute"')) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
                 if (state.connStatus != "mic_error") {
                     state.connStatus := "mic_error"
-                    if (IsObject(state.rebuildTrayFn))
-                        try state.rebuildTrayFn.Call()
+                    state.NotifyTrayStatus()
                 }
                 ToolTip "PresenterSync Remote: Audio source '" cfg.TargetMicName "' not found in OBS"
                 SetTimer RemoveToolTip, -2500
             } else if (state.connStatus = "mic_error" && RegExMatch(msg, '"result"\s*:\s*true')) {
                 state.connStatus := "connected"
-                if (IsObject(state.rebuildTrayFn))
-                    try state.rebuildTrayFn.Call()
+                state.NotifyTrayStatus()
             }
         }
     }
@@ -832,6 +839,8 @@ InitRemoteHUD(cfg, state) {
     OnMessage(0x0201, WM_REMOTE_LBUTTONDOWN.Bind(cfg, state))
     OnMessage(0x0205, WM_REMOTE_RBUTTONUP.Bind(state))
     OnMessage(0x02E0, WM_REMOTE_DPICHANGED.Bind(cfg, state))
+    OnMessage(0x0211, OnRemoteMenuLoop.Bind(state, true))
+    OnMessage(0x0212, OnRemoteMenuLoop.Bind(state, false))
 }
 
 WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
@@ -905,6 +914,23 @@ WM_REMOTE_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
         A_TrayMenu.Show()
 }
 
+OnRemoteMenuLoop(state, isEnter, wParam, lParam, msg, hwnd) {
+    if (!IsObject(state))
+        return
+    if (isEnter) {
+        state._trayMenuOpen := true
+        state._trayMenuCloseUntil := 0
+    } else {
+        state._trayMenuOpen := false
+        state._trayMenuCloseUntil := A_TickCount + 300
+        if (state.HasOwnProp("_pendingTrayRebuild") && state._pendingTrayRebuild) {
+            state._pendingTrayRebuild := false
+            if (IsObject(state.rebuildTrayFn))
+                SetTimer state.rebuildTrayFn, -350
+        }
+    }
+}
+
 WM_REMOTE_DPICHANGED(cfg, state, wParam, lParam, msg, hwnd) {
     if (!IsObject(state.MicGui) || hwnd != state.MicGui.Hwnd)
         return
@@ -941,19 +967,46 @@ RefreshRemoteHudAppearance(cfg, state) {
 
 ; --- TRAY MENU & COSMETIC ACTIONS ---
 
+GetRemoteTrayStatusText(state) {
+    if (state.connStatus = "auth_failed")
+        return "✕ Auth Failed (Check Password)"
+    else if (state.obsConnected && state.connStatus = "mic_error")
+        return "⚠ Connected (Mic Not Found): " state.activeHost
+    else if (state.obsConnected)
+        return "● Connected: " state.activeHost
+    return "○ Searching for OBS Host..."
+}
+
+SyncRemoteTrayStatus(cfg, state) {
+    newStatus := GetRemoteTrayStatusText(state)
+    if (state.HasOwnProp("_lastTrayStatusText") && state._lastTrayStatusText == newStatus)
+        return
+    state._lastTrayStatusText := newStatus
+    if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
+    ; Rename status row 1 in-place so A_TrayMenu handles/submenus & command IDs stay intact
+    try {
+        A_TrayMenu.Rename("1&", newStatus)
+        A_TrayMenu.Disable("1&")
+        return
+    }
+    BuildRemoteTrayMenu(cfg, state)
+}
+
 BuildRemoteTrayMenu(cfg, state) {
+    if (IsObject(state) && state.HasOwnProp("_trayMenuOpen") && state._trayMenuOpen) {
+        state._pendingTrayRebuild := true
+        return
+    }
+    if (IsObject(state))
+        state._pendingTrayRebuild := false
     Theme.ApplyMenuTheme()
     A_TrayMenu.Delete()
 
     ; 1. STATUS LINE
-    if (state.connStatus = "auth_failed")
-        statusText := "✕ Auth Failed (Check Password)"
-    else if (state.obsConnected && state.connStatus = "mic_error")
-        statusText := "⚠ Connected (Mic Not Found): " state.activeHost
-    else if (state.obsConnected)
-        statusText := "● Connected: " state.activeHost
-    else
-        statusText := "○ Searching for OBS Host..."
+    statusText := GetRemoteTrayStatusText(state)
+    if (IsObject(state))
+        state._lastTrayStatusText := statusText
     A_TrayMenu.Add(statusText, (*) => 0)
     A_TrayMenu.Disable(statusText)
     A_TrayMenu.Add()
@@ -1135,7 +1188,7 @@ SetRemoteOpacity(cfg, state, val, *) {
     cfg.OpacityLevel := val
     cfg.Write("Appearance", "OpacityLevel", val)
     state.baseAlpha := val
-    state.currentAlpha := val
+    state.currentAlpha := GetRemoteEffectiveAlpha(state)
     RefreshRemoteHudAppearance(cfg, state)
     BuildRemoteTrayMenu(cfg, state)
 }
@@ -1158,6 +1211,8 @@ SetRemoteTheme(cfg, state, mode, *) {
 ResetRemotePositionAction(cfg, state, *) {
     cfg.ResetPosition()
     RefreshRemoteHudAppearance(cfg, state)
+    if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
 }
 
 ResetRemoteAppearanceAction(cfg, state, *) {
@@ -1608,7 +1663,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
             dlg._testTimer := ""
         }
         if IsObject(dlg._testWs) {
-            try dlg._testWs.shutdown()
+            SafeCloseWebSocketDeferred(dlg._testWs)
             dlg._testWs := ""
         }
         Theme.UnregisterWindow(dlg, "OBS Remote Connection")
@@ -1690,8 +1745,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
             state.currentAlpha := GetRemoteEffectiveAlpha(state)
             ApplyMicAppearance(cfg, state)
         }
-        if (IsObject(state.rebuildTrayFn))
-            try state.rebuildTrayFn.Call()
+        state.NotifyTrayStatus()
         SetTimer state.reconnectTimerFn, -20
     }
 
@@ -1715,7 +1769,7 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
         dlg._testTimer := ""
     }
     if IsObject(dlg._testWs) {
-        try dlg._testWs.shutdown()
+        SafeCloseWebSocketDeferred(dlg._testWs)
         dlg._testWs := ""
     }
 
@@ -1733,7 +1787,7 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
     FinishTest(msg) {
         ClearProbeTimer()
         if IsObject(dlg._testWs) {
-            try dlg._testWs.shutdown()
+            SafeCloseWebSocketDeferred(dlg._testWs)
             dlg._testWs := ""
         }
         if (IsCancelled())
@@ -1760,7 +1814,7 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
 
         OnRelayTestMsg(ws, raw) {
             if (IsCancelled() || (IsObject(dlg._testWs) && ws != dlg._testWs)) {
-                try ws.shutdown()
+                SafeCloseWebSocketDeferred(ws)
                 return
             }
             msg := (Type(raw) == "Buffer") ? StrGet(raw, "UTF-8") : String(raw)
@@ -1832,7 +1886,7 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
             if (IsCancelled() || testSuccess)
                 return
             if IsObject(dlg._testWs) {
-                try dlg._testWs.shutdown()
+                SafeCloseWebSocketDeferred(dlg._testWs)
                 dlg._testWs := ""
             }
             currentIndex += 1
@@ -1846,7 +1900,7 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
 
             OnTestMsg(ws, raw) {
                 if (IsCancelled() || (IsObject(dlg._testWs) && ws != dlg._testWs)) {
-                    try ws.shutdown()
+                    SafeCloseWebSocketDeferred(ws)
                     return
                 }
                 msg := (Type(raw) == "Buffer") ? StrGet(raw, "UTF-8") : String(raw)
@@ -1869,7 +1923,7 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
                     return
                 ClearProbeTimer()
                 if IsObject(dlg._testWs) {
-                    try dlg._testWs.shutdown()
+                    SafeCloseWebSocketDeferred(dlg._testWs)
                     dlg._testWs := ""
                 }
                 if (st == 4009) {
@@ -1878,6 +1932,13 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
                 }
                 currentIndex += 1
                 TryNextCandidate()
+            }
+
+            if ((!target.HasOwnProp("url") || target.url = "") && target.HasOwnProp("host") && target.HasOwnProp("port")
+                && IsLoopbackHost(target.host) && !IsLocalTcpPortListening(target.port)) {
+                currentIndex += 1
+                TryNextCandidate()
+                return
             }
 
             try {

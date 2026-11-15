@@ -8,7 +8,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "4.1.1"
+    static APP_VERSION := "4.3.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -3322,12 +3322,22 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
     h := (customH != "") ? customH : pos.micH
     alpha := (customAlpha != "") ? customAlpha : state.currentAlpha
     mutedState := (overrideMuted != "") ? overrideMuted : state.isMuted
+    isRemoteOffline := (overrideMuted == "" && state.HasOwnProp("activeHost") && state.HasOwnProp("obsConnected") && !state.obsConnected)
 
-    bgRgb := mutedState ? state.colors.muted : state.colors.live
-    brdBgr := mutedState ? state.colors.borderMuted : state.colors.borderLive
-    icHex := cfg.MonoIcon ? (mutedState ? state.colors.iconMuted : state.colors.iconLive) : "FFFFFF"
-    glyph := mutedState ? Chr(0xF781) : Chr(0xE720)
-    lbl := mutedState ? "MUTED" : "LIVE"
+    if (isRemoteOffline) {
+        isAuthErr := (state.HasOwnProp("connStatus") && state.connStatus = "auth_failed")
+        bgRgb := state.colors.recOff
+        brdBgr := isAuthErr ? state.colors.borderMuted : state.colors.recBorderOff
+        icHex := cfg.MonoIcon ? state.colors.recIconOff : "E5E7EB"
+        glyph := Chr(0xF781)
+        lbl := isAuthErr ? "AUTH ERR" : "OFFLINE"
+    } else {
+        bgRgb := mutedState ? state.colors.muted : state.colors.live
+        brdBgr := mutedState ? state.colors.borderMuted : state.colors.borderLive
+        icHex := cfg.MonoIcon ? (mutedState ? state.colors.iconMuted : state.colors.iconLive) : "FFFFFF"
+        glyph := mutedState ? Chr(0xF781) : Chr(0xE720)
+        lbl := mutedState ? "MUTED" : "LIVE"
+    }
     contentArgb := Gdip.HexToArgb(icHex)
 
     if (cfg.ShowText) {
@@ -3343,7 +3353,7 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
         labelCfg := ""
     }
 
-    meterLevel := (!mutedState && cfg.HasOwnProp("ShowVoiceMeter") && cfg.ShowVoiceMeter && state.HasOwnProp("voicePeak")) ? state.voicePeak : 0.0
+    meterLevel := (!mutedState && !isRemoteOffline && cfg.HasOwnProp("ShowVoiceMeter") && cfg.ShowVoiceMeter && state.HasOwnProp("voicePeak")) ? state.voicePeak : 0.0
     return Gdip.RenderPill(state.MicGui.Hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg, meterLevel)
 }
 
@@ -4293,7 +4303,7 @@ UpdateHudVisibility(cfg, state) {
         return
     }
 
-    state.currentAlpha := state.baseAlpha
+    state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
     if IsObject(state.MicGui) {
         ApplyMicAppearance(cfg, state)
@@ -4353,7 +4363,7 @@ PlayMuteAnimation(cfg, state) {
 
     if (IsHudSuppressed(cfg)) {
         SetTimer state.breathTimerFn, 0
-        state.currentAlpha := (state.HasOwnProp("activeHost") && !state.obsConnected) ? Max(60, Round(state.baseAlpha * 0.4)) : state.baseAlpha
+        state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
         ApplyMicAppearance(cfg, state)
         return
     }
@@ -4402,7 +4412,7 @@ PlayMuteAnimation(cfg, state) {
     if (state.animSeq != mySeq || IsHudSuppressed(cfg))
         return
 
-    state.currentAlpha := (state.HasOwnProp("activeHost") && !state.obsConnected) ? Max(60, Round(state.baseAlpha * 0.4)) : state.baseAlpha
+    state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
     ApplyMicAppearance(cfg, state, state.savedX, state.savedY, state.baseWidth, state.baseHeight, state.currentAlpha)
 
     if (state.isMuted && !IsHudSuppressed(cfg) && (!state.HasOwnProp("activeHost") || state.obsConnected)) {
@@ -4639,7 +4649,7 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         }
     }
     UpdateHudLayout(state, anchor.x, anchor.y)
-    state.currentAlpha := state.baseAlpha
+    state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
     ApplyMicAppearance(cfg, state)
     if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && cfg.EnableWS) {
         ApplySceneAppearance(cfg, state)

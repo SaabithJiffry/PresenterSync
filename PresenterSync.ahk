@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 4.1.1
+; Version: 4.3.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 4.1.1.0
+;@Ahk2Exe-SetVersion 4.3.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -45,7 +45,7 @@ if (AppConfig.AudioRoutingMode == 0
 AppState := OverlayState(AppConfig)
 AppState.rebuildTrayFn := BuildTrayMenu.Bind(AppConfig, AppState)
 AppState.rebindHotkeysFn := (*) => RebindAllHostHotkeys(AppConfig, AppState)
-AppState.triggerMuteFn := (*) => TriggerMute(AppConfig, AppState)
+AppState.triggerMuteFn := (*) => TriggerMute(AppConfig, AppState, true)
 BuildTrayMenu(AppConfig, AppState)
 InitHUD(AppConfig, AppState)
 
@@ -843,7 +843,7 @@ LaptopKeyboardMute(cfg, state, ThisHotkey) {
     }
 }
 
-TriggerMute(cfg, state) {
+TriggerMute(cfg, state, fromHudClick := false) {
     static lastTick := 0
     static inHold := false
     if (inHold)
@@ -853,14 +853,14 @@ TriggerMute(cfg, state) {
         return false
     lastTick := now
 
-    if !(cfg.EnablePPT || cfg.EnableMicOnly) {
+    if (!fromHudClick && !(cfg.EnablePPT || cfg.EnableMicOnly)) {
         return
     }
 
     inHold := true
     try {
         if (DispatchHostMuteToggle(cfg, state)) {
-            if (WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
+            if (!fromHudClick && WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
                 DispatchHostMuteToggle(cfg, state)
                 lastTick := A_TickCount
             }

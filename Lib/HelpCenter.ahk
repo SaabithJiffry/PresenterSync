@@ -105,7 +105,7 @@ GetRemoteHudAnatomyItems() {
             pillTitle: "Remote 1-Tier Mic Pill (LIVE / MUTED / Offline)",
             tier: "PresenterSync Remote (Dedicated Single-Pill Companion)",
             summary: "Displays real-time microphone mute state synchronized from your Primary streaming PC over LAN or the Internet Relay.",
-            states: "• Bright Green LIVE: Mic is open on host PC.`r`n• Red MUTED (Pulses): Mic is muted on host PC and pulses steadily.`r`n• Dimmed (40% Opacity): Searching for host, LAN disconnected, or wrong OBS password (4009).",
+            states: "• Bright Green LIVE: Mic is open on host PC.`r`n• Red MUTED (Pulses): Mic is muted on host PC and pulses steadily.`r`n• Slate OFFLINE: Searching for host or LAN disconnected (uses your full chosen Transparency Level).`r`n• AUTH ERR (Red Border): Wrong OBS password (4009).",
             actions: "• Press Pointer Mute Button (default b) or short-click the pill to toggle mic Mute/Unmute.`r`n• Toggle Pointer Mute Control ON/OFF with Ctrl+F12 (HUD still stays live when OFF).",
             configWhere: "• Tray -> Show Mute Indicator`r`n• Tray -> Pointer Controls -> Enable Pointer Mute`r`n• Tray -> Indicator Appearance -> Show Text Label / HUD Color Preset"
         },
@@ -1193,7 +1193,7 @@ BuildRemoteHudDiagramBitmap(cfg, selectedIdx := 1, targetW := 680, targetH := 19
     p := spec.pills[2]
     _GdipDrawMiniPill(pGraphics, p.x, p.y, p.w, p.h, pal.muted, pal.muted, iconFont, Chr(0xF781), mono ? pal.iconMuted : "FFFFFF", "MUTED (Pulse)", 10.0, isDark, 0.0, selectedIdx == 1, accentArgb)
     p := spec.pills[3]
-    _GdipDrawMiniPill(pGraphics, p.x, p.y, p.w, p.h, pal.recOff, pal.recOff, iconFont, Chr(0xF781), "9CA3AF", "Dimmed (Offline)", 8.5, isDark, 0.0, selectedIdx == 3 || selectedIdx == 4, accentArgb)
+    _GdipDrawMiniPill(pGraphics, p.x, p.y, p.w, p.h, pal.recOff, pal.recOff, iconFont, Chr(0xF781), "E5E7EB", "Slate (Offline)", 8.5, isDark, 0.0, selectedIdx == 3 || selectedIdx == 4, accentArgb)
 
     for cardItem in spec.cards
         _GdipDrawCalloutCard(pGraphics, cardItem, cardItem.id, cardItem.id == selectedIdx, isDark, accentArgb)
