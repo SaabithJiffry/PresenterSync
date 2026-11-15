@@ -645,6 +645,12 @@ GetHelpKnowledgeBase() {
         "SYSTEM UTILITIES`r`n`r`n• Unified Control Center: Edit every setting across 6 tabs with live validation—invalid hotkeys are flagged cleanly in the status bar without corrupting saved configuration.`r`n• Start with Windows: Strictly OFF by default; adds/removes HKCU Run startup entry when toggled.`r`n• GitHub Update Checker: Safely checks https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest when clicked and compares SemVer.",
         "control center apply save start with windows update checker github semver")
 
+    Add("feat-easter-snake", "Features", "Profiles, Updates & Startup", "Secret Easter Egg: Desktop HUD Snake (Hidden Mini-Game)",
+        "Secret Hotkey Only (No Tray / Control Center Menu)", "Alt+Ctrl+Shift+S", "Hidden until triggered",
+        "Curious explorers who press Alt+Ctrl+Shift+S morph the floating HUD pills into a transparent desktop Snake game!",
+        "PSST... YOU FOUND THE SECRET DESKTOP HUD SNAKE!`r`n`r`n• HOW TO LAUNCH / EXIT:`r`n  Press Alt + Ctrl + Shift + S at any time while PresenterSync is running! There is intentionally NO System Tray or Control Center menu item—only this secret chord.`r`n`r`n• HOW IT WORKS:`r`n  1. Your visible floating HUD pills seamlessly detach and morph directly into a GDI+ pill-segmented snake on the topmost click-through layer of your desktop—no popup box, and all open windows underneath keep running normally.`r`n  2. Fruits (plus periodic 9-second Golden Bonus Fruits worth +30 pts and +2 length!) spawn across your monitor work area while a compact Scoreboard pill hovers at top-center.`r`n  3. Normal HUD timers & PowerPoint slide intercepts pause cleanly until you exit, then your live synchronized HUD automatically reappears.`r`n`r`n• IN-GAME CONTROLS:`r`n  - Steer: Arrow Keys or W / A / S / D`r`n  - Pause / Resume: P or Space`r`n  - Edge Mode: E (Toggle classic Monitor WALLS vs screen WRAP)`r`n  - Retry after Crash: R, Enter, or Space`r`n  - Restore Live HUD Anytime: Esc or Alt + Ctrl + Shift + S",
+        "secret easter egg snake mini game hidden alt ctrl shift s morph fruit scoreboard wrap walls")
+
     ; ==========================================================================
     ; 4. KEYBOARD & CLICKER SHORTCUTS
     ; ==========================================================================

@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v3.2.0
-;              and PresenterSync Remote v3.2.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v4.0.0
+;              and PresenterSync Remote v4.0.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -13,13 +13,27 @@
 #Include "..\Lib\UIA.ahk"
 #Include "..\Lib\OBS_Network.ahk"
 #Include "..\Lib\GUI_Config.ahk"
+#Include "..\Lib\HudSnakeGame.ahk"
 
 Gdip.Startup()
-OnExit((*) => (Theme.Shutdown(), UIA.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => (HudSnake.Stop(), Theme.Shutdown(), UIA.Shutdown(), Gdip.Shutdown()))
 
 results := []
 PassCount := 0
 FailCount := 0
+
+TestFailFastOnError(exc, mode) {
+    global results, FailCount
+    if (mode = "Return")
+        return 0
+    FailCount += 1
+    msg := Format("[FAIL] Unhandled exception in {} ({}:{}): {}", exc.What, exc.File, exc.Line, exc.Message)
+    results.Push(msg)
+    try FileAppend(msg "`n", A_ScriptDir "\master_audit_results.log")
+    try HudSnake.Stop()
+    ExitApp(1)
+}
+OnError(TestFailFastOnError)
 
 Assert(testName, condition, detail := "") {
     global PassCount, FailCount, results
@@ -228,13 +242,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 3.2.0", UIConstants.APP_VERSION == "3.2.0")
+Assert("APP_VERSION updated to 4.0.0", UIConstants.APP_VERSION == "4.0.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v3.2.0 and Remote Host",
-    InStr(summaryTxt, "v3.2.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v4.0.0 and Remote Host",
+    InStr(summaryTxt, "v4.0.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1204,7 +1218,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v3.2.0", "3.1.1") == 1
+    CompareSemVer("v4.0.0", "3.2.0") == 1
+    && CompareSemVer("v3.2.0", "3.1.1") == 1
     && CompareSemVer("v3.1.1", "3.1.0") == 1
     && CompareSemVer("v3.1.0", "3.0.1") == 1
     && CompareSemVer("v3.0.1", "3.0.0") == 1
@@ -1672,6 +1687,186 @@ Assert("v3.2.0 Help diagram live-refreshes cleanly with zero GDI leak & complete
     liveHelpPresetOk && (gdiAfter - gdiBefore) == 0 && remConnSearch.Length >= 4,
     Format("liveOk={} gdiDelta={} remConn={}", liveHelpPresetOk, (gdiAfter - gdiBefore), remConnSearch.Length))
 
+; ==============================================================================
+; SECTION 25: v4.0.0 HIDDEN DESKTOP HUD SNAKE EASTER EGG REGRESSIONS
+; ==============================================================================
+cfgSnake := Config(testIni)
+cfgSnake.ShowIndicator := true
+cfgSnake.ShowExtraHuds := true
+cfgSnake.EnableWS := true
+cfgSnake.EnableZoom := true
+cfgSnake.ColorPreset := "Standard"
+stSnake := OverlayState(cfgSnake)
+InitHUD(cfgSnake, stSnake, true)
+Sleep(40)
+
+TestGetExStyleHiddenSafe(hwnd) {
+    if (!hwnd)
+        return 0
+    prevDhw := A_DetectHiddenWindows
+    DetectHiddenWindows(true)
+    try return WinGetExStyle("ahk_id " hwnd)
+    finally DetectHiddenWindows(prevDhw)
+}
+
+gdiSnakeBefore := DllCall("GetGuiResources", "Ptr", hProcAudit, "Int", 0, "UInt")
+okSnakeStart := HudSnake.Start(cfgSnake, stSnake, false)
+snakePhaseInit := HudSnake.Phase
+snakeSeedsCount := HudSnake._morphSeeds.Length
+snakeInitLen := HudSnake._snake.Length
+snakeHwnd := IsObject(HudSnake._gui) ? HudSnake._gui.Hwnd : 0
+snakeExStyle := TestGetExStyleHiddenSafe(snakeHwnd)
+micHiddenDuringSnake := DllCall("IsWindowVisible", "Ptr", stSnake.MicGui.Hwnd, "Int") == 0
+suppressedDuringSnake := IsHudSuppressed(cfgSnake)
+
+; Ensure RefreshHudAppearance cannot un-hide HUD pills while Snake runs
+RefreshHudAppearance(cfgSnake, stSnake)
+micStillHidden := DllCall("IsWindowVisible", "Ptr", stSnake.MicGui.Hwnd, "Int") == 0
+
+Sleep(400)
+HudSnake._FrameTick()
+snakePhaseAfterMorph := HudSnake.Phase
+
+Assert("v4.0.0 HudSnake morphs live HUD onto transparent click-through topmost canvas & suppresses live HUDs",
+    okSnakeStart && snakePhaseInit == "morph" && snakePhaseAfterMorph == "playing"
+    && snakeSeedsCount >= 5 && snakeInitLen >= 5
+    && (snakeExStyle & 0x80000) != 0 && (snakeExStyle & 0x20) != 0
+    && suppressedDuringSnake && micHiddenDuringSnake && micStillHidden,
+    Format("ok={} p0={} p1={} seeds={} exStyle={:#x} sup={} hid={} still={}",
+        okSnakeStart, snakePhaseInit, snakePhaseAfterMorph, snakeSeedsCount, snakeExStyle, suppressedDuringSnake, micHiddenDuringSnake, micStillHidden))
+
+HudSnake.Stop()
+Sleep(40)
+gdiSnakeAfter := DllCall("GetGuiResources", "Ptr", hProcAudit, "Int", 0, "UInt")
+micRestoredAfterStop := DllCall("IsWindowVisible", "Ptr", stSnake.MicGui.Hwnd, "Int") != 0
+Assert("v4.0.0 HudSnake.Stop() cleanly frees GDI handles, unbinds game hotkeys & restores HUD pills",
+    !HudSnake.IsActive && HudSnake.Phase == "idle" && HudSnake._boundHotkeys.Length == 0
+    && (gdiSnakeAfter - gdiSnakeBefore) == 0 && !IsHudSuppressed(cfgSnake) && micRestoredAfterStop,
+    Format("active={} hk={} gdiDelta={} micVis={}", HudSnake.IsActive, HudSnake._boundHotkeys.Length, (gdiSnakeAfter - gdiSnakeBefore), micRestoredAfterStop))
+
+; Headless deterministic mechanics verification
+HudSnake.Start(cfgSnake, stSnake, true)
+HudSnake._dir := { x: 1, y: 0 }
+HudSnake._dirQueue := []
+HudSnake._snake := [
+    { col: 10, row: 10, colorHex: "10B981" },
+    { col: 9,  row: 10, colorHex: "DC2626" },
+    { col: 8,  row: 10, colorHex: "2563EB" },
+    { col: 7,  row: 10, colorHex: "6B21A8" },
+    { col: 6,  row: 10, colorHex: "374151" }
+]
+; Verify food never spawns in occupied segments or scoreboard zone and test direction queue
+sbTopEdge := HudSnake._sbSafeRows
+foodValid := IsObject(HudSnake._food) && HudSnake._food.col >= 0 && HudSnake._food.col < HudSnake._cols && HudSnake._food.row >= 0 && HudSnake._food.row < HudSnake._rows
+revRejected := !HudSnake.QueueDirection(-1, 0)
+turn1Ok := HudSnake.QueueDirection(0, 1)
+turn2Ok := HudSnake.QueueDirection(-1, 0)
+turn3Cap := !HudSnake.QueueDirection(0, -1)
+HudSnake._dirQueue := []
+
+; Eat normal fruit -> +10 score, length +1, speed faster, HighScore persisted
+HudSnake._food := { col: 11, row: 10, kind: "normal", bornTick: A_TickCount, ttlMs: 0, pts: 10 }
+HudSnake.StepSimulation(A_TickCount + 100)
+eat1Ok := (HudSnake._score == 10 && HudSnake._eatenCount == 1 && HudSnake._snake.Length == 6 && HudSnake._stepMs < 135 && HudSnake._highScore == 10 && cfgSnake.Read("EasterEgg", "SnakeHighScore", "0") == "10")
+
+; Eat golden bonus fruit -> +30 score, total +2 length across 2 steps
+bh := HudSnake._snake[1]
+HudSnake._food := { col: bh.col + 1, row: bh.row, kind: "bonus", bornTick: A_TickCount, ttlMs: 9000, pts: 30 }
+HudSnake.StepSimulation(A_TickCount + 200)
+HudSnake._food := { col: 1, row: sbTopEdge + 2, kind: "normal", bornTick: A_TickCount, ttlMs: 0, pts: 10 }
+HudSnake.StepSimulation(A_TickCount + 300)
+bonusOk := (HudSnake._score == 40 && HudSnake._snake.Length == 8 && HudSnake._bestBeaten)
+
+Assert("v4.0.0 HudSnake food, anti-180 direction queue, growth, speed ramp, bonus & INI HighScore work",
+    foodValid && revRejected && turn1Ok && turn2Ok && turn3Cap && eat1Ok && bonusOk,
+    Format("fv={} q=({},{},{},{}) e1={} bonus={} len={} sc={}", foodValid, revRejected, turn1Ok, turn2Ok, turn3Cap, eat1Ok, bonusOk, HudSnake._snake.Length, HudSnake._score))
+
+; Chasing vacating tail tip survives vs hitting non-tail segment dies
+HudSnake.Restart()
+HudSnake.Phase := "playing"
+HudSnake._growPending := 0
+HudSnake._dirQueue := []
+HudSnake._dir := { x: 0, y: -1 }
+HudSnake._food := { col: 1, row: 10, kind: "normal", bornTick: A_TickCount, ttlMs: 0, pts: 10 }
+HudSnake._snake := [
+    { col: 8, row: 9,  colorHex: "10B981" },
+    { col: 9, row: 9,  colorHex: "DC2626" },
+    { col: 9, row: 8,  colorHex: "2563EB" },
+    { col: 8, row: 8,  colorHex: "6B21A8" }
+]
+HudSnake.StepSimulation(A_TickCount + 400)
+tailChaseSurvived := (HudSnake.Phase == "playing")
+
+HudSnake._dir := { x: 1, y: 0 }
+HudSnake._snake := [
+    { col: 8, row: 8, colorHex: "10B981" },
+    { col: 8, row: 9, colorHex: "DC2626" },
+    { col: 9, row: 9, colorHex: "2563EB" },
+    { col: 9, row: 8, colorHex: "6B21A8" },
+    { col: 9, row: 7, colorHex: "374151" }
+]
+HudSnake.StepSimulation(A_TickCount + 500)
+selfCrashDied := (HudSnake.Phase == "gameover" && HudSnake._deathReason == "self")
+
+; Wall crash vs Edge Wrap + Pause/Resume
+HudSnake.Restart()
+HudSnake.Phase := "playing"
+HudSnake._edgeWrap := false
+HudSnake._dirQueue := []
+HudSnake._dir := { x: -1, y: 0 }
+HudSnake._snake := [
+    { col: 0, row: 10, colorHex: "10B981" },
+    { col: 1, row: 10, colorHex: "DC2626" },
+    { col: 2, row: 10, colorHex: "2563EB" }
+]
+HudSnake.StepSimulation(A_TickCount + 600)
+wallDied := (HudSnake.Phase == "gameover" && HudSnake._deathReason == "wall")
+
+HudSnake.Restart()
+HudSnake.Phase := "playing"
+HudSnake.TogglePause()
+pauseOk := (HudSnake.Phase == "paused")
+HudSnake.TogglePause()
+resumeOk := (HudSnake.Phase == "playing")
+HudSnake.ToggleEdgeMode()
+HudSnake._dir := { x: -1, y: 0 }
+HudSnake._snake := [
+    { col: 0, row: 10, colorHex: "10B981" },
+    { col: 1, row: 10, colorHex: "DC2626" },
+    { col: 2, row: 10, colorHex: "2563EB" }
+]
+HudSnake.StepSimulation(A_TickCount + 700)
+wrapOk := (HudSnake.Phase == "playing" && HudSnake._snake[1].col == HudSnake._cols - 1)
+HudSnake.Stop()
+
+Assert("v4.0.0 HudSnake tail exemption, self/wall death, pause/resume & edge wrap behave cleanly",
+    tailChaseSurvived && selfCrashDied && wallDied && pauseOk && resumeOk && wrapOk,
+    Format("tail={} self={} wall={} p={}/{} wrap={}", tailChaseSurvived, selfCrashDied, wallDied, pauseOk, resumeOk, wrapOk))
+
+cfgSnake.ShowIndicator := false
+UpdateVoiceMeterTimer(cfgSnake, stSnake)
+UpdateAutoDodgeTimer(cfgSnake, stSnake)
+for g in GetHudGuiList(stSnake)
+    try g.Destroy()
+
+; Secret discoverability guard: hotkeys wired in Primary, zero Tray/ControlCenter UI, subtle Help entry only on Primary
+primSrc := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
+remSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
+guiSrc := FileRead(A_ScriptDir "\..\Lib\GUI_Config.ahk", "UTF-8")
+trayPart := StrSplit(StrSplit(primSrc, "BuildTrayMenu(cfg, state) {")[2], "NotifyHelpRefresh")[1]
+ccPart := StrSplit(guiSrc, "ShowControlCenterWindow(cfg, state := `"`", *) {")[2]
+remTrayPart := StrSplit(StrSplit(remSrc, "BuildRemoteTrayMenu(")[2], "ShowRemoteHelpUI(")[1]
+
+noUiMenuLeak := !InStr(trayPart, "Snake") && !InStr(trayPart, "Easter")
+    && !InStr(ccPart, "Snake") && !InStr(ccPart, "Easter")
+    && !InStr(remTrayPart, "Snake") && !InStr(remSrc, "HudSnake")
+secretHkWired := InStr(primSrc, "`"!^+s`"") && InStr(primSrc, "HudSnake.Toggle") && InStr(primSrc, "!HudSnake.IsActive")
+helpPrimHits := SearchHelpEntries("snake", "All", false)
+helpRemHits := SearchHelpEntries("snake", "All", true)
+Assert("v4.0.0 Snake remains secret in Tray/CC/Remote, bound to !^+s in Primary & subtle in Primary Help",
+    noUiMenuLeak && secretHkWired && helpPrimHits.Length == 1 && helpPrimHits[1].id == "feat-easter-snake" && helpRemHits.Length == 0,
+    Format("noLeak={} hkWired={} primHits={} remHits={}", noUiMenuLeak, secretHkWired, helpPrimHits.Length, helpRemHits.Length))
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1679,7 +1874,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v3.2.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.0.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

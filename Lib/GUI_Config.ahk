@@ -8,7 +8,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "3.2.0"
+    static APP_VERSION := "4.0.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -3346,10 +3346,14 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
     return Gdip.RenderPill(state.MicGui.Hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg, meterLevel)
 }
 
+IsHudSuppressed(cfg) {
+    return !IsObject(cfg) || !cfg.ShowIndicator || (IsSet(HudSnake) && HudSnake.IsActive)
+}
+
 SyncChatState(cfg, state, newCount) {
     if (state.unreadChatCount != newCount) {
         state.unreadChatCount := newCount
-        if (cfg.ShowIndicator && cfg.ShowExtraHuds)
+        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds)
             ApplyChatAppearance(cfg, state)
     }
 }
@@ -3387,7 +3391,7 @@ ApplyChatAppearance(cfg, state) {
 SyncStudioState(cfg, state, isEnabled) {
     if (state.studioModeActive != isEnabled) {
         state.studioModeActive := isEnabled
-        if (cfg.ShowIndicator && cfg.ShowExtraHuds)
+        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds)
             ApplyStudioAppearance(cfg, state)
     }
 }
@@ -3459,7 +3463,7 @@ SyncStreamState(cfg, state, newState, congestion := 0.0, skippedFrames := -1, re
     if (stateChanged) {
         oldW := state.streamW
         state.ComputeDimensions(cfg)
-        if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud)) {
+        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && cfg.EnableWS && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud)) {
             if (state.streamW != oldW && !state.isDraggingHud) {
                 UpdateHudLayout(state, state.savedX, state.savedY)
                 ApplyVCamAppearance(cfg, state)
@@ -3506,7 +3510,7 @@ SyncVCamState(cfg, state, isActive) {
     active := !!isActive
     if (state.vcamActive != active) {
         state.vcamActive := active
-        if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud))
+        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && cfg.EnableWS && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud))
             ApplyVCamAppearance(cfg, state)
     }
 }
@@ -3558,7 +3562,7 @@ SyncSceneState(cfg, state, sceneName) {
         state.sceneMarqueePhase := "pause_start"
         state.sceneMarqueeTicks := 0
         state.ComputeDimensions(cfg)
-        if (cfg.ShowIndicator && cfg.ShowExtraHuds && !state.isDraggingHud) {
+        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && !state.isDraggingHud) {
             UpdateHudLayout(state, state.savedX, state.savedY)
             ApplySceneAppearance(cfg, state)
         }
@@ -3609,7 +3613,7 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
             state.sceneMarqueeOffset := 0
             state.sceneMarqueePhase := "pause_start"
             state.sceneMarqueeTicks := 0
-            if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS && state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
+            if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && cfg.EnableWS && state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
                 SetTimer(state.sceneMarqueeTimerFn, 40)
         }
         drawX := scPad - Round(state.sceneMarqueeOffset)
@@ -3727,7 +3731,7 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1) {
     if (stateChanged || durProvided) {
         oldW := state.recW
         state.ComputeDimensions(cfg)
-        if (cfg.ShowIndicator && cfg.ShowExtraHuds) {
+        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds) {
             if (state.recW != oldW && !state.isDraggingHud) {
                 UpdateHudLayout(state, state.savedX, state.savedY)
                 ApplyChatAppearance(cfg, state)
@@ -3847,7 +3851,7 @@ IsGuiValid(guiObj) {
 UpdateVoiceMeterTimer(cfg, state) {
     if (!IsObject(state) || !state.HasOwnProp("voiceMeterTimerFn") || !state.voiceMeterTimerFn)
         return
-    shouldRun := cfg.ShowIndicator && (!cfg.HasOwnProp("ShowVoiceMeter") || cfg.ShowVoiceMeter) && !state.isMuted && IsGuiValid(state.MicGui)
+    shouldRun := !IsHudSuppressed(cfg) && (!cfg.HasOwnProp("ShowVoiceMeter") || cfg.ShowVoiceMeter) && !state.isMuted && IsGuiValid(state.MicGui)
     if (shouldRun) {
         SetTimer(state.voiceMeterTimerFn, UIConstants.VOICE_METER_INTERVAL_MS)
     } else {
@@ -3857,7 +3861,7 @@ UpdateVoiceMeterTimer(cfg, state) {
 }
 
 VoiceMeterTick(cfg, state, readerFn := "") {
-    if (!IsGuiValid(state.MicGui) || !cfg.ShowIndicator || (cfg.HasOwnProp("ShowVoiceMeter") && !cfg.ShowVoiceMeter) || state.isMuted) {
+    if (!IsGuiValid(state.MicGui) || IsHudSuppressed(cfg) || (cfg.HasOwnProp("ShowVoiceMeter") && !cfg.ShowVoiceMeter) || state.isMuted) {
         state.voicePeak := 0.0
         if (state.HasOwnProp("voiceMeterTimerFn") && state.voiceMeterTimerFn)
             SetTimer(state.voiceMeterTimerFn, 0)
@@ -3908,7 +3912,7 @@ RefreshHudAppearance(cfg, state) {
     state.ComputeDimensions(cfg)
     UpdateHudLayout(state, state.savedX, state.savedY)
     UpdateHudVisibility(cfg, state)
-    if (cfg.ShowIndicator && state.isMuted)
+    if (!IsHudSuppressed(cfg) && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     else
         SetTimer state.breathTimerFn, 0
@@ -4091,7 +4095,7 @@ ApplyHudClickThroughStyle(cfg, state, forceClickThrough := -1) {
 UpdateAutoDodgeTimer(cfg, state) {
     if (!IsObject(state) || !state.HasOwnProp("autoDodgeTimerFn") || !state.autoDodgeTimerFn)
         return
-    needPoll := cfg.ShowIndicator && IsGuiValid(state.MicGui)
+    needPoll := !IsHudSuppressed(cfg) && IsGuiValid(state.MicGui)
         && ((cfg.HasOwnProp("HudAutoDodge") && cfg.HudAutoDodge) || (cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough))
     SetTimer(state.autoDodgeTimerFn, needPoll ? UIConstants.DODGE_POLL_INTERVAL_MS : 0)
     if (!needPoll && state.HasOwnProp("isAutoDodged") && state.isAutoDodged) {
@@ -4104,7 +4108,7 @@ UpdateAutoDodgeTimer(cfg, state) {
 }
 
 AutoDodgeTick(cfg, state, cursorPos := "", altHeldOverride := -1) {
-    if (!IsObject(state) || !IsGuiValid(state.MicGui) || !cfg.ShowIndicator || state.isDraggingHud)
+    if (!IsObject(state) || !IsGuiValid(state.MicGui) || IsHudSuppressed(cfg) || state.isDraggingHud)
         return
     altHeld := (altHeldOverride != -1) ? !!altHeldOverride : GetKeyState("Alt", "P")
     dodgeEnabled := (cfg.HasOwnProp("HudAutoDodge") && cfg.HudAutoDodge)
@@ -4266,7 +4270,7 @@ UpdateHudLayout(state, anchorX := "", anchorY := "", skipHwnd := 0) {
 
 UpdateHudVisibility(cfg, state) {
     state.animSeq += 1
-    if (!cfg.ShowIndicator) {
+    if (IsHudSuppressed(cfg)) {
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
         UpdateVoiceMeterTimer(cfg, state)
@@ -4346,7 +4350,7 @@ PlayMuteAnimation(cfg, state) {
     state.animSeq += 1
     mySeq := state.animSeq
 
-    if (!cfg.ShowIndicator) {
+    if (IsHudSuppressed(cfg)) {
         SetTimer state.breathTimerFn, 0
         state.currentAlpha := (state.HasOwnProp("activeHost") && !state.obsConnected) ? Max(60, Round(state.baseAlpha * 0.4)) : state.baseAlpha
         ApplyMicAppearance(cfg, state)
@@ -4363,7 +4367,7 @@ PlayMuteAnimation(cfg, state) {
     prevMuted := !state.isMuted
 
     Loop UIConstants.FADE_STEPS {
-        if (state.animSeq != mySeq || state.isDraggingHud)
+        if (state.animSeq != mySeq || state.isDraggingHud || IsHudSuppressed(cfg))
             return
         state.currentAlpha -= fadeStep
         if (state.currentAlpha < 0)
@@ -4379,7 +4383,7 @@ PlayMuteAnimation(cfg, state) {
     }
 
     Loop UIConstants.FADE_STEPS {
-        if (state.animSeq != mySeq || state.isDraggingHud)
+        if (state.animSeq != mySeq || state.isDraggingHud || IsHudSuppressed(cfg))
             return
         state.currentAlpha += fadeStep
         if (state.currentAlpha > state.baseAlpha)
@@ -4394,13 +4398,13 @@ PlayMuteAnimation(cfg, state) {
         Sleep UIConstants.FADE_SLEEP_MS
     }
 
-    if (state.animSeq != mySeq)
+    if (state.animSeq != mySeq || IsHudSuppressed(cfg))
         return
 
     state.currentAlpha := (state.HasOwnProp("activeHost") && !state.obsConnected) ? Max(60, Round(state.baseAlpha * 0.4)) : state.baseAlpha
     ApplyMicAppearance(cfg, state, state.savedX, state.savedY, state.baseWidth, state.baseHeight, state.currentAlpha)
 
-    if (state.isMuted && cfg.ShowIndicator && (!state.HasOwnProp("activeHost") || state.obsConnected)) {
+    if (state.isMuted && !IsHudSuppressed(cfg) && (!state.HasOwnProp("activeHost") || state.obsConnected)) {
         state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     } else {
@@ -4409,6 +4413,11 @@ PlayMuteAnimation(cfg, state) {
 }
 
 BreathingAnimation(cfg, state) {
+    if (IsHudSuppressed(cfg)) {
+        if (IsObject(state) && state.HasOwnProp("breathTimerFn") && state.breathTimerFn)
+            SetTimer state.breathTimerFn, 0
+        return
+    }
     if (!IsObject(state.MicGui) || state.isDraggingHud)
         return
 
@@ -4631,13 +4640,13 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     UpdateHudLayout(state, anchor.x, anchor.y)
     state.currentAlpha := state.baseAlpha
     ApplyMicAppearance(cfg, state)
-    if (cfg.ShowIndicator && cfg.ShowExtraHuds && cfg.EnableWS) {
+    if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && cfg.EnableWS) {
         ApplySceneAppearance(cfg, state)
         if (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud)
             ApplyStreamAppearance(cfg, state)
     }
     ApplyHudClickThroughStyle(cfg, state)
-    if (cfg.ShowIndicator && state.isMuted)
+    if (!IsHudSuppressed(cfg) && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 
     if (isShortClick)
