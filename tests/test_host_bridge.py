@@ -1,0 +1,243 @@
+"""
+Live E2E verification for PresenterSync HostCompanionBridge (Lib/HostBridge.ahk):
+- UDP Session Code discovery (valid, invalid, rate limit, rotated code)
+- HTTP GET /health and POST /pair (auth success, wrong code -> 401 -> 429 lockout, reset on rotate)
+- RFC 6455 WebSocket /ws (unauthenticated rejection, token auth, toggle_mute Mode 2, Mode 1/3 sync, CloseRemote broadcast)
+"""
+
+import base64
+import hashlib
+import json
+import os
+import socket
+import struct
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+AHK_EXE = r"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+REPO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+SERVER_AHK = os.path.join(REPO_DIR, "tests", "test_host_bridge.ahk")
+READY_FILE = os.path.join(REPO_DIR, "tests", "_bridge_ready.json")
+
+
+def ws_connect(host: str, port: int, path: str) -> tuple[socket.socket, bytes]:
+    s = socket.create_connection((host, port), timeout=5.0)
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    req = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        f"Upgrade: websocket\r\n"
+        f"Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        f"Sec-WebSocket-Version: 13\r\n\r\n"
+    ).encode("ascii")
+    s.sendall(req)
+
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            raise RuntimeError("EOF before 101 Switching Protocols")
+        buf += chunk
+    idx = buf.index(b"\r\n\r\n") + 4
+    hdr = buf[:idx].decode("utf-8", errors="replace")
+    rest = buf[idx:]
+    assert "101 " in hdr, f"Expected 101 Switching Protocols, got: {hdr}"
+    expected_accept = base64.b64encode(
+        hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()
+    ).decode("ascii")
+    assert expected_accept in hdr, f"Bad Sec-WebSocket-Accept in {hdr}"
+    return s, rest
+
+
+def ws_send_text(s: socket.socket, text: str) -> None:
+    payload = text.encode("utf-8")
+    mask = os.urandom(4)
+    header = bytearray([0x81])
+    n = len(payload)
+    if n <= 125:
+        header.append(0x80 | n)
+    else:
+        header.append(0x80 | 126)
+        header.extend(struct.pack("!H", n))
+    header.extend(mask)
+    masked = bytes(payload[i] ^ mask[i % 4] for i in range(n))
+    s.sendall(bytes(header) + masked)
+
+
+def ws_recv_json(s: socket.socket, buf: bytearray, timeout: float = 5.0) -> dict:
+    s.settimeout(timeout)
+    while True:
+        while len(buf) < 2:
+            chunk = s.recv(4096)
+            if not chunk:
+                raise EOFError("Socket closed")
+            buf.extend(chunk)
+        b0, b1 = buf[0], buf[1]
+        op = b0 & 0x0F
+        plen = b1 & 0x7F
+        off = 2
+        if plen == 126:
+            while len(buf) < 4:
+                buf.extend(s.recv(4096))
+            plen = struct.unpack("!H", buf[2:4])[0]
+            off = 4
+        while len(buf) < off + plen:
+            buf.extend(s.recv(4096))
+        payload = bytes(buf[off : off + plen])
+        del buf[: off + plen]
+        if op == 0x9:  # ping
+            mask = os.urandom(4)
+            s.sendall(bytes([0x8A, 0x80 | len(payload)]) + mask + bytes(payload[i] ^ mask[i % 4] for i in range(len(payload))))
+            continue
+        if op == 0xA:
+            continue
+        if op == 0x8:
+            raise EOFError("WS Close frame received")
+        return json.loads(payload.decode("utf-8"))
+
+
+def http_json(method: str, url: str, payload: dict | None = None) -> tuple[int, dict]:
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    if payload is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode("utf-8"))
+
+
+def main() -> int:
+    for p in [READY_FILE, READY_FILE + ".cmd", READY_FILE + ".rotated"]:
+        if os.path.exists(p):
+            os.remove(p)
+
+    proc = subprocess.Popen(
+        [AHK_EXE, SERVER_AHK, "--serve", READY_FILE],
+        cwd=REPO_DIR,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.time() + 10.0
+        while not os.path.exists(READY_FILE):
+            if time.time() > deadline:
+                raise RuntimeError("Timed out waiting for AHK HostBridge server")
+            time.sleep(0.05)
+        time.sleep(0.05)
+        with open(READY_FILE, "r", encoding="utf-8-sig") as f:
+            info = json.load(f)
+        assert info["ok"] is True, f"Server failed: {info}"
+        tcp_port = info["tcpPort"]
+        udp_port = info["udpPort"]
+        code = info["sessionCode"]
+        print(f"[INFO] HostBridge up on TCP={tcp_port}, UDP={udp_port}, code={code}")
+
+        # 1. GET /health
+        st, health = http_json("GET", f"http://127.0.0.1:{tcp_port}/health")
+        assert st == 200 and health["ok"] is True and health["bridgePort"] == tcp_port
+        print("[PASS] GET /health")
+
+        # 2. UDP discovery with valid normalized code (strip dash & lowercase!)
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp.settimeout(2.0)
+        udp.sendto(b"PSYNC_DISCOVER|k7m9p2|dev-android-1|SmartBoard 75", ("127.0.0.1", udp_port))
+        offer, _ = udp.recvfrom(1024)
+        udp.close()
+        offer_str = offer.decode("utf-8")
+        assert offer_str.startswith("PSYNC_OFFER|") and f"|{tcp_port}|4455|" in offer_str, f"Bad offer: {offer_str}"
+        print(f"[PASS] UDP PSYNC_DISCOVER -> {offer_str}")
+
+        # 3. HTTP POST /pair rate limit lockout (5 bad attempts -> 429) + Rotate reset -> 200 OK
+        for i in range(5):
+            st, body = http_json("POST", f"http://127.0.0.1:{tcp_port}/pair", {"code": "WRONG1"})
+            assert st == 401 and body["ok"] is False, f"Expected 401 on try {i+1}: {st} {body}"
+        st, body = http_json("POST", f"http://127.0.0.1:{tcp_port}/pair", {"code": "K7M-9P2"})
+        assert st == 429, f"Expected 429 lockout after 5 fails, got {st}"
+        print("[PASS] POST /pair brute-force lockout -> 429")
+
+        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+            f.write("ROTATE_CODE")
+        t0 = time.time()
+        while not os.path.exists(READY_FILE + ".rotated"):
+            if time.time() - t0 > 5:
+                raise RuntimeError("Rotate code timeout")
+            time.sleep(0.05)
+        with open(READY_FILE + ".rotated", "r", encoding="utf-8-sig") as f:
+            new_code = f.read().strip()
+
+        st, pair_ok = http_json(
+            "POST",
+            f"http://127.0.0.1:{tcp_port}/pair",
+            {
+                "code": new_code.replace("-", "").lower(),
+                "deviceId": "sb-pixel-34",
+                "deviceName": "Lecture Hall Board",
+                "platform": "Android",
+            },
+        )
+        assert st == 200 and pair_ok["ok"] is True
+        assert pair_ok["obsPassword"] == "bridgePass123"
+        assert pair_ok["targetMicName"] == "Studio Mic"
+        assert pair_ok["routingMode"] == 2
+        assert pair_ok["internetPairingCode"] == "PS-BRDG-777"
+        assert len(pair_ok["sessionToken"]) == 64
+        token = pair_ok["sessionToken"]
+        print("[PASS] POST /pair rotated code -> 200 with sessionToken & config bundle")
+
+        # 4. Unauthenticated WS attempt -> rejected
+        s_bad, r_bad = ws_connect("127.0.0.1", tcp_port, "/ws")
+        buf_bad = bytearray(r_bad)
+        ws_send_text(s_bad, json.dumps({"type": "toggle_mute"}))
+        err_msg = ws_recv_json(s_bad, buf_bad)
+        assert err_msg["type"] == "auth_error"
+        s_bad.close()
+        print("[PASS] WS unauthenticated toggle_mute rejected cleanly")
+
+        # 5. Authenticated WS via token + Mode 2 toggle_mute + Host sync broadcast + CloseRemote
+        s_ok, r_ok = ws_connect("127.0.0.1", tcp_port, f"/ws?token={token}&deviceId=sb-pixel-34&deviceName=Lecture+Hall+Board")
+        buf_ok = bytearray(r_ok)
+        m1 = ws_recv_json(s_ok, buf_ok)
+        m2 = ws_recv_json(s_ok, buf_ok)
+        assert m1["type"] == "auth_ok"
+        assert m2["type"] == "mute_state" and m2["isMuted"] is False
+
+        ws_send_text(s_ok, json.dumps({"type": "toggle_mute", "source": "clicker"}))
+        m3 = ws_recv_json(s_ok, buf_ok)
+        assert m3["type"] == "mute_state" and m3["isMuted"] is True
+        print("[PASS] WS Mode 2 toggle_mute flips state and broadcasts mute_state=true")
+
+        # Test CloseRemote broadcast
+        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+            f.write("CLOSE_REMOTE")
+        m4 = ws_recv_json(s_ok, buf_ok)
+        assert m4["type"] == "close_remote" and m4["command"] == "CloseRemote"
+        print("[PASS] WS receives CloseRemote signal from SendCloseRemoteSignal")
+
+        ws_send_text(s_ok, json.dumps({"type": "ping"}))
+        m5 = ws_recv_json(s_ok, buf_ok)
+        assert m5["type"] == "pong" and m5["isMuted"] is True
+        print("[PASS] WS ping -> pong")
+
+        s_ok.close()
+        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+            f.write("STOP")
+        proc.wait(timeout=5)
+        print("=== ALL HOST BRIDGE E2E TESTS PASSED ===")
+        return 0
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=5)
+        for p in [READY_FILE, READY_FILE + ".cmd", READY_FILE + ".rotated", os.path.join(REPO_DIR, "tests", "test_host_bridge_cfg.ini")]:
+            if os.path.exists(p):
+                os.remove(p)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

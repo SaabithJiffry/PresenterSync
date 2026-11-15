@@ -24,7 +24,7 @@ SetKeyDelay 50, 50
 #Include <HudSnakeGame>
 
 Gdip.Startup()
-OnExit((*) => (HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => (StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\PresenterSync.ico")
@@ -60,6 +60,7 @@ if (AppConfig.EnableWS)
 
 UpdateZoomMonitorTimer(AppConfig, AppState)
 UpdateHostInternetRelay(AppConfig, AppState)
+StartHostCompanionBridge(AppConfig, AppState, AppConfig.BridgePort)
 
 ; --- CUSTOM TRAY MENU ---
 BuildTrayMenu(cfg, state) {
