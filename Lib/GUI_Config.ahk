@@ -4,6 +4,7 @@
 ; ==============================================================================
 
 #Include "%A_LineFile%\..\Gdip.ahk"
+#Include "%A_LineFile%\..\QrCode.ahk"
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
@@ -3307,21 +3308,41 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     if (!cfg.HasOwnProp("SessionPairingCode") || cfg.SessionPairingCode = "")
         cfg.SessionPairingCode := GenerateSessionPairingCode()
 
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+12", "Smart Board Session Code (LAN / No-Camera Pairing):"), "Text", "normal")
-    editSession := dlg.Add("Edit", "xm w200 h28 ReadOnly Center", cfg.SessionPairingCode)
-    Theme.RegisterControl(dlg, editSession, "Edit")
-    btnCopySession := dlg.Add("Button", "x+8 yp w72 h28", "Copy")
-    btnNewSession := dlg.Add("Button", "x+8 yp w72 h28", "New")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Smart Board Pairing (Scan QR Code or Enter Session Code):"), "Text", "normal")
+    qrUri := BuildHostPairingUri(cfg, endpoints.ips)
+    qrRes := QrCode.BuildHBitmap(qrUri, 128)
+    hQrBmp := qrRes.hBitmap
+
+    editSession := dlg.Add("Edit", "xm Section w128 h26 ReadOnly Center y+6", cfg.SessionPairingCode)
+    Theme.RegisterControl(dlg, editSession, "Edit", "accent")
+    btnCopySession := dlg.Add("Button", "x+4 yp w44 h26", "Copy")
+    btnNewSession := dlg.Add("Button", "x+4 yp w42 h26", "New")
     Theme.RegisterControl(dlg, btnCopySession, "Button")
     Theme.RegisterControl(dlg, btnNewSession, "Button")
 
     formatBridgeStatus := (*) => _FormatHostBridgeStatusLine(cfg)
     formatPairedList := (*) => _FormatHostBridgeDeviceText()
 
-    lblBridgeStatus := dlg.Add("Text", "xm w360 y+8", formatBridgeStatus.Call())
+    dlg.SetFont("s8.5 w400", Theme.UiFont)
+    lblBridgeStatus := dlg.Add("Text", "xs w222 y+6", formatBridgeStatus.Call())
     Theme.RegisterControl(dlg, lblBridgeStatus, "Text", "muted")
-    editPairedDevs := dlg.Add("Edit", "xm w360 h46 ReadOnly Multi -WantReturn", formatPairedList.Call())
+    editPairedDevs := dlg.Add("Edit", "xs w222 h74 ReadOnly Multi -WantReturn y+4", formatPairedList.Call())
     Theme.RegisterControl(dlg, editPairedDevs, "Edit")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+
+    picQr := dlg.Add("Picture", "x252 ys w128 h128 +0x800000", hQrBmp ? ("HBITMAP:" hQrBmp) : "")
+
+    RefreshQrBitmap() {
+        newUri := BuildHostPairingUri(cfg, endpoints.ips)
+        nextQr := QrCode.BuildHBitmap(newUri, 128)
+        if (nextQr.hBitmap) {
+            oldBmp := hQrBmp
+            hQrBmp := nextQr.hBitmap
+            try picQr.Value := "*w128 *h128 HBITMAP:" hQrBmp
+            if (oldBmp)
+                DllCall("DeleteObject", "Ptr", oldBmp)
+        }
+    }
 
     btnCopySession.OnEvent("Click", (*) => (
         A_Clipboard := cfg.SessionPairingCode,
@@ -3330,11 +3351,12 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     btnNewSession.OnEvent("Click", (*) => (
         RotateHostSessionPairingCode(cfg),
         editSession.Value := cfg.SessionPairingCode,
-        TrayTip("Generated new Session Code: " cfg.SessionPairingCode, "PresenterSync", 1)
+        RefreshQrBitmap(),
+        TrayTip("Generated new Session Code & QR: " cfg.SessionPairingCode, "PresenterSync", 1)
     ))
 
     statusLine := "OBS Port: 4455  |  Password: " (cfg.obsPassword != "" ? "Configured" : "None") "  |  Mic: " cfg.targetMicName
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10 Center", statusLine), "Text", "muted")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+12 Center", statusLine), "Text", "muted")
 
     btnCloseRemote := dlg.Add("Button", "xm w176 h32 y+10", "Close Remote Companion...")
     btnClose := dlg.Add("Button", "x+8 yp w176 h32 Default", "Close")
@@ -3345,6 +3367,10 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         if (dlg._closed)
             return
         dlg._closed := true
+        if (hQrBmp) {
+            DllCall("DeleteObject", "Ptr", hQrBmp)
+            hQrBmp := 0
+        }
         Theme.UnregisterWindow(dlg, "Remote Companion Connection Info")
         dlg.Destroy()
     }

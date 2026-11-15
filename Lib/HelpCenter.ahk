@@ -699,6 +699,12 @@ GetHelpKnowledgeBase() {
         "SAFE REMOTE SHUTDOWN & TROUBLESHOOTING`r`n`r`n• Safe Manual Shutdown: Closing or restarting Primary PresenterSync NEVER closes PresenterSync Remote unexpectedly. To shut down PresenterSync Remote on the secondary PC remotely, use Primary Tray -> 'Close Remote Companion...' and confirm.`r`n• Error 'Auth Failed (Code 4009)': Re-enter your OBS WebSocket password in Remote Tray -> Change OBS Connection...`r`n• Error 'Mic Not Found': Open OBS Audio Mixer on Primary Host and match exact capitalization (e.g., 'Mic/Aux' vs 'USB Mic') inside Change OBS Connection...",
         "close remote companion safe shutdown auth failed 4009 mic not found troubleshooting")
 
+    Add("rem-android", "Remote", "Android Smart Board Client (APK)", "Android Smart Board Companion (PresenterSync_Remote.apk)",
+        "Settings > Remote Companion Info...  |  Android App (API 26+ / Android 14+ Ready)", "QR / XXX-XXX / Manual", "Zero Google Play Services",
+        "Always-on-top 1-tier floating Mic pill + hardware clicker mute filter for Android-based Smart Boards.",
+        "ANDROID SMART BOARD COMPANION (PresenterSync_Remote.apk)`r`n`r`n• Overlay Everywhere: Uses Android Foreground Service + SYSTEM_ALERT_WINDOW so your LIVE / MUTED pill floats smoothly over whiteboards, browsers, PDFs, and OPS inputs.`r`n• 3-Method Instant Pairing:`r`n  1) Camera QR Scan: Scan the live QR code inside Primary -> Settings -> Remote Companion Info...`r`n  2) Session Pairing Code (XXX-XXX): Discover & pair on any camera-less Smart Board over Host Bridge port 4456.`r`n  3) WAN Relay (PS-XXXX-XXXX) or Direct LAN OBS WebSocket port 4455.`r`n• Global Hardware Clicker Filter: Enable 'PresenterSync Hardware Clicker Filter' under Android Accessibility Settings so your USB/BT pointer's Mute key works anywhere without stealing whiteboard focus.`r`n• Android 13/14+ Sideload Tip: If Android blocks Accessibility toggle for a sideloaded APK, open App Info -> 3-dot menu (top-right) -> 'Allow restricted settings' once.",
+        "android apk smart board qr session code 4456 accessibility restricted settings overlay non-gms")
+
     cache := entries
     return cache
 }

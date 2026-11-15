@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.KeyEvent
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -32,12 +33,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -62,9 +66,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -81,6 +87,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.config.AppConstants
+import com.saabithjiffry.presentersync.remote.config.DeepLinkParser
 import com.saabithjiffry.presentersync.remote.config.NetworkMode
 import com.saabithjiffry.presentersync.remote.input.ClickerMuteController
 import com.saabithjiffry.presentersync.remote.network.ConnStatus
@@ -89,12 +96,16 @@ import com.saabithjiffry.presentersync.remote.service.ClickerAccessibilityServic
 import com.saabithjiffry.presentersync.remote.service.FloatingHudForegroundService
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import com.saabithjiffry.presentersync.remote.ui.theme.PresenterSyncTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+
+    private var pendingDeepLink by mutableStateOf<Pair<Long, String>?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        captureDeepLink(intent)
         val app = application as PresenterSyncRemoteApp
 
         setContent {
@@ -103,8 +114,25 @@ class MainActivity : ComponentActivity() {
             PresenterSyncTheme(themeMode = cfg.themeMode) {
                 RemoteDashboardScreen(
                     app = app,
+                    pendingDeepLink = pendingDeepLink,
+                    onConsumeDeepLink = { pendingDeepLink = null },
                     onRequestOverlayPermission = { openOverlayPermissionSettings() }
                 )
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        captureDeepLink(intent)
+    }
+
+    private fun captureDeepLink(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_VIEW) {
+            val rawUri = intent.dataString?.trim().orEmpty()
+            if (rawUri.startsWith("presentersync://", ignoreCase = true)) {
+                pendingDeepLink = System.nanoTime() to rawUri
             }
         }
     }
@@ -168,10 +196,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun RemoteDashboardScreen(
     app: PresenterSyncRemoteApp,
+    pendingDeepLink: Pair<Long, String>? = null,
+    onConsumeDeepLink: () -> Unit = {},
     onRequestOverlayPermission: () -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
     val cfg by app.configStore.config.collectAsStateWithLifecycle()
     val conn by app.connectionManager.uiState.collectAsStateWithLifecycle()
@@ -209,7 +240,27 @@ private fun RemoteDashboardScreen(
     }
 
     var showConnectionDialog by rememberSaveable { mutableStateOf(cfg.firstRun) }
+    var showQuickQrScanner by rememberSaveable { mutableStateOf(false) }
+    var showHelpDialog by rememberSaveable { mutableStateOf(false) }
+    var showAboutDialog by rememberSaveable { mutableStateOf(false) }
     var selectedTabIndex by rememberSaveable { mutableStateOf(0) }
+
+    LaunchedEffect(pendingDeepLink) {
+        val incoming = pendingDeepLink ?: return@LaunchedEffect
+        val parsed = DeepLinkParser.parse(incoming.second)
+        onConsumeDeepLink()
+        if (parsed == null) {
+            Toast.makeText(
+                context,
+                "PresenterSync: Unrecognized pairing URI.",
+                Toast.LENGTH_SHORT
+            ).show()
+            return@LaunchedEffect
+        }
+        showConnectionDialog = false
+        val msg = app.connectionManager.applyDeepLinkPayload(parsed)
+        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -239,6 +290,15 @@ private fun RemoteDashboardScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = { showQuickQrScanner = true }) {
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan Host QR")
+                        }
+                        IconButton(onClick = { showHelpDialog = true }) {
+                            Icon(Icons.Default.HelpOutline, contentDescription = "Help & Diagnostics")
+                        }
+                        IconButton(onClick = { showAboutDialog = true }) {
+                            Icon(Icons.Default.Info, contentDescription = "About & Updates")
+                        }
                         IconButton(onClick = { showConnectionDialog = true }) {
                             Icon(Icons.Default.Settings, contentDescription = "Connection Settings")
                         }
@@ -487,6 +547,36 @@ private fun RemoteDashboardScreen(
                                 Text("Reconnect")
                             }
                         }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { showQuickQrScanner = true },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Scan QR")
+                            }
+                            OutlinedButton(
+                                onClick = { showHelpDialog = true },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.HelpOutline, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Help")
+                            }
+                            OutlinedButton(
+                                onClick = { showAboutDialog = true },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Info, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("About")
+                            }
+                        }
                     }
                 }
 
@@ -590,6 +680,33 @@ private fun RemoteDashboardScreen(
                 showConnectionDialog = false
             },
             onSaved = { showConnectionDialog = false }
+        )
+    }
+
+    if (showQuickQrScanner) {
+        QrScannerDialog(
+            onPayloadScanned = { payload ->
+                showQuickQrScanner = false
+                scope.launch {
+                    val msg = app.connectionManager.applyDeepLinkPayload(payload)
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+            },
+            onDismiss = { showQuickQrScanner = false }
+        )
+    }
+
+    if (showHelpDialog) {
+        HelpCenterDialog(
+            app = app,
+            onDismiss = { showHelpDialog = false }
+        )
+    }
+
+    if (showAboutDialog) {
+        AboutUpdateDialog(
+            httpClient = app.connectionManager.sharedHttpClient,
+            onDismiss = { showAboutDialog = false }
         )
     }
 }

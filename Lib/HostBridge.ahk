@@ -1135,3 +1135,70 @@ _FormatHostBridgeDeviceText() {
     }
     return out
 }
+
+UriEncodeComponent(str) {
+    str := String(str)
+    if (str = "")
+        return ""
+    needed := StrPut(str, "UTF-8")
+    buf := Buffer(needed, 0)
+    written := StrPut(str, buf, "UTF-8")
+    out := ""
+    Loop written - 1 {
+        b := NumGet(buf, A_Index - 1, "UChar")
+        if ((b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A)
+            || b = 0x2D || b = 0x5F || b = 0x2E || b = 0x7E) {
+            out .= Chr(b)
+        } else {
+            out .= "%" Format("{:02X}", b)
+        }
+    }
+    return out
+}
+
+BuildHostPairingUri(cfg, candidateIps := "") {
+    hosts := []
+    seen := Map()
+    PushHost(h) {
+        clean := Trim(String(h))
+        if (clean = "" || seen.Has(clean))
+            return
+        seen[clean] := true
+        hosts.Push(clean)
+    }
+
+    if IsObject(candidateIps) {
+        for ep in candidateIps
+            PushHost(ep)
+    } else if (Type(candidateIps) = "String" && candidateIps != "") {
+        for part in StrSplit(candidateIps, ",")
+            PushHost(part)
+    }
+    PushHost(A_ComputerName ".local")
+
+    hostStr := ""
+    limit := Min(hosts.Length, 4)
+    Loop limit {
+        hostStr .= (A_Index > 1 ? "," : "") hosts[A_Index]
+    }
+
+    obsPort := 4455
+    bridgePort := (IsObject(cfg) && cfg.HasOwnProp("BridgePort")) ? cfg.BridgePort : 4456
+    obsPw := (IsObject(cfg) && cfg.HasOwnProp("obsPassword")) ? cfg.obsPassword : ""
+    sessCode := (IsObject(cfg) && cfg.HasOwnProp("SessionPairingCode")) ? cfg.SessionPairingCode : ""
+    micName := (IsObject(cfg) && cfg.HasOwnProp("targetMicName")) ? cfg.targetMicName : "Mic/Aux"
+    netMode := (IsObject(cfg) && cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet") ? "internet" : "lan"
+    rc := (IsObject(cfg) && cfg.HasOwnProp("InternetPairingCode")) ? cfg.InternetPairingCode : ""
+
+    uri := "presentersync://connect?hosts=" UriEncodeComponent(hostStr)
+        . "&port=" obsPort
+        . "&bp=" bridgePort
+        . "&code=" UriEncodeComponent(sessCode)
+        . "&mic=" UriEncodeComponent(micName)
+        . "&mode=" netMode
+    if (obsPw != "")
+        uri .= "&pw=" UriEncodeComponent(obsPw)
+    if (rc != "")
+        uri .= "&rc=" UriEncodeComponent(rc)
+    return uri
+}
