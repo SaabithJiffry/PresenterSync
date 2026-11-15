@@ -65,13 +65,26 @@ jobs:
           $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
           foreach ($suite in @("tests\test_qr_code.ahk", "tests\test_host_bridge.ahk", "tests\test_master_suite.ahk")) {
             Write-Host "Running $suite ..."
-            $p = Start-Process -FilePath $ahk -ArgumentList "/ErrorStdOut", $suite -Wait -PassThru -NoNewWindow
+            $errLog = Join-Path $env:TEMP "ahk_stderr.txt"
+            $outLog = Join-Path $env:TEMP "ahk_stdout.txt"
+            Remove-Item -Force -ErrorAction SilentlyContinue $errLog, $outLog
+            $p = Start-Process -FilePath $ahk -ArgumentList "/ErrorStdOut", $suite -Wait -PassThru -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+            if (Test-Path $outLog) { Get-Content $outLog }
+            if (Test-Path $errLog) { Get-Content $errLog }
             if ($p.ExitCode -ne 0) {
-              Write-Error "$suite failed with exit code $($p.ExitCode)"
+              $failDetails = @()
               Get-ChildItem "tests\*_results.log" -ErrorAction SilentlyContinue | ForEach-Object {
+                $failHits = Select-String -Path $_.FullName -Pattern "\[FAIL\]" | ForEach-Object { $_.Line }
+                if ($failHits) { $failDetails += $failHits }
                 Write-Host "=== $($_.Name) ==="
-                Get-Content $_.FullName -Tail 40
+                Get-Content $_.FullName
               }
+              if (-not $failDetails -and (Test-Path $errLog)) {
+                $failDetails = (Get-Content $errLog -Raw) -replace "`r?`n", " | "
+              }
+              $summary = ($failDetails -join " ; ").Trim()
+              if (-not $summary) { $summary = "ExitCode=$($p.ExitCode)" }
+              Write-Host "::error title=$suite failed::$summary"
               exit $p.ExitCode
             }
           }
