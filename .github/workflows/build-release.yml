@@ -16,23 +16,66 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Locate or install AutoHotkey v2
+      - name: Locate or install AutoHotkey v2 & Ahk2Exe Compiler
         shell: pwsh
         run: |
-          if (-not (Test-Path "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe")) {
-            winget install --id AutoHotkey.AutoHotkey --exact --silent --accept-package-agreements --accept-source-agreements
+          $ahkExe = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+          if (-not (Test-Path $ahkExe)) {
+            winget install --id AutoHotkey.AutoHotkey --exact --silent --scope machine --accept-package-agreements --accept-source-agreements
+            if (-not (Test-Path $ahkExe)) {
+              $localAhk = Join-Path $env:LOCALAPPDATA "Programs\AutoHotkey"
+              if (Test-Path (Join-Path $localAhk "v2\AutoHotkey64.exe")) {
+                New-Item -ItemType Directory -Path "C:\Program Files\AutoHotkey" -Force | Out-Null
+                Copy-Item -Path "$localAhk\*" -Destination "C:\Program Files\AutoHotkey\" -Recurse -Force
+              }
+            }
           }
+          if (-not (Test-Path $ahkExe)) {
+            Write-Error "AutoHotkey64.exe not found at $ahkExe"
+            exit 1
+          }
+
+          $compilerDir = "C:\Program Files\AutoHotkey\Compiler"
+          $ahk2exe = Join-Path $compilerDir "Ahk2Exe.exe"
+          if (-not (Test-Path $ahk2exe)) {
+            New-Item -ItemType Directory -Path $compilerDir -Force | Out-Null
+            $zipUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a2/Ahk2Exe1.1.37.02a2.zip"
+            try {
+              $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/AutoHotkey/Ahk2Exe/releases/latest" -Headers @{"User-Agent"="PresenterSync-CI"}
+              $asset = $rel.assets | Where-Object { $_.name -like "Ahk2Exe*.zip" } | Select-Object -First 1
+              if ($asset -and $asset.browser_download_url) { $zipUrl = $asset.browser_download_url }
+            } catch {
+              Write-Host "Falling back to pinned Ahk2Exe URL: $zipUrl"
+            }
+            $zipPath = Join-Path $env:TEMP "Ahk2Exe.zip"
+            Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+            Expand-Archive -Path $zipPath -DestinationPath $compilerDir -Force
+            Remove-Item -Force -ErrorAction SilentlyContinue $zipPath
+          }
+          if (-not (Test-Path $ahk2exe)) {
+            Write-Error "Ahk2Exe.exe not found at $ahk2exe"
+            exit 1
+          }
+          Write-Host "Found AutoHotkey64: $ahkExe"
+          Write-Host "Found Ahk2Exe: $ahk2exe"
 
       - name: Run Windows Regression & Bridge Tests
         shell: pwsh
         run: |
           $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
-          & $ahk /ErrorStdOut tests\test_qr_code.ahk
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $ahk /ErrorStdOut tests\test_host_bridge.ahk
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $ahk /ErrorStdOut tests\test_master_suite.ahk
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($suite in @("tests\test_qr_code.ahk", "tests\test_host_bridge.ahk", "tests\test_master_suite.ahk")) {
+            Write-Host "Running $suite ..."
+            $p = Start-Process -FilePath $ahk -ArgumentList "/ErrorStdOut", $suite -Wait -PassThru -NoNewWindow
+            if ($p.ExitCode -ne 0) {
+              Write-Error "$suite failed with exit code $($p.ExitCode)"
+              Get-ChildItem "tests\*_results.log" -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Host "=== $($_.Name) ==="
+                Get-Content $_.FullName -Tail 40
+              }
+              exit $p.ExitCode
+            }
+          }
+          Remove-Item -Force -ErrorAction SilentlyContinue "tests\*_results.log"
 
       - name: Build PresenterSync.exe & PresenterSync_Remote.exe
         run: cmd /c build.bat --nopause
