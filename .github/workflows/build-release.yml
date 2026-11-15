@@ -1,0 +1,118 @@
+name: Build & Release PresenterSync
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows EXEs (Host + Remote)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate or install AutoHotkey v2
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe")) {
+            winget install --id AutoHotkey.AutoHotkey --exact --silent --accept-package-agreements --accept-source-agreements
+          }
+
+      - name: Run Windows Regression & Bridge Tests
+        shell: pwsh
+        run: |
+          $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+          & $ahk /ErrorStdOut tests\test_qr_code.ahk
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $ahk /ErrorStdOut tests\test_host_bridge.ahk
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $ahk /ErrorStdOut tests\test_master_suite.ahk
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build PresenterSync.exe & PresenterSync_Remote.exe
+        run: cmd /c build.bat --nopause
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: |
+            PresenterSync.exe
+            PresenterSync_Remote.exe
+
+  build-android:
+    name: Build & Test Android Smart Board Client (APK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: Decode Release Keystore (if configured)
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release-keystore.jks
+            cat <<EOF > android/keystore.properties
+          storeFile=app/release-keystore.jks
+          storePassword=${KEYSTORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_PASSWORD}
+          EOF
+          fi
+
+      - name: Run Android JVM Unit Tests & Assemble Release APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleRelease --no-daemon
+
+      - name: Stage PresenterSync_Remote.apk
+        run: |
+          APK_RELEASE="android/app/build/outputs/apk/release/app-release.apk"
+          if [ -f "$APK_RELEASE" ]; then
+            cp "$APK_RELEASE" PresenterSync_Remote.apk
+          else
+            echo "ERROR: APK output missing"
+            exit 1
+          fi
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: PresenterSync_Remote.apk
+
+  publish-release:
+    name: Publish GitHub Release (3 Binaries)
+    needs: [build-windows, build-android]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release with all 3 binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release-assets/PresenterSync.exe
+            release-assets/PresenterSync_Remote.exe
+            release-assets/PresenterSync_Remote.apk

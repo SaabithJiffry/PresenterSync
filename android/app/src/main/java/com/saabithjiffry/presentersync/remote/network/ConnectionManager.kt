@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.NetworkMode
+import com.saabithjiffry.presentersync.remote.config.ParsedConnectionPayload
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
 import kotlinx.coroutines.CoroutineScope
@@ -49,7 +50,14 @@ data class ConnectionUiState(
     val usingBridge: Boolean = false,
     val isMuted: Boolean = false,
     val serviceRunning: Boolean = false
-)
+) {
+    val transportName: String
+        get() = when {
+            usingBridge -> "Host Bridge"
+            usingRelayFallback -> "WAN Relay"
+            else -> "OBS WebSocket"
+        }
+}
 
 sealed interface RemoteEvent {
     data class MuteChanged(val isMuted: Boolean) : RemoteEvent
@@ -69,6 +77,9 @@ class ConnectionManager(
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
+
+    val sharedHttpClient: OkHttpClient
+        get() = httpClient
 
     private val _uiState = MutableStateFlow(
         ConnectionUiState(isMuted = configStore.current.isMuted)
@@ -635,6 +646,46 @@ class ConnectionManager(
                 "✓ Paired with ${b.hostName} (${b.pairedIp})! Connected via Bridge :${b.bridgePort}."
             }
             is PairingResult.Error -> "✕ ${res.message}"
+        }
+    }
+
+    suspend fun applyDeepLinkPayload(
+        payload: ParsedConnectionPayload,
+        onProgress: (String) -> Unit = {}
+    ): String {
+        configStore.update { prev ->
+            prev.copy(
+                networkMode = payload.networkMode,
+                hostAddress = payload.hostsCsv.ifBlank { prev.hostAddress },
+                hostPort = payload.obsPort,
+                bridgePort = payload.bridgePort,
+                obsPassword = payload.obsPassword.ifEmpty { prev.obsPassword },
+                targetMicName = payload.targetMicName.ifBlank { prev.targetMicName },
+                sessionPairingCode = payload.sessionCode.ifBlank { prev.sessionPairingCode },
+                internetPairingCode = payload.internetPairingCode.ifBlank { prev.internetPairingCode },
+                firstRun = false
+            )
+        }
+        if (payload.networkMode == NetworkMode.LAN && payload.sessionCode.isNotBlank()) {
+            val res = pairByCode(
+                codeInput = payload.sessionCode,
+                fallbackHostInput = payload.hostsCsv,
+                bridgePortInput = payload.bridgePort,
+                forceWanRelay = false,
+                onProgress = onProgress
+            )
+            if (res.startsWith("✓")) {
+                return res
+            }
+            reconnectNow()
+            val detail = res.removePrefix("✕ ").trim()
+            return "✓ Loaded QR host profile (${payload.hostsCsv}); connecting directly ($detail)."
+        }
+        reconnectNow()
+        return if (payload.networkMode == NetworkMode.INTERNET) {
+            "✓ Loaded Internet Relay profile (${payload.internetPairingCode}). Connecting..."
+        } else {
+            "✓ Loaded host profile (${payload.hostsCsv}:${payload.obsPort}). Connecting..."
         }
     }
 

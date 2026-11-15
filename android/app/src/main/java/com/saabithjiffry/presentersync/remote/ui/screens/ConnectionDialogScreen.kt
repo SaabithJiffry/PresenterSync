@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -114,6 +115,7 @@ fun ConnectionSettingsForm(
 
     var testing by remember { mutableStateOf(false) }
     var pairing by remember { mutableStateOf(false) }
+    var showQrScanner by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("") }
     var validationError by remember { mutableStateOf<String?>(null) }
 
@@ -153,20 +155,39 @@ fun ConnectionSettingsForm(
                 .padding(horizontal = 20.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Easy Session Code Pairing (No-Camera Smart Board Flow)
+            // Easy QR / Session Code Pairing (Camera or No-Camera Smart Board Flow)
             ExplorerCard(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 borderColor = MaterialTheme.colorScheme.outline,
                 contentPadding = 14
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Quick Pair (QR or Session Code)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedButton(
+                            onClick = { showQrScanner = true },
+                            enabled = !pairing && !testing
+                        ) {
+                            Icon(
+                                Icons.Default.QrCodeScanner,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Scan QR")
+                        }
+                    }
                     Text(
-                        text = "Quick Pair by Session Code (Smart Board)",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "Enter the 6-char Host Session Code (e.g. K7M-9P2) or Internet Code (PS-...) from PresenterSync on your PC.",
+                        text = "Scan the QR code from PresenterSync > Remote Setup, or type the 6-char Host Session Code (e.g. K7M-9P2) or Internet Code (PS-...).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -478,5 +499,43 @@ fun ConnectionSettingsForm(
             }
         }
         } // end pinned footer column
+    }
+
+    if (showQrScanner) {
+        QrScannerDialog(
+            onPayloadScanned = { payload ->
+                showQrScanner = false
+                validationError = null
+                networkMode = payload.networkMode
+                if (payload.hostsCsv.isNotBlank()) hostAddress = payload.hostsCsv
+                hostPortStr = payload.obsPort.toString()
+                bridgePortStr = payload.bridgePort.toString()
+                if (payload.obsPassword.isNotEmpty()) obsPassword = payload.obsPassword
+                if (payload.targetMicName.isNotBlank()) targetMicName = payload.targetMicName
+                if (payload.sessionCode.isNotBlank()) sessionCodeInput = payload.sessionCode
+                if (payload.internetPairingCode.isNotBlank()) pairingCode = payload.internetPairingCode
+
+                pairing = true
+                statusText = "Applying QR connection profile..."
+                scope.launch {
+                    val msg = connectionManager.applyDeepLinkPayload(
+                        payload = payload,
+                        onProgress = { statusText = it }
+                    )
+                    val updated = configStore.current
+                    networkMode = updated.networkMode
+                    sessionCodeInput = updated.sessionPairingCode
+                    pairingCode = updated.internetPairingCode
+                    hostAddress = updated.hostAddress
+                    hostPortStr = updated.hostPort.toString()
+                    bridgePortStr = updated.bridgePort.toString()
+                    obsPassword = updated.obsPassword
+                    targetMicName = updated.targetMicName
+                    statusText = msg
+                    pairing = false
+                }
+            },
+            onDismiss = { showQrScanner = false }
+        )
     }
 }
