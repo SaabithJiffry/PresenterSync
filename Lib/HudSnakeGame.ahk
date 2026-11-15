@@ -1090,10 +1090,13 @@ class HudSnake {
         skipIdx2Split := false
 
         if (dhc == 0) {
-            ; Crash impact nudge or stationary frame
+            ; Crash impact nudge or stationary frame — preserve cHead pivot so a turn right on impact stays strictly 90°
             hx := Float(cHead.col) + this._crashDir.x * interp
             hy := Float(cHead.row) + this._crashDir.y * interp
-            pieces.Push([{ c: hx, r: hy }])
+            headPts := [{ c: hx, r: hy }]
+            if (Abs(hx - Float(cHead.col)) > 0.001 || Abs(hy - Float(cHead.row)) > 0.001)
+                headPts.Push({ c: Float(cHead.col), r: Float(cHead.row) })
+            pieces.Push(headPts)
         } else if (dhc == 1) {
             hx := Float(pHead.col) + Float(cHead.col - pHead.col) * interp
             hy := Float(pHead.row) + Float(cHead.row - pHead.row) * interp

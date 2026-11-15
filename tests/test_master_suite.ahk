@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v4.3.0
-;              and PresenterSync Remote v4.3.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v4.4.0
+;              and PresenterSync Remote v4.4.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -250,13 +250,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 4.3.0", UIConstants.APP_VERSION == "4.3.0")
+Assert("APP_VERSION updated to 4.4.0", UIConstants.APP_VERSION == "4.4.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v4.3.0 and Remote Host",
-    InStr(summaryTxt, "v4.3.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v4.4.0 and Remote Host",
+    InStr(summaryTxt, "v4.4.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1226,7 +1226,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v4.3.0", "4.1.1") == 1
+    CompareSemVer("v4.4.0", "4.3.0") == 1
+    && CompareSemVer("v4.3.0", "4.1.1") == 1
     && CompareSemVer("v4.1.1", "4.1.0") == 1
     && CompareSemVer("v4.1.0", "4.0.1") == 1
     && CompareSemVer("v4.0.1", "4.0.0") == 1
@@ -2015,8 +2016,8 @@ HudSnake._W := savedW
 HudSnake._H := savedH
 HudSnake._dpi := savedDpi
 
-upd430 := CheckForUpdates("4.3.0", '{"tag_name":"v4.3.0","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v4.3.0"}', true)
-Assert("v4.3.0 CheckForUpdates recognizes current version 4.3.0 as up_to_date", upd430.status == "up_to_date")
+upd440 := CheckForUpdates("4.4.0", '{"tag_name":"v4.4.0","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v4.4.0"}', true)
+Assert("v4.4.0 CheckForUpdates recognizes current version 4.4.0 as up_to_date", upd440.status == "up_to_date")
 
 ; ==============================================================================
 ; SECTION 28: v4.3.0 REMOTE OFFLINE ALPHA, SCALING & VISUAL RENDER CHECKS
@@ -2064,6 +2065,101 @@ for opVal in [255, 220, 127] {
     }
 }
 
+; ==============================================================================
+; SECTION 29: v4.4.0 HUD SNAKE 90-DEGREE IMPACT TURN REGRESSIONS
+; ==============================================================================
+AllSegmentsAxisAligned(pieceList) {
+    for pc in pieceList {
+        if (pc.Length < 2)
+            continue
+        Loop (pc.Length - 1) {
+            p1 := pc[A_Index]
+            p2 := pc[A_Index + 1]
+            if (Abs(p2.c - p1.c) > 0.0001 && Abs(p2.r - p1.r) > 0.0001)
+                return false
+        }
+    }
+    return true
+}
+
+cfgTurn := Config(testIni)
+stTurn := OverlayState(cfgTurn)
+HudSnake.Start(cfgTurn, stTurn, true)
+HudSnake.Phase := "playing"
+HudSnake._edgeWrap := false
+HudSnake._growPending := 0
+HudSnake._dir := { x: -1, y: 0 }
+HudSnake._dirQueue := []
+HudSnake._snake := [
+    { col: 10, row: 12 },
+    { col: 11, row: 12 },
+    { col: 12, row: 12 },
+    { col: 13, row: 12 },
+    { col: 14, row: 12 },
+    { col: 15, row: 12 }
+]
+HudSnake._prevSnake := HudSnake._CloneSnake(HudSnake._snake)
+tTurnUs := HudSnake._NowUs()
+HudSnake._food := { col: 1, row: 5, kind: "normal", bornUs: tTurnUs, ttlMs: 0, pts: 10 }
+
+; Simulate 3 rapid right turns from Left: Up -> Right -> Down into own body at (11,12)
+q1 := HudSnake.QueueDirection(0, -1)
+q2 := HudSnake.QueueDirection(1, 0)
+HudSnake.StepSimulation(tTurnUs + 140000.0) ; moves Up to (10,11)
+q3 := HudSnake.QueueDirection(0, 1)
+HudSnake.StepSimulation(tTurnUs + 280000.0) ; moves Right to (11,11)
+HudSnake.StepSimulation(tTurnUs + 420000.0) ; attempts Down into (11,12) -> self crash
+
+selfImpactPieces := HudSnake._BuildInterpolatedPieces(HudSnake._frozenInterp)
+selfHeadPivotOk := (selfImpactPieces.Length >= 1 && selfImpactPieces[1].Length >= 4
+    && Abs(selfImpactPieces[1][1].c - 11.0) < 0.0001
+    && Abs(selfImpactPieces[1][1].r - (11.0 + HudSnake._frozenInterp)) < 0.0001
+    && Abs(selfImpactPieces[1][2].c - 11.0) < 0.0001
+    && Abs(selfImpactPieces[1][2].r - 11.0) < 0.0001
+    && Abs(selfImpactPieces[1][3].c - 10.0) < 0.0001
+    && Abs(selfImpactPieces[1][3].r - 11.0) < 0.0001)
+selfOrthoOk := AllSegmentsAxisAligned(selfImpactPieces)
+Assert("v4.4.0 HudSnake fast 3-turn self-collision preserves 90-degree head corner pivot without diagonal segment",
+    q1 && q2 && q3 && HudSnake.Phase == "gameover" && HudSnake._deathReason == "self" && selfHeadPivotOk && selfOrthoOk,
+    Format("phase={} reason={} pivot={} ortho={}", HudSnake.Phase, HudSnake._deathReason, selfHeadPivotOk, selfOrthoOk))
+
+; Sideways 90-degree turn directly into top perimeter wall
+HudSnake.Restart()
+HudSnake.Phase := "playing"
+HudSnake._edgeWrap := false
+HudSnake._growPending := 0
+HudSnake._dir := { x: -1, y: 0 }
+HudSnake._dirQueue := []
+HudSnake._snake := [
+    { col: 10, row: 0 },
+    { col: 11, row: 0 },
+    { col: 12, row: 0 },
+    { col: 13, row: 0 },
+    { col: 14, row: 0 }
+]
+HudSnake._prevSnake := HudSnake._CloneSnake(HudSnake._snake)
+HudSnake.QueueDirection(0, -1)
+HudSnake.StepSimulation(tTurnUs + 600000.0)
+wallImpactPieces := HudSnake._BuildInterpolatedPieces(HudSnake._frozenInterp)
+wallHeadPivotOk := (wallImpactPieces.Length >= 1 && wallImpactPieces[1].Length >= 3
+    && Abs(wallImpactPieces[1][1].c - 10.0) < 0.0001
+    && Abs(wallImpactPieces[1][1].r - (-HudSnake._frozenInterp)) < 0.0001
+    && Abs(wallImpactPieces[1][2].c - 10.0) < 0.0001
+    && Abs(wallImpactPieces[1][2].r - 0.0) < 0.0001)
+wallOrthoOk := AllSegmentsAxisAligned(wallImpactPieces)
+Assert("v4.4.0 HudSnake sideways 90-degree turn into wall preserves corner pivot without diagonal segment",
+    HudSnake.Phase == "gameover" && HudSnake._deathReason == "wall" && wallHeadPivotOk && wallOrthoOk,
+    Format("phase={} reason={} pivot={} ortho={}", HudSnake.Phase, HudSnake._deathReason, wallHeadPivotOk, wallOrthoOk))
+
+; Zero-displacement crash / stationary frame avoids duplicate cHead vertex
+zeroImpactPieces := HudSnake._BuildInterpolatedPieces(0.0)
+zeroNoDupOk := (zeroImpactPieces.Length >= 1 && zeroImpactPieces[1].Length >= 2
+    && (Abs(zeroImpactPieces[1][1].c - zeroImpactPieces[1][2].c) + Abs(zeroImpactPieces[1][1].r - zeroImpactPieces[1][2].r)) >= 0.99
+    && AllSegmentsAxisAligned(zeroImpactPieces))
+Assert("v4.4.0 HudSnake zero-displacement crash frame avoids duplicate corner vertices",
+    zeroNoDupOk)
+HudSnake.Stop()
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -2071,7 +2167,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.3.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.4.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
