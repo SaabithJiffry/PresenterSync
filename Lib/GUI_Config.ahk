@@ -8,7 +8,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "4.0.1"
+    static APP_VERSION := "4.1.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -330,6 +330,7 @@ class AudioMeter {
             return AudioMeter.NormalizePeak(peak)
         } catch {
             this._meter := ""
+            this._enum := ""
             this._nextRetryTick := A_TickCount + 3000
             return 0.0
         }
@@ -4921,14 +4922,14 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true) {
     parsed := httpOk ? ParseGitHubReleaseTag(rawJson) : { ok: false, tag: "", version: "", url: "" }
     if (!parsed.ok) {
         if (!silent)
-            MsgBox("Unable to check GitHub for updates right now (offline or rate-limited).`n`nReleases page: " fallbackUrl, "Update Check", "Icon!")
+            MsgBox("Unable to check GitHub for updates right now (offline or rate-limited).`n`nReleases page: " fallbackUrl, "Update Check", "Icon! 0x40000")
         return { ok: false, status: "error", current: cur, latest: "", updateAvailable: false, url: fallbackUrl }
     }
 
     relUrl := (parsed.url != "") ? parsed.url : fallbackUrl
     if (CompareSemVer(parsed.version, cur) > 0) {
         if (!silent) {
-            ans := MsgBox("A new version of PresenterSync is available!`n`nCurrent Version: v" cur "`nLatest Version:  v" parsed.version "`n`nOpen the GitHub Releases page to download?", "PresenterSync Update Available", "YesNo Iconi")
+            ans := MsgBox("A new version of PresenterSync is available!`n`nCurrent Version: v" cur "`nLatest Version:  v" parsed.version "`n`nOpen the GitHub Releases page to download?", "PresenterSync Update Available", "YesNo Iconi 0x40000")
             if (ans = "Yes")
                 try Run(relUrl)
         }
@@ -4936,7 +4937,7 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true) {
     }
 
     if (!silent)
-        MsgBox("You are running the latest version of PresenterSync (v" cur ").", "Up to Date", "Iconi")
+        MsgBox("You are running the latest version of PresenterSync (v" cur ").", "Up to Date", "Iconi 0x40000")
     return { ok: true, status: "up_to_date", current: cur, latest: parsed.version, updateAvailable: false, url: relUrl }
 }
 

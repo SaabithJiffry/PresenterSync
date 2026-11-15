@@ -18,6 +18,26 @@ results := []
 PassCount := 0
 FailCount := 0
 
+RemoteAuditFailFast(exc, mode) {
+    global results, FailCount
+    FailCount += 1
+    msg := Format("[FAIL] Unhandled exception ({}) in {} ({}:{}): {}", mode, exc.What, exc.File, exc.Line, exc.Message)
+    results.Push(msg)
+    try FileAppend(msg "`n", A_ScriptDir "\audit_results.log")
+    ExitApp(1)
+}
+OnError(RemoteAuditFailFast)
+
+RemoteAuditWatchdog() {
+    global results, FailCount
+    FailCount += 1
+    msg := "[FAIL] Watchdog timeout reached (15s)"
+    results.Push(msg)
+    try FileAppend(msg "`n", A_ScriptDir "\audit_results.log")
+    ExitApp(2)
+}
+SetTimer(RemoteAuditWatchdog, -15000)
+
 Assert(testName, condition, detail := "") {
     global PassCount, FailCount, results
     if (condition) {
