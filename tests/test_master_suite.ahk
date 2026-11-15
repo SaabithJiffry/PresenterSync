@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v4.1.0
-;              and PresenterSync Remote v4.1.0 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v4.1.1
+;              and PresenterSync Remote v4.1.1 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -250,13 +250,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 4.1.0", UIConstants.APP_VERSION == "4.1.0")
+Assert("APP_VERSION updated to 4.1.1", UIConstants.APP_VERSION == "4.1.1")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v4.1.0 and Remote Host",
-    InStr(summaryTxt, "v4.1.0") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v4.1.1 and Remote Host",
+    InStr(summaryTxt, "v4.1.1") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1226,7 +1226,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v4.1.0", "4.0.1") == 1
+    CompareSemVer("v4.1.1", "4.1.0") == 1
+    && CompareSemVer("v4.1.0", "4.0.1") == 1
     && CompareSemVer("v4.0.1", "4.0.0") == 1
     && CompareSemVer("v4.0.0", "3.2.0") == 1
     && CompareSemVer("v3.2.0", "3.1.1") == 1
@@ -1934,6 +1935,88 @@ Assert("v4.1.0 Audit: Snake blocks HwMute pointer trigger, fast loopback probe a
     checkPtrLineOk && loopbackHelpersOk && deadPortOk && probeElapsedMs < 150 && fastLoopbackSkipOk && upd410.status == "up_to_date",
     Format("ptr={} lb={} dead={} dt={}ms connOk={}({}ms) upd={}", checkPtrLineOk, loopbackHelpersOk, deadPortOk, probeElapsedMs, fastLoopbackSkipOk, loopbackDt, upd410.status))
 
+; ==============================================================================
+; SECTION 27: v4.1.1 SNAKE VISUALS & 90-DEGREE TAIL CORNERING
+; ==============================================================================
+
+savedPrev := HudSnake._prevSnake
+savedSnake := HudSnake._snake
+savedCols := HudSnake._cols
+savedRows := HudSnake._rows
+savedGrew := HudSnake._stepGrew
+savedCfg := HudSnake._cfg
+savedW := HudSnake._W
+savedH := HudSnake._H
+savedDpi := HudSnake._dpi
+
+; 1) Normal 90-degree tail turn preserves exact orthogonal corner vertex cTail before tailTip
+HudSnake._cols := 24
+HudSnake._rows := 18
+HudSnake._stepGrew := false
+HudSnake._prevSnake := [{ col: 11, row: 10 }, { col: 10, row: 10 }, { col: 10, row: 11 }, { col: 10, row: 12 }]
+HudSnake._snake     := [{ col: 12, row: 10 }, { col: 11, row: 10 }, { col: 10, row: 10 }, { col: 10, row: 11 }]
+normPieces := HudSnake._BuildInterpolatedPieces(0.45)
+normOk := (normPieces.Length == 1 && normPieces[1].Length == 5
+    && Abs(normPieces[1][4].c - 10.0) < 0.01 && Abs(normPieces[1][4].r - 11.0) < 0.01
+    && Abs(normPieces[1][5].c - 10.0) < 0.01 && Abs(normPieces[1][5].r - 11.55) < 0.02)
+Assert("v4.1.1 Snake normal 90-degree tail turn keeps exact corner pivot before tail tip",
+    normOk, Format("pieces={} verts={}", normPieces.Length, normPieces.Length >= 1 ? normPieces[1].Length : 0))
+
+; 2) Wrapped 90-degree tail turn preserves corner pivot & stays strictly axis-aligned
+HudSnake._cols := 20
+HudSnake._rows := 15
+HudSnake._prevSnake := [{ col: 19, row: 8 }, { col: 19, row: 7 }, { col: 19, row: 6 }, { col: 19, row: 5 }, { col: 0, row: 5 }]
+HudSnake._snake     := [{ col: 19, row: 9 }, { col: 19, row: 8 }, { col: 19, row: 7 }, { col: 19, row: 6 }, { col: 19, row: 5 }]
+wrapPiecesEarly := HudSnake._BuildInterpolatedPieces(0.25)
+wrapPiecesLate := HudSnake._BuildInterpolatedPieces(0.75)
+wrapAxisAligned := true
+for pArr in [wrapPiecesEarly, wrapPiecesLate] {
+    for pc in pArr {
+        loop (pc.Length - 1) {
+            dx := Abs(pc[A_Index + 1].c - pc[A_Index].c)
+            dy := Abs(pc[A_Index + 1].r - pc[A_Index].r)
+            if (dx > 0.01 && dy > 0.01)
+                wrapAxisAligned := false
+        }
+    }
+}
+Assert("v4.1.1 Snake wrap-edge tail turn remains strictly axis-aligned across wrap split",
+    wrapAxisAligned && wrapPiecesEarly.Length == 2 && wrapPiecesLate.Length == 1,
+    Format("axis={} early={} late={}", wrapAxisAligned, wrapPiecesEarly.Length, wrapPiecesLate.Length))
+
+; 3) Live HUD appearance inheritance (_GetHudStyle & IndicatorScale cell sizing & contrast-safe MonoIcon)
+cfgSnakeStyle := Config(testIni)
+cfgSnakeStyle.OpacityLevel := 127
+cfgSnakeStyle.SleekCorners := true
+cfgSnakeStyle.MonoIcon := true
+cfgSnakeStyle.IndicatorScale := 1.0
+HudSnake._cfg := cfgSnakeStyle
+HudSnake._W := 1920, HudSnake._H := 1032, HudSnake._dpi := 1.0
+HudSnake._ComputeGrid()
+cellAt1 := HudSnake._cell
+cfgSnakeStyle.IndicatorScale := 1.5
+HudSnake._ComputeGrid()
+cellAt15 := HudSnake._cell
+stObj := HudSnake._GetHudStyle()
+stdMonoSafe := HudSnake._PickBadgeContentHex("2563EB", "1E3A8A", true, true, 220)
+oledMonoKeep := HudSnake._PickBadgeContentHex("13233A", "60A5FA", true, true, 220)
+Assert("v4.1.1 Snake inherits HUD Opacity/Sleek/Mono/Scale & contrast-guards MonoIcon badges",
+    stObj.opacity == 127 && stObj.sleek && stObj.mono && cellAt15 > cellAt1 && stdMonoSafe == "FFFFFF" && oledMonoKeep == "60A5FA",
+    Format("op={} sl={} mo={} c1={} c15={} std={} oled={}", stObj.opacity, stObj.sleek, stObj.mono, cellAt1, cellAt15, stdMonoSafe, oledMonoKeep))
+
+HudSnake._prevSnake := savedPrev
+HudSnake._snake := savedSnake
+HudSnake._cols := savedCols
+HudSnake._rows := savedRows
+HudSnake._stepGrew := savedGrew
+HudSnake._cfg := savedCfg
+HudSnake._W := savedW
+HudSnake._H := savedH
+HudSnake._dpi := savedDpi
+
+upd411 := CheckForUpdates("4.1.1", '{"tag_name":"v4.1.1","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v4.1.1"}', true)
+Assert("v4.1.1 CheckForUpdates recognizes current version 4.1.1 as up_to_date", upd411.status == "up_to_date")
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1941,7 +2024,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.1.0) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.1.1) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"
