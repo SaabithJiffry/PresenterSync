@@ -30,10 +30,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -224,7 +224,7 @@ fun HelpCenterDialog(
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.HelpOutline,
+                            imageVector = Icons.AutoMirrored.Filled.HelpOutline,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary
                         )
@@ -292,7 +292,6 @@ fun HelpCenterDialog(
                         )
                         else -> HelpDiagnosticsTab(
                             context = context,
-                            app = app,
                             cfg = cfg,
                             conn = conn
                         )
@@ -465,7 +464,6 @@ private fun HelpSearchTab(
 @Composable
 private fun HelpDiagnosticsTab(
     context: Context,
-    app: PresenterSyncRemoteApp,
     cfg: com.saabithjiffry.presentersync.remote.config.RemoteConfig,
     conn: com.saabithjiffry.presentersync.remote.network.ConnectionUiState
 ) {

@@ -3,6 +3,7 @@ package com.saabithjiffry.presentersync.remote.network
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.util.Log
 import com.saabithjiffry.presentersync.remote.config.AppConstants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -259,9 +260,11 @@ object SessionPairingClient {
         return@withContext try {
             httpClient.newCall(req).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
+                runCatching { Log.i("PresenterSync", "POST $hostIp:$bridgePort/pair -> HTTP ${resp.code}") }
                 parsePairResponse(hostIp, resp.code, text)
             }
         } catch (e: Exception) {
+            runCatching { Log.w("PresenterSync", "POST $hostIp:$bridgePort/pair failed: ${e.message}") }
             PairingResult.Error("Unreachable $hostIp:$bridgePort (${e.message ?: "network error"})")
         }
     }

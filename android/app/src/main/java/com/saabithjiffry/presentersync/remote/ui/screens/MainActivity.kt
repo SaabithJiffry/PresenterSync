@@ -33,7 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Layers
@@ -258,8 +258,7 @@ private fun RemoteDashboardScreen(
             return@LaunchedEffect
         }
         showConnectionDialog = false
-        val msg = app.connectionManager.applyDeepLinkPayload(parsed)
-        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        app.connectionManager.applyDeepLinkAsync(parsed)
     }
 
     Scaffold(
@@ -294,7 +293,7 @@ private fun RemoteDashboardScreen(
                             Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan Host QR")
                         }
                         IconButton(onClick = { showHelpDialog = true }) {
-                            Icon(Icons.Default.HelpOutline, contentDescription = "Help & Diagnostics")
+                            Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = "Help & Diagnostics")
                         }
                         IconButton(onClick = { showAboutDialog = true }) {
                             Icon(Icons.Default.Info, contentDescription = "About & Updates")
@@ -564,7 +563,7 @@ private fun RemoteDashboardScreen(
                                 onClick = { showHelpDialog = true },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Default.HelpOutline, contentDescription = null)
+                                Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null)
                                 Spacer(Modifier.width(6.dp))
                                 Text("Help")
                             }
