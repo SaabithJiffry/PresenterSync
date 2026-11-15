@@ -99,7 +99,7 @@ private val REMOTE_HUD_CALLOUTS = listOf(
         tag = "[2] Bubble Gestures",
         title = "Customizable Single / Double / Long / Very Long Press",
         subtitle = "Safe by default on Smart Boards: Single Tap ignores accidental touches; Long Press toggles Mute; Double Tap opens Quick Menu.",
-        details = "• Open HUD Style -> Floating Bubble Multi-Gestures to map Single Tap, Double Tap, Long Press, and Very Long Press to Toggle Mute, Mute Only, Unmute Only, Quick Menu, Settings, Pointer Intercept, Reconnect, or Hide Pill.\n• Hold shows a glowing amber → blue progress arc with haptic feedback."
+        details = "• Open HUD Style -> Floating Bubble Multi-Gestures to map Single Tap, Double Tap, Long Press, and Very Long Press to Toggle Mute, Mute Only, Unmute Only, Open Quick Menu, Open Settings, Reconnect Host, or Hide Floating Pill.\n• Hold shows a glowing amber → blue progress arc with haptic feedback."
     ),
     HudCalloutItem(
         id = 3,
@@ -110,10 +110,10 @@ private val REMOTE_HUD_CALLOUTS = listOf(
     ),
     HudCalloutItem(
         id = 4,
-        tag = "[4] Menu & Pointer Toggle",
-        title = "Double-Tap Quick Menu, Pointer Intercept Switch & Safety",
-        subtitle = "Toggle Hardware Pointer Intercept ON/OFF depending on whether clicker USB dongle is in the PC or Smart Board.",
-        details = "• Double-tap the floating pill (default) for the Explorer Quick Context Menu with one-tap Pointer Intercept, Lock Position, and Mute controls.\n• Enable Click-Through or Hover Auto-Dodge in HUD Style; unlock Click-Through anytime via Foreground Notification or Android Quick Tile."
+        tag = "[4] Menu & Host Deck",
+        title = "Double-Tap Quick Menu, Host Deck & Screen Safety",
+        subtitle = "Control Mute, Slide Deck, Host Recording, Lock Position, and Smart Board Screen-Awake directly from the overlay.",
+        details = "• Double-tap the floating pill (default) for the Explorer Quick Context Menu with one-tap Mute, Lock Position, Prev/Next Slide, and Record controls.\n• Enable Click-Through, Idle Auto-Dim, Keep Screen Awake, or Hover Auto-Dodge in HUD Style; unlock Click-Through anytime via Foreground Notification or Android Quick Tile."
     )
 )
 

@@ -50,6 +50,8 @@ class FloatingMicOverlayManager(
     private var attached = false
     private var isDragging = false
     private var isAutoDodged = false
+    private var isIdleDimmed = false
+    private var lastIdleWakeKey = ""
 
     private var currentConfig: RemoteConfig = configStore.current
     private var currentConn: ConnectionUiState = connectionManager.uiState.value
@@ -57,6 +59,29 @@ class FloatingMicOverlayManager(
     private var currentAlpha: Int = currentConfig.opacityLevel
     private var breathDir: Int = -AppConstants.PULSE_STEP_NORMAL
     private var animSeq = 0
+
+    private val idleDimRunnable = Runnable {
+        if (attached && currentConfig.showIndicator && currentConfig.idleDimAfterSec > 0 && !isDragging) {
+            isIdleDimmed = true
+            stopBreathing()
+            syncOverlayFlagsAndRender()
+        }
+    }
+
+    private fun resetIdleDimTimer(wakeNow: Boolean = true) {
+        handler.removeCallbacks(idleDimRunnable)
+        if (wakeNow && isIdleDimmed) {
+            isIdleDimmed = false
+            currentAlpha = currentConfig.opacityLevel
+            syncOverlayFlagsAndRender()
+            if (currentConn.connected && currentConn.isMuted && !isDragging && !isAutoDodged) {
+                startBreathing()
+            }
+        }
+        if (attached && currentConfig.showIndicator && currentConfig.idleDimAfterSec > 0) {
+            handler.postDelayed(idleDimRunnable, currentConfig.idleDimAfterSec.coerceAtLeast(1) * 1000L)
+        }
+    }
 
     private val restoreDodgeRunnable = Runnable {
         if (attached && isAutoDodged) {
@@ -71,7 +96,7 @@ class FloatingMicOverlayManager(
 
     private val breathRunnable = object : Runnable {
         override fun run() {
-            if (!attached || isDragging || isAutoDodged || !currentConfig.showIndicator || !currentConn.connected || !currentConn.isMuted) {
+            if (!attached || isDragging || isAutoDodged || isIdleDimmed || !currentConfig.showIndicator || !currentConn.connected || !currentConn.isMuted) {
                 return
             }
             val minRatio = if (currentConfig.aggressivePulse) {
@@ -136,25 +161,39 @@ class FloatingMicOverlayManager(
             handler.removeCallbacks(restoreDodgeRunnable)
         }
 
+        val wasAttached = attached
         if (!attached) {
             attachView()
         } else {
             updateDimensionsAndPosition()
         }
 
+        val wakeKey = "${conn.connected}|${conn.isMuted}|${conn.connStatus}|${conn.streamDropWarn}|${conn.voiceWhileMuted}|${cfg.idleDimAfterSec}|${cfg.showIndicator}"
+        if (cfg.idleDimAfterSec <= 0) {
+            lastIdleWakeKey = wakeKey
+            resetIdleDimTimer(wakeNow = true)
+        } else if (!wasAttached || wakeKey != lastIdleWakeKey) {
+            lastIdleWakeKey = wakeKey
+            resetIdleDimTimer(wakeNow = wasAttached)
+        }
+
         syncTouchableFlag()
+        val safeW = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager).width
 
         if (!isDragging) {
             if (isAutoDodged) {
                 stopBreathing()
                 currentAlpha = min(cfg.opacityLevel, AppConstants.DODGE_ALPHA)
-                pillView?.updateRenderState(cfg, conn, currentAlpha)
+                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
+            } else if (isIdleDimmed) {
+                stopBreathing()
+                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
             } else if (!conn.connected || !conn.isMuted) {
                 stopBreathing()
                 currentAlpha = cfg.opacityLevel
-                pillView?.updateRenderState(cfg, conn, currentAlpha)
+                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
             } else {
-                pillView?.updateRenderState(cfg, conn, currentAlpha)
+                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
                 startBreathing()
             }
         }
@@ -214,7 +253,10 @@ class FloatingMicOverlayManager(
     fun hide() {
         stopBreathing()
         handler.removeCallbacks(restoreDodgeRunnable)
+        handler.removeCallbacks(idleDimRunnable)
         isAutoDodged = false
+        isIdleDimmed = false
+        lastIdleWakeKey = ""
         animSeq++
         dismissQuickMenu()
         if (attached && pillView != null) {
@@ -229,14 +271,15 @@ class FloatingMicOverlayManager(
     }
 
     private fun computeWindowAlpha(wantPassThrough: Boolean): Float {
-        if (!wantPassThrough) return 1.0f
+        if (!wantPassThrough) return if (isIdleDimmed) 0.35f else 1.0f
         // Android 12+ (API 31+) blocks touches passing through TYPE_APPLICATION_OVERLAY if window alpha > 0.80
-        val effective = if (isAutoDodged) {
+        val effective = if (isAutoDodged || isIdleDimmed) {
             min(currentAlpha, AppConstants.DODGE_ALPHA)
         } else {
             currentAlpha
         }
-        return (effective / 255f).coerceIn(0.10f, AppConstants.MAX_PASS_THROUGH_ALPHA)
+        val base = (effective / 255f).coerceIn(0.10f, AppConstants.MAX_PASS_THROUGH_ALPHA)
+        return if (isIdleDimmed) min(base, 0.35f) else base
     }
 
     private fun attachView() {
@@ -265,6 +308,9 @@ class FloatingMicOverlayManager(
         if (wantPassThrough) {
             baseFlags = baseFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
+        if (currentConfig.keepScreenOn) {
+            baseFlags = baseFlags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        }
 
         val params = WindowManager.LayoutParams(
             w,
@@ -288,6 +334,7 @@ class FloatingMicOverlayManager(
             pillView = view
             layoutParams = params
             attached = true
+            resetIdleDimTimer(wakeNow = false)
         } catch (_: Exception) {
         }
     }
@@ -298,14 +345,21 @@ class FloatingMicOverlayManager(
         if (!attached) return
 
         val wantPassThrough = currentConfig.hudClickThrough || isAutoDodged
+        val wantKeepScreenOn = currentConfig.keepScreenOn
         val desiredWinAlpha = computeWindowAlpha(wantPassThrough)
-        val hasFlag = (params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0
+        val hasTouchFlag = (params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0
+        val hasKeepScreenFlag = (params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
         val alphaChanged = abs(params.alpha - desiredWinAlpha) > 0.01f
-        if (wantPassThrough != hasFlag || alphaChanged) {
+        if (wantPassThrough != hasTouchFlag || wantKeepScreenOn != hasKeepScreenFlag || alphaChanged) {
             params.flags = if (wantPassThrough) {
                 params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             } else {
                 params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            }
+            params.flags = if (wantKeepScreenOn) {
+                params.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            } else {
+                params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
             }
             params.alpha = desiredWinAlpha
             runCatching { windowManager.updateViewLayout(view, params) }
@@ -336,6 +390,7 @@ class FloatingMicOverlayManager(
 
     private fun engageAutoDodge() {
         dismissQuickMenu()
+        resetIdleDimTimer(wakeNow = true)
         if (!isAutoDodged) {
             isAutoDodged = true
             stopBreathing()
@@ -494,6 +549,7 @@ class FloatingMicOverlayManager(
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     dismissQuickMenu()
+                    resetIdleDimTimer(wakeNow = true)
                     downRawX = event.rawX
                     downRawY = event.rawY
                     startParamX = params.x
@@ -560,6 +616,7 @@ class FloatingMicOverlayManager(
                 }
                 MotionEvent.ACTION_UP -> {
                     stopHoldVisualTick()
+                    resetIdleDimTimer(wakeNow = true)
                     if (isDragging) {
                         isDragging = false
                         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)

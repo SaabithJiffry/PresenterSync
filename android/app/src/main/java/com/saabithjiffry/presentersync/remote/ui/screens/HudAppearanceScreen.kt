@@ -455,15 +455,16 @@ fun HudAppearanceScreen(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val longSliderVal = cfg.longPressDurationMs.coerceIn(350, 1200)
                     Text(
-                        text = "Long Press Hold Duration: ${cfg.longPressDurationMs} ms",
+                        text = "Long Press Hold Duration: $longSliderVal ms",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
                     Slider(
-                        value = cfg.longPressDurationMs.toFloat(),
+                        value = longSliderVal.toFloat(),
                         onValueChange = { v ->
-                            val snapped = ((v / 50f).toInt() * 50).coerceIn(350, 1500)
+                            val snapped = ((v / 25f).toInt() * 25).coerceIn(350, 1200)
                             app.configStore.update { prev ->
                                 prev.copy(
                                     longPressDurationMs = snapped,
@@ -471,13 +472,13 @@ fun HudAppearanceScreen(
                                 )
                             }
                         },
-                        valueRange = 350f..1500f,
+                        valueRange = 350f..1200f,
                         enabled = cfg.enableHudClickActions
                     )
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(400, 600, 800, 1000).forEach { ms ->
+                        listOf(350, 600, 900, 1200).forEach { ms ->
                             FilterChip(
-                                selected = cfg.longPressDurationMs == ms,
+                                selected = longSliderVal == ms,
                                 enabled = cfg.enableHudClickActions,
                                 onClick = {
                                     app.configStore.update { prev ->
@@ -494,25 +495,26 @@ fun HudAppearanceScreen(
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    val minVeryLong = (cfg.longPressDurationMs + 300).coerceAtLeast(900)
+                    val minVeryLong = (cfg.longPressDurationMs + 300).coerceIn(900, 2500)
+                    val veryLongSliderVal = cfg.veryLongPressDurationMs.coerceIn(minVeryLong, 2500)
                     Text(
-                        text = "Very Long Press Hold Duration: ${cfg.veryLongPressDurationMs} ms",
+                        text = "Very Long Press Hold Duration: $veryLongSliderVal ms",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
                     Slider(
-                        value = cfg.veryLongPressDurationMs.coerceIn(minVeryLong, 3500).toFloat(),
+                        value = veryLongSliderVal.toFloat(),
                         onValueChange = { v ->
-                            val snapped = ((v / 100f).toInt() * 100).coerceIn(minVeryLong, 3500)
+                            val snapped = ((v / 50f).toInt() * 50).coerceIn(minVeryLong, 2500)
                             app.configStore.update { it.copy(veryLongPressDurationMs = snapped) }
                         },
-                        valueRange = minVeryLong.toFloat()..3500f,
+                        valueRange = minVeryLong.toFloat()..2500f,
                         enabled = cfg.enableHudClickActions
                     )
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(1100, 1400, 1800, 2500).filter { it >= minVeryLong }.forEach { ms ->
+                        listOf(900, 1400, 1900, 2500).filter { it >= minVeryLong }.forEach { ms ->
                             FilterChip(
-                                selected = cfg.veryLongPressDurationMs == ms,
+                                selected = veryLongSliderVal == ms,
                                 enabled = cfg.enableHudClickActions,
                                 onClick = {
                                     app.configStore.update { it.copy(veryLongPressDurationMs = ms) }
@@ -571,6 +573,37 @@ fun HudAppearanceScreen(
                     checked = cfg.enableVoiceWhileMutedAlert,
                     onCheckedChange = { v -> app.configStore.update { it.copy(enableVoiceWhileMutedAlert = v) } }
                 )
+                ExplorerSettingToggleRow(
+                    title = "Keep Screen Awake (Smart Board / Phone)",
+                    subtitle = "Keep screen on while dashboard or floating HUD is active during sessions",
+                    checked = cfg.keepScreenOn,
+                    onCheckedChange = { v -> app.configStore.update { it.copy(keepScreenOn = v) } }
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Idle HUD Auto-Dim",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Softly dim floating pill when idle and wake instantly on touch, hover, or mute changes",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(0 to "Off", 15 to "15s", 30 to "30s", 60 to "60s", 120 to "120s").forEach { (sec, label) ->
+                            FilterChip(
+                                selected = cfg.idleDimAfterSec == sec,
+                                onClick = { app.configStore.update { it.copy(idleDimAfterSec = sec) } },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 ExplorerSettingToggleRow(
                     title = "Start HUD Automatically on Boot",
                     subtitle = "Auto-start PresenterSync Remote when Android powers on (OFF by default)",
