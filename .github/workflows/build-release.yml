@@ -122,13 +122,20 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release-keystore.jks
-            cat <<EOF > android/keystore.properties
-          storeFile=app/release-keystore.jks
-          storePassword=${KEYSTORE_PASSWORD}
-          keyAlias=${KEY_ALIAS}
-          keyPassword=${KEY_PASSWORD}
-          EOF
+            if [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+              echo "::error::ANDROID_KEYSTORE_BASE64 is set, but KEYSTORE_PASSWORD, KEY_ALIAS, or KEY_PASSWORD secret is empty."
+              exit 1
+            fi
+            JKS_PATH="$GITHUB_WORKSPACE/android/app/release-keystore.jks"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | grep -v -- '-----' | tr -d ' \t\r\n' | base64 -d > "$JKS_PATH"
+            if [ ! -s "$JKS_PATH" ]; then
+              echo "::error::Decoded release keystore file is empty."
+              exit 1
+            fi
+            keytool -list -keystore "$JKS_PATH" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+            printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+              "$JKS_PATH" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > "$GITHUB_WORKSPACE/android/keystore.properties"
+            echo "KEYSTORE_FILE=$JKS_PATH" >> "$GITHUB_ENV"
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             echo "::error::Release tag builds require ANDROID_KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, and KEY_PASSWORD secrets (refusing to publish a debug-signed APK)."
             exit 1
@@ -157,6 +164,23 @@ jobs:
           else
             echo "ERROR: APK output missing"
             exit 1
+          fi
+
+      - name: Verify APK Signature (apksigner)
+        env:
+          HAS_KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          echo "Using apksigner: $APKSIGNER"
+          VERIFY_OUT=$("$APKSIGNER" verify --verbose --print-certs dist/PresenterSync_Remote.apk)
+          echo "$VERIFY_OUT"
+          if [[ "${{ github.ref }}" == refs/tags/v* || "$HAS_KS" == "true" ]]; then
+            if echo "$VERIFY_OUT" | grep -qi "Android Debug"; then
+              echo "::error::APK is signed with Android Debug certificate instead of release keystore!"
+              exit 1
+            fi
+            echo "$VERIFY_OUT" | grep -q "APK Signature Scheme v2): true" || { echo "::error::v2 signing missing"; exit 1; }
+            echo "$VERIFY_OUT" | grep -q "APK Signature Scheme v3): true" || { echo "::error::v3 signing missing"; exit 1; }
           fi
 
       - name: Upload Android APK artifact
