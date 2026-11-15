@@ -49,7 +49,6 @@ data class RemoteConfig(
     val heartbeatSeconds: Int = AppConstants.DEFAULT_HEARTBEAT_SECONDS,
 
     val hwMuteHotkey: String = "KEYCODE_B",
-    val enablePointerIntercept: Boolean = true,
     val enablePointerMute: Boolean = true,
     val enablePushToMute: Boolean = false,
     val toggleMuteShortcut: String = "Ctrl+F12",
@@ -148,7 +147,6 @@ class RemoteConfigStore(context: Context) {
             targetMicName = mic,
             heartbeatSeconds = validHb,
             hwMuteHotkey = prefs.getString("hwMuteHotkey", "KEYCODE_B").orEmpty().ifBlank { "KEYCODE_B" },
-            enablePointerIntercept = prefs.getBoolean("enablePointerIntercept", true),
             enablePointerMute = prefs.getBoolean("enablePointerMute", true),
             enablePushToMute = prefs.getBoolean("enablePushToMute", false),
             toggleMuteShortcut = prefs.getString("toggleMuteShortcut", "Ctrl+F12").orEmpty().ifBlank { "Ctrl+F12" },
@@ -295,7 +293,6 @@ class RemoteConfigStore(context: Context) {
             .putString("targetMicName", c.targetMicName)
             .putInt("heartbeatSeconds", c.heartbeatSeconds)
             .putString("hwMuteHotkey", c.hwMuteHotkey)
-            .putBoolean("enablePointerIntercept", c.enablePointerIntercept)
             .putBoolean("enablePointerMute", c.enablePointerMute)
             .putBoolean("enablePushToMute", c.enablePushToMute)
             .putString("toggleMuteShortcut", c.toggleMuteShortcut)

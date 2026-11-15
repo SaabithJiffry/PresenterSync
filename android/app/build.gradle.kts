@@ -16,6 +16,12 @@ when {
 val envStoreFile = System.getenv("KEYSTORE_FILE")
 val hasReleaseSigning = (!envStoreFile.isNullOrBlank() && file(envStoreFile).exists()) ||
     (!releaseKeystoreProps.getProperty("storeFile").isNullOrBlank() && file(releaseKeystoreProps.getProperty("storeFile")).exists())
+val requireReleaseSigning = (findProperty("requireReleaseSigning")?.toString()?.toBoolean() == true)
+if (requireReleaseSigning && !hasReleaseSigning) {
+    throw GradleException(
+        "Release signing keystore required (-PrequireReleaseSigning=true), but no keystore.properties or KEYSTORE_FILE was found."
+    )
+}
 
 android {
     namespace = "com.saabithjiffry.presentersync.remote"
@@ -42,6 +48,9 @@ android {
                 storePassword = System.getenv("KEYSTORE_PASSWORD") ?: releaseKeystoreProps.getProperty("storePassword")
                 keyAlias = System.getenv("KEY_ALIAS") ?: releaseKeystoreProps.getProperty("keyAlias")
                 keyPassword = System.getenv("KEY_PASSWORD") ?: releaseKeystoreProps.getProperty("keyPassword")
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }

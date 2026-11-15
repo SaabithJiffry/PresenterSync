@@ -389,8 +389,8 @@ Assert("OverlayState.ComputeDimensions reserves extra HUD headroom when ShowExtr
 
 Assert("PromptForPassword accepts optional promptText", PromptForPassword.MinParams == 0 && PromptForPassword.MaxParams == 1)
 
-hostIco := A_ScriptDir "\..\PresenterSync.ico"
-remoteIco := A_ScriptDir "\..\PresenterSyncRemote.ico"
+hostIco := A_ScriptDir "\..\assets\PresenterSync.ico"
+remoteIco := A_ScriptDir "\..\assets\PresenterSyncRemote.ico"
 hostIcoBuf := FileExist(hostIco) ? FileRead(hostIco, "RAW") : Buffer(0)
 remoteIcoBuf := FileExist(remoteIco) ? FileRead(remoteIco, "RAW") : Buffer(0)
 Assert("Primary and Remote icon files exist with multi-resolution frames",

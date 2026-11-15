@@ -11,11 +11,6 @@ enum class BubbleGestureAction(
     UNMUTE_ONLY("unmute_only", "Unmute Mic Only", "Explicitly unmute the host microphone"),
     OPEN_QUICK_MENU("open_quick_menu", "Open Quick Menu", "Show the floating Explorer Quick Menu"),
     OPEN_SETTINGS("open_settings", "Open Settings", "Bring PresenterSync Remote window to front"),
-    TOGGLE_POINTER_INTERCEPT(
-        "toggle_pointer_intercept",
-        "Toggle Pointer Intercept",
-        "Switch hardware clicker keystroke interception ON/OFF"
-    ),
     RECONNECT("reconnect", "Reconnect Host", "Restart LAN/Bridge/Relay connection"),
     HIDE_PILL("hide_pill", "Hide Floating Pill", "Hide floating indicator until reopened from tile/notification");
 

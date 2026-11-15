@@ -136,7 +136,7 @@ fun AboutUpdateDialog(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Strict 1-Tier Android Smart Board Mic Companion with OBS WebSocket v5, Windows Host Bridge (:4456), WAN Relay (PS-XXXX-XXXX), zero-GMS CameraX + ZXing QR pairing, Global Clicker Accessibility Filter, and Windows 11 Explorer UI.",
+                                text = "Strict 1-Tier Android Smart Board & Phone Mic Companion with OBS WebSocket v5, Windows Host Bridge (:4456), WAN Relay (PS-XXXX-XXXX), zero-GMS CameraX + ZXing QR pairing, Floating Bubble Multi-Gestures, and Windows 11 Explorer UI.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

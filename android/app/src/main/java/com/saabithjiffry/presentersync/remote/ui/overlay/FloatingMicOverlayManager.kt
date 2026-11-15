@@ -609,14 +609,6 @@ class FloatingMicOverlayManager(
             BubbleGestureAction.UNMUTE_ONLY -> connectionManager.setMuteFromHud(false)
             BubbleGestureAction.OPEN_QUICK_MENU -> showQuickMenu()
             BubbleGestureAction.OPEN_SETTINGS -> openSettingsActivity()
-            BubbleGestureAction.TOGGLE_POINTER_INTERCEPT -> {
-                val updated = configStore.update { it.copy(enablePointerIntercept = !it.enablePointerIntercept) }
-                Toast.makeText(
-                    context,
-                    "Pointer Intercept: ${if (updated.enablePointerIntercept) "ON" else "OFF"}",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
             BubbleGestureAction.RECONNECT -> {
                 connectionManager.reconnectNow()
                 Toast.makeText(context, "Reconnecting PresenterSync...", Toast.LENGTH_SHORT).show()
@@ -693,17 +685,6 @@ class FloatingMicOverlayManager(
 
         addMenuRow(if (currentConn.isMuted) "Unmute Mic (Currently MUTED)" else "Mute Mic (Currently LIVE)") {
             connectionManager.toggleMuteFromHud()
-        }
-        addMenuRow("Pointer Intercept: ${if (currentConfig.enablePointerIntercept) "ON" else "OFF"}") {
-            val next = configStore.update { it.copy(enablePointerIntercept = !it.enablePointerIntercept) }
-            Toast.makeText(
-                context,
-                "Pointer Intercept: ${if (next.enablePointerIntercept) "ON" else "OFF"}",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-        addMenuRow("Pointer Mute Key: ${if (currentConfig.enablePointerMute) "ON" else "OFF"}") {
-            configStore.update { it.copy(enablePointerMute = !it.enablePointerMute) }
         }
         addMenuRow("Lock Pill Position: ${if (currentConfig.lockHudPosition) "LOCKED" else "UNLOCKED"}") {
             configStore.update { it.copy(lockHudPosition = !it.lockHudPosition) }

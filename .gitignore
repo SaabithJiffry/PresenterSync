@@ -1,9 +1,9 @@
 # Compiled AutoHotkey Executables & Release Binaries (track official portable release binaries)
 *.exe
-!PresenterSync.exe
-!PresenterSync_Remote.exe
+!dist/PresenterSync.exe
+!dist/PresenterSync_Remote.exe
 *.apk
-!PresenterSync_Remote.apk
+!dist/PresenterSync_Remote.apk
 *.aab
 *.bin
 

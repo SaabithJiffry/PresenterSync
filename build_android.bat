@@ -46,16 +46,17 @@ if not exist "%RELEASE_APK%" (
 )
 
 echo.
-echo [2/2] Copying signed release APK to repo root PresenterSync_Remote.apk...
-copy /y "%RELEASE_APK%" "%SCRIPT_DIR%\PresenterSync_Remote.apk" >nul
+echo [2/2] Copying signed release APK to dist\PresenterSync_Remote.apk...
+if not exist "%SCRIPT_DIR%\dist" mkdir "%SCRIPT_DIR%\dist"
+copy /y "%RELEASE_APK%" "%SCRIPT_DIR%\dist\PresenterSync_Remote.apk" >nul
 if %errorlevel% neq 0 (
-    echo [ERROR] Failed to copy PresenterSync_Remote.apk.
+    echo [ERROR] Failed to copy dist\PresenterSync_Remote.apk.
     popd
     exit /b 1
 )
 
-for %%F in ("%SCRIPT_DIR%\PresenterSync_Remote.apk") do (
-    echo [OK] PresenterSync_Remote.apk built ^(%%~zF bytes^)
+for %%F in ("%SCRIPT_DIR%\dist\PresenterSync_Remote.apk") do (
+    echo [OK] dist\PresenterSync_Remote.apk built ^(%%~zF bytes^)
 )
 
 popd
