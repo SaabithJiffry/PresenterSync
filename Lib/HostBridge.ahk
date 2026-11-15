@@ -1025,10 +1025,8 @@ class HostCompanionBridge {
                 ExecuteHostRemoteToggleMute(this.cfg, this.state)
             case "set_mute":
                 targetMuted := _HB_JsonExtractBool(msg, "isMuted", this.state.isMuted)
-                if (this.state.isMuted != targetMuted)
-                    ExecuteHostRemoteToggleMute(this.cfg, this.state)
-                else
-                    this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+                ExecuteHostRemoteSetMute(this.cfg, this.state, targetMuted)
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "sync_req":
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "ping":

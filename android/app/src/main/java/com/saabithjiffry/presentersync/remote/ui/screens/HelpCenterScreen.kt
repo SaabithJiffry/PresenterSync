@@ -97,24 +97,24 @@ private val REMOTE_HUD_CALLOUTS = listOf(
     ),
     HudCalloutItem(
         id = 2,
-        tag = "[2] Tap & Cough Hold",
-        title = "Touchscreen Tap & ≥350ms Cough Push-to-Mute",
-        subtitle = "Short-tap the floating pill (or short-press pointer key) to toggle mute cleanly.",
-        details = "• Enable 'Interactive Pill Tap Actions' in HUD Style.\n• Enable 'Push-to-Mute (Cough Hold)' in Pointer & Keys: holding ≥350ms mutes while held and automatically restores LIVE on release."
+        tag = "[2] Bubble Gestures",
+        title = "Customizable Single / Double / Long / Very Long Press",
+        subtitle = "Safe by default on Smart Boards: Single Tap ignores accidental touches; Long Press toggles Mute; Double Tap opens Quick Menu.",
+        details = "• Open HUD Style -> Floating Bubble Multi-Gestures to map Single Tap, Double Tap, Long Press, and Very Long Press to Toggle Mute, Mute Only, Unmute Only, Quick Menu, Settings, Pointer Intercept, Reconnect, or Hide Pill.\n• Hold shows a glowing amber → blue progress arc with haptic feedback."
     ),
     HudCalloutItem(
         id = 3,
         tag = "[3] Drag & 14dp Snap",
-        title = "Touchscreen Drag, Magnetic Snap & 0.25x–5.0x Scale",
-        subtitle = "Drag smoothly with finger or stylus; automatically clamps safely inside Android bars & rotation.",
-        details = "• 14dp Magnetic Snap aligns cleanly to Smart Board edges and screen centers.\n• Sizes scale up to 5.0x Gigantic for 65\"–86\" classroom 4K panels."
+        title = "Touchscreen Drag, Position Lock & 0.25x–5.0x Scale",
+        subtitle = "Drag smoothly with finger or stylus, or enable 'Lock Pill Position' so sleeves/touches cannot knock it away.",
+        details = "• 14dp Magnetic Snap aligns cleanly to Smart Board edges and screen centers, preserving aspect position across rotation.\n• Sizes scale up to 5.0x Gigantic for 65\"–86\" classroom 4K panels."
     ),
     HudCalloutItem(
         id = 4,
-        tag = "[4] Menu & Safety",
-        title = "Long-Press Quick Menu, Auto-Dodge & Click-Through",
-        subtitle = "Never blocks whiteboard ink or stylus writing.",
-        details = "• Long-press the floating pill (550ms) for the Explorer Quick Context Menu.\n• Enable Click-Through or Hover Auto-Dodge in HUD Style; unlock Click-Through anytime via Foreground Notification or Android Quick Tile."
+        tag = "[4] Menu & Pointer Toggle",
+        title = "Double-Tap Quick Menu, Pointer Intercept Switch & Safety",
+        subtitle = "Toggle Hardware Pointer Intercept ON/OFF depending on whether clicker USB dongle is in the PC or Smart Board.",
+        details = "• Double-tap the floating pill (default) for the Explorer Quick Context Menu with one-tap Pointer Intercept, Lock Position, and Mute controls.\n• Enable Click-Through or Hover Auto-Dodge in HUD Style; unlock Click-Through anytime via Foreground Notification or Android Quick Tile."
     )
 )
 
@@ -161,6 +161,18 @@ private val HELP_TOPICS = listOf(
         "Color Presets, Acoustic Chimes & 2s Banner",
         "5 Windows-matched color schemes + synthesized audio tones.",
         "Open HUD Style tab to switch between Standard, Colorblind Safe, OLED Stealth, Broadcast Tally, and Cyber Ocean, plus 880Hz↔520Hz chimes and the 2-second Mic: MUTED/LIVE banner."
+    ),
+    HelpTopic(
+        "Floating HUD",
+        "Floating Bubble Multi-Gestures & Position Lock",
+        "Customize Single Tap, Double Tap, Long Press, and Very Long Press independently.",
+        "Open HUD Style -> Floating Bubble Multi-Gestures. By default Single Tap is None (to avoid accidental board touches), Double Tap opens the Quick Menu, and Long Press (600ms) toggles mute. You can also set Long Press = Mute Only and Very Long Press = Unmute Only, and toggle 'Lock Pill Position' so touches never drag the bubble."
+    ),
+    HelpTopic(
+        "Pointer & Clicker",
+        "Pointer Keystroke Intercept: ON vs OFF",
+        "Choose where your wireless presenter dongle is plugged in.",
+        "Keep Pointer Intercept OFF when the clicker USB receiver is plugged directly into the Primary Windows PC and use Bubble Long-Press gestures on the Smart Board / Phone. Turn Pointer Intercept ON in Pointer & Keys (or Quick Menu) only when the clicker is connected directly to Android via USB/Bluetooth."
     ),
     HelpTopic(
         "Pointer & Clicker",

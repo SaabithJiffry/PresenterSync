@@ -22,20 +22,25 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,11 +58,13 @@ import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.HudColorPalettes
 import com.saabithjiffry.presentersync.remote.config.ThemeMode
 import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
+import com.saabithjiffry.presentersync.remote.input.BubbleGestureAction
 import com.saabithjiffry.presentersync.remote.network.ConnStatus
 import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
 import com.saabithjiffry.presentersync.remote.ui.overlay.MicPillCanvasView
 import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
+import com.saabithjiffry.presentersync.remote.ui.theme.ResponsiveExplorerActionRow
 
 private val SCALE_OPTIONS = listOf(
     0.25f to "0.25x Micro",
@@ -343,8 +350,183 @@ fun HudAppearanceScreen(
             }
         }
 
-        // 3. Smart Board Ergonomics, Audio/Toast Feedback & Reset Card
-        ExplorerCard(contentPadding = 18) {
+        // 3. Customizable Floating Bubble Multi-Gestures Card
+        ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Floating Bubble Multi-Gestures",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Prevent accidental smartboard taps by mapping Single Tap, Double Tap, Long Press, and Very Long Press independently.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                ExplorerSettingToggleRow(
+                    title = "Enable Bubble Tap & Hold Gestures",
+                    subtitle = "Master switch for all touchscreen gestures on the floating pill (dragging still works unless locked)",
+                    checked = cfg.enableHudClickActions,
+                    onCheckedChange = { v -> app.configStore.update { it.copy(enableHudClickActions = v) } }
+                )
+                ExplorerSettingToggleRow(
+                    title = "Lock Pill Position (Prevent Drag)",
+                    subtitle = "Anchor the bubble in place so casual touches or whiteboard sleeves cannot move it",
+                    checked = cfg.lockHudPosition,
+                    onCheckedChange = { v -> app.configStore.update { it.copy(lockHudPosition = v) } }
+                )
+
+                Text(
+                    text = "Quick Gesture Presets",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                val isSafeDefault = cfg.singleTapAction == BubbleGestureAction.NONE &&
+                    cfg.doubleTapAction == BubbleGestureAction.OPEN_QUICK_MENU &&
+                    cfg.longPressAction == BubbleGestureAction.TOGGLE_MUTE &&
+                    cfg.veryLongPressAction == BubbleGestureAction.NONE
+                val isHoldSplit = cfg.singleTapAction == BubbleGestureAction.NONE &&
+                    cfg.longPressAction == BubbleGestureAction.MUTE_ONLY &&
+                    cfg.veryLongPressAction == BubbleGestureAction.UNMUTE_ONLY
+                val isClassicTap = cfg.singleTapAction == BubbleGestureAction.TOGGLE_MUTE &&
+                    cfg.doubleTapAction == BubbleGestureAction.NONE &&
+                    cfg.longPressAction == BubbleGestureAction.OPEN_QUICK_MENU
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilterChip(
+                        selected = isSafeDefault,
+                        onClick = { app.configStore.applyGesturePreset("smartboard_safe") },
+                        label = { Text("Smart Board Safe") }
+                    )
+                    FilterChip(
+                        selected = isHoldSplit,
+                        onClick = { app.configStore.applyGesturePreset("hold_mute_unmute") },
+                        label = { Text("Separate Hold Mute / Unmute") }
+                    )
+                    FilterChip(
+                        selected = isClassicTap,
+                        onClick = { app.configStore.applyGesturePreset("classic_tap") },
+                        label = { Text("Classic Quick Tap") }
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                BubbleGestureSlotRow(
+                    title = "Single Tap",
+                    subtitle = "Keep as None on busy touch panels so accidental touches never toggle mute",
+                    currentAction = cfg.singleTapAction,
+                    enabled = cfg.enableHudClickActions,
+                    isTightWidth = formFactor.isTightWidth,
+                    onSelect = { act -> app.configStore.update { it.copy(singleTapAction = act) } }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                BubbleGestureSlotRow(
+                    title = "Double Tap",
+                    subtitle = "Quick double tap on the floating pill (default: Open Quick Menu)",
+                    currentAction = cfg.doubleTapAction,
+                    enabled = cfg.enableHudClickActions,
+                    isTightWidth = formFactor.isTightWidth,
+                    onSelect = { act -> app.configStore.update { it.copy(doubleTapAction = act) } }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                BubbleGestureSlotRow(
+                    title = "Long Press (${cfg.longPressDurationMs} ms)",
+                    subtitle = "Hold until amber arc completes & buzzes; lift before Very Long threshold",
+                    currentAction = cfg.longPressAction,
+                    enabled = cfg.enableHudClickActions,
+                    isTightWidth = formFactor.isTightWidth,
+                    onSelect = { act -> app.configStore.update { it.copy(longPressAction = act) } }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                BubbleGestureSlotRow(
+                    title = "Very Long Press (${cfg.veryLongPressDurationMs} ms)",
+                    subtitle = "Keep holding past amber buzz until blue arc completes & triggers immediately",
+                    currentAction = cfg.veryLongPressAction,
+                    enabled = cfg.enableHudClickActions,
+                    isTightWidth = formFactor.isTightWidth,
+                    onSelect = { act -> app.configStore.update { it.copy(veryLongPressAction = act) } }
+                )
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Long Press Hold Duration: ${cfg.longPressDurationMs} ms",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Slider(
+                        value = cfg.longPressDurationMs.toFloat(),
+                        onValueChange = { v ->
+                            val snapped = ((v / 50f).toInt() * 50).coerceIn(350, 1500)
+                            app.configStore.update { prev ->
+                                prev.copy(
+                                    longPressDurationMs = snapped,
+                                    veryLongPressDurationMs = prev.veryLongPressDurationMs.coerceAtLeast(snapped + 300)
+                                )
+                            }
+                        },
+                        valueRange = 350f..1500f,
+                        enabled = cfg.enableHudClickActions
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(400, 600, 800, 1000).forEach { ms ->
+                            FilterChip(
+                                selected = cfg.longPressDurationMs == ms,
+                                enabled = cfg.enableHudClickActions,
+                                onClick = {
+                                    app.configStore.update { prev ->
+                                        prev.copy(
+                                            longPressDurationMs = ms,
+                                            veryLongPressDurationMs = prev.veryLongPressDurationMs.coerceAtLeast(ms + 300)
+                                        )
+                                    }
+                                },
+                                label = { Text("${ms}ms") }
+                            )
+                        }
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val minVeryLong = (cfg.longPressDurationMs + 300).coerceAtLeast(900)
+                    Text(
+                        text = "Very Long Press Hold Duration: ${cfg.veryLongPressDurationMs} ms",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Slider(
+                        value = cfg.veryLongPressDurationMs.coerceIn(minVeryLong, 3500).toFloat(),
+                        onValueChange = { v ->
+                            val snapped = ((v / 100f).toInt() * 100).coerceIn(minVeryLong, 3500)
+                            app.configStore.update { it.copy(veryLongPressDurationMs = snapped) }
+                        },
+                        valueRange = minVeryLong.toFloat()..3500f,
+                        enabled = cfg.enableHudClickActions
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(1100, 1400, 1800, 2500).filter { it >= minVeryLong }.forEach { ms ->
+                            FilterChip(
+                                selected = cfg.veryLongPressDurationMs == ms,
+                                enabled = cfg.enableHudClickActions,
+                                onClick = {
+                                    app.configStore.update { it.copy(veryLongPressDurationMs = ms) }
+                                },
+                                label = { Text("${ms}ms") }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Smart Board Ergonomics, Audio/Toast Feedback & Reset Card
+        ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     text = "Smart Board Ergonomics, Feedback & Startup",
@@ -353,12 +535,6 @@ fun HudAppearanceScreen(
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                ExplorerSettingToggleRow(
-                    title = "Interactive Pill Tap Actions",
-                    subtitle = "Tap the floating pill directly on touchscreen to mute/unmute host mic",
-                    checked = cfg.enableHudClickActions,
-                    onCheckedChange = { v -> app.configStore.update { it.copy(enableHudClickActions = v) } }
-                )
                 ExplorerSettingToggleRow(
                     title = "Magnetic Edge & Center Snap (14dp)",
                     subtitle = "Snap cleanly to screen safe-area borders and centerlines while dragging",
@@ -460,5 +636,67 @@ internal fun ExplorerSettingToggleRow(
     }
     if (showDivider) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+@Composable
+private fun BubbleGestureSlotRow(
+    title: String,
+    subtitle: String,
+    currentAction: BubbleGestureAction,
+    enabled: Boolean,
+    isTightWidth: Boolean,
+    onSelect: (BubbleGestureAction) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    ResponsiveExplorerActionRow(
+        title = title,
+        subtitle = "$subtitle\nCurrent: ${currentAction.label}",
+        subtitleColor = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        isTightWidth = isTightWidth
+    ) {
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                enabled = enabled,
+                contentPadding = CompactExplorerButtonPadding
+            ) {
+                Text(
+                    text = currentAction.label,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                BubbleGestureAction.entries.forEach { act ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(act.label, fontWeight = if (act == currentAction) FontWeight.Bold else FontWeight.Normal)
+                                Text(
+                                    act.shortDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        leadingIcon = if (act == currentAction) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        } else null,
+                        onClick = {
+                            expanded = false
+                            onSelect(act)
+                        }
+                    )
+                }
+            }
+        }
     }
 }

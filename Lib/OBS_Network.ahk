@@ -464,6 +464,9 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
         BroadcastHostRelayMuteState(cfg, state)
     } else if (pkt.cmd = "toggle_mute") {
         ExecuteHostRemoteToggleMute(cfg, state)
+    } else if (pkt.cmd = "set_mute") {
+        wantMuted := (StrLower(Trim(String(pkt.data))) = "1" || StrLower(Trim(String(pkt.data))) = "true")
+        ExecuteHostRemoteSetMute(cfg, state, wantMuted)
     }
 }
 
@@ -472,6 +475,25 @@ ExecuteHostRemoteToggleMute(cfg, state) {
         return false
     if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
         return true
+    return _DispatchHostRemoteControlSend(cfg, state, !state.isMuted)
+}
+
+ExecuteHostRemoteSetMute(cfg, state, targetMuted) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    wantMuted := !!targetMuted
+    if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsSetInputMute(state.obsWs, cfg.targetMicName, wantMuted, "HostRemoteSetMute")) {
+        if (!!state.isMuted = wantMuted)
+            BroadcastHostRelayMuteState(cfg, state)
+        return true
+    }
+    if (!!state.isMuted != wantMuted)
+        return _DispatchHostRemoteControlSend(cfg, state, wantMuted)
+    BroadcastHostRelayMuteState(cfg, state)
+    return true
+}
+
+_DispatchHostRemoteControlSend(cfg, state, nextMuted) {
     obsOpen := WinExist("ahk_exe obs64.exe")
     appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
     confSpec := GetConferencingWindowSpec(appType)
@@ -495,7 +517,7 @@ ExecuteHostRemoteToggleMute(cfg, state) {
         SetKeyDelay 50, 50
     }
     if (ShouldOptimisticallyFlipMute(cfg, state))
-        SyncUIState(cfg, state, !state.isMuted)
+        SyncUIState(cfg, state, nextMuted)
     else
         BroadcastHostRelayMuteState(cfg, state)
     return true

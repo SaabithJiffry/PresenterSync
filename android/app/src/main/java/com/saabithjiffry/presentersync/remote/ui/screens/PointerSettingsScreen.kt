@@ -222,7 +222,7 @@ fun PointerSettingsScreen(
         }
 
         // 2. Clicker Behavior & Mute Button Configuration Card
-        ExplorerCard(contentPadding = 18) {
+        ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     text = "Hardware Clicker Controls",
@@ -237,15 +237,49 @@ fun PointerSettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text("Enable Pointer Mute", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         Text(
-                            "Allow hardware clicker mute button to toggle OBS/Host mic",
+                            "Enable Hardware Pointer Keystroke Intercept",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Intercept presenter clicker keys when USB/Bluetooth receiver is paired to this Android device. Turn OFF if the receiver is plugged into the Windows PC.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = cfg.enablePointerIntercept,
+                        onCheckedChange = { enabled ->
+                            app.configStore.update { it.copy(enablePointerIntercept = enabled) }
+                        }
+                    )
+                }
+                if (!cfg.enablePointerIntercept) {
+                    Text(
+                        text = "Pointer key interception is OFF — clicker keys pass cleanly to Android apps. Use Floating Bubble Gestures (Long Press / Double Tap) in HUD Style to mute/unmute anytime.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Enable Pointer Mute Button", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Allow assigned clicker mute button to toggle OBS/Host mic",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Switch(
                         checked = cfg.enablePointerMute,
+                        enabled = cfg.enablePointerIntercept,
                         onCheckedChange = { enabled ->
                             app.configStore.update { it.copy(enablePointerMute = enabled) }
                         }
@@ -268,6 +302,7 @@ fun PointerSettingsScreen(
                     }
                     Switch(
                         checked = cfg.enablePushToMute,
+                        enabled = cfg.enablePointerIntercept,
                         onCheckedChange = { enabled ->
                             app.configStore.update { it.copy(enablePushToMute = enabled) }
                         }
@@ -479,6 +514,7 @@ fun PointerSettingsScreen(
         EditShortcutsDialog(
             initialToggle = cfg.toggleMuteShortcut,
             initialExit = cfg.exitShortcut,
+            formFactor = formFactor,
             onSave = { t, e ->
                 app.configStore.update {
                     it.copy(
@@ -730,6 +766,7 @@ private fun RestrictedSettingsGuideDialog(
 private fun EditShortcutsDialog(
     initialToggle: String,
     initialExit: String,
+    formFactor: ResolvedFormFactor,
     onSave: (String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -743,8 +780,9 @@ private fun EditShortcutsDialog(
         Surface(
             modifier = Modifier
                 .widthIn(max = 520.dp)
-                .fillMaxWidth(0.92f)
-                .padding(vertical = 16.dp),
+                .fillMaxWidth(formFactor.dialogWidthFraction)
+                .heightIn(max = (formFactor.heightDp * 0.92f).dp)
+                .padding(vertical = 12.dp),
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -768,7 +806,10 @@ private fun EditShortcutsDialog(
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Column(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedTextField(

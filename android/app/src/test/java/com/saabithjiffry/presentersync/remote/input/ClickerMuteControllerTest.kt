@@ -112,6 +112,13 @@ class ClickerMuteControllerTest {
             controller.onKeyEvent("KEYCODE_F12", KeyAction.DOWN, isCtrl = false, isAlt = true, isShift = true, 0, cfg)
         )
 
+        // When Pointer Intercept master toggle is OFF, pointer button passes through cleanly
+        val interceptOffCfg = cfg.copy(enablePointerIntercept = false)
+        assertEquals(
+            ClickerDecision.PASS_THROUGH,
+            controller.onKeyEvent("KEYCODE_PAGE_DOWN", KeyAction.DOWN, false, false, false, 0, interceptOffCfg)
+        )
+
         // When suspended, neither clicker nor shortcuts consume or fire
         val suspendedCfg = cfg.copy(hotkeysSuspended = true)
         assertEquals(

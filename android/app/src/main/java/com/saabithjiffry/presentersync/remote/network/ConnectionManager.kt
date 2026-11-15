@@ -571,7 +571,11 @@ class ConnectionManager(
         return false
     }
 
-    fun setMuteFromClicker(targetMuted: Boolean): Boolean {
+    fun setMuteFromHud(targetMuted: Boolean): Boolean = setMuteInternal(targetMuted)
+
+    fun setMuteFromClicker(targetMuted: Boolean): Boolean = setMuteInternal(targetMuted)
+
+    private fun setMuteInternal(targetMuted: Boolean): Boolean {
         val st = _uiState.value
         if (!st.connected) {
             _events.tryEmit(RemoteEvent.ToastMessage("PresenterSync Remote: Not connected to OBS host"))
@@ -586,10 +590,10 @@ class ConnectionManager(
             return obs.sendSetInputMute(targetMuted)
         }
         val relay = relayClient
-        if (relay != null && st.isMuted != targetMuted) {
-            return relay.sendToggleMute()
+        if (relay != null) {
+            return relay.sendSetMute(targetMuted)
         }
-        return st.isMuted == targetMuted
+        return false
     }
 
     suspend fun pairByCode(

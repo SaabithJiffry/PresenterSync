@@ -1,6 +1,13 @@
 package com.saabithjiffry.presentersync.remote.ui.overlay
 
 import android.content.Context
+import android.view.HapticFeedbackConstants
+import android.widget.ScrollView
+import android.widget.Toast
+import com.saabithjiffry.presentersync.remote.input.BubbleGestureAction
+import com.saabithjiffry.presentersync.remote.input.BubbleGestureRecognizer
+import com.saabithjiffry.presentersync.remote.input.BubbleHoldStage
+import com.saabithjiffry.presentersync.remote.input.GestureScheduler
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
@@ -39,7 +46,7 @@ class FloatingMicOverlayManager(
 
     private var pillView: MicPillCanvasView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
-    private var quickMenuView: LinearLayout? = null
+    private var quickMenuView: View? = null
     private var attached = false
     private var isDragging = false
     private var isAutoDodged = false
@@ -389,24 +396,98 @@ class FloatingMicOverlayManager(
         }
     }
 
+    private var activeGestureRecognizer: BubbleGestureRecognizer? = null
+
     private fun setupTouchHandling(view: MicPillCanvasView, params: WindowManager.LayoutParams) {
         val density = context.resources.displayMetrics.density
         val slopPx = (AppConstants.SHORT_TAP_MAX_SLOP_DP * density).coerceAtLeast(
             ViewConfiguration.get(context).scaledTouchSlop.toFloat()
         )
+        val lockCancelSlopPx = (56f * density).coerceAtLeast(slopPx * 2.5f)
         var downRawX = 0f
         var downRawY = 0f
         var startParamX = 0
         var startParamY = 0
-        var downTime = 0L
         var movedPastSlop = false
-        var longPressTriggered = false
+        var lastStage = BubbleHoldStage.IDLE
 
-        val longPressRunnable = Runnable {
-            if (!movedPastSlop && isDragging.not()) {
-                longPressTriggered = true
-                showQuickMenu()
+        val scheduler = object : GestureScheduler {
+            override fun schedule(delayMs: Long, task: () -> Unit): Any {
+                val r = Runnable { task() }
+                handler.postDelayed(r, delayMs)
+                return r
             }
+
+            override fun cancel(token: Any) {
+                (token as? Runnable)?.let { handler.removeCallbacks(it) }
+            }
+        }
+
+        var holdVisualTickRunnable: Runnable? = null
+        fun stopHoldVisualTick() {
+            holdVisualTickRunnable?.let { handler.removeCallbacks(it) }
+            holdVisualTickRunnable = null
+            view.setGestureFeedback(BubbleHoldStage.IDLE, 0f)
+        }
+
+        val recognizer = BubbleGestureRecognizer(
+            scheduler = scheduler,
+            clockMs = { System.currentTimeMillis() },
+            listener = object : BubbleGestureRecognizer.Listener {
+                override fun onActionTriggered(gestureLabel: String, action: BubbleGestureAction) {
+                    if (action != BubbleGestureAction.NONE) {
+                        runCatching { view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP) }
+                    }
+                    executeBubbleAction(action)
+                }
+
+                override fun onHoldStageChanged(stage: BubbleHoldStage, progressFraction: Float) {
+                    if (stage != lastStage) {
+                        when (stage) {
+                            BubbleHoldStage.REACHED_LONG -> {
+                                runCatching { view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                            }
+                            BubbleHoldStage.REACHED_VERY_LONG -> {
+                                runCatching { view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) }
+                            }
+                            else -> Unit
+                        }
+                        lastStage = stage
+                    }
+                    view.setGestureFeedback(stage, progressFraction)
+                    if (stage == BubbleHoldStage.IDLE) {
+                        stopHoldVisualTick()
+                    }
+                }
+            }
+        )
+        activeGestureRecognizer = recognizer
+
+        fun startHoldVisualTick() {
+            stopHoldVisualTick()
+            val ticker = object : Runnable {
+                override fun run() {
+                    val (stage, frac) = recognizer.currentVisualHoldState()
+                    if (stage != lastStage) {
+                        when (stage) {
+                            BubbleHoldStage.REACHED_LONG -> {
+                                runCatching { view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                            }
+                            BubbleHoldStage.REACHED_VERY_LONG -> {
+                                runCatching { view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) }
+                            }
+                            else -> Unit
+                        }
+                        lastStage = stage
+                    }
+                    view.setGestureFeedback(stage, frac)
+                    if (holdVisualTickRunnable === this) {
+                        handler.postDelayed(this, 32L)
+                    }
+                }
+            }
+            holdVisualTickRunnable = ticker
+            handler.postDelayed(ticker, 48L)
         }
 
         view.setOnTouchListener { _, event ->
@@ -417,19 +498,34 @@ class FloatingMicOverlayManager(
                     downRawY = event.rawY
                     startParamX = params.x
                     startParamY = params.y
-                    downTime = System.currentTimeMillis()
                     movedPastSlop = false
-                    longPressTriggered = false
-                    handler.postDelayed(longPressRunnable, 550L)
+                    lastStage = BubbleHoldStage.IDLE
+                    val gestureCfg = currentConfig.toBubbleGestureConfig()
+                    recognizer.onDown(gestureCfg)
+                    if (gestureCfg.enabled &&
+                        (gestureCfg.longPressAction != BubbleGestureAction.NONE ||
+                            gestureCfg.veryLongPressAction != BubbleGestureAction.NONE)
+                    ) {
+                        startHoldVisualTick()
+                    }
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - downRawX
                     val dy = event.rawY - downRawY
+                    if (currentConfig.lockHudPosition) {
+                        if (!movedPastSlop && (abs(dx) > lockCancelSlopPx || abs(dy) > lockCancelSlopPx)) {
+                            movedPastSlop = true
+                            stopHoldVisualTick()
+                            recognizer.onDragCancelledGesture()
+                        }
+                        return@setOnTouchListener true
+                    }
                     if (!movedPastSlop && (abs(dx) > slopPx || abs(dy) > slopPx)) {
                         movedPastSlop = true
                         isDragging = true
-                        handler.removeCallbacks(longPressRunnable)
+                        stopHoldVisualTick()
+                        recognizer.onDragCancelledGesture()
                         stopBreathing()
                     }
                     if (movedPastSlop) {
@@ -463,9 +559,8 @@ class FloatingMicOverlayManager(
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    handler.removeCallbacks(longPressRunnable)
-                    val elapsed = System.currentTimeMillis() - downTime
-                    if (movedPastSlop) {
+                    stopHoldVisualTick()
+                    if (isDragging) {
                         isDragging = false
                         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
                         val (rx, ry) = ScreenBoundsCalculator.computePositionRatios(
@@ -483,18 +578,18 @@ class FloatingMicOverlayManager(
                                 savedYRatio = ry
                             )
                         }
+                        recognizer.onUp()
                         if (currentConn.connected && currentConn.isMuted) {
                             startBreathing()
                         }
-                    } else if (!longPressTriggered && elapsed < AppConstants.SHORT_TAP_MAX_MS) {
-                        if (currentConfig.enableHudClickActions) {
-                            connectionManager.toggleMuteFromHud()
-                        }
+                    } else {
+                        recognizer.onUp()
                     }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    handler.removeCallbacks(longPressRunnable)
+                    stopHoldVisualTick()
+                    recognizer.onCancel()
                     isDragging = false
                     if (currentConn.connected && currentConn.isMuted) {
                         startBreathing()
@@ -502,6 +597,32 @@ class FloatingMicOverlayManager(
                     true
                 }
                 else -> false
+            }
+        }
+    }
+
+    private fun executeBubbleAction(action: BubbleGestureAction) {
+        when (action) {
+            BubbleGestureAction.NONE -> Unit
+            BubbleGestureAction.TOGGLE_MUTE -> connectionManager.toggleMuteFromHud()
+            BubbleGestureAction.MUTE_ONLY -> connectionManager.setMuteFromHud(true)
+            BubbleGestureAction.UNMUTE_ONLY -> connectionManager.setMuteFromHud(false)
+            BubbleGestureAction.OPEN_QUICK_MENU -> showQuickMenu()
+            BubbleGestureAction.OPEN_SETTINGS -> openSettingsActivity()
+            BubbleGestureAction.TOGGLE_POINTER_INTERCEPT -> {
+                val updated = configStore.update { it.copy(enablePointerIntercept = !it.enablePointerIntercept) }
+                Toast.makeText(
+                    context,
+                    "Pointer Intercept: ${if (updated.enablePointerIntercept) "ON" else "OFF"}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            BubbleGestureAction.RECONNECT -> {
+                connectionManager.reconnectNow()
+                Toast.makeText(context, "Reconnecting PresenterSync...", Toast.LENGTH_SHORT).show()
+            }
+            BubbleGestureAction.HIDE_PILL -> {
+                configStore.update { it.copy(showIndicator = false) }
             }
         }
     }
@@ -573,8 +694,19 @@ class FloatingMicOverlayManager(
         addMenuRow(if (currentConn.isMuted) "Unmute Mic (Currently MUTED)" else "Mute Mic (Currently LIVE)") {
             connectionManager.toggleMuteFromHud()
         }
-        addMenuRow("Pointer Mute: ${if (currentConfig.enablePointerMute) "ON" else "OFF"}") {
+        addMenuRow("Pointer Intercept: ${if (currentConfig.enablePointerIntercept) "ON" else "OFF"}") {
+            val next = configStore.update { it.copy(enablePointerIntercept = !it.enablePointerIntercept) }
+            Toast.makeText(
+                context,
+                "Pointer Intercept: ${if (next.enablePointerIntercept) "ON" else "OFF"}",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+        addMenuRow("Pointer Mute Key: ${if (currentConfig.enablePointerMute) "ON" else "OFF"}") {
             configStore.update { it.copy(enablePointerMute = !it.enablePointerMute) }
+        }
+        addMenuRow("Lock Pill Position: ${if (currentConfig.lockHudPosition) "LOCKED" else "UNLOCKED"}") {
+            configStore.update { it.copy(lockHudPosition = !it.lockHudPosition) }
         }
         addMenuRow("Show Text Label: ${if (currentConfig.showText) "ON" else "OFF"}") {
             configStore.update { it.copy(showText = !it.showText) }
@@ -591,12 +723,27 @@ class FloatingMicOverlayManager(
 
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
         val maxMenuW = (bounds.width - (16 * density).roundToInt()).coerceAtLeast((180 * density).roundToInt())
-        val menuW = (240 * density).roundToInt().coerceAtMost(maxMenuW)
+        val menuW = (248 * density).roundToInt().coerceAtMost(maxMenuW)
         container.measure(
             View.MeasureSpec.makeMeasureSpec(menuW, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         )
-        val menuH = container.measuredHeight.coerceAtLeast((180 * density).roundToInt())
+        val maxMenuH = (bounds.height - (16 * density).roundToInt()).coerceAtLeast((160 * density).roundToInt())
+        val menuH = container.measuredHeight.coerceIn((160 * density).roundToInt().coerceAtMost(maxMenuH), maxMenuH)
+
+        val outerBg = container.background
+        container.background = null
+        val menuRoot = ScrollView(context).apply {
+            isVerticalScrollBarEnabled = true
+            background = outerBg
+            addView(
+                container,
+                android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
 
         val (anchor, pillH) = currentAnchorForToast()
         val gap = (8 * density).roundToInt()
@@ -619,7 +766,7 @@ class FloatingMicOverlayManager(
             y = targetY
         }
 
-        container.setOnTouchListener { _, ev ->
+        menuRoot.setOnTouchListener { _, ev ->
             if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) {
                 dismissQuickMenu()
                 true
@@ -629,8 +776,8 @@ class FloatingMicOverlayManager(
         }
 
         runCatching {
-            windowManager.addView(container, menuParams)
-            quickMenuView = container
+            windowManager.addView(menuRoot, menuParams)
+            quickMenuView = menuRoot
         }
     }
 

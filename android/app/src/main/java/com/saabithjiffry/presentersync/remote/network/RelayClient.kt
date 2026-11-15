@@ -111,6 +111,10 @@ class RelayClient(
         return publishPacket("toggle_mute", "1")
     }
 
+    fun sendSetMute(isMuted: Boolean): Boolean {
+        return publishPacket("set_mute", if (isMuted) "1" else "0")
+    }
+
     private fun publishPacket(cmd: String, data: String): Boolean {
         if (topic.isEmpty() || closed.get()) return false
         val pktStr = RelayCrypto.formatRelayPacket("remote", cmd, data, authToken)
