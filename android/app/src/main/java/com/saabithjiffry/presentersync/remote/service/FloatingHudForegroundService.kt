@@ -3,14 +3,18 @@ package com.saabithjiffry.presentersync.remote.service
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
@@ -28,12 +32,21 @@ class FloatingHudForegroundService : LifecycleService() {
     private lateinit var app: PresenterSyncRemoteApp
     private lateinit var overlayManager: FloatingMicOverlayManager
     private var wifiLock: WifiManager.WifiLock? = null
+    private var wakeReceiverRegistered = false
+
+    private val wakeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            overlayManager.onDisplayConfigurationChanged()
+            app.connectionManager.verifyOrReconnect()
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         app = application as PresenterSyncRemoteApp
         overlayManager = FloatingMicOverlayManager(this, app.configStore, app.connectionManager)
         acquireWifiLock()
+        registerWakeReceiver()
         promoteToForeground(buildNotification(app.configStore.current, app.connectionManager.uiState.value))
 
         app.connectionManager.start()
@@ -83,11 +96,46 @@ class FloatingHudForegroundService : LifecycleService() {
         stopSelf()
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::overlayManager.isInitialized) {
+            overlayManager.onDisplayConfigurationChanged()
+        }
+    }
+
     override fun onDestroy() {
+        unregisterWakeReceiver()
         overlayManager.hide()
         app.connectionManager.stop()
         releaseWifiLock()
         super.onDestroy()
+    }
+
+    private fun registerWakeReceiver() {
+        if (wakeReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        try {
+            ContextCompat.registerReceiver(
+                this,
+                wakeReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            wakeReceiverRegistered = true
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun unregisterWakeReceiver() {
+        if (!wakeReceiverRegistered) return
+        try {
+            unregisterReceiver(wakeReceiver)
+        } catch (_: Exception) {
+        }
+        wakeReceiverRegistered = false
     }
 
     override fun onBind(intent: Intent): IBinder? {
