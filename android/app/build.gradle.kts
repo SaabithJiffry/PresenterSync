@@ -8,14 +8,30 @@ plugins {
 val releaseKeystoreProps = Properties()
 val userKeystorePropsFile = file("${System.getProperty("user.home")}/.presentersync/keystore.properties")
 val localKeystorePropsFile = rootProject.file("keystore.properties")
-when {
-    localKeystorePropsFile.exists() -> localKeystorePropsFile.inputStream().use { releaseKeystoreProps.load(it) }
-    userKeystorePropsFile.exists() -> userKeystorePropsFile.inputStream().use { releaseKeystoreProps.load(it) }
+val activePropsFile = when {
+    localKeystorePropsFile.exists() -> {
+        localKeystorePropsFile.inputStream().use { releaseKeystoreProps.load(it) }
+        localKeystorePropsFile
+    }
+    userKeystorePropsFile.exists() -> {
+        userKeystorePropsFile.inputStream().use { releaseKeystoreProps.load(it) }
+        userKeystorePropsFile
+    }
+    else -> null
 }
 
-val envStoreFile = System.getenv("KEYSTORE_FILE")
-val hasReleaseSigning = (!envStoreFile.isNullOrBlank() && file(envStoreFile).exists()) ||
-    (!releaseKeystoreProps.getProperty("storeFile").isNullOrBlank() && file(releaseKeystoreProps.getProperty("storeFile")).exists())
+fun resolveKeystoreCandidate(pathStr: String?): File? {
+    val cleaned = pathStr?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val direct = file(cleaned)
+    if (direct.exists()) return direct
+    activePropsFile?.parentFile?.resolve(cleaned)?.takeIf { it.exists() }?.let { return it }
+    rootProject.file(cleaned).takeIf { it.exists() }?.let { return it }
+    return null
+}
+
+val resolvedKeystoreFile = resolveKeystoreCandidate(System.getenv("KEYSTORE_FILE"))
+    ?: resolveKeystoreCandidate(releaseKeystoreProps.getProperty("storeFile"))
+val hasReleaseSigning = resolvedKeystoreFile != null
 val requireReleaseSigning = (findProperty("requireReleaseSigning")?.toString()?.toBoolean() == true)
 if (requireReleaseSigning && !hasReleaseSigning) {
     throw GradleException(
@@ -31,8 +47,8 @@ android {
         applicationId = "com.saabithjiffry.presentersync.remote"
         minSdk = 26
         targetSdk = 34
-        versionCode = 50400
-        versionName = "5.4.0"
+        versionCode = 60000
+        versionName = "6.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -43,11 +59,13 @@ android {
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
-                val sf = envStoreFile?.takeIf { it.isNotBlank() } ?: releaseKeystoreProps.getProperty("storeFile")
-                storeFile = file(sf)
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: releaseKeystoreProps.getProperty("storePassword")
-                keyAlias = System.getenv("KEY_ALIAS") ?: releaseKeystoreProps.getProperty("keyAlias")
-                keyPassword = System.getenv("KEY_PASSWORD") ?: releaseKeystoreProps.getProperty("keyPassword")
+                storeFile = resolvedKeystoreFile!!
+                storePassword = (System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+                    ?: releaseKeystoreProps.getProperty("storePassword")?.trim())
+                keyAlias = (System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() }
+                    ?: releaseKeystoreProps.getProperty("keyAlias")?.trim())
+                keyPassword = (System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+                    ?: releaseKeystoreProps.getProperty("keyPassword")?.trim())
                 enableV1Signing = false
                 enableV2Signing = true
                 enableV3Signing = true
