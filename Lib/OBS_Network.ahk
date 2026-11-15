@@ -479,6 +479,54 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
     }
 }
 
+IsLoopbackHost(host) {
+    h := StrLower(Trim(String(host), " []"))
+    return (h = "127.0.0.1" || h = "localhost" || h = "::1")
+}
+
+; Fast non-blocking (<1ms) local TCP listener check so closed localhost OBS/Host ports do not freeze the AHK UI thread for 2s in WinHttpSendRequest.
+; Fails open (returns true) on unexpected Win32 API errors so non-standard network stacks remain functional.
+IsLocalTcpPortListening(port) {
+    try targetPort := Integer(port)
+    catch
+        return true
+    if (targetPort < 1 || targetPort > 65535)
+        return false
+    v4Checked := false
+    for af in [2, 23] {
+        sz := 0
+        rc := DllCall("iphlpapi\GetExtendedTcpTable", "Ptr", 0, "UInt*", &sz, "Int", 0, "UInt", af, "Int", 3, "UInt", 0, "UInt")
+        if (rc == 232 || (rc == 0 && sz <= 4)) {
+            if (af == 2)
+                v4Checked := true
+            continue
+        }
+        if (af == 23 && rc != 122)
+            continue
+        if (rc != 122 || sz < 4)
+            return true
+        buf := Buffer(sz, 0)
+        rc := DllCall("iphlpapi\GetExtendedTcpTable", "Ptr", buf.Ptr, "UInt*", &sz, "Int", 0, "UInt", af, "Int", 3, "UInt", 0, "UInt")
+        if (rc != 0)
+            return (af == 2) ? true : (v4Checked ? false : true)
+        if (af == 2)
+            v4Checked := true
+        cnt := NumGet(buf, 0, "UInt")
+        rowSize := (af == 2) ? 24 : 56
+        portOff := (af == 2) ? 8 : 20
+        if (buf.Size < 4 + cnt * rowSize)
+            return true
+        Loop cnt {
+            base := 4 + (A_Index - 1) * rowSize
+            rawPort := NumGet(buf, base + portOff, "UInt")
+            hostPort := ((rawPort & 0xFF) << 8) | ((rawPort >> 8) & 0xFF)
+            if (hostPort == targetPort)
+                return true
+        }
+    }
+    return false
+}
+
 SendCloseRemoteSignal(cfg, state) {
     sentLan := false
     sentWan := false
@@ -486,7 +534,7 @@ SendCloseRemoteSignal(cfg, state) {
     ; 1. Dispatch over active OBS WebSocket (LAN Mode)
     if (IsObject(state) && state.obsConnected && IsObject(state.obsWs)) {
         sentLan := SendObsBroadcastCloseRemote(state.obsWs)
-    } else {
+    } else if (IsLocalTcpPortListening(4455)) {
         ; One-shot loopback connect to local OBS 127.0.0.1:4455 in case Host WS Sync is currently off
         try {
             tempBox := {ws: ""}
@@ -545,6 +593,12 @@ ConnectToOBS(cfg, state) {
     if IsObject(state.obsWs) {
         try state.obsWs.shutdown()
         state.obsWs := ""
+    }
+
+    if (!IsLocalTcpPortListening(4455)) {
+        if (cfg.EnableWS)
+            SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
+        return
     }
 
     try {

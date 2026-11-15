@@ -1,5 +1,5 @@
 """
-End-to-End Live WebSocket Integration Test for PresenterSync v4.0.1
+End-to-End Live WebSocket Integration Test for PresenterSync v4.1.0
 Tests the real production handlers from Lib/OBS_Network.ahk, PresenterSync.ahk,
 and PresenterSync_Remote.ahk over live localhost RFC 6455 WebSocket v5 servers.
 """
@@ -348,6 +348,20 @@ Assert(name, cond, detail := "") {{
     }}
     FileAppend(msgLine "`n", "{result_path}", "UTF-8")
 }}
+
+E2EFailFast(exc, mode) {{
+    global FailCount
+    FailCount += 1
+    FileAppend(Format("[FAIL] Unhandled exception ({{}}) in {{}} ({{}}:{{}}): {{}}`n", mode, exc.What, exc.File, exc.Line, exc.Message), "{result_path}", "UTF-8")
+    ExitApp(1)
+}}
+OnError(E2EFailFast)
+
+HardE2EWatchdog() {{
+    FileAppend("[FAIL] Hard E2E watchdog timeout reached (13s)`n", "{result_path}", "UTF-8")
+    ExitApp(2)
+}}
+SetTimer HardE2EWatchdog, -13000
 
 FlushAndBail() {{
     if WinExist("WebSocket Setup")
@@ -807,6 +821,25 @@ remConnectHits := SearchHelpEntries("connect", "All", true)
 Assert("Remote Help diagram redraws live on preset change & 'connect' search matches >= 4 entries",
     liveRefreshOk && remConnectHits.Length >= 4,
     Format("liveOk={{}} hits={{}}", liveRefreshOk, remConnectHits.Length))
+
+; Verify IsLocalTcpPortListening & fast non-blocking LAN loopback failover against dead localhost port
+tTcp0 := A_TickCount
+authOpen := IsLocalTcpPortListening({auth_port})
+failFastState := RemoteState(rCfg)
+failFastState.MicGui := ""
+failFastCfg := RemoteConfig("{remote_ini}")
+failFastCfg.NetworkMode := "LAN"
+failFastCfg.EnableRelayFallback := false
+failFastCfg.HostAddress := "127.0.0.1"
+failFastCfg.HostPort := "59997"
+failFastState.candidates := ParseCandidateEndpoints(failFastCfg.HostAddress, failFastCfg.HostPort)
+failFastState.candidateIndex := 1
+ConnectToRemoteOBS(failFastCfg, failFastState)
+SetTimer failFastState.reconnectTimerFn, 0
+tcpElapsedMs := A_TickCount - tTcp0
+Assert("IsLocalTcpPortListening detects open server & ConnectToRemoteOBS skips closed loopback in < 200ms",
+    authOpen && !IsLocalTcpPortListening(59997) && !failFastState.obsConnected && tcpElapsedMs < 200,
+    Format("authOpen={{}} dt={{}}ms", authOpen, tcpElapsedMs))
 
 SetTimer dualRemState.reconnectTimerFn, 0
 SetTimer dualRemState.heartbeatTimerFn, 0

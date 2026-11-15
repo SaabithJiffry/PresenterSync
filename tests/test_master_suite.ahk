@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Master Test Suite: test_master_suite.ahk
-; Description: End-to-End automated live verification of PresenterSync v4.0.1
-;              and PresenterSync Remote v4.0.1 across all subsystems.
+; Description: End-to-End automated live verification of PresenterSync v4.1.0
+;              and PresenterSync Remote v4.1.0 across all subsystems.
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -32,6 +32,16 @@ TestFailFastOnError(exc, mode) {
     ExitApp(1)
 }
 OnError(TestFailFastOnError)
+
+MasterWatchdogAbort() {
+    global results, FailCount, PassCount
+    FailCount += 1
+    results.Push("[FAIL] Master test suite watchdog timeout reached (45s)")
+    try HudSnake.Stop()
+    try FileAppend("`n=== WATCHDOG ABORT AFTER 45s (Pass=" PassCount ", Fail=" FailCount ") ===`n" results[results.Length] "`n", A_ScriptDir "\master_audit_results.log")
+    ExitApp(2)
+}
+SetTimer(MasterWatchdogAbort, -45000)
 
 Assert(testName, condition, detail := "") {
     global PassCount, FailCount, results
@@ -240,13 +250,13 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION updated to 4.0.1", UIConstants.APP_VERSION == "4.0.1")
+Assert("APP_VERSION updated to 4.1.0", UIConstants.APP_VERSION == "4.1.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
 summaryTxt := BuildLiveStatusSummary(cfg)
-Assert("BuildLiveStatusSummary includes v4.0.1 and Remote Host",
-    InStr(summaryTxt, "v4.0.1") && InStr(summaryTxt, "Remote Companion Host:"))
+Assert("BuildLiveStatusSummary includes v4.1.0 and Remote Host",
+    InStr(summaryTxt, "v4.1.0") && InStr(summaryTxt, "Remote Companion Host:"))
 
 ; ==============================================================================
 ; SECTION 7: JSON ESCAPING, WS HELPERS, LAYOUT & PROMPT REGRESSIONS
@@ -1216,7 +1226,8 @@ Assert("SetStartWithWindows toggles back OFF cleanly",
     cfgSys.StartWithWindows == false && Config(testIni).StartWithWindows == false)
 
 Assert("CompareSemVer handles major/minor/patch and v-prefix correctly",
-    CompareSemVer("v4.0.1", "4.0.0") == 1
+    CompareSemVer("v4.1.0", "4.0.1") == 1
+    && CompareSemVer("v4.0.1", "4.0.0") == 1
     && CompareSemVer("v4.0.0", "3.2.0") == 1
     && CompareSemVer("v3.2.0", "3.1.1") == 1
     && CompareSemVer("v3.1.1", "3.1.0") == 1
@@ -1896,6 +1907,33 @@ Assert("v4.0.1 Snake remains secret in Tray/CC/Remote, bound to !^+s in Primary 
     noUiMenuLeak && secretHkWired && helpPrimHits.Length == 1 && helpPrimHits[1].id == "feat-easter-snake" && helpRemHits.Length == 0,
     Format("noLeak={} hkWired={} primHits={} remHits={}", noUiMenuLeak, secretHkWired, helpPrimHits.Length, helpRemHits.Length))
 
+; ==============================================================================
+; SECTION 26: v4.1.0 AUDIT FIXES (SNAKE POINTER GUARD & NON-BLOCKING LOOPBACK)
+; ==============================================================================
+checkPtrLineOk := RegExMatch(primSrc, "CheckPointerEnable\([^\)]*\)\s*\{\s*return\s+!HudSnake\.IsActive\s*&&") != 0
+loopbackHelpersOk := IsLoopbackHost("127.0.0.1") && IsLoopbackHost(" LOCALHOST ") && IsLoopbackHost("[::1]") && !IsLoopbackHost("192.168.1.50")
+tProbe0 := A_TickCount
+deadPortOk := !IsLocalTcpPortListening(59998) && !IsLocalTcpPortListening(0) && !IsLocalTcpPortListening(70000) && IsLocalTcpPortListening("abc")
+probeElapsedMs := A_TickCount - tProbe0
+fastLoopbackSkipOk := true
+loopbackDt := 0
+if (!IsLocalTcpPortListening(4455)) {
+    cfgNoObs := Config(testIni)
+    cfgNoObs.EnableWS := true
+    stNoObs := OverlayState(cfgNoObs)
+    stNoObs.obsTimerFn := (*) => 0
+    tConn0 := A_TickCount
+    ConnectToOBS(cfgNoObs, stNoObs)
+    loopbackDt := A_TickCount - tConn0
+    SetTimer(stNoObs.obsTimerFn, 0)
+    fastLoopbackSkipOk := (!stNoObs.obsConnected && loopbackDt < 250)
+}
+AudioMeter.Reset()
+upd410 := CheckForUpdates("4.1.0", '{"tag_name":"v4.1.0","html_url":"https://github.com/SaabithJiffry/PresenterSync/releases/tag/v4.1.0"}', true)
+Assert("v4.1.0 Audit: Snake blocks HwMute pointer trigger, fast loopback probe avoids 2s WinHTTP stall & Reset works",
+    checkPtrLineOk && loopbackHelpersOk && deadPortOk && probeElapsedMs < 150 && fastLoopbackSkipOk && upd410.status == "up_to_date",
+    Format("ptr={} lb={} dead={} dt={}ms connOk={}({}ms) upd={}", checkPtrLineOk, loopbackHelpersOk, deadPortOk, probeElapsedMs, fastLoopbackSkipOk, loopbackDt, upd410.status))
+
 ; Cleanup test ini
 if FileExist(testIni)
     FileDelete(testIni)
@@ -1903,7 +1941,7 @@ if FileExist(testIni)
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT
 ; ==============================================================================
-report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.0.1) ===`n"
+report := "=== PRESENTER SYNC MASTER TEST REPORT (v4.1.0) ===`n"
 report .= "Total Tests Executed: " (PassCount + FailCount) "`n"
 report .= "Passed: " PassCount "`n"
 report .= "Failed: " FailCount "`n"

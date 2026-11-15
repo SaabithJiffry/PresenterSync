@@ -136,17 +136,36 @@ OnClose(ws, status, reason) {
 }
 
 FinishTest() {
-    global stepResults
+    global stepResults, state
+    if IsObject(state.obsWs) {
+        try state.obsWs.shutdown()
+        state.obsWs := ""
+    }
     for res in stepResults
         FileAppend(res "`n", "*")
     ExitApp(0)
 }
 
 TimeoutAbort() {
+    global state
+    if IsObject(state.obsWs) {
+        try state.obsWs.shutdown()
+        state.obsWs := ""
+    }
     FileAppend("[FAIL] Live socket test timed out after 5 seconds`n", "*")
-    ExitApp(1)
+    ExitApp(2)
 }
 
+SocketClientFailFast(exc, mode) {
+    global state
+    if IsObject(state.obsWs) {
+        try state.obsWs.shutdown()
+        state.obsWs := ""
+    }
+    FileAppend(Format("[FAIL] Unhandled exception ({}) in {} ({}:{}): {}`n", mode, exc.What, exc.File, exc.Line, exc.Message), "*")
+    ExitApp(1)
+}
+OnError(SocketClientFailFast)
 SetTimer TimeoutAbort, -5000
 
 try {
