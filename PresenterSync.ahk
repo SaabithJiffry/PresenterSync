@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 3.2.0
+; Version: 4.0.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 3.2.0.0
+;@Ahk2Exe-SetVersion 4.0.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -21,9 +21,10 @@ SetKeyDelay 50, 50
 #Include <Gdip>
 #Include <OBS_Network>
 #Include <GUI_Config>
+#Include <HudSnakeGame>
 
 Gdip.Startup()
-OnExit((*) => (UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => (HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\PresenterSync.ico")
@@ -613,6 +614,11 @@ BindSystemHotkeys(cfg, state) {
         try Hotkey(cfg.ExitHotkey, (*) => ExitTrayApp(), "On")
         BoundSystemHotkeys.Push(cfg.ExitHotkey)
     }
+    ; Secret Easter Egg hotkey (intentionally undocumented in Tray / Control Center)
+    try {
+        Hotkey("!^+s", (*) => HudSnake.Toggle(cfg, state), "On")
+        BoundSystemHotkeys.Push("!^+s")
+    }
 }
 BindSystemHotkeys(AppConfig, AppState)
 
@@ -622,7 +628,7 @@ RemoveToolTip() {
 
 ; --- POWERPOINT CONTROLS (OMNI-CATCH) ---
 IsPptInterceptActive(cfg) {
-    return cfg.EnablePPT && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
+    return cfg.EnablePPT && !HudSnake.IsActive && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
 IsPptKeyNotMute(cfg, pptKey) {
