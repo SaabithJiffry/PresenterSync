@@ -953,11 +953,12 @@ class HudSnake {
         isBonus := (f.kind = "bonus")
 
         ; Minimal HUD pill proportions matching _GdipDrawMiniPill / RenderPill + user SleekCorners & Opacity
-        baseSz := Float(this._cell) * (isBonus ? 0.78 : 0.70)
+        ; Special bonus fruit renders 2x wider/taller (~4x area) so its timed reward stands out cleanly
+        baseSz := Float(this._cell) * (isBonus ? 1.42 : 0.70)
         sz := baseSz
         foodX := cellX - sz / 2.0
         foodY := cellY - sz / 2.0
-        radius := style.sleek ? (sz / 2.0) : Min(7.5 * this._dpi, sz * 0.34)
+        radius := style.sleek ? (sz / 2.0) : Min((isBonus ? 13.0 : 7.5) * this._dpi, sz * 0.34)
 
         glassAlpha := style.opacity
         if (isBonus) {
@@ -980,6 +981,21 @@ class HudSnake {
         if (!pPath)
             return
 
+        if (isBonus) {
+            ; Subtle matte outer halo ring to distinguish bonus fruit gently on busy slides/wallpapers
+            haloPad := 2.4 * this._dpi
+            haloRad := style.sleek ? ((sz + haloPad * 2.0) / 2.0) : (radius + haloPad * 0.6)
+            if (pHaloPath := Gdip.CreateRoundedRectPath(foodX - haloPad, foodY - haloPad, sz + haloPad * 2.0, sz + haloPad * 2.0, haloRad)) {
+                pHaloPen := 0
+                DllCall("gdiplus\GdipCreatePen1", "UInt", Gdip.HexToArgb(rimHex, Max(75, Round(glassAlpha * 0.45))), "Float", Float(1.6 * this._dpi), "Int", 2, "Ptr*", &pHaloPen)
+                if (pHaloPen) {
+                    DllCall("gdiplus\GdipDrawPath", "Ptr", pGfx, "Ptr", pHaloPen, "Ptr", pHaloPath)
+                    DllCall("gdiplus\GdipDeletePen", "Ptr", pHaloPen)
+                }
+                DllCall("gdiplus\GdipDeletePath", "Ptr", pHaloPath)
+            }
+        }
+
         pBrush := 0
         DllCall("gdiplus\GdipCreateSolidFill", "UInt", fillArgb, "Ptr*", &pBrush)
         if (pBrush) {
@@ -987,16 +1003,16 @@ class HudSnake {
             DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
         }
 
+        barH := isBonus ? Max(3.2, 4.4 * this._dpi) : 0.0
         if (isBonus && f.ttlMs > 0) {
             ; HUD-consistent bottom progress bar clipped inside the rounded pill (mirrors LIVE VU meter bar!)
             remFrac := Max(0.0, 1.0 - (nowUs - f.bornUs) / (Float(f.ttlMs) * 1000.0))
             if (remFrac > 0.01) {
                 DllCall("gdiplus\GdipSetClipPath", "Ptr", pGfx, "Ptr", pPath, "Int", 0)
-                barH := Max(2.2, 3.0 * this._dpi)
                 pBar := 0
                 DllCall("gdiplus\GdipCreateSolidFill", "UInt", 0xEBFFFFFF, "Ptr*", &pBar)
                 if (pBar) {
-                    DllCall("gdiplus\GdipFillRectangle", "Ptr", pGfx, "Ptr", pBar, "Float", Float(foodX + 1.0), "Float", Float(foodY + sz - barH - 0.5), "Float", Max(2.0, Float(sz - 2.0) * remFrac), "Float", Float(barH))
+                    DllCall("gdiplus\GdipFillRectangle", "Ptr", pGfx, "Ptr", pBar, "Float", Float(foodX + 1.0), "Float", Float(foodY + sz - barH - 0.5), "Float", Max(3.0, Float(sz - 2.0) * remFrac), "Float", Float(barH))
                     DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBar)
                 }
                 DllCall("gdiplus\GdipResetClip", "Ptr", pGfx)
@@ -1004,7 +1020,7 @@ class HudSnake {
         }
 
         pPen := 0
-        DllCall("gdiplus\GdipCreatePen1", "UInt", brdArgb, "Float", Float(1.4 * this._dpi), "Int", 2, "Ptr*", &pPen)
+        DllCall("gdiplus\GdipCreatePen1", "UInt", brdArgb, "Float", Float((isBonus ? 1.8 : 1.4) * this._dpi), "Int", 2, "Ptr*", &pPen)
         if (pPen) {
             DllCall("gdiplus\GdipDrawPath", "Ptr", pGfx, "Ptr", pPen, "Ptr", pPath)
             DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
@@ -1014,7 +1030,7 @@ class HudSnake {
         ; Minimal flat interior indicator matching HUD glyph clarity (no 3D highlights)
         pipArgb := Gdip.HexToArgb(pipHex, Min(245, Max(180, glassAlpha)))
         if (isBonus) {
-            Gdip.DrawText(pGfx, Chr(0x2605), "Segoe UI Symbol", Max(8.0, 9.5 * this._dpi), 1, pipArgb, foodX, foodY - 1.0, sz, sz - 2.0, 1, 1, 0, true)
+            Gdip.DrawText(pGfx, Chr(0x2605), "Segoe UI Symbol", Max(14.0, sz * 0.44), 1, pipArgb, foodX, foodY - 1.0 * this._dpi, sz, sz - barH - 1.0 * this._dpi, 1, 1, 0, true)
         } else {
             dotSz := Max(4.0, sz * 0.28)
             this._FillRoundedBox(pGfx, cellX - dotSz / 2.0, cellY - dotSz / 2.0, dotSz, dotSz, dotSz * 0.35, pipArgb, 0, 0)
@@ -1029,8 +1045,9 @@ class HudSnake {
                 t := ageMs / 240.0
                 cellX := this._gridOffX + (eff.col + 0.5) * this._cell
                 cellY := this._gridOffY + (eff.row + 0.5) * this._cell
-                sz := this._cell * (0.68 + t * 0.38)
-                rad := Min(7.5 * this._dpi, sz * 0.38)
+                startScale := (eff.kind = "bonus") ? 1.42 : 0.68
+                sz := this._cell * (startScale + t * 0.44)
+                rad := Min((eff.kind = "bonus" ? 14.0 : 7.5) * this._dpi, sz * 0.38)
                 alpha := Round((1.0 - t) * 180)
                 colHex := (eff.kind = "bonus") ? snakePal.recPaused : snakePal.live
                 this._FillRoundedBox(pGfx, cellX - sz / 2.0, cellY - sz / 2.0, sz, sz, rad, 0x00000000, Gdip.HexToArgb(colHex, alpha), 1.4 * this._dpi)
@@ -1384,10 +1401,7 @@ class HudSnake {
     static _DrawScoreboard(pGfx, snakePal, isDark) {
         style := this._GetHudStyle()
         dpi := this._dpi
-        sbW := Min(Float(Round(624 * dpi)), Float(this._W - 32))
-        sbH := Float(Round(38 * dpi))
-        sbX := (this._W - sbW) / 2.0
-        sbY := Float(Round(8 * dpi))
+        sbH := Float(Round(40 * dpi))
 
         ; Windows 11 Explorer Fluent frosted surface + PresenterSync HUD pill chrome
         surfAlpha := Max(170, Min(246, style.opacity + 38))
@@ -1395,13 +1409,10 @@ class HudSnake {
         bgArgb := isDark ? ((surfAlpha << 24) | 0x2C2C2C) : ((Min(250, surfAlpha + 6) << 24) | 0xFFFFFF)
         brdArgb := isDark ? 0xFF454545 : 0xFFDCDCDC
         txtArgb := isDark ? 0xFFFFFFFF : 0xFF1F2328
-        mutedArgb := isDark ? 0xFFC5C5C5 : 0xFF5F5F5F
         divArgb := isDark ? 0xFF454545 : 0xFFE2E2E2
         sbRad := style.sleek ? (sbH / 2.0) : Min(8.0 * dpi, sbH / 2.0)
 
-        this._FillRoundedBox(pGfx, sbX, sbY, sbW, sbH, sbRad, bgArgb, brdArgb, 1.2)
-
-        ; Left PresenterSync HUD Status Pill (matches live HUD pill fill, corner style, opacity & contrast-safe MonoIcon)
+        ; Left PresenterSync HUD Status Pill (dynamically measured & centered internally)
         if (this.Phase = "gameover") {
             pillHex := snakePal.muted, pillMonoHex := snakePal.iconMuted, pillGlyph := Chr(0xE7BA)
         } else if (this.Phase = "paused") {
@@ -1409,22 +1420,18 @@ class HudSnake {
         } else {
             pillHex := snakePal.live, pillMonoHex := snakePal.iconLive, pillGlyph := Chr(0xE720)
         }
-        badgeW := Float(Round(100 * dpi))
+        badgeTitle := "HUD SNAKE"
+        badgeLblW := Float(Gdip.MeasureTextWidth(badgeTitle, "Segoe UI", 8.6 * dpi, 1))
+        icW := 13.0 * dpi
+        icGap := 5.0 * dpi
+        badgeInnerW := icW + icGap + badgeLblW
+        badgeW := Max(Float(Round(104 * dpi)), badgeInnerW + 22.0 * dpi)
         badgeH := sbH - 10.0 * dpi
-        badgeX := sbX + 5.0 * dpi
-        badgeY := sbY + 5.0 * dpi
-        badgeRad := style.sleek ? (badgeH / 2.0) : Min(6.0 * dpi, badgeH / 2.0)
-        badgeFill := Gdip.HexToArgb(pillHex, pillAlpha)
-        badgeRim := Gdip.HexToArgb(this._LightenHex(pillHex, 0.18), Min(255, pillAlpha + 25))
-        badgeTxtHex := this._PickBadgeContentHex(pillHex, pillMonoHex, style.mono, isDark, pillAlpha)
-        badgeTxt := Gdip.HexToArgb(badgeTxtHex, 255)
-        iconFont := (IsObject(this._state) && this._state.HasOwnProp("IconFont")) ? this._state.IconFont : "Segoe MDL2 Assets"
 
-        this._FillRoundedBox(pGfx, badgeX, badgeY, badgeW, badgeH, badgeRad, badgeFill, badgeRim, 1.2)
-        Gdip.DrawText(pGfx, pillGlyph, iconFont, 8.8 * dpi, 0, badgeTxt, badgeX + 6 * dpi, badgeY, 15 * dpi, badgeH, 1, 1, 0, true)
-        Gdip.DrawText(pGfx, "SNAKE", "Segoe UI", 8.8 * dpi, 1, badgeTxt, badgeX + 23 * dpi, badgeY, badgeW - 27 * dpi, badgeH, 0, 1, 0, true)
-
-        ; Right-side Win11 keycap hints measured dynamically so nothing ever clips
+        ; Right-side Edge chip + Win11 keycap hints measured dynamically
+        edgeLabel := this._edgeWrap ? "WRAP" : "WALLS"
+        edgeW := Max(Float(Round(58 * dpi)), Float(Gdip.MeasureTextWidth(edgeLabel, "Segoe UI", 7.8 * dpi, 1) + 20.0 * dpi))
+        edgeH := Float(Round(22 * dpi))
         hintItems := [
             { k: "P", l: "Pause" },
             { k: "E", l: "Edge" },
@@ -1436,9 +1443,34 @@ class HudSnake {
             aw := Float(Gdip.MeasureTextWidth(it.l, "Segoe UI", 8.0 * dpi, 0) + 6.0 * dpi)
             hintsTotalW += kw + 4.0 * dpi + aw + (hi < hintItems.Length ? 7.0 * dpi : 0.0)
         }
+
+        speedMult := Format("{:.1f}x", 132.0 / Max(68, this._stepMs))
+        statsText := Format("Score {}   ·   Best {}   ·   Len {}   ·   {}", this._score, this._highScore, this._snake.Length, speedMult)
+        statsTextW := Float(Gdip.MeasureTextWidth(statsText, "Segoe UI", 9.0 * dpi, 1))
+        rightClusterW := edgeW + 10.0 * dpi + 1.0 + 9.0 * dpi + hintsTotalW + 10.0 * dpi
+        minSbW := 5.0 * dpi + badgeW + 16.0 * dpi + statsTextW + 16.0 * dpi + rightClusterW
+        sbW := Min(Float(this._W - 32), Max(Float(Round(640 * dpi)), minSbW))
+        sbX := (this._W - sbW) / 2.0
+        sbY := Float(Round(8 * dpi))
+
+        this._FillRoundedBox(pGfx, sbX, sbY, sbW, sbH, sbRad, bgArgb, brdArgb, 1.2)
+
+        badgeX := sbX + 5.0 * dpi
+        badgeY := sbY + 5.0 * dpi
+        badgeRad := style.sleek ? (badgeH / 2.0) : Min(6.0 * dpi, badgeH / 2.0)
+        badgeFill := Gdip.HexToArgb(pillHex, pillAlpha)
+        badgeRim := Gdip.HexToArgb(this._LightenHex(pillHex, 0.18), Min(255, pillAlpha + 25))
+        badgeTxtHex := this._PickBadgeContentHex(pillHex, pillMonoHex, style.mono, isDark, pillAlpha)
+        badgeTxt := Gdip.HexToArgb(badgeTxtHex, 255)
+        iconFont := (IsObject(this._state) && this._state.HasOwnProp("IconFont")) ? this._state.IconFont : "Segoe MDL2 Assets"
+
+        this._FillRoundedBox(pGfx, badgeX, badgeY, badgeW, badgeH, badgeRad, badgeFill, badgeRim, 1.2)
+        cX := badgeX + (badgeW - badgeInnerW) / 2.0
+        Gdip.DrawText(pGfx, pillGlyph, iconFont, 8.8 * dpi, 0, badgeTxt, cX, badgeY, icW, badgeH, 1, 1, 0, true)
+        Gdip.DrawText(pGfx, badgeTitle, "Segoe UI", 8.6 * dpi, 1, badgeTxt, cX + icW + icGap, badgeY, badgeLblW + 4.0 * dpi, badgeH, 0, 1, 0, true)
+
         hx := sbX + sbW - hintsTotalW - 10.0 * dpi
         divX := hx - 9.0 * dpi
-
         pDiv := 0
         DllCall("gdiplus\GdipCreatePen1", "UInt", divArgb, "Float", Float(1.0), "Int", 2, "Ptr*", &pDiv)
         if (pDiv) {
@@ -1452,9 +1484,6 @@ class HudSnake {
             curHx += usedW + 7.0 * dpi
         }
 
-        ; Edge Mode mini HUD pill chip right before the divider
-        edgeW := Float(Round(58 * dpi))
-        edgeH := Float(Round(22 * dpi))
         edgeX := divX - edgeW - 10.0 * dpi
         edgeY := sbY + (sbH - edgeH) / 2.0
         edgeRad := style.sleek ? (edgeH / 2.0) : Min(5.5 * dpi, edgeH / 2.0)
@@ -1462,38 +1491,29 @@ class HudSnake {
             edgeFill := Gdip.HexToArgb(isDark ? "1A365D" : "EBF5FF", 235)
             edgeBrd := Gdip.HexToArgb(isDark ? "60CDFF" : "0067C0", 255)
             edgeTxt := Gdip.HexToArgb(isDark ? "60CDFF" : "0067C0", 255)
-            edgeLabel := "WRAP"
         } else {
             edgeFill := isDark ? 0xFF333333 : 0xFFF3F3F3
             edgeBrd := isDark ? 0xFF565656 : 0xFFC8C8C8
             edgeTxt := txtArgb
-            edgeLabel := "WALLS"
         }
         this._FillRoundedBox(pGfx, edgeX, edgeY, edgeW, edgeH, edgeRad, edgeFill, edgeBrd, 1.1)
         Gdip.DrawText(pGfx, edgeLabel, "Segoe UI", 7.8 * dpi, 1, edgeTxt, edgeX, edgeY, edgeW, edgeH, 1, 1, 0, true)
 
-        ; Middle Fluent metrics strip between HUD badge & Edge chip
-        speedMult := Format("{:.1f}x", 132.0 / Max(68, this._stepMs))
-        statsText := Format("Score {}   ·   Best {}   ·   Len {}   ·   {}", this._score, this._highScore, this._snake.Length, speedMult)
-        statX := badgeX + badgeW + 12.0 * dpi
+        ; Middle Fluent metrics strip centered symmetrically between HUD badge and Edge chip
+        statX := badgeX + badgeW + 10.0 * dpi
         statW := Max(60.0, edgeX - statX - 10.0 * dpi)
-        Gdip.DrawText(pGfx, statsText, "Segoe UI", 9.0 * dpi, 1, txtArgb, statX, sbY, statW, sbH, 0, 1, 0, true)
+        Gdip.DrawText(pGfx, statsText, "Segoe UI", 9.0 * dpi, 1, txtArgb, statX, sbY, statW, sbH, 1, 1, 0, true)
     }
 
     static _DrawStatusBanner(pGfx, snakePal, isDark) {
         style := this._GetHudStyle()
         dpi := this._dpi
-        banW := Min(Float(Round(544 * dpi)), Float(this._W - 40))
-        banH := Float(Round(72 * dpi))
-        banX := (this._W - banW) / 2.0
-        banY := Float(Round(56 * dpi))
-        banRad := style.sleek ? (14.0 * dpi) : (8.0 * dpi)
-
         isDead := (this.Phase = "gameover")
         surfAlpha := Max(178, Min(248, style.opacity + 42))
         pillAlpha := Max(196, style.opacity)
         bgArgb := isDark ? ((surfAlpha << 24) | 0x2C2C2C) : ((Min(252, surfAlpha + 6) << 24) | 0xFFFFFF)
         brdArgb := isDark ? 0xFF454545 : 0xFFDCDCDC
+        divArgb := isDark ? 0xFF404040 : 0xFFE6E6E6
         txtArgb := isDark ? 0xFFFFFFFF : 0xFF1F2328
         subArgb := isDark ? 0xFFC5C5C5 : 0xFF5F5F5F
 
@@ -1503,6 +1523,48 @@ class HudSnake {
         pillGlyph := isDead ? Chr(0xE7BA) : Chr(0xE769)
         iconFont := (IsObject(this._state) && this._state.HasOwnProp("IconFont")) ? this._state.IconFont : "Segoe MDL2 Assets"
 
+        ; Measure Row 1 centered cluster: [Glyph + Status Pill]  ·  Title/Reason  [Score Chip]  [New Best Chip]
+        statusTag := isDead ? "GAME OVER" : "PAUSED"
+        tagTxtW := Float(Gdip.MeasureTextWidth(statusTag, "Segoe UI", 8.2 * dpi, 1))
+        icSz := 12.0 * dpi
+        icGap := 5.0 * dpi
+        tagInnerW := icSz + icGap + tagTxtW
+        tagW := tagInnerW + 18.0 * dpi
+        tagH := 23.0 * dpi
+
+        midTitle := isDead
+            ? ((this._deathReason = "wall") ? "Hit Monitor Edge" : "Self-Collision")
+            : "HUD Snake Paused"
+        midTitleW := Float(Gdip.MeasureTextWidth(midTitle, "Segoe UI", 10.2 * dpi, 1)) + 4.0 * dpi
+        dotW := 16.0 * dpi
+
+        scTxt := "Score " this._score
+        scW := Float(Gdip.MeasureTextWidth(scTxt, "Segoe UI", 8.4 * dpi, 1)) + 18.0 * dpi
+        bestTxt := Chr(0x2605) " New Best"
+        bestW := (isDead && this._bestBeaten) ? (Float(Gdip.MeasureTextWidth(bestTxt, "Segoe UI", 8.2 * dpi, 1)) + 18.0 * dpi) : 0.0
+
+        row1W := tagW + dotW + midTitleW + 10.0 * dpi + scW + ((bestW > 0) ? (8.0 * dpi + bestW) : 0.0)
+
+        ; Measure Row 2 centered Fluent Win11 Explorer keycap action hints
+        actions := isDead
+            ? [ { k: "R / Space", l: "Play Again" }, { k: "E", l: "Toggle Edge" }, { k: "Esc", l: "Restore HUD" } ]
+            : [ { k: "P / Space", l: "Resume" },     { k: "E", l: "Toggle Edge" }, { k: "Esc", l: "Restore HUD" } ]
+        actWidths := []
+        row2W := 0.0
+        for ai, act in actions {
+            kw := Float(Gdip.MeasureTextWidth(act.k, "Segoe UI", 7.8 * dpi, 1) + 12.0 * dpi)
+            aw := Float(Gdip.MeasureTextWidth(act.l, "Segoe UI", 8.0 * dpi, 0) + 6.0 * dpi)
+            itemW := kw + 4.0 * dpi + aw
+            actWidths.Push(itemW)
+            row2W += itemW + (ai < actions.Length ? 18.0 * dpi : 0.0)
+        }
+
+        banW := Min(Float(this._W - 32), Max(Float(Round(500 * dpi)), Ceil(Max(row1W, row2W) + 52.0 * dpi)))
+        banH := Float(Round(80 * dpi))
+        banX := (this._W - banW) / 2.0
+        banY := Float(Round(56 * dpi))
+        banRad := style.sleek ? (14.0 * dpi) : (8.0 * dpi)
+
         this._FillRoundedBox(pGfx, banX, banY, banW, banH, banRad, bgArgb, brdArgb, 1.2)
 
         ; Subtle Win11 Tab/Card bottom accent strip clipped cleanly inside card bounds
@@ -1511,75 +1573,66 @@ class HudSnake {
             pAccBrush := 0
             DllCall("gdiplus\GdipCreateSolidFill", "UInt", Gdip.HexToArgb(accentHex, 235), "Ptr*", &pAccBrush)
             if (pAccBrush) {
-                DllCall("gdiplus\GdipFillRectangle", "Ptr", pGfx, "Ptr", pAccBrush, "Float", banX, "Float", banY + banH - 2.6 * dpi, "Float", banW, "Float", 3.0 * dpi)
+                DllCall("gdiplus\GdipFillRectangle", "Ptr", pGfx, "Ptr", pAccBrush, "Float", banX, "Float", banY + banH - 2.8 * dpi, "Float", banW, "Float", 3.2 * dpi)
                 DllCall("gdiplus\GdipDeleteBrush", "Ptr", pAccBrush)
             }
             DllCall("gdiplus\GdipResetClip", "Ptr", pGfx)
             DllCall("gdiplus\GdipDeletePath", "Ptr", pCardPath)
         }
 
-        ; Left PresenterSync HUD Icon Pill (mirrors Icon-Only HUD Pill look inside Fluent card)
-        icSz := Float(Round(40 * dpi))
-        icX := banX + 14.0 * dpi
-        icY := banY + (banH - 2.0 * dpi - icSz) / 2.0
-        icRad := style.sleek ? (icSz / 2.0) : Min(8.0 * dpi, icSz * 0.34)
-        icFill := Gdip.HexToArgb(pillHex, pillAlpha)
-        icRim := Gdip.HexToArgb(this._LightenHex(pillHex, 0.20), Min(255, pillAlpha + 25))
-        icTxtHex := this._PickBadgeContentHex(pillHex, pillMonoHex, style.mono, isDark, pillAlpha)
-        icTxt := Gdip.HexToArgb(icTxtHex, 255)
-        this._FillRoundedBox(pGfx, icX, icY, icSz, icSz, icRad, icFill, icRim, 1.3)
-        Gdip.DrawText(pGfx, pillGlyph, iconFont, 13.0 * dpi, 0, icTxt, icX, icY, icSz, icSz, 1, 1, 0, true)
-
-        bodyX := icX + icSz + 14.0 * dpi
-        rightPad := banX + banW - 14.0 * dpi
+        ; Draw centered Row 1
         row1Y := banY + 11.0 * dpi
-        row1H := 24.0 * dpi
-        row2Y := banY + 38.0 * dpi
-        row2H := 22.0 * dpi
+        row1H := 25.0 * dpi
+        curX := banX + (banW - row1W) / 2.0
 
-        ; Right-aligned inline status/score HUD pill chips on row 1
-        chipRightX := rightPad
-        if (isDead) {
-            if (this._bestBeaten) {
-                bestTxt := Chr(0x2605) " New Best"
-                bw := Float(Gdip.MeasureTextWidth(bestTxt, "Segoe UI", 8.2 * dpi, 1) + 18.0 * dpi)
-                chipRightX -= bw
-                bestTxtHex := this._PickBadgeContentHex(snakePal.recPaused, snakePal.recIconPaused, style.mono, isDark, pillAlpha)
-                this._FillRoundedBox(pGfx, chipRightX, row1Y + 1, bw, row1H - 2, (style.sleek ? (row1H - 2) / 2 : 5.5 * dpi), Gdip.HexToArgb(snakePal.recPaused, pillAlpha), Gdip.HexToArgb(this._LightenHex(snakePal.recPaused, 0.20), 255), 1.1)
-                Gdip.DrawText(pGfx, bestTxt, "Segoe UI", 8.2 * dpi, 1, Gdip.HexToArgb(bestTxtHex, 255), chipRightX, row1Y + 1, bw, row1H - 2, 1, 1, 0, true)
-                chipRightX -= 8.0 * dpi
-            }
-            scTxt := "Score " this._score
-            sw := Float(Gdip.MeasureTextWidth(scTxt, "Segoe UI", 8.5 * dpi, 1) + 18.0 * dpi)
-            chipRightX -= sw
-            this._FillRoundedBox(pGfx, chipRightX, row1Y + 1, sw, row1H - 2, (style.sleek ? (row1H - 2) / 2 : 5.5 * dpi), isDark ? 0xFF333333 : 0xFFF3F3F3, isDark ? 0xFF454545 : 0xFFDCDCDC, 1.1)
-            Gdip.DrawText(pGfx, scTxt, "Segoe UI", 8.5 * dpi, 1, txtArgb, chipRightX, row1Y + 1, sw, row1H - 2, 1, 1, 0, true)
-            chipRightX -= 10.0 * dpi
-        } else {
-            pTxt := "Paused"
-            pw := Float(Gdip.MeasureTextWidth(pTxt, "Segoe UI", 8.2 * dpi, 1) + 18.0 * dpi)
-            chipRightX -= pw
-            pTxtHex := this._PickBadgeContentHex(snakePal.chatAlert, snakePal.chatIconAlert, style.mono, isDark, pillAlpha)
-            this._FillRoundedBox(pGfx, chipRightX, row1Y + 1, pw, row1H - 2, (style.sleek ? (row1H - 2) / 2 : 5.5 * dpi), Gdip.HexToArgb(snakePal.chatAlert, pillAlpha), Gdip.HexToArgb(this._LightenHex(snakePal.chatAlert, 0.20), 255), 1.1)
-            Gdip.DrawText(pGfx, pTxt, "Segoe UI", 8.2 * dpi, 1, Gdip.HexToArgb(pTxtHex, 255), chipRightX, row1Y + 1, pw, row1H - 2, 1, 1, 0, true)
-            chipRightX -= 10.0 * dpi
+        tagY := row1Y + (row1H - tagH) / 2.0
+        tagRad := style.sleek ? (tagH / 2.0) : Min(6.0 * dpi, tagH / 2.0)
+        tagTxtHex := this._PickBadgeContentHex(pillHex, pillMonoHex, style.mono, isDark, pillAlpha)
+        tagTxtArgb := Gdip.HexToArgb(tagTxtHex, 255)
+        this._FillRoundedBox(pGfx, curX, tagY, tagW, tagH, tagRad, Gdip.HexToArgb(pillHex, pillAlpha), Gdip.HexToArgb(this._LightenHex(pillHex, 0.20), Min(255, pillAlpha + 25)), 1.1)
+        tagInnerX := curX + (tagW - tagInnerW) / 2.0
+        Gdip.DrawText(pGfx, pillGlyph, iconFont, 8.6 * dpi, 0, tagTxtArgb, tagInnerX, tagY, icSz, tagH, 1, 1, 0, true)
+        Gdip.DrawText(pGfx, statusTag, "Segoe UI", 8.2 * dpi, 1, tagTxtArgb, tagInnerX + icSz + icGap, tagY, tagTxtW + 4.0 * dpi, tagH, 0, 1, 0, true)
+        curX += tagW
+
+        Gdip.DrawText(pGfx, "·", "Segoe UI", 9.5 * dpi, 1, subArgb, curX, row1Y, dotW, row1H, 1, 1, 0, true)
+        curX += dotW
+
+        Gdip.DrawText(pGfx, midTitle, "Segoe UI", 10.2 * dpi, 1, txtArgb, curX, row1Y, midTitleW, row1H, 0, 1, 0, true)
+        curX += midTitleW + 10.0 * dpi
+
+        chipY := row1Y + (row1H - tagH) / 2.0
+        chipRad := style.sleek ? (tagH / 2.0) : 5.5 * dpi
+        this._FillRoundedBox(pGfx, curX, chipY, scW, tagH, chipRad, isDark ? 0xFF333333 : 0xFFF3F3F3, isDark ? 0xFF4B4B4B : 0xFFD8D8D8, 1.1)
+        Gdip.DrawText(pGfx, scTxt, "Segoe UI", 8.4 * dpi, 1, txtArgb, curX, chipY, scW, tagH, 1, 1, 0, true)
+        curX += scW
+
+        if (bestW > 0) {
+            curX += 8.0 * dpi
+            bestTxtHex := this._PickBadgeContentHex(snakePal.recPaused, snakePal.recIconPaused, style.mono, isDark, pillAlpha)
+            this._FillRoundedBox(pGfx, curX, chipY, bestW, tagH, chipRad, Gdip.HexToArgb(snakePal.recPaused, pillAlpha), Gdip.HexToArgb(this._LightenHex(snakePal.recPaused, 0.20), 255), 1.1)
+            Gdip.DrawText(pGfx, bestTxt, "Segoe UI", 8.2 * dpi, 1, Gdip.HexToArgb(bestTxtHex, 255), curX, chipY, bestW, tagH, 1, 1, 0, true)
         }
 
-        topMsg := isDead
-            ? Format("Game Over  ·  {}", (this._deathReason = "wall") ? "Hit Monitor Edge" : "Self-Collision")
-            : "HUD Snake Paused"
-        Gdip.DrawText(pGfx, topMsg, "Segoe UI", 10.5 * dpi, 1, txtArgb, bodyX, row1Y, Max(80.0, chipRightX - bodyX), row1H, 0, 1, 0, true)
+        ; Delicate centered divider separating Row 1 header from Row 2 action keys
+        pHDiv := 0
+        DllCall("gdiplus\GdipCreatePen1", "UInt", divArgb, "Float", Float(1.0), "Int", 2, "Ptr*", &pHDiv)
+        if (pHDiv) {
+            divPad := 24.0 * dpi
+            DllCall("gdiplus\GdipDrawLine", "Ptr", pGfx, "Ptr", pHDiv, "Float", banX + divPad, "Float", banY + 41.0 * dpi, "Float", banX + banW - divPad, "Float", banY + 41.0 * dpi)
+            DllCall("gdiplus\GdipDeletePen", "Ptr", pHDiv)
+        }
 
-        ; Row 2: Fluent Win11 Explorer keycap action hints
-        actions := isDead
-            ? [ { k: "R / Space", l: "Play Again" }, { k: "E", l: "Toggle Edge" }, { k: "Esc", l: "Restore HUD" } ]
-            : [ { k: "P / Space", l: "Resume" },     { k: "E", l: "Toggle Edge" }, { k: "Esc", l: "Restore HUD" } ]
-        ax := bodyX
+        ; Draw centered Row 2 Fluent keycap action hints
+        row2Y := banY + 46.0 * dpi
+        row2H := 24.0 * dpi
+        ax := banX + (banW - row2W) / 2.0
         for ai, act in actions {
             usedW := this._DrawFluentKeyHint(pGfx, ax, row2Y, row2H, act.k, act.l, isDark, dpi)
-            ax += usedW + 14.0 * dpi
+            ax += usedW
             if (ai < actions.Length) {
-                Gdip.DrawText(pGfx, "·", "Segoe UI", 8.5 * dpi, 0, subArgb, ax - 11.0 * dpi, row2Y, 8.0 * dpi, row2H, 1, 1, 0, true)
+                Gdip.DrawText(pGfx, "·", "Segoe UI", 8.5 * dpi, 0, subArgb, ax + 1.0 * dpi, row2Y, 10.0 * dpi, row2H, 1, 1, 0, true)
+                ax += 18.0 * dpi
             }
         }
     }

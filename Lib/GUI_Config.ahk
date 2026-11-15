@@ -8,7 +8,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "4.4.0"
+    static APP_VERSION := "4.5.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -2416,7 +2416,8 @@ ShowHelpWindow(cfg, state := "", *) {
         . "Exit PresenterSync:`n"
         . "Clicker Mute Button:`n"
         . "OBS Mute / Rec / Pause:`n"
-        . "Conf Mute / Rec / Pause:"
+        . "Conf Mute / Rec / Pause:`n"
+        . "Undocumented Chord:"
     normApp := NormalizeConferencingApp(cfg.ConferencingApp)
     activeConfKey := (normApp = "Teams") ? cfg.TeamsMuteHotkey : ((normApp = "Meet") ? cfg.MeetMuteHotkey : cfg.ZoomMuteHotkey)
     scCol2 := FormatHK(cfg.PptHotkey) "`n"
@@ -2427,16 +2428,17 @@ ShowHelpWindow(cfg, state := "", *) {
         . FormatHK(cfg.ExitHotkey) "`n"
         . FormatHK(cfg.HwMuteHotkey) (cfg.EnablePushToMute ? "  (Hold >= 350ms = Cough Mute)" : "  (Tap Toggle)") "`n"
         . FormatHK(cfg.ObsMuteHotkey) "  /  " FormatHK(cfg.ObsRecHotkey) "  /  " FormatHK(cfg.ObsPauseHotkey) "`n"
-        . FormatHK(activeConfKey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey) "  (" normApp ")"
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y122 w200 h192", scCol1), "Text", "tabMuted")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x238 y122 w572 h192", scCol2), "Text", "tabText")
+        . FormatHK(activeConfKey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey) "  (" normApp ")`n"
+        . "Alt + Ctrl + Shift + S  (Try at your own risk...)"
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y122 w200 h206", scCol1), "Text", "tabMuted")
+    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x238 y122 w572 h206", scCol2), "Text", "tabText")
 
     shortcutNotes := "HOW SHORTCUTS WORK`r`n"
         . "• Hardware Clicker Mute Button: Works in Full PPT + Mute and Pointer Mute Only modes, protected by a 150ms hardware debounce and automatic pause while any PresenterSync settings window is active.`r`n"
         . "• Mutual Exclusion Shield: Binding PgDn, Esc, Tab, or F5 as your Clicker Mute Button automatically excludes it from PowerPoint slide forwarding so one button press never changes a slide AND mutes at once.`r`n"
         . "• Fallback Shortcuts (OBS / Zoom / Teams / Meet): Fired automatically when OBS WebSocket Sync is disabled (Mode 1 / 3) or when syncing Conferencing mute in Mode 2 / Mode 3.`r`n"
         . "• Disable Any Key: Clear a shortcut box or enter 'None' to leave it unbound."
-    AddHelpGuideEdit(helpGui, 30, 322, 780, 166, shortcutNotes)
+    AddHelpGuideEdit(helpGui, 30, 336, 780, 152, shortcutNotes)
 
     btnAppHk := helpGui.Add("Button", "x30 y498 w186 h34", "Edit App Shortcuts")
     btnObsHk := helpGui.Add("Button", "x228 y498 w186 h34", "Edit OBS Settings")
@@ -2618,33 +2620,45 @@ ShowAboutWindow(cfg := "", state := "", *) {
     Theme.NamedWindows["AboutWindow"] := aboutGui
 
     iconSource := A_IsCompiled ? A_ScriptFullPath : (FileExist(A_ScriptDir "\PresenterSync.ico") ? A_ScriptDir "\PresenterSync.ico" : A_LineFile "\..\..\PresenterSync.ico")
-
-    if FileExist(iconSource) {
-        aboutGui.Add("Picture", "x158 y15 w64 h64", iconSource)
-    }
+    if FileExist(iconSource)
+        aboutGui.Add("Picture", "x203 y16 w64 h64", iconSource)
 
     aboutGui.SetFont("s16 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "PresenterSync"), "Text")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y88 w430 h30 Center", "PresenterSync"), "Text")
 
     aboutGui.SetFont("s10 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+4", "Version " UIConstants.APP_VERSION), "Text", "accent")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y120 w430 h20 Center", "Version " UIConstants.APP_VERSION "  -  Primary Host Suite"), "Text", "accent")
 
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 w340 Center y+8", "OBS Studio WebSocket v5, Zoom UIA Telemetry & Smart PowerPoint Control Suite"), "Text", "muted")
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y142 w430 h20 Center", "OBS Studio WebSocket v5, UIA Meeting Telemetry & Smart Clicker Control"), "Text", "muted")
 
-    aboutGui.SetFont("s10 w400 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x10 w360 Center y+12", "Created by Saabith Jiffry"), "Text")
+    aboutGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y164 w430 h18 Center", "Created by Saabith Jiffry"), "Text")
 
-    aboutGui.SetFont("s10 w400 norm", Theme.UiFont)
-    gitBtn := aboutGui.Add("Button", "w170 x18 y+16 h30", "GitHub Repo")
+    aboutGui.SetFont("s9 w700 norm", Theme.UiFont)
+    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y192 w430 h18", "Included Primary Host Capabilities & Highlights:"), "Text")
+
+    aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
+    primCapsText := "Full presenter host suite engineered for live lecturing, streaming & hybrid classrooms.`r`n`r`n"
+        . "CORE PRIMARY HOST CAPABILITIES:`r`n"
+        . "• 4-Tier Live HUD Stack: Mic + live CoreAudio VU bar, Rec, Conf Chat, Studio Mode, Scene, Stream & Virtual Cam pills with 0.25x-5.0x scale.`r`n"
+        . "• 3 Audio Routing Modes: (1) Pro OBS VB-Cable, (2) Direct Mic Conferencing-Only, (3) Dual App Sync across Zoom, MS Teams & Google Meet.`r`n"
+        . "• Hardware Clicker Control: Dedicated Mute Button routing, Cough Hold (>= 350ms), Mutual Exclusion Shield, PowerPoint forwarding & Tester.`r`n"
+        . "• Remote Companion Host: Streams synced HUD state to PresenterSync Remote via Same Router (LAN mDNS/failover) or Mode 2 Internet Relay.`r`n"
+        . "• Visuals & Ergonomics: Dark/Light/System themes, Solid/Frosted/Ghost opacity, 5 palettes, Mono icons, 14px Magnetic Snap, Auto-Dodge & Click-Through.`r`n"
+        . "• Control Center & Profiles: Unified settings hub, interactive searchable Help Guide, saved workflow profiles & GitHub auto-update checker."
+    AddHelpGuideEdit(aboutGui, 20, 214, 430, 224, primCapsText)
+
+    aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
+    gitBtn := aboutGui.Add("Button", "x20 y450 w208 h30", "GitHub Repo")
     Theme.RegisterControl(aboutGui, gitBtn, "Button")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    updBtn := aboutGui.Add("Button", "w170 x+14 yp h30", "Check for Updates")
+    updBtn := aboutGui.Add("Button", "x242 y450 w208 h30", "Check for Updates")
     Theme.RegisterControl(aboutGui, updBtn, "Button")
     updBtn.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false))
 
-    helpBtn := aboutGui.Add("Button", "w170 x18 y+8 h30", "Help & Guide")
+    helpBtn := aboutGui.Add("Button", "x20 y488 w208 h30", "Open Help Guide")
     Theme.RegisterControl(aboutGui, helpBtn, "Button")
     CloseAbout(*) {
         Theme.UnregisterWindow(aboutGui, "AboutWindow")
@@ -2655,13 +2669,14 @@ ShowAboutWindow(cfg := "", state := "", *) {
     else
         helpBtn.Enabled := false
 
-    closeBtn := aboutGui.Add("Button", "w170 x+14 yp h30 Default", "Close")
+    closeBtn := aboutGui.Add("Button", "x242 y488 w208 h30 Default", "Close")
     Theme.RegisterControl(aboutGui, closeBtn, "Button")
     closeBtn.OnEvent("Click", CloseAbout)
     aboutGui.OnEvent("Close", CloseAbout)
     aboutGui.OnEvent("Escape", CloseAbout)
 
-    aboutGui.Show("AutoSize Center")
+    aboutGui.Show("w470 h536 Center")
+    closeBtn.Focus()
     return aboutGui
 }
 

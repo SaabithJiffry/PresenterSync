@@ -1,11 +1,11 @@
-# PresenterSync v4.4.0 🎙️📊
+# PresenterSync v4.5.0 🎙️📊
 
 PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It bridges OBS Studio, Zoom / Microsoft Teams / Google Meet, and Microsoft PowerPoint, allowing you to control your slides, track recording/stream/vcam/studio/scene/chat telemetry, and manage your microphone without ever losing window focus or broadcasting a hot mic.
 
 ## 🚀 Features
 
 *   **Interactive Help Center, Live Visual HUD Guide & Instant Search:** Explore an annotated **Live HUD Diagram** with numbered arrow callouts explaining every pill, color state, click/drag/hold/Alt gesture, and the CoreAudio Voice Activity bar; browse every **System Tray menu and submenu**; read the categorized **Features A-Z** guide; and search any feature, menu item, or shortcut instantly in both PresenterSync and PresenterSync Remote (with Remote's **About** & **Setup & Help Guide** strictly curated to its streamlined 1-tier companion capabilities).
-*   **Hidden Desktop HUD Snake Easter Egg (`v4.0.1`):** A whimsical top-layer transparent mini-game that morphs your floating HUD pills into a smooth matte-glass continuous ribbon snake gliding at 60 FPS across your desktop without interrupting underlying windows or stuttering (intentionally hidden from the System Tray and Control Center—curious explorers can uncover its secret keyboard chord inside the **Help Center**!).
+*   **Undocumented Desktop Surprise (`Alt + Ctrl + Shift + S`):** Curious explorers who press **`Alt + Ctrl + Shift + S`** while PresenterSync is active will find their floating HUD transforming into something unexpected right on the desktop (intentionally absent from the System Tray and Control Center—*try at your own risk!*).
 *   **Unified Fluent Control Center Dashboard:** Configure every subsystem in one Windows 11 Fluent 6-tab dashboard (**Audio & Conf**, **OBS & Stream**, **Pointer**, **HUD & Theme**, **Remote**, **Profiles & Sys**) and click **Apply & Save** to validate hotkeys, update settings, rebind hotkeys, tear down or switch telemetry backends, and refresh the HUD and tray menu live without restarting.
 *   **3 Audio Routing Profiles & Multi-Platform Conferencing (`Zoom`, `Microsoft Teams`, `Google Meet`):**
     1. **Pro OBS Setup (VB-Cable):** Controls OBS mic directly.
@@ -59,7 +59,7 @@ Zero-dependency portable executables (`PresenterSync.exe` and `PresenterSync_Rem
 If you prefer to run the raw script or compile it yourself:
 1. Download and install [AutoHotkey v2](https://www.autohotkey.com/).
 2. Clone or download this repository.
-3. Ensure the `Lib` folder contains `WebSocket.ahk`, `UIA.ahk`, `Crypto.ahk`, `Gdip.ahk`, `OBS_Network.ahk`, `GUI_Config.ahk`, `HelpCenter.ahk`, and `HudSnakeGame.ahk`.
+3. Ensure the `Lib` folder contains the supporting modules (`WebSocket.ahk`, `UIA.ahk`, `Crypto.ahk`, `Gdip.ahk`, `OBS_Network.ahk`, `GUI_Config.ahk`, `HelpCenter.ahk`, etc.).
 4. Run `PresenterSync.ahk` on the primary streaming laptop.
 5. Run `PresenterSync_Remote.ahk` on the smart board / secondary laptop.
 
@@ -83,7 +83,7 @@ You can build standalone, zero-dependency `.exe` binaries for both the primary a
 
 1. **Initial Setup:** On your first launch, choose your Audio Routing Mode (`1`, `2`, or `3`) and configure your OBS / Zoom fallback shortcuts.
 2. **Choose Monitoring Engine:** Right-click the PresenterSync tray icon (or right-click directly on any HUD pill) to enable **OBS WebSocket Sync** or **Conferencing Monitoring** (`Zoom`, `Microsoft Teams`, or `Google Meet`, mutually exclusive).
-3. **Interactive Help & Remote Guide:** Open **Help & Shortcuts** in the tray menu for step-by-step setup instructions across **Shortcuts**, **Pointer & PPT**, **Audio & Sync**, **Remote Setup**, **HUD & Theme**, and **Live Status**.
+3. **Interactive Help & Remote Guide:** Open **Help & Shortcuts** in the tray menu for an interactive **Visual HUD** diagram, **Tray Menus**, **Features A-Z**, instant **Search Help**, **Shortcuts**, **Remote Setup**, and **Live Status**.
 4. **Customize Live:** Left-drag any HUD pill to reposition the whole stack (coordinates save automatically), or use **Indicator Appearance** to change scale, labels, opacity, corner style, and **App Theme** (**Follow System**, **Dark Mode**, or **Light Mode**) live without interrupting your active session.
 
 **Default System Shortcuts (Primary Host):**
@@ -93,6 +93,7 @@ You can build standalone, zero-dependency `.exe` binaries for both the primary a
 *   `Ctrl + Shift + F12` : Hide/Unhide the HUD Indicator
 *   `Ctrl + Alt + Shift + F12` : Suspend All Hotkeys
 *   `Alt + Shift + F12` : Exit Application
+*   `Alt + Ctrl + Shift + S` : Try at your own risk...
 
 **Default System Shortcuts (Remote Companion):**
 *   `Ctrl + F12` : Toggle Pointer Mute Control ON/OFF (HUD continues displaying live mic status when OFF)
