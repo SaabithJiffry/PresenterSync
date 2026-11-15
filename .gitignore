@@ -1,8 +1,21 @@
-# Compiled AutoHotkey Executables (track official portable release binaries)
+# Compiled AutoHotkey Executables & Release Binaries (track official portable release binaries)
 *.exe
 !PresenterSync.exe
 !PresenterSync_Remote.exe
+*.apk
+!PresenterSync_Remote.apk
+*.aab
 *.bin
+
+# Android Gradle Build Caches, Local SDK Paths & Release Signing Secrets
+android/.gradle/
+android/**/build/
+android/build/
+android/local.properties
+android/.idea/
+*.jks
+*.keystore
+keystore.properties
 
 # PresenterSync Configuration & Memory Files
 MicOverlay_Config.ini
