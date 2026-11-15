@@ -145,6 +145,18 @@ private val HELP_TOPICS = listOf(
         "Switch Network Mode to 'Different Networks (Internet)' on both Primary Windows app and Android Remote, then enter the PS-XXXX-XXXX code."
     ),
     HelpTopic(
+        "Connection",
+        "Simultaneous Multi-Remote Sync (Smart Board + Phone + PC)",
+        "Run PresenterSync Remote on a Smart Board, presenter phone, and Windows PC together.",
+        "Pair each device via QR Code or the 6-char Session Code (XXX-XXX). All connected Android and Windows remotes share live mute updates over Host Bridge (:4456), and you can watch connected devices live in Windows -> Remote Companion Info."
+    ),
+    HelpTopic(
+        "Connection",
+        "Adaptive Smart Board & Mobile Phone Profiles (Android 12+)",
+        "Optimized layouts for both 65\"+ Smart Boards and compact phones.",
+        "Select Auto, Smart Board, or Mobile Phone in Connection -> Device Form Factor Profile to tune dialog spacing and control sizing between Redmi Note 12 / Galaxy A07 phones and 65\" classroom Smart Boards."
+    ),
+    HelpTopic(
         "Floating HUD",
         "Floating Pill Over Whiteboards & Apps",
         "Stays visible above Smart Board note-taking, browser, or OPS screens.",

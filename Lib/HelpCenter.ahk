@@ -389,10 +389,10 @@ GetHelpKnowledgeBase() {
         "remote network mode lan internet wan relay router bridge pairing")
 
     Add("tray-set-reminfo", "Tray", "Settings Submenu", "Settings > Remote Companion Info...",
-        "Tray > Settings > Remote Companion Info...", "None", "N/A",
-        "Shows your host PC's mDNS name, detected LAN IPv4 addresses, copyable Universal String, and Pairing Code.",
-        "MENU ITEM: Settings > Remote Companion Info...`r`n`r`nWHAT IT DOES:`r`n• Displays your computer's .local mDNS hostname, physical LAN + virtual adapter IPs, and a 1-click 'Copy Universal String to Clipboard' button.`r`n• Also displays and copies/regenerates your 'Different Networks (Internet)' Pairing Code (PS-XXXX-XXXX) and provides a direct 'Close Remote Companion...' action.",
-        "remote companion info universal connection string ip mdns copy pairing code")
+        "Tray > Settings > Remote Companion Info...", "Live auto-refresh + Pair Code", "N/A",
+        "Shows live QR code, 6-char Session Code, Host Bridge :4456 status, live paired remotes, and WAN Relay code.",
+        "MENU ITEM: Settings > Remote Companion Info...`r`n`r`nWHAT IT DOES:`r`n• Displays your offline QR Code (presentersync://connect?...), 6-character LAN Session Code (XXX-XXX) with New rotate button, Host Bridge port 4456 status, and live auto-refreshing paired/connected Windows & Android remote roster.`r`n• Also shows your computer's .local mDNS hostname, detected LAN IPv4 addresses, 'Copy Universal String to Clipboard', your WAN Relay Code (PS-XXXX-XXXX), and 'Close Remote Companion...'.",
+        "remote companion info universal connection string ip mdns copy pairing code qr session 4456 live devices")
 
     Add("tray-set-closerem", "Tray", "Settings & Top-Level", "Close Remote Companion...",
         "Tray > Close Remote Companion...  (and Settings > Close Remote Companion...)", "Confirmed prompt", "Safe manual shutdown",
@@ -699,11 +699,17 @@ GetHelpKnowledgeBase() {
         "SAFE REMOTE SHUTDOWN & TROUBLESHOOTING`r`n`r`n• Safe Manual Shutdown: Closing or restarting Primary PresenterSync NEVER closes PresenterSync Remote unexpectedly. To shut down PresenterSync Remote on the secondary PC remotely, use Primary Tray -> 'Close Remote Companion...' and confirm.`r`n• Error 'Auth Failed (Code 4009)': Re-enter your OBS WebSocket password in Remote Tray -> Change OBS Connection...`r`n• Error 'Mic Not Found': Open OBS Audio Mixer on Primary Host and match exact capitalization (e.g., 'Mic/Aux' vs 'USB Mic') inside Change OBS Connection...",
         "close remote companion safe shutdown auth failed 4009 mic not found troubleshooting")
 
-    Add("rem-android", "Remote", "Android Smart Board Client (APK)", "Android Smart Board Companion (PresenterSync_Remote.apk)",
-        "Settings > Remote Companion Info...  |  Android App (API 26+ / Android 14+ Ready)", "QR / XXX-XXX / Manual", "Zero Google Play Services",
-        "Always-on-top 1-tier floating Mic pill + hardware clicker mute filter for Android-based Smart Boards.",
-        "ANDROID SMART BOARD COMPANION (PresenterSync_Remote.apk)`r`n`r`n• Overlay Everywhere: Uses Android Foreground Service + SYSTEM_ALERT_WINDOW so your LIVE / MUTED pill floats smoothly over whiteboards, browsers, PDFs, and OPS inputs.`r`n• 3-Method Instant Pairing:`r`n  1) Camera QR Scan: Scan the live QR code inside Primary -> Settings -> Remote Companion Info...`r`n  2) Session Pairing Code (XXX-XXX): Discover & pair on any camera-less Smart Board over Host Bridge port 4456.`r`n  3) WAN Relay (PS-XXXX-XXXX) or Direct LAN OBS WebSocket port 4455.`r`n• Global Hardware Clicker Filter: Enable 'PresenterSync Hardware Clicker Filter' under Android Accessibility Settings so your USB/BT pointer's Mute key works anywhere without stealing whiteboard focus.`r`n• Android 13/14+ Sideload Tip: If Android blocks Accessibility toggle for a sideloaded APK, open App Info -> 3-dot menu (top-right) -> 'Allow restricted settings' once.",
-        "android apk smart board qr session code 4456 accessibility restricted settings overlay non-gms")
+    Add("rem-android", "Remote", "Android Smart Board & Phone Client (APK)", "Android Companion (PresenterSync_Remote.apk)",
+        "Settings > Remote Companion Info...  |  Android 12+ Phones & 65`" Smart Boards", "QR / XXX-XXX / Manual", "Zero Google Play Services",
+        "Always-on-top 1-tier floating Mic pill with Multi-Gestures, Phone/Smart Board layouts, and optional Clicker Intercept.",
+        "ANDROID SMART BOARD & PHONE COMPANION (PresenterSync_Remote.apk)`r`n`r`n• Adaptive Layouts (Android 12–15+): Automatically adapts between 65`"+ landscape Smart Boards and portrait mobile phones (Auto / Smart Board / Mobile Phone).`r`n• Floating Bubble Multi-Gestures & Position Lock: Customize Single Tap (default None to prevent accidental touches), Double Tap (Quick Menu), Long Press (600ms Toggle Mute with animated progress arc), and Very Long Press (1400ms, optional split Mute Only / Unmute Only), plus Lock Pill Position.`r`n• 3-Method Instant Pairing: Camera QR Scan, 6-char Session Code (XXX-XXX) over Host Bridge :4456, or WAN Relay (PS-XXXX-XXXX) / Manual OBS (:4455).`r`n• Optional Hardware Clicker Intercept (ON/OFF): Keep Pointer Intercept OFF when clicker dongle is plugged into the Primary PC, or turn ON via 'PresenterSync Hardware Clicker Filter' (Accessibility) when plugged into Android.`r`n• Android 13/14/15 Sideload Tip: If Android restricts Accessibility for a sideloaded APK, open App Info -> 3-dot menu -> 'Allow restricted settings' once.",
+        "android apk smart board phone 12 14 qr session code 4456 gestures long press position lock pointer intercept accessibility restricted settings non-gms")
+
+    Add("rem-multi", "Remote", "Multi-Remote Host Bridge", "Simultaneous Multi-Remote Sync (Smart Board + Phone + Windows)",
+        "Host Bridge Port 4456  |  PresenterSync_Remote.exe -Instance <name>", "Unlimited paired remotes", "Live sync across all clients",
+        "Connect multiple Android Smart Boards, presenters' phones, and Windows companions to one Primary Host simultaneously.",
+        "SIMULTANEOUS MULTI-REMOTE ARCHITECTURE`r`n`r`n• Mix Any Devices Together: Pair your classroom Smart Board (Android or Windows), presenter's Android phone, and secondary laptop at the same time against one Primary PresenterSync PC Host.`r`n• Shared Real-Time Mute State: Toggling mute from Primary Host, Mode 2 Zoom/Teams/Meet, OBS Studio, or ANY paired remote broadcasts updated LIVE/MUTED status to every connected remote in real time.`r`n• Windows Session Code & Multi-Instance CLI: Inside PresenterSync Remote's OBS Connection UI, enter the Host Bridge Session Code (XXX-XXX) and click 'Pair by Code'. To run 2+ Windows companions on the same machine, launch with '-Instance board' or '-Config C:\\path\\remote2.ini' (or pass '-Uri presentersync://connect?...').`r`n• Live Roster & Safe Shutdown: View all connected devices live inside Primary -> Remote Companion Info..., and cleanly close all connected remotes with 'Close Remote Companion...'.",
+        "multi remote simultaneous bridge 4456 multiple android phone smart board windows instance config uri")
 
     cache := entries
     return cache

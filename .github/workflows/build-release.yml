@@ -63,7 +63,7 @@ jobs:
         shell: pwsh
         run: |
           $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
-          foreach ($suite in @("tests\test_qr_code.ahk", "tests\test_host_bridge.ahk", "tests\test_master_suite.ahk")) {
+          foreach ($suite in @("tests\test_qr_code.ahk", "tests\test_host_bridge.ahk", "tests\test_multi_remote.ahk", "tests\test_master_suite.ahk")) {
             Write-Host "Running $suite ..."
             $errLog = Join-Path $env:TEMP "ahk_stderr.txt"
             $outLog = Join-Path $env:TEMP "ahk_stdout.txt"

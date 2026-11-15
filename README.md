@@ -1,4 +1,4 @@
-# PresenterSync v5.0.0 🎙️📊
+# PresenterSync v5.4.0 🎙️📊
 
 PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It bridges OBS Studio, Zoom / Microsoft Teams / Google Meet, and Microsoft PowerPoint, allowing you to control your slides, track recording/stream/vcam/studio/scene/chat telemetry, and manage your microphone without ever losing window focus or broadcasting a hot mic.
 
@@ -22,11 +22,14 @@ PresenterSync is a lightweight, standalone Windows utility designed for live str
 *   **5 Curated HUD Color Palettes & Tally Presets:** Choose between **Standard**, **Colorblind Safe** (Okabe-Ito Blue/Orange), **OLED Stealth**, **Broadcast Tally**, and **Cyber Ocean**, plus optional **Two-Tone Acoustic Audio Chime** and **Mute Status Toast** feedback.
 *   **Smart PowerPoint Controls & Cough Hold-to-Mute Gesture:** Safely route arrow/page/slide keys directly to PowerPoint in the background, and optionally enable **Cough / Push-to-Mute** so holding your clicker mute button (`>= 350ms`) mutes while held and automatically unmutes back to `LIVE` on release.
 *   **Persistent Named Configuration Profiles & System Utilities:** Save, load, switch, and delete named configuration profiles (`[Profile:<Name>]`) from the Tray Menu or Control Center, toggle **Start with Windows** (strictly `OFF` by default), and check for new releases via the built-in **GitHub Update Checker**.
-*   **Smart Board Companion Client (`PresenterSync_Remote.apk` for Android 8–15+ & `PresenterSync_Remote.exe` for Windows):** Standalone **1-tier Mic HUD** companions for Android-based Smart Boards and Windows OPS modules.
-    *   **Triple-Method Pairing (QR, Session Code, WAN Relay):** Scan the host's live QR code (`presentersync://connect?...`) in the Android app, enter the 6-character LAN **Session Code (`XXX-XXX`)** on camera-less Smart Boards via Host Bridge port `4456`, use **WAN Relay (`PS-XXXX-XXXX`)** across separate networks/hotspots, or enter manual Host/Port directly.
-    *   **Global Clicker Mute & Cough Hold:** Intercepts USB/Bluetooth presenter pointer keystrokes (default `b`) with a 150ms debounce shield and optional `>= 350ms` Cough Push-to-Mute hold across PowerPoint and Android whiteboards (`ClickerAccessibilityService`).
-    *   **Safe Manual Remote Shutdown:** Use **Close Remote Companion...** in the Primary system tray (or **Remote Companion Info...**) to shut down connected Windows or Android companions safely.
-    *   **Touchscreen Drag, Scale & Safety:** Magnetic screen-edge/center snapping, hover Auto-Dodge, Click-Through Mode, two-tone acoustic chime, 5 color presets, and Smart Board scales up to `5.0x`.
+*   **Smart Board & Mobile Remote Companions (`PresenterSync_Remote.apk` for Android 12–15+ & `PresenterSync_Remote.exe` for Windows):** Standalone **1-tier Mic HUD** companions for 65"+ classroom Smart Boards, Android phones (Galaxy A07, Redmi Note 12, Poco M3 class), and Windows OPS/presenter laptops.
+    *   **Simultaneous Multi-Remote Host Bridge (`:4456`):** Pair and run **multiple Android and Windows remotes at the same time** (e.g., Smart Board + Presenter Phone + Secondary Laptop via `-Instance <name>`) connected to one Primary PC Host, with bidirectional sync across Mode 1 OBS, Mode 2 Conferencing-Only, Mode 3 Dual, and WAN Relay, monitored live inside **Remote Companion Info...**.
+    *   **Adaptive Smart Board & Phone Layouts:** Automatic form-factor detection (`Auto`, `Smart Board`, `Mobile Phone`) keeps controls crisp from compact 360dp portrait phones (`Android 12+`) up to 65"+ 4K landscape Smart Boards (`Android 14+`) with floating pill scales from `0.25x` up to `5.0x`.
+    *   **Triple-Method Pairing (QR, Session Code, WAN Relay):** Scan the host's live QR code (`presentersync://connect?...`) in Android, enter the 6-character LAN **Session Code (`XXX-XXX`)** on camera-less Smart Boards or Windows Remote via Host Bridge port `4456`, use **WAN Relay (`PS-XXXX-XXXX`)** across separate networks/hotspots, or enter manual Host/Port directly.
+    *   **Customizable Floating Bubble Multi-Gestures & Position Lock:** Configure **Single Tap**, **Double Tap**, **Long Press** (`600ms`), and **Very Long Press** (`1400ms`) independently—defaulting to Single Tap disabled (`None`) to prevent accidental Smart Board touches, `Long Press` to Toggle Mute (with animated progress arc), and `Double Tap` for Quick Menu—plus optional split Hold Mute / Very Long Unmute and **Lock Pill Position**.
+    *   **Optional Hardware Pointer Keystroke Intercept (`ON/OFF`):** Toggle pointer intercept ON in Android (`ClickerAccessibilityService`) or Windows when the clicker USB/BT receiver is plugged into the remote device, or turn it OFF when plugged into the Primary PC while keeping the live Mic HUD and bubble gestures active.
+    *   **Safe Manual Remote Shutdown:** Use **Close Remote Companion...** in the Primary system tray (or **Remote Companion Info...**) to shut down all connected Windows or Android companions safely.
+    *   **Touchscreen Drag, Scale & Safety:** Magnetic screen-edge/center snapping, hover Auto-Dodge, Click-Through Mode (with persistent notification & Quick Tile unlock), two-tone acoustic chime, and 5 color presets.
 
 ## ⚙️ Prerequisites: OBS WebSocket & Zoom Setup
 
@@ -72,12 +75,14 @@ You can build standalone, zero-dependency `.exe` binaries for both the primary a
    * **`PresenterSync_Remote.exe`** (Smart Board Companion)
 4. Copy `PresenterSync_Remote.exe` to a USB drive or smart board OPS module and run it portably without any installation!
 
-## 📡 Smart Board Remote Companion Setup
-1. **Host Firewall & OBS WebSocket:** Enable OBS Studio WebSocket v5 (`Tools` > `WebSocket Server Settings`, port `4455`), and allow **TCP port `4455`** in Windows Firewall on the host laptop.
-2. **Copy Host Endpoints:** On the primary laptop, right-click the PresenterSync tray icon > **Settings** > **Remote Companion Info...** (or open the **Remote Setup** tab in **Help & Shortcuts**) and click **Copy Universal String to Clipboard** (contains your computer name `.local` and all active Ethernet/Wi-Fi IPs).
-3. **Connect Smart Board:** On the smart board, launch `PresenterSync_Remote` (script or `.exe`). Paste the connection string into **Host Address**, verify **Port** (`4455`), enter your OBS WebSocket password, match the exact **Audio Source Name** (default `Mic/Aux`), and click **Test Connection** before clicking **Connect & Start**.
-4. **In-App Help on Smart Board:** Right-click the Remote pill (or tray icon) and choose **Help & Setup Guide...**, or click **Setup Guide** directly in the connection dialog.
-5. **Present:** Plug your clicker into the smart board—pressing the mute button (default `b`) immediately toggles OBS mute on the host laptop, while the HUD displays a crisp slate `OFFLINE` pill at your chosen transparency when disconnected.
+## 📡 Multi-Remote Smart Board & Phone Setup
+1. **Host Firewall & Companion Bridge:** Enable OBS Studio WebSocket v5 (`Tools` > `WebSocket Server Settings`, port `4455`) if using OBS (Mode 1/3)—Mode 2 Zoom/Teams/Meet works without OBS via Host Bridge—and allow TCP ports `4455` & `4456` plus UDP `4456` on Private Firewall.
+2. **Instant Pair Multiple Remotes:** Open **Settings** > **Remote Companion Info...** on the Primary host PC:
+   * **Android (Phone / Smart Board):** Tap **Scan QR** in `PresenterSync_Remote.apk` or type the 6-character **Session Code (`XXX-XXX`)** -> **Pair Code** (works simultaneously on both your presenter phone and 65" Smart Board).
+   * **Windows Remote (`PresenterSync_Remote.exe`):** Enter the **Session Code** in **Host Bridge Session Code** -> **Pair by Code**, or paste the **Universal Connection String**. Launch additional isolated Windows companions anytime using `-Instance <name>` (or `-Config <path.ini>`).
+   * **Separate Networks (WAN Relay):** Enable **Different Networks (Internet)** and enter your `PS-XXXX-XXXX` code on any remote.
+3. **Customize Controls Per Device:** On Android Smart Boards, leave **Single Tap = None** and use **Long Press** / **Very Long Press** gestures (or split Mute / Unmute holds) plus **Lock Pill Position** so interactive board taps don't accidentally toggle mute. Toggle **Pointer Keystroke Intercept** ON only on devices where the clicker dongle is connected.
+4. **Live Connected Roster:** Watch all paired/live Windows & Android remotes update live inside **Remote Companion Info...**, or safely shut them down together with **Close Remote Companion...**.
 
 ## 🎮 How It Works
 
