@@ -1,7 +1,12 @@
 package com.saabithjiffry.presentersync.remote
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.view.WindowManager
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -58,6 +63,36 @@ class OverlayAndLifecycleInstrumentationTest {
                 Thread.sleep(100)
             }
             assertFalse("Service should stop cleanly", app.connectionManager.uiState.value.serviceRunning)
+        }
+    }
+
+    @Test
+    fun fileProviderAndInstallPermissionConfigured() {
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
+        @Suppress("DEPRECATION")
+        val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ctx.packageManager.getPackageInfo(
+                ctx.packageName,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())
+            )
+        } else {
+            ctx.packageManager.getPackageInfo(ctx.packageName, PackageManager.GET_PERMISSIONS)
+        }
+        val perms = pkgInfo.requestedPermissions?.toList().orEmpty()
+        assertTrue(
+            "Manifest must declare REQUEST_INSTALL_PACKAGES",
+            perms.contains(Manifest.permission.REQUEST_INSTALL_PACKAGES)
+        )
+
+        val updatesDir = File(ctx.cacheDir, "updates").apply { mkdirs() }
+        val dummyApk = File(updatesDir, "test.apk").apply { writeText("test") }
+        try {
+            val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", dummyApk)
+            assertEquals("content", uri.scheme)
+            assertEquals("${ctx.packageName}.fileprovider", uri.authority)
+            assertTrue("Expected updates path in URI: $uri", uri.toString().contains("/updates/test.apk"))
+        } finally {
+            dummyApk.delete()
         }
     }
 }

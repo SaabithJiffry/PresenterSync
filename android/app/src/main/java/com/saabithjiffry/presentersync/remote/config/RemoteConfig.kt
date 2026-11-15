@@ -81,6 +81,9 @@ data class RemoteConfig(
     val firstRun: Boolean = true,
     val isMuted: Boolean = false,
     val startOnBoot: Boolean = false,
+    val autoCheckUpdates: Boolean = true,
+    val lastUpdateCheckMs: Long = 0L,
+    val skippedUpdateVersion: String = "",
     val deviceProfileMode: DeviceProfileMode = DeviceProfileMode.AUTO,
     val savedX: Int = -1,
     val savedY: Int = -1,
@@ -177,6 +180,9 @@ class RemoteConfigStore(context: Context) {
             firstRun = prefs.getBoolean("firstRun", true),
             isMuted = prefs.getBoolean("isMuted", false),
             startOnBoot = prefs.getBoolean("startOnBoot", false),
+            autoCheckUpdates = prefs.getBoolean("autoCheckUpdates", true),
+            lastUpdateCheckMs = prefs.getLong("lastUpdateCheckMs", 0L).coerceAtLeast(0L),
+            skippedUpdateVersion = prefs.getString("skippedUpdateVersion", "").orEmpty().trim(),
             deviceProfileMode = DeviceProfileMode.fromRaw(prefs.getString("deviceProfileMode", "Auto")),
             savedX = prefs.getInt("savedX", -1),
             savedY = prefs.getInt("savedY", -1),
@@ -196,6 +202,12 @@ class RemoteConfigStore(context: Context) {
     fun resetPosition() = update {
         it.copy(savedX = -1, savedY = -1, savedXRatio = -1f, savedYRatio = -1f)
     }
+
+    fun setHudWasActive(active: Boolean) {
+        prefs.edit().putBoolean("hudWasActive", active).apply()
+    }
+
+    fun wasHudActive(): Boolean = prefs.getBoolean("hudWasActive", false)
 
     fun applyFormFactorPreset(targetClass: FormFactorClass) = update { prev ->
         when (targetClass) {
@@ -323,6 +335,9 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("firstRun", c.firstRun)
             .putBoolean("isMuted", c.isMuted)
             .putBoolean("startOnBoot", c.startOnBoot)
+            .putBoolean("autoCheckUpdates", c.autoCheckUpdates)
+            .putLong("lastUpdateCheckMs", c.lastUpdateCheckMs)
+            .putString("skippedUpdateVersion", c.skippedUpdateVersion)
             .putString("deviceProfileMode", c.deviceProfileMode.rawValue)
             .putInt("savedX", c.savedX)
             .putInt("savedY", c.savedY)

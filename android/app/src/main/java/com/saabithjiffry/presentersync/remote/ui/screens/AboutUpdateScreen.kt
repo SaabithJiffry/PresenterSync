@@ -22,22 +22,23 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,26 +48,38 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.DeviceProfileMode
 import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
-import com.saabithjiffry.presentersync.remote.network.AppUpdater
 import com.saabithjiffry.presentersync.remote.network.UpdateCheckResult
+import com.saabithjiffry.presentersync.remote.network.UpdateInstallState
 import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
+import java.util.Locale
+
+internal fun formatUpdateByteProgress(downloaded: Long, total: Long, percent: Int): String {
+    fun mb(bytes: Long): String = String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+    return if (total > 0L) {
+        "${mb(downloaded)} / ${mb(total)} ($percent%)"
+    } else {
+        "${mb(downloaded)} downloaded..."
+    }
+}
 
 @Composable
 fun AboutUpdateDialog(
-    httpClient: OkHttpClient,
+    app: PresenterSyncRemoteApp,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val formFactor = rememberFormFactor(DeviceProfileMode.AUTO)
-    var checking by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<UpdateCheckResult?>(null) }
+    val cfg by app.configStore.config.collectAsStateWithLifecycle()
+    val result by app.apkSelfInstaller.latestCheck.collectAsStateWithLifecycle()
+    val installState by app.apkSelfInstaller.installState.collectAsStateWithLifecycle()
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -136,7 +149,7 @@ fun AboutUpdateDialog(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Strict 1-Tier Android Smart Board & Phone Mic Companion with OBS WebSocket v5, Windows Host Bridge (:4456), WAN Relay (PS-XXXX-XXXX), zero-GMS CameraX + ZXing QR pairing, Floating Bubble Multi-Gestures, and Windows 11 Explorer UI.",
+                                text = "Strict 1-Tier Android Smart Board & Phone Mic Companion with OBS WebSocket v5, Windows Host Bridge (:4456), WAN Relay (PS-XXXX-XXXX), zero-GMS CameraX + ZXing QR pairing, built-in SHA-256 self-updater, and Windows 11 Explorer UI.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -145,74 +158,116 @@ fun AboutUpdateDialog(
 
                     ExplorerCard(contentPadding = 16) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(
-                                text = "GitHub APK Update Checker",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "1-Tap In-App Self-Updater",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.Security,
+                                    contentDescription = null,
+                                    tint = Color(0xFF10B981),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                            val res = result
-                            if (checking) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                                    Text("Checking GitHub Releases for latest APK...", style = MaterialTheme.typography.bodySmall)
-                                }
-                            } else if (res != null) {
-                                if (res.errorMessage != null) {
-                                    Text(
-                                        text = "Could not reach GitHub (${res.errorMessage}).",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFFD97706)
-                                    )
-                                } else if (res.updateAvailable) {
-                                    Text(
-                                        text = "New Version Available: v${res.latestVersion} (Current: v${res.currentVersion})",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    if (res.releaseNotes.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Auto-check updates daily on startup",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Switch(
+                                    checked = cfg.autoCheckUpdates,
+                                    onCheckedChange = { enabled ->
+                                        app.configStore.update { it.copy(autoCheckUpdates = enabled) }
+                                    }
+                                )
+                            }
+
+                            if (installState !is UpdateInstallState.Idle) {
+                                UpdateInstallProgressBody(
+                                    app = app,
+                                    installState = installState,
+                                    result = result
+                                )
+                            } else {
+                                    val res = result
+                                    if (res != null) {
+                                        if (res.errorMessage != null) {
+                                            Text(
+                                                text = "Could not reach GitHub (${res.errorMessage}).",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFFD97706)
+                                            )
+                                        } else if (res.updateAvailable) {
+                                            Text(
+                                                text = "New Version Available: v${res.latestVersion} (Current: v${res.currentVersion})",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            if (res.releaseNotes.isNotBlank()) {
+                                                Text(
+                                                    text = res.releaseNotes.take(500),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            if (res.apkDownloadUrl != null) {
+                                                Button(
+                                                    onClick = { app.apkSelfInstaller.startDownloadAndInstall(res) },
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Icon(Icons.Default.Download, contentDescription = null)
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text("Download & Install v${res.latestVersion}")
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = {
+                                                        runCatching {
+                                                            context.startActivity(
+                                                                Intent(Intent.ACTION_VIEW, Uri.parse(res.releaseHtmlUrl))
+                                                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                            )
+                                                        }
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Text("Open Release Page")
+                                                }
+                                            }
+                                        } else {
+                                            Text(
+                                                text = "✓ You are on the latest release (v${res.latestVersion ?: res.currentVersion}).",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFF10B981),
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    } else {
                                         Text(
-                                            text = res.releaseNotes.take(500),
+                                            text = "Downloads, SHA-256 verifies, and installs signed updates from SaabithJiffry/PresenterSync without leaving the app.",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    val targetUrl = res.apkDownloadUrl ?: res.releaseHtmlUrl
-                                    Button(
-                                        onClick = {
-                                            runCatching {
-                                                context.startActivity(
-                                                    Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
-                                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                                )
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Icon(Icons.Default.Download, contentDescription = null)
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(if (res.apkDownloadUrl != null) "Download PresenterSync_Remote.apk" else "Open Release Page")
-                                    }
-                                } else {
-                                    Text(
-                                        text = "✓ You are on the latest release (v${res.latestVersion ?: res.currentVersion}).",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF10B981),
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            } else {
-                                Text(
-                                    text = "Check SaabithJiffry/PresenterSync releases on GitHub for new APK versions.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
+
+                            val busy = installState is UpdateInstallState.Checking ||
+                                installState is UpdateInstallState.Downloading ||
+                                installState is UpdateInstallState.Verifying
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -220,13 +275,12 @@ fun AboutUpdateDialog(
                             ) {
                                 Button(
                                     onClick = {
-                                        checking = true
                                         scope.launch {
-                                            result = AppUpdater.checkLatestRelease(httpClient, AppConstants.APP_VERSION)
-                                            checking = false
+                                            app.apkSelfInstaller.clearError()
+                                            app.apkSelfInstaller.checkForUpdates(manual = true)
                                         }
                                     },
-                                    enabled = !checking,
+                                    enabled = !busy,
                                     contentPadding = CompactExplorerButtonPadding,
                                     modifier = Modifier.weight(1f)
                                 ) {
@@ -262,6 +316,242 @@ fun AboutUpdateDialog(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun UpdateInstallProgressBody(
+    app: PresenterSyncRemoteApp,
+    installState: UpdateInstallState,
+    result: UpdateCheckResult?
+) {
+    when (installState) {
+        UpdateInstallState.Checking -> {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(
+                    "Checking GitHub Releases for updates...",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+        is UpdateInstallState.Downloading -> {
+            Text(
+                text = "Downloading v${installState.version}...",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (installState.totalBytes > 0L) {
+                LinearProgressIndicator(
+                    progress = { installState.percent / 100f },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            Text(
+                text = formatUpdateByteProgress(
+                    installState.bytesDownloaded,
+                    installState.totalBytes,
+                    installState.percent
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedButton(
+                onClick = { app.apkSelfInstaller.cancelDownload() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Cancel Download")
+            }
+        }
+        is UpdateInstallState.Verifying -> {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(
+                    "Verifying SHA-256 & APK package integrity...",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+        is UpdateInstallState.NeedsUnknownSourcesPermission -> {
+            Text(
+                text = "Verified v${installState.version} is ready! Grant 'Install unknown apps' permission once so PresenterSync Remote can start the Android installer.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFD97706)
+            )
+            Button(
+                onClick = { app.apkSelfInstaller.openUnknownAppSourcesSettings() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Allow App Updates & Install")
+            }
+        }
+        is UpdateInstallState.ReadyToInstall -> {
+            Text(
+                text = if (installState.sha256Verified) {
+                    "✓ SHA-256 & package verified for v${installState.version}."
+                } else {
+                    "✓ Package verified for v${installState.version}."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF10B981),
+                fontWeight = FontWeight.Medium
+            )
+            Button(
+                onClick = {
+                    app.apkSelfInstaller.launchInstaller(
+                        installState.apkFile,
+                        installState.version,
+                        installState.sha256Verified
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Install v${installState.version} Now")
+            }
+        }
+        is UpdateInstallState.LaunchedInstaller -> {
+            Text(
+                text = "✓ Android updater launched for v${installState.version}${if (installState.sha256Verified) " (SHA-256 verified)" else ""}. Confirm Update on the system prompt — your active HUD restores automatically afterward.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF10B981),
+                fontWeight = FontWeight.Medium
+            )
+        }
+        is UpdateInstallState.Error -> {
+            Text(
+                text = "Update error: ${installState.message}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFDC2626)
+            )
+            if (result?.updateAvailable == true && result.apkDownloadUrl != null) {
+                Button(
+                    onClick = {
+                        app.apkSelfInstaller.clearError()
+                        app.apkSelfInstaller.startDownloadAndInstall(result)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Retry Download & Install")
+                }
+            }
+        }
+        UpdateInstallState.Idle -> Unit
+    }
+}
+
+@Composable
+fun UpdateReadyInlineBanner(app: PresenterSyncRemoteApp) {
+    val cfg by app.configStore.config.collectAsStateWithLifecycle()
+    val result by app.apkSelfInstaller.latestCheck.collectAsStateWithLifecycle()
+    val installState by app.apkSelfInstaller.installState.collectAsStateWithLifecycle()
+    val bannerDismissed by app.apkSelfInstaller.bannerDismissed.collectAsStateWithLifecycle()
+
+    val showActiveInstall = installState !is UpdateInstallState.Idle && installState !is UpdateInstallState.Checking
+    val res = result
+    val ver = res?.latestVersion
+    val showAvailableBanner = installState is UpdateInstallState.Idle &&
+        !bannerDismissed &&
+        res != null &&
+        res.updateAvailable &&
+        !ver.isNullOrBlank() &&
+        ver != cfg.skippedUpdateVersion &&
+        res.apkDownloadUrl != null
+
+    if (!showActiveInstall && !showAvailableBanner) return
+
+    ExplorerCard(
+        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+        contentPadding = 14
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = if (ver != null && res.updateAvailable) {
+                            "Update Ready: v$ver"
+                        } else {
+                            "App Self-Updater"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (installState is UpdateInstallState.Error || installState is UpdateInstallState.LaunchedInstaller) {
+                    IconButton(
+                        onClick = { app.apkSelfInstaller.clearError() },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+
+            if (showActiveInstall) {
+                UpdateInstallProgressBody(
+                    app = app,
+                    installState = installState,
+                    result = res
+                )
+            } else if (res != null && ver != null) {
+                Text(
+                    text = "PresenterSync Remote v$ver is available (installed: v${AppConstants.APP_VERSION}). Download, SHA-256 verify, and upgrade in-place.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { app.apkSelfInstaller.startDownloadAndInstall(res) },
+                        contentPadding = CompactExplorerButtonPadding,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Update Now", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    }
+                    OutlinedButton(
+                        onClick = { app.apkSelfInstaller.dismissBannerForSession() },
+                        contentPadding = CompactExplorerButtonPadding
+                    ) {
+                        Text("Later", maxLines = 1, softWrap = false)
+                    }
+                    TextButton(
+                        onClick = {
+                            app.configStore.update { it.copy(skippedUpdateVersion = ver) }
+                            app.apkSelfInstaller.dismissBannerForSession()
+                        },
+                        contentPadding = CompactExplorerButtonPadding
+                    ) {
+                        Text("Skip v$ver", maxLines = 1, softWrap = false)
                     }
                 }
             }
