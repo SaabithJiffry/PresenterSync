@@ -566,6 +566,12 @@ fun HudAppearanceScreen(
                     onCheckedChange = { v -> app.configStore.update { it.copy(enableMuteToast = v) } }
                 )
                 ExplorerSettingToggleRow(
+                    title = "Voice-While-Muted Alert",
+                    subtitle = "Alert subtly when Host microphone picks up speech for 1.5s while muted",
+                    checked = cfg.enableVoiceWhileMutedAlert,
+                    onCheckedChange = { v -> app.configStore.update { it.copy(enableVoiceWhileMutedAlert = v) } }
+                )
+                ExplorerSettingToggleRow(
                     title = "Start HUD Automatically on Boot",
                     subtitle = "Auto-start PresenterSync Remote when Android powers on (OFF by default)",
                     checked = cfg.startOnBoot,

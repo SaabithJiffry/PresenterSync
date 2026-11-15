@@ -10,7 +10,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "6.1.0"
+    static APP_VERSION := "6.2.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -73,6 +73,10 @@ class UIConstants {
     static PPT_DEBOUNCE_MS := 150
     static PUSH_TO_MUTE_HOLD_MS := 350
     static VOICE_METER_INTERVAL_MS := 65
+    static MUTED_VOICE_THRESHOLD := 0.12
+    static MUTED_VOICE_TRIGGER_MS := 1500
+    static MUTED_VOICE_CLEAR_MS := 1500
+    static MUTED_VOICE_POLL_MS := 250
     static STREAM_POLL_INTERVAL_MS := 5000
     static STREAM_CONGESTION_WARN := 0.35
     static DODGE_POLL_INTERVAL_MS := 80
@@ -561,7 +565,7 @@ class Theme {
         } else if (ctrlType = "Edit") {
             ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_CFD" : "Explorer", "Ptr", 0)
-        } else if (ctrlType = "ListBox") {
+        } else if (ctrlType = "ListBox" || ctrlType = "ListView") {
             ctrl.Opt(isDark ? ("+Background" UIConstants.DARK_INPUT_BG " c" UIConstants.DARK_TEXT) : ("+Background" UIConstants.LIGHT_SURFACE " c" UIConstants.LIGHT_TEXT))
             DllCall("uxtheme\SetWindowTheme", "Ptr", ctrl.Hwnd, "Str", isDark ? "DarkMode_Explorer" : "Explorer", "Ptr", 0)
         } else if (ctrlType = "DropDownList") {
@@ -1144,6 +1148,7 @@ class Config {
     AggressivePulse := false
     EnableAudioCue := false
     EnableMuteToast := false
+    EnableVoiceWhileMutedAlert := true
     ShowVoiceMeter := true
     ShowRecTimer := true
     ShowStreamHud := true
@@ -1290,6 +1295,7 @@ class Config {
         this.AggressivePulse := this.ReadBool("Settings", "AggressivePulse")
         this.EnableAudioCue := this.ReadBool("Settings", "EnableAudioCue", false)
         this.EnableMuteToast := this.ReadBool("Settings", "EnableMuteToast", false)
+        this.EnableVoiceWhileMutedAlert := this.ReadBool("Settings", "EnableVoiceWhileMutedAlert", true)
         this.ShowVoiceMeter := this.ReadBool("Settings", "ShowVoiceMeter", true)
         this.ShowRecTimer := this.ReadBool("Settings", "ShowRecTimer", true)
         this.ShowStreamHud := this.ReadBool("Settings", "ShowStreamHud", true)
@@ -1333,8 +1339,10 @@ class Config {
         if (this.BridgePort < 1 || this.BridgePort > 65535)
             this.BridgePort := 4456
         this.SessionPairingCode := Trim(this.Read("Settings", "SessionPairingCode", ""))
-        if (this.SessionPairingCode = "")
+        if (this.SessionPairingCode = "") {
             this.SessionPairingCode := GenerateSessionPairingCode()
+            this.Write("Settings", "SessionPairingCode", this.SessionPairingCode)
+        }
         profName := this.NormalizeProfileName(this.Read("Settings", "ActiveProfile", "Default"))
         this.ActiveProfile := (profName != "") ? profName : "Default"
         this.StartWithWindows := this.ReadBool("Settings", "StartWithWindows", false)
@@ -1357,6 +1365,7 @@ class Config {
         this.AggressivePulse := false
         this.EnableAudioCue := false
         this.EnableMuteToast := false
+        this.EnableVoiceWhileMutedAlert := true
         this.ShowVoiceMeter := true
         this.ShowRecTimer := true
         this.ShowStreamHud := true
@@ -1375,6 +1384,7 @@ class Config {
         this.Write("Settings", "AggressivePulse", 0)
         this.Write("Settings", "EnableAudioCue", 0)
         this.Write("Settings", "EnableMuteToast", 0)
+        this.Write("Settings", "EnableVoiceWhileMutedAlert", 1)
         this.Write("Settings", "ShowVoiceMeter", 1)
         this.Write("Settings", "ShowRecTimer", 1)
         this.Write("Settings", "ShowStreamHud", 1)
@@ -1432,6 +1442,7 @@ class Config {
             { sec: "Settings", key: "AggressivePulse", prop: "AggressivePulse", kind: "bool" },
             { sec: "Settings", key: "EnableAudioCue", prop: "EnableAudioCue", kind: "bool" },
             { sec: "Settings", key: "EnableMuteToast", prop: "EnableMuteToast", kind: "bool" },
+            { sec: "Settings", key: "EnableVoiceWhileMutedAlert", prop: "EnableVoiceWhileMutedAlert", kind: "bool" },
             { sec: "Settings", key: "ShowVoiceMeter", prop: "ShowVoiceMeter", kind: "bool" },
             { sec: "Settings", key: "ShowRecTimer", prop: "ShowRecTimer", kind: "bool" },
             { sec: "Settings", key: "ShowStreamHud", prop: "ShowStreamHud", kind: "bool" },
@@ -1626,7 +1637,13 @@ class OverlayState {
     breathTimerFn := ""
     autoDodgeTimerFn := ""
     voiceMeterTimerFn := ""
+    mutedVoiceTimerFn := ""
     recTimerFn := ""
+    voiceWhileMuted := false
+    mutedVoiceAboveSince := 0
+    mutedVoiceQuietSince := 0
+    pptNextFn := ""
+    pptPrevFn := ""
     streamTimerFn := ""
     obsTimerFn := ""
     relayTimerFn := ""
@@ -1727,6 +1744,7 @@ class OverlayState {
         this.dragTimerFn := DragSyncTick.Bind(this)
         this.breathTimerFn := BreathingAnimation.Bind(cfg, this)
         this.voiceMeterTimerFn := VoiceMeterTick.Bind(cfg, this)
+        this.mutedVoiceTimerFn := MutedVoiceMonitorTick.Bind(cfg, this)
         this.recTimerFn := RecTimerTick.Bind(cfg, this)
         this.streamTimerFn := PollStreamStatus.Bind(cfg, this)
         this.autoDodgeTimerFn := AutoDodgeTick.Bind(cfg, this)
@@ -3329,16 +3347,62 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     Theme.RegisterControl(dlg, btnNewSession, "Button")
 
     formatBridgeStatus := (*) => _FormatHostBridgeStatusLine(cfg)
-    formatPairedList := (*) => _FormatHostBridgeDeviceText()
+    _BuildPairedSnapshot() {
+        st := GetHostBridgeStatusSummary()
+        sig := ""
+        for idx, d in st.devices
+            sig .= d.deviceId "|" d.deviceName "|" d.platform "|" d.ip "|" d.pairedAt "|" (d.connected ? "1" : "0") ";"
+        return { summary: st, signature: sig }
+    }
 
     dlg.SetFont("s8.5 w400", Theme.UiFont)
     lastBridgeTxt := formatBridgeStatus.Call()
-    lastPairedTxt := formatPairedList.Call()
     lblBridgeStatus := dlg.Add("Text", "xs w314 y+4", lastBridgeTxt)
     Theme.RegisterControl(dlg, lblBridgeStatus, "Text", "muted")
-    editPairedDevs := dlg.Add("Edit", "xs w314 h60 ReadOnly Multi -WantReturn y+4", lastPairedTxt)
-    Theme.RegisterControl(dlg, editPairedDevs, "Edit")
+    lblHintDev := dlg.Add("Text", "xs w314 y+6", "Scan the QR code from Android PresenterSync Remote, or enter Session Code on LAN.")
+    Theme.RegisterControl(dlg, lblHintDev, "Text", "muted")
+
+    picQr := dlg.Add("Picture", "x346 ys w114 h114 +0x800000", hQrBmp ? ("HBITMAP:" hQrBmp) : "")
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440 y+12", "Paired Devices (Online / Offline):"), "Text")
+    dlg.SetFont("s8.5 w400", Theme.UiFont)
+    lvDevs := dlg.Add("ListView", "xm w440 r4 -Multi NoSortHdr Grid y+4", ["Status", "Nickname / Device", "Platform", "IP / Paired"])
+    Theme.RegisterControl(dlg, lvDevs, "ListView")
+    lvDevs.ModifyCol(1, 78)
+    lvDevs.ModifyCol(2, 152)
+    lvDevs.ModifyCol(3, 76)
+    lvDevs.ModifyCol(4, 130)
+
+    pairedIds := []
+    lastSnapSig := "__init__"
+    _PopulateDevicesList(snap) {
+        selIdx := lvDevs.GetNext()
+        selId := (selIdx >= 1 && selIdx <= pairedIds.Length) ? pairedIds[selIdx] : ""
+        lvDevs.Delete()
+        pairedIds := []
+        for idx, d in snap.summary.devices {
+            pairedIds.Push(d.deviceId)
+            statusBadge := d.connected ? "● Online" : "○ Offline"
+            ipPaired := d.ip (d.pairedAt != "" ? (" • " d.pairedAt) : "")
+            rowOpts := (selId != "" && d.deviceId = selId) ? "Select Focus" : ""
+            lvDevs.Add(rowOpts, statusBadge, d.deviceName, d.platform, ipPaired)
+        }
+        btnRenameDev.Enabled := (pairedIds.Length > 0)
+        btnUnpairDev.Enabled := (pairedIds.Length > 0)
+    }
+
     dlg.SetFont("s9 w400", Theme.UiFont)
+    btnRenameDev := dlg.Add("Button", "xm w136 h28 y+6", "Rename Device...")
+    btnUnpairDev := dlg.Add("Button", "x+8 yp w136 h28", "Unpair Selected")
+    btnRevokeAll := dlg.Add("Button", "x+8 yp w152 h28", "Rotate & Revoke All")
+    Theme.RegisterControl(dlg, btnRenameDev, "Button")
+    Theme.RegisterControl(dlg, btnUnpairDev, "Button")
+    Theme.RegisterControl(dlg, btnRevokeAll, "Button")
+
+    initSnap := _BuildPairedSnapshot()
+    lastSnapSig := initSnap.signature
+    _PopulateDevicesList(initSnap)
 
     RefreshBridgeDevices(*) {
         if (dlg._closed || !WinExist("ahk_id " dlg.Hwnd))
@@ -3348,15 +3412,13 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
             lastBridgeTxt := curBridge
             try lblBridgeStatus.Value := curBridge
         }
-        curPaired := formatPairedList.Call()
-        if (curPaired != lastPairedTxt) {
-            lastPairedTxt := curPaired
-            try editPairedDevs.Value := curPaired
+        curSnap := _BuildPairedSnapshot()
+        if (curSnap.signature != lastSnapSig) {
+            lastSnapSig := curSnap.signature
+            try _PopulateDevicesList(curSnap)
         }
     }
     SetTimer(RefreshBridgeDevices, 1000)
-
-    picQr := dlg.Add("Picture", "x346 ys w114 h114 +0x800000", hQrBmp ? ("HBITMAP:" hQrBmp) : "")
 
     RefreshQrBitmap() {
         newUri := BuildHostPairingUri(cfg, endpoints.ips)
@@ -3370,12 +3432,71 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         }
     }
 
+    _SelectedDeviceEntry() {
+        row := lvDevs.GetNext()
+        if (row < 1 || row > pairedIds.Length)
+            return ""
+        targetId := pairedIds[row]
+        for d in GetHostBridgeStatusSummary().devices {
+            if (d.deviceId = targetId)
+                return d
+        }
+        return ""
+    }
+
+    _OpenRenameDialog(*) {
+        sel := _SelectedDeviceEntry()
+        if (!IsObject(sel)) {
+            TrayTip("Select a paired device in the list first.", "PresenterSync", 2)
+            return
+        }
+        rnGui := Gui("+AlwaysOnTop +Owner" dlg.Hwnd " -MinimizeBox -MaximizeBox", "Rename Paired Device")
+        rnGui.MarginX := 16
+        rnGui.MarginY := 12
+        Theme.ApplyToWindow(rnGui)
+        Theme.RegisterControl(rnGui, rnGui.Add("Text", "xm w320", "Nickname for " sel.deviceName " (" sel.platform "):"), "Text")
+        edNick := rnGui.Add("Edit", "xm w320 h26 y+6", sel.deviceName)
+        Theme.RegisterControl(rnGui, edNick, "Edit")
+        bOk := rnGui.Add("Button", "xm w156 h28 y+10 Default", "Save Nickname")
+        bCan := rnGui.Add("Button", "x+8 yp w156 h28", "Cancel")
+        Theme.RegisterControl(rnGui, bOk, "Button", "accent")
+        Theme.RegisterControl(rnGui, bCan, "Button")
+        _CloseRn(*) => (Theme.UnregisterWindow(rnGui), rnGui.Destroy())
+        _SaveRn(*) {
+            newNick := Trim(edNick.Value)
+            if (newNick != "") {
+                RenameHostPairedDevice(sel.deviceId, newNick)
+                RefreshBridgeDevices()
+            }
+            _CloseRn()
+        }
+        bOk.OnEvent("Click", _SaveRn)
+        bCan.OnEvent("Click", _CloseRn)
+        rnGui.OnEvent("Close", _CloseRn)
+        rnGui.OnEvent("Escape", _CloseRn)
+        rnGui.Show("AutoSize Center")
+    }
+
+    btnRenameDev.OnEvent("Click", _OpenRenameDialog)
+    btnUnpairDev.OnEvent("Click", (*) => (
+        (IsObject(sel := _SelectedDeviceEntry())
+            ? (UnpairHostPairedDevice(sel.deviceId), RefreshBridgeDevices(), TrayTip("Unpaired device: " sel.deviceName, "PresenterSync", 1))
+            : TrayTip("Select a paired device in the list first.", "PresenterSync", 2))
+    ))
+    btnRevokeAll.OnEvent("Click", (*) => (
+        RotateHostSessionPairingCode(cfg, true),
+        editSession.Value := cfg.SessionPairingCode,
+        RefreshQrBitmap(),
+        RefreshBridgeDevices(),
+        TrayTip("Session Code rotated & all paired tokens revoked.", "PresenterSync", 1)
+    ))
+
     btnCopySession.OnEvent("Click", (*) => (
         A_Clipboard := cfg.SessionPairingCode,
         TrayTip("Copied Session Code: " cfg.SessionPairingCode, "PresenterSync", 1)
     ))
     btnNewSession.OnEvent("Click", (*) => (
-        RotateHostSessionPairingCode(cfg),
+        RotateHostSessionPairingCode(cfg, false),
         editSession.Value := cfg.SessionPairingCode,
         RefreshQrBitmap(),
         RefreshBridgeDevices(),
@@ -3576,6 +3697,11 @@ SyncStreamState(cfg, state, newState, congestion := 0.0, skippedFrames := -1, re
         else
             SetTimer(state.streamTimerFn, 0)
     }
+
+    prevWarn := (prevState == 2)
+    currWarn := (effectiveState == 2)
+    if (prevWarn != currWarn)
+        HostBridgeBroadcastMuteState(cfg, state)
 
     if (stateChanged) {
         oldW := state.streamW
@@ -3805,6 +3931,8 @@ RecTimerTick(cfg, state) {
         return
     }
     state.recElapsedSec += 1
+    if (Mod(state.recElapsedSec, 5) == 0)
+        HostBridgeBroadcastMuteState(cfg, state)
     if (cfg.ShowIndicator && cfg.ShowExtraHuds && (!cfg.HasOwnProp("ShowRecTimer") || cfg.ShowRecTimer) && !state.isDraggingHud && IsGuiValid(state.RecGui)) {
         if (cfg.ShowText) {
             oldW := state.recW
@@ -3846,6 +3974,7 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1) {
     }
 
     if (stateChanged || durProvided) {
+        HostBridgeBroadcastMuteState(cfg, state)
         oldW := state.recW
         state.ComputeDimensions(cfg)
         if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds) {
@@ -4005,13 +4134,96 @@ ToggleVoiceMeter(cfg, state := "", *) {
     }
 }
 
+EvaluateMutedVoiceAlert(cfg, state, rawPeak, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (nowTick = "")
+        nowTick := A_TickCount
+    alertEnabled := (!cfg.HasOwnProp("EnableVoiceWhileMutedAlert") || cfg.EnableVoiceWhileMutedAlert)
+    if (!state.isMuted || !alertEnabled) {
+        wasWarn := state.HasOwnProp("voiceWhileMuted") ? state.voiceWhileMuted : false
+        state.voiceWhileMuted := false
+        state.mutedVoiceAboveSince := 0
+        state.mutedVoiceQuietSince := 0
+        return wasWarn != state.voiceWhileMuted
+    }
+    if (!state.HasOwnProp("voiceWhileMuted"))
+        state.voiceWhileMuted := false
+    if (!state.HasOwnProp("mutedVoiceAboveSince"))
+        state.mutedVoiceAboveSince := 0
+    if (!state.HasOwnProp("mutedVoiceQuietSince"))
+        state.mutedVoiceQuietSince := 0
+
+    if (rawPeak >= UIConstants.MUTED_VOICE_THRESHOLD) {
+        state.mutedVoiceQuietSince := 0
+        if (state.mutedVoiceAboveSince = 0)
+            state.mutedVoiceAboveSince := nowTick
+        if (!state.voiceWhileMuted && (nowTick - state.mutedVoiceAboveSince) >= UIConstants.MUTED_VOICE_TRIGGER_MS) {
+            state.voiceWhileMuted := true
+            return true
+        }
+    } else {
+        state.mutedVoiceAboveSince := 0
+        if (state.voiceWhileMuted) {
+            if (state.mutedVoiceQuietSince = 0)
+                state.mutedVoiceQuietSince := nowTick
+            if ((nowTick - state.mutedVoiceQuietSince) >= UIConstants.MUTED_VOICE_CLEAR_MS) {
+                state.voiceWhileMuted := false
+                state.mutedVoiceQuietSince := 0
+                return true
+            }
+        }
+    }
+    return false
+}
+
+UpdateMutedVoiceMonitorTimer(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("mutedVoiceTimerFn") || !state.mutedVoiceTimerFn)
+        return
+    alertEnabled := (!IsObject(cfg) || !cfg.HasOwnProp("EnableVoiceWhileMutedAlert") || cfg.EnableVoiceWhileMutedAlert)
+    if (state.isMuted && alertEnabled) {
+        SetTimer(state.mutedVoiceTimerFn, UIConstants.MUTED_VOICE_POLL_MS)
+    } else {
+        SetTimer(state.mutedVoiceTimerFn, 0)
+        if (state.HasOwnProp("voiceWhileMuted") && state.voiceWhileMuted) {
+            state.voiceWhileMuted := false
+            state.mutedVoiceAboveSince := 0
+            state.mutedVoiceQuietSince := 0
+            HostBridgeBroadcastMuteState(cfg, state)
+        }
+    }
+}
+
+MutedVoiceMonitorTick(cfg, state, readerFn := "") {
+    alertEnabled := (!IsObject(cfg) || !cfg.HasOwnProp("EnableVoiceWhileMutedAlert") || cfg.EnableVoiceWhileMutedAlert)
+    if (!IsObject(state) || !state.isMuted || !alertEnabled) {
+        if (IsObject(state) && state.HasOwnProp("mutedVoiceTimerFn") && state.mutedVoiceTimerFn)
+            SetTimer(state.mutedVoiceTimerFn, 0)
+        if (EvaluateMutedVoiceAlert(cfg, state, 0.0))
+            HostBridgeBroadcastMuteState(cfg, state)
+        return
+    }
+    if (!IsObject(readerFn) && GetHostBridgeStatusSummary().connectedCount <= 0)
+        return
+    newPeak := IsObject(readerFn) ? Float(readerFn.Call()) : AudioMeter.GetPeak()
+    newPeak := Min(1.0, Max(0.0, newPeak))
+    if (EvaluateMutedVoiceAlert(cfg, state, newPeak))
+        HostBridgeBroadcastMuteState(cfg, state)
+}
+
 SyncUIState(cfg, state, obsIsMuted) {
     if (state.isMuted != obsIsMuted) {
         state.isMuted := obsIsMuted
         cfg.IsMuted := obsIsMuted
         cfg.WriteBool("Settings", "IsMuted", state.isMuted)
+        if (!obsIsMuted) {
+            state.voiceWhileMuted := false
+            state.mutedVoiceAboveSince := 0
+            state.mutedVoiceQuietSince := 0
+        }
         PlayMuteAnimation(cfg, state)
         UpdateVoiceMeterTimer(cfg, state)
+        UpdateMutedVoiceMonitorTimer(cfg, state)
         if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
             PlayMuteAudioCue(obsIsMuted)
         if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
@@ -4307,6 +4519,7 @@ InitHUD(cfg, state, showWindows := true) {
     }
     ApplyHudClickThroughStyle(cfg, state)
     UpdateAutoDodgeTimer(cfg, state)
+    UpdateMutedVoiceMonitorTimer(cfg, state)
 
     OnMessage(0x0003, WM_HUD_MOVE.Bind(state))
     OnMessage(0x0201, WM_LBUTTONDOWN.Bind(cfg, state))
@@ -4457,6 +4670,7 @@ UpdateHudVisibility(cfg, state) {
     }
     ApplyHudClickThroughStyle(cfg, state)
     UpdateAutoDodgeTimer(cfg, state)
+    UpdateMutedVoiceMonitorTimer(cfg, state)
 }
 
 ; --- HUD ANIMATIONS ---
@@ -4658,18 +4872,7 @@ HandleHudPillClick(cfg, state, hwnd) {
         return "mic"
     }
     if (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd) {
-        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
-            SendObsRequest(state.obsWs, "ToggleRecord", "ClickToggleRec")
-        } else if (cfg.EnableZoom && state.zoomConnected && cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") {
-            confSpec := GetConferencingWindowSpec(cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom")
-            SetKeyDelay -1, 30
-            try ControlSend(FormatSendKey(cfg.ZoomRecHotkey), , confSpec)
-            SetKeyDelay 50, 50
-            state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
-            SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
-        } else {
-            SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
-        }
+        ExecuteHostToggleRecord(cfg, state)
         return "rec"
     }
     if (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd) {

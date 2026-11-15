@@ -224,7 +224,56 @@ def main() -> int:
         assert m5["type"] == "pong" and m5["isMuted"] is True
         print("[PASS] WS ping -> pong")
 
+        # 6. Host Deck actions (ppt_next, ppt_prev, toggle_record) & Telemetry broadcast
+        for p in [READY_FILE + ".rec_ready", READY_FILE + ".events"]:
+            if os.path.exists(p):
+                os.remove(p)
+        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+            f.write("OBS_REC_MODE")
+        t0 = time.time()
+        while not os.path.exists(READY_FILE + ".rec_ready"):
+            if time.time() - t0 > 5:
+                raise RuntimeError("OBS_REC_MODE timeout")
+
+        for act in ("ppt_next", "ppt_prev", "toggle_record"):
+            ws_send_text(s_ok, json.dumps({"type": act, "source": "test_py"}))
+            ack = ws_recv_json(s_ok, buf_ok)
+            assert ack["type"] == "ack" and ack["action"] == act and ack["ok"] is True, f"Unexpected ack: {ack}"
+        print("[PASS] WS deck commands (ppt_next, ppt_prev, toggle_record) ACKed")
+
+        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+            f.write("EMIT_TELEMETRY")
+        tel = None
+        for _ in range(8):
+            pkt = ws_recv_json(s_ok, buf_ok)
+            if pkt.get("type") == "mute_state" and pkt.get("recState") == 1:
+                tel = pkt
+                break
+        assert tel is not None and tel.get("recSeconds") == 95 and tel.get("streamDropWarn") is True and tel.get("voiceWhileMuted") is True, f"Missing telemetry: {tel}"
+        print("[PASS] WS mute_state mirrors v6.2.0 telemetry (recState, recSeconds, streamDropWarn, voiceWhileMuted)")
+
+        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+            f.write("DUMP_EVENTS")
+        t0 = time.time()
+        while not os.path.exists(READY_FILE + ".events"):
+            if time.time() - t0 > 5:
+                raise RuntimeError("DUMP_EVENTS timeout")
+        time.sleep(0.05)
+        with open(READY_FILE + ".events", "r", encoding="utf-8-sig") as f:
+            ev = json.load(f)
+        assert ev["ppt"] == "next,prev" and ev["hasToggleRecord"] is True, f"Unexpected host events: {ev}"
+        print("[PASS] Host Bridge executed real PPT handlers & OBS ToggleRecord")
+
+        ws_send_text(s_ok, json.dumps({"type": "unpair"}))
+        try:
+            ws_recv_json(s_ok, buf_ok, timeout=1.5)
+        except Exception:
+            pass
         s_ok.close()
+        for p in [READY_FILE + ".rec_ready", READY_FILE + ".events"]:
+            if os.path.exists(p):
+                os.remove(p)
+
         with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
             f.write("STOP")
         proc.wait(timeout=5)

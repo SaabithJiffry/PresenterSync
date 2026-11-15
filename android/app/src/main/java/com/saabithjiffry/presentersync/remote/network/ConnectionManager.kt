@@ -50,7 +50,11 @@ data class ConnectionUiState(
     val usingRelayFallback: Boolean = false,
     val usingBridge: Boolean = false,
     val isMuted: Boolean = false,
-    val serviceRunning: Boolean = false
+    val serviceRunning: Boolean = false,
+    val recState: Int = 0,
+    val recSeconds: Int = 0,
+    val streamDropWarn: Boolean = false,
+    val voiceWhileMuted: Boolean = false
 ) {
     val transportName: String
         get() = when {
@@ -58,11 +62,24 @@ data class ConnectionUiState(
             usingRelayFallback -> "WAN Relay"
             else -> "OBS WebSocket"
         }
+
+    val isRecordingActive: Boolean
+        get() = recState == 1 || recState == 2
+
+    fun formattedRecElapsed(): String {
+        val total = recSeconds.coerceAtLeast(0)
+        val hrs = total / 3600
+        val mins = (total % 3600) / 60
+        val secs = total % 60
+        return if (hrs > 0) String.format("%d:%02d:%02d", hrs, mins, secs)
+        else String.format("%02d:%02d", mins, secs)
+    }
 }
 
 sealed interface RemoteEvent {
     data class MuteChanged(val isMuted: Boolean) : RemoteEvent
     data class ToastMessage(val message: String) : RemoteEvent
+    data object VoiceWhileMutedAlert : RemoteEvent
     data object CloseRemoteRequested : RemoteEvent
 }
 
@@ -96,6 +113,7 @@ class ConnectionManager(
     private var relayClient: RelayClient? = null
     private var connectLoopJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var recTickerJob: Job? = null
     private var networkDebounceJob: Job? = null
     private var networkCallbackRegistered = false
 
@@ -157,6 +175,7 @@ class ConnectionManager(
         networkDebounceJob?.cancel()
         connectLoopJob?.cancel()
         heartbeatJob?.cancel()
+        recTickerJob?.cancel()
         closeActiveClients()
         unregisterNetworkCallback()
         _uiState.value = _uiState.value.copy(
@@ -164,7 +183,11 @@ class ConnectionManager(
             connStatus = ConnStatus.SEARCHING,
             activeHost = "",
             usingRelayFallback = false,
-            serviceRunning = false
+            serviceRunning = false,
+            recState = 0,
+            recSeconds = 0,
+            streamDropWarn = false,
+            voiceWhileMuted = false
         )
     }
 
@@ -172,12 +195,17 @@ class ConnectionManager(
         val gen = generation.incrementAndGet()
         connectLoopJob?.cancel()
         heartbeatJob?.cancel()
+        recTickerJob?.cancel()
         closeActiveClients()
         _uiState.value = _uiState.value.copy(
             connected = false,
             connStatus = ConnStatus.SEARCHING,
             activeHost = "",
-            usingRelayFallback = false
+            usingRelayFallback = false,
+            recState = 0,
+            recSeconds = 0,
+            streamDropWarn = false,
+            voiceWhileMuted = false
         )
         connectLoopJob = scope.launch {
             runConnectLoop(gen)
@@ -320,6 +348,11 @@ class ConnectionManager(
                     applyNewMuteState(isMuted)
                 }
 
+                override fun onTelemetryChanged(telemetry: BridgeTelemetryState) {
+                    if (gen != generation.get()) return
+                    applyBridgeTelemetry(gen, telemetry)
+                }
+
                 override fun onCloseRemoteSignal() {
                     if (gen != generation.get()) return
                     _events.tryEmit(RemoteEvent.CloseRemoteRequested)
@@ -328,12 +361,17 @@ class ConnectionManager(
                 override fun onBridgeDisconnected(reason: String) {
                     Log.w("PresenterSync", "Host Bridge disconnected ($wsUrl): $reason")
                     heartbeatJob?.cancel()
+                    recTickerJob?.cancel()
                     if (gen == generation.get() && _uiState.value.connStatus != ConnStatus.AUTH_FAILED) {
                         _uiState.value = _uiState.value.copy(
                             connected = false,
                             connStatus = ConnStatus.SEARCHING,
                             activeHost = "",
-                            usingBridge = false
+                            usingBridge = false,
+                            recState = 0,
+                            recSeconds = 0,
+                            streamDropWarn = false,
+                            voiceWhileMuted = false
                         )
                     }
                     done.complete(SessionOutcome.DISCONNECTED)
@@ -422,7 +460,11 @@ class ConnectionManager(
                             _uiState.value = st.copy(
                                 connected = false,
                                 connStatus = ConnStatus.SEARCHING,
-                                activeHost = ""
+                                activeHost = "",
+                                recState = 0,
+                                recSeconds = 0,
+                                streamDropWarn = false,
+                                voiceWhileMuted = false
                             )
                         }
                     }
@@ -504,7 +546,11 @@ class ConnectionManager(
                             connected = false,
                             connStatus = ConnStatus.SEARCHING,
                             activeHost = "",
-                            usingRelayFallback = false
+                            usingRelayFallback = false,
+                            recState = 0,
+                            recSeconds = 0,
+                            streamDropWarn = false,
+                            voiceWhileMuted = false
                         )
                     }
                     done.complete(SessionOutcome.DISCONNECTED)
@@ -537,13 +583,64 @@ class ConnectionManager(
         }
     }
 
+    private fun applyBridgeTelemetry(gen: Int, telemetry: BridgeTelemetryState) {
+        val prev = _uiState.value
+        val activeVoiceWarn = prev.isMuted && telemetry.voiceWhileMuted
+        _uiState.value = prev.copy(
+            recState = telemetry.recState,
+            recSeconds = telemetry.recSeconds,
+            streamDropWarn = telemetry.streamDropWarn,
+            voiceWhileMuted = activeVoiceWarn
+        )
+        if (activeVoiceWarn && !prev.voiceWhileMuted && configStore.current.enableVoiceWhileMutedAlert) {
+            _events.tryEmit(RemoteEvent.VoiceWhileMutedAlert)
+        }
+        if (telemetry.recState == 1) {
+            if (recTickerJob?.isActive != true) {
+                recTickerJob = scope.launch {
+                    while (gen == generation.get() && _uiState.value.connected && _uiState.value.recState == 1) {
+                        delay(1000L)
+                        val cur = _uiState.value
+                        if (gen == generation.get() && cur.connected && cur.recState == 1) {
+                            _uiState.value = cur.copy(recSeconds = cur.recSeconds + 1)
+                        }
+                    }
+                }
+            }
+        } else {
+            recTickerJob?.cancel()
+        }
+    }
+
     private fun applyNewMuteState(muted: Boolean) {
         val prev = _uiState.value.isMuted
         configStore.update { it.copy(isMuted = muted) }
-        _uiState.value = _uiState.value.copy(isMuted = muted)
+        _uiState.value = _uiState.value.copy(
+            isMuted = muted,
+            voiceWhileMuted = if (muted) _uiState.value.voiceWhileMuted else false
+        )
         if (prev != muted) {
             _events.tryEmit(RemoteEvent.MuteChanged(muted))
         }
+    }
+
+    fun sendPptNext(source: String = "quick_menu"): Boolean =
+        sendBridgeDeckAction { it.sendPptNext(source) }
+
+    fun sendPptPrev(source: String = "quick_menu"): Boolean =
+        sendBridgeDeckAction { it.sendPptPrev(source) }
+
+    fun sendToggleRecord(source: String = "quick_menu"): Boolean =
+        sendBridgeDeckAction { it.sendToggleRecord(source) }
+
+    private fun sendBridgeDeckAction(action: (HostBridgeClient) -> Boolean): Boolean {
+        val st = _uiState.value
+        val bridge = bridgeClient
+        if (!st.connected || bridge == null || !st.usingBridge) {
+            _events.tryEmit(RemoteEvent.ToastMessage("Deck controls require Primary Host Bridge connection."))
+            return false
+        }
+        return action(bridge)
     }
 
     fun toggleMuteFromHud(): Boolean = toggleMuteInternal("hud")

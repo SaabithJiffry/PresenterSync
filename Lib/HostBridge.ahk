@@ -174,8 +174,12 @@ class HostCompanionBridge {
         this.requestedUdpPort := (udpPort = -1) ? tcpPort : udpPort
         this.lastError := ""
 
-        if (!cfg.HasOwnProp("SessionPairingCode") || cfg.SessionPairingCode = "")
+        if (!cfg.HasOwnProp("SessionPairingCode") || cfg.SessionPairingCode = "") {
             cfg.SessionPairingCode := GenerateSessionPairingCode()
+            if (cfg.HasMethod("Write"))
+                try cfg.Write("Settings", "SessionPairingCode", cfg.SessionPairingCode)
+        }
+        this.LoadPairedDevices()
 
         wsaData := Buffer(408, 0)
         if (DllCall("ws2_32\WSAStartup", "UShort", 0x0202, "Ptr", wsaData, "Int") != 0) {
@@ -308,11 +312,125 @@ class HostCompanionBridge {
         }
     }
 
-    RotateSessionCode() {
+    RotateSessionCode(revokePaired := false) {
         newCode := GenerateSessionPairingCode()
         this.cfg.SessionPairingCode := newCode
+        if (IsObject(this.cfg) && this.cfg.HasMethod("Write"))
+            try this.cfg.Write("Settings", "SessionPairingCode", newCode)
         this.rateLimits := Map()
+        if (revokePaired)
+            this.RevokeAllDevices()
         return newCode
+    }
+
+    _GetIniPath() {
+        if (IsObject(this.cfg) && this.cfg.HasOwnProp("ConfigFile") && this.cfg.ConfigFile != "")
+            return this.cfg.ConfigFile
+        return ""
+    }
+
+    LoadPairedDevices() {
+        this.pairedDevices := Map()
+        this.validTokens := Map()
+        iniPath := this._GetIniPath()
+        if (iniPath = "" || !FileExist(iniPath))
+            return
+        rawSection := ""
+        try rawSection := IniRead(iniPath, "HostBridgePairedDevices", , "")
+        if (rawSection = "")
+            return
+        for _, line in StrSplit(rawSection, "`n", "`r") {
+            trimmed := Trim(line)
+            eqPos := InStr(trimmed, "=")
+            if (eqPos <= 1)
+                continue
+            devId := UriDecodeComponent(SubStr(trimmed, 1, eqPos - 1))
+            val := SubStr(trimmed, eqPos + 1)
+            parsed := _HB_ParsePairedDevice(devId, val)
+            if (IsObject(parsed)) {
+                this.pairedDevices[parsed.deviceId] := parsed
+                if (parsed.token != "")
+                    this.validTokens[parsed.token] := parsed.deviceId
+            }
+        }
+    }
+
+    SavePairedDevices() {
+        iniPath := this._GetIniPath()
+        if (iniPath = "")
+            return false
+        try IniDelete(iniPath, "HostBridgePairedDevices")
+        for devId, d in this.pairedDevices {
+            iniKey := UriEncodeComponent(devId)
+            if (iniKey = "")
+                continue
+            try IniWrite(_HB_SerializePairedDevice(d), iniPath, "HostBridgePairedDevices", iniKey)
+        }
+        return true
+    }
+
+    RenamePairedDevice(devId, newName) {
+        cleanName := RegExReplace(Trim(String(newName)), "[\r\n\t]", " ")
+        cleanName := SubStr(Trim(cleanName), 1, 64)
+        if (cleanName = "" || !this.pairedDevices.Has(devId))
+            return false
+        this.pairedDevices[devId].deviceName := cleanName
+        this.pairedDevices[devId].customName := true
+        for _, cli in this.clients {
+            if (cli.deviceId = devId)
+                cli.deviceName := cleanName
+        }
+        this.SavePairedDevices()
+        return true
+    }
+
+    UnpairDevice(devId) {
+        if (devId = "" || !this.pairedDevices.Has(devId))
+            return false
+        dev := this.pairedDevices[devId]
+        if (dev.HasOwnProp("token") && dev.token != "" && this.validTokens.Has(dev.token))
+            this.validTokens.Delete(dev.token)
+        staleTokens := []
+        for tok, ownerId in this.validTokens {
+            if (ownerId = devId)
+                staleTokens.Push(tok)
+        }
+        for tok in staleTokens
+            this.validTokens.Delete(tok)
+        this.pairedDevices.Delete(devId)
+
+        targets := []
+        for _, cli in this.clients {
+            if (cli.deviceId = devId)
+                targets.Push(cli)
+        }
+        for cli in targets {
+            if (cli.kind = "ws") {
+                this._QueueWsFrame(cli, 0x1, '{"type":"auth_error","error":"Device unpaired by host"}')
+                cli.closeAfterSend := true
+                this._FlushSendQueue(cli)
+            } else {
+                this._CloseClient(cli)
+            }
+        }
+        this.SavePairedDevices()
+        return true
+    }
+
+    RevokeAllDevices() {
+        targets := []
+        for _, cli in this.clients {
+            if (cli.kind = "ws" && cli.authenticated)
+                targets.Push(cli)
+        }
+        this.validTokens := Map()
+        this.pairedDevices := Map()
+        this.SavePairedDevices()
+        for cli in targets {
+            this._QueueWsFrame(cli, 0x1, '{"type":"auth_error","error":"Session revoked by host"}')
+            cli.closeAfterSend := true
+            this._FlushSendQueue(cli)
+        }
     }
 
     GetDeviceList() {
@@ -325,7 +443,8 @@ class HostCompanionBridge {
                 ip: d.ip,
                 transport: d.transport,
                 pairedAt: d.pairedAt,
-                connected: d.connected
+                connected: d.connected,
+                customName: d.HasOwnProp("customName") ? d.customName : false
             })
         }
         return list
@@ -790,6 +909,14 @@ class HostCompanionBridge {
         }
 
         this._ResetPairingFailures(c.ip)
+        if (this.pairedDevices.Has(devId)) {
+            oldTok := this.pairedDevices[devId].token
+            if (oldTok != "" && this.validTokens.Has(oldTok))
+                this.validTokens.Delete(oldTok)
+            if (this.pairedDevices[devId].HasOwnProp("customName") && this.pairedDevices[devId].customName && this.pairedDevices[devId].deviceName != "")
+                devName := this.pairedDevices[devId].deviceName
+        }
+        hadCustom := this.pairedDevices.Has(devId) && this.pairedDevices[devId].HasOwnProp("customName") && this.pairedDevices[devId].customName
         rnd := GenerateRandomBytes(16)
         rndHex := ""
         Loop 16
@@ -806,8 +933,10 @@ class HostCompanionBridge {
             token: sessionToken,
             pairedAt: FormatTime(, "HH:mm:ss"),
             lastSeenTick: A_TickCount,
-            connected: false
+            connected: false,
+            customName: hadCustom
         }
+        this.SavePairedDevices()
 
         endpoints := IsObject(this.cachedEndpoints) ? this.cachedEndpoints : GetLocalNetworkEndpoints()
         ipsJson := "["
@@ -904,7 +1033,8 @@ class HostCompanionBridge {
             return false
 
         finalDevId := (devId != "") ? devId : (matchedDevId != "" ? matchedDevId : ("ws-" c.ip "-" c.sock))
-        finalName := (devName != "") ? devName : (this.pairedDevices.Has(finalDevId) ? this.pairedDevices[finalDevId].deviceName : "Smart Board")
+        hadCustom := this.pairedDevices.Has(finalDevId) && this.pairedDevices[finalDevId].HasOwnProp("customName") && this.pairedDevices[finalDevId].customName
+        finalName := (hadCustom && this.pairedDevices[finalDevId].deviceName != "") ? this.pairedDevices[finalDevId].deviceName : ((devName != "") ? devName : (this.pairedDevices.Has(finalDevId) ? this.pairedDevices[finalDevId].deviceName : "Smart Board"))
         finalPlat := (plat != "") ? plat : (this.pairedDevices.Has(finalDevId) ? this.pairedDevices[finalDevId].platform : "Remote")
 
         c.authenticated := true
@@ -920,10 +1050,14 @@ class HostCompanionBridge {
             ip: c.ip,
             transport: "Bridge WS",
             token: tokToKeep,
-            pairedAt: this.pairedDevices.Has(finalDevId) ? this.pairedDevices[finalDevId].pairedAt : FormatTime(, "HH:mm:ss"),
+            pairedAt: (this.pairedDevices.Has(finalDevId) && this.pairedDevices[finalDevId].pairedAt != "") ? this.pairedDevices[finalDevId].pairedAt : FormatTime(, "HH:mm:ss"),
             lastSeenTick: A_TickCount,
-            connected: true
+            connected: true,
+            customName: hadCustom
         }
+        if (tokToKeep != "")
+            this.validTokens[tokToKeep] := finalDevId
+        this.SavePairedDevices()
         return true
     }
 
@@ -1068,19 +1202,23 @@ class HostCompanionBridge {
                 targetMuted := _HB_JsonExtractBool(msg, "isMuted", this.state.isMuted)
                 ExecuteHostRemoteSetMute(this.cfg, this.state, targetMuted)
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "ppt_next":
+                ok := ExecuteHostRemotePptCommand(this.cfg, this.state, "next")
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"ppt_next","ok":' (ok ? "true" : "false") '}')
+            case "ppt_prev":
+                ok := ExecuteHostRemotePptCommand(this.cfg, this.state, "prev")
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"ppt_prev","ok":' (ok ? "true" : "false") '}')
+            case "toggle_record":
+                ok := ExecuteHostToggleRecord(this.cfg, this.state)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_record","ok":' (ok ? "true" : "false") '}')
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "sync_req":
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "ping":
                 isMutedStr := this.state.isMuted ? "true" : "false"
                 this._QueueWsFrame(c, 0x1, '{"type":"pong","isMuted":' isMutedStr ',"timestamp":' A_TickCount '}')
             case "unpair":
-                if (c.deviceId != "" && this.pairedDevices.Has(c.deviceId)) {
-                    tok := this.pairedDevices[c.deviceId].token
-                    if (tok != "" && this.validTokens.Has(tok))
-                        this.validTokens.Delete(tok)
-                    this.pairedDevices.Delete(c.deviceId)
-                }
-                this._CloseClient(c)
+                this.UnpairDevice(c.deviceId)
         }
     }
 
@@ -1089,7 +1227,11 @@ class HostCompanionBridge {
         mode := this.cfg.HasOwnProp("AudioRoutingMode") ? this.cfg.AudioRoutingMode : 0
         micName := this.cfg.HasOwnProp("targetMicName") ? this.cfg.targetMicName : "Mic/Aux"
         confApp := this.cfg.HasOwnProp("ConferencingApp") ? this.cfg.ConferencingApp : "Zoom"
-        return '{"type":"mute_state","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount '}'
+        recSt := this.state.HasOwnProp("recState") ? Integer(this.state.recState) : 0
+        recSec := this.state.HasOwnProp("recElapsedSec") ? Max(0, Integer(this.state.recElapsedSec)) : 0
+        streamWarnStr := (this.state.HasOwnProp("streamState") && this.state.streamState == 2) ? "true" : "false"
+        voiceMutedStr := (this.state.HasOwnProp("voiceWhileMuted") && this.state.voiceWhileMuted) ? "true" : "false"
+        return '{"type":"mute_state","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","recState":' recSt ',"recSeconds":' recSec ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount '}'
     }
 }
 
@@ -1112,13 +1254,91 @@ StopHostCompanionBridge() {
     }
 }
 
-RotateHostSessionPairingCode(cfg) {
+RotateHostSessionPairingCode(cfg, revokeAll := false) {
     global g_HostCompanionBridge
     if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
-        return g_HostCompanionBridge.RotateSessionCode()
+        return g_HostCompanionBridge.RotateSessionCode(revokeAll)
     newCode := GenerateSessionPairingCode()
     cfg.SessionPairingCode := newCode
+    if (IsObject(cfg) && cfg.HasMethod("Write"))
+        try cfg.Write("Settings", "SessionPairingCode", newCode)
+    if (revokeAll && IsObject(cfg) && cfg.HasOwnProp("ConfigFile") && cfg.ConfigFile != "")
+        try IniDelete(cfg.ConfigFile, "HostBridgePairedDevices")
     return newCode
+}
+
+RenameHostPairedDevice(devId, newName) {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.RenamePairedDevice(devId, newName)
+    return false
+}
+
+UnpairHostPairedDevice(devId) {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.UnpairDevice(devId)
+    return false
+}
+
+_HB_SerializePairedDevice(dev) {
+    customFlag := (dev.HasOwnProp("customName") && dev.customName) ? "1" : "0"
+    return "v1|" UriEncodeComponent(dev.deviceName) "|" UriEncodeComponent(dev.platform) "|" UriEncodeComponent(dev.token) "|" UriEncodeComponent(dev.pairedAt) "|" UriEncodeComponent(dev.ip) "|" UriEncodeComponent(dev.transport) "|" customFlag
+}
+
+_HB_ParsePairedDevice(devId, rawVal) {
+    parts := StrSplit(String(rawVal), "|")
+    if (parts.Length < 7 || parts[1] != "v1")
+        return ""
+    tok := UriDecodeComponent(parts[4])
+    if (tok = "" || devId = "")
+        return ""
+    return {
+        deviceId: devId,
+        deviceName: UriDecodeComponent(parts[2]),
+        platform: UriDecodeComponent(parts[3]),
+        token: tok,
+        pairedAt: UriDecodeComponent(parts[5]),
+        ip: UriDecodeComponent(parts[6]),
+        transport: UriDecodeComponent(parts[7]),
+        customName: (parts.Length >= 8 && parts[8] = "1"),
+        lastSeenTick: 0,
+        connected: false
+    }
+}
+
+UriDecodeComponent(str) {
+    str := String(str)
+    if (str = "")
+        return ""
+    bytes := []
+    len := StrLen(str)
+    i := 1
+    while (i <= len) {
+        ch := SubStr(str, i, 1)
+        if (ch = "%" && i + 2 <= len) {
+            hx := SubStr(str, i + 1, 2)
+            if (hx ~= "^[0-9A-Fa-f]{2}$") {
+                bytes.Push(Integer("0x" hx))
+                i += 3
+                continue
+            }
+        }
+        needed := StrPut(ch, "UTF-8")
+        if (needed > 1) {
+            cbuf := Buffer(needed, 0)
+            StrPut(ch, cbuf, "UTF-8")
+            Loop (needed - 1)
+                bytes.Push(NumGet(cbuf, A_Index - 1, "UChar"))
+        }
+        i += 1
+    }
+    if (bytes.Length = 0)
+        return ""
+    outBuf := Buffer(bytes.Length + 1, 0)
+    for idx, bv in bytes
+        NumPut("UChar", bv, outBuf, idx - 1)
+    return StrGet(outBuf, "UTF-8")
 }
 
 HostBridgeBroadcastMuteState(cfg, state) {

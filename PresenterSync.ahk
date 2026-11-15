@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 6.1.0
+; Version: 6.2.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 6.1.0.0
+;@Ahk2Exe-SetVersion 6.2.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -48,6 +48,8 @@ AppState := OverlayState(AppConfig)
 AppState.rebuildTrayFn := BuildTrayMenu.Bind(AppConfig, AppState)
 AppState.rebindHotkeysFn := (*) => RebindAllHostHotkeys(AppConfig, AppState)
 AppState.triggerMuteFn := (*) => TriggerMute(AppConfig, AppState, true)
+AppState.pptNextFn := (*) => SendToPPT(AppConfig, "{Right}")
+AppState.pptPrevFn := (*) => SendToPPT(AppConfig, "{Left}")
 BuildTrayMenu(AppConfig, AppState)
 InitHUD(AppConfig, AppState)
 
@@ -125,6 +127,10 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("Mute Status Toast", ToggleMuteToast.Bind(cfg, state))
     if (cfg.EnableMuteToast)
         AppearanceMenu.Check("Mute Status Toast")
+
+    AppearanceMenu.Add("Voice-While-Muted Alert", (*) => (ToggleBoolSetting(cfg, state, "EnableVoiceWhileMutedAlert"), UpdateMutedVoiceMonitorTimer(cfg, state)))
+    if (cfg.EnableVoiceWhileMutedAlert)
+        AppearanceMenu.Check("Voice-While-Muted Alert")
 
     AppearanceMenu.Add("Show Live Voice Activity Bar", ToggleVoiceMeter.Bind(cfg, state))
     if (cfg.ShowVoiceMeter)

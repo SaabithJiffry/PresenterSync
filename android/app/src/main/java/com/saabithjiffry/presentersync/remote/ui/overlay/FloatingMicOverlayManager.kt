@@ -658,9 +658,93 @@ class FloatingMicOverlayManager(
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             val hp = (10 * density).roundToInt()
             val vp = (6 * density).roundToInt()
-            setPadding(hp, vp, hp, vp)
+            setPadding(hp, vp, hp, (2 * density).roundToInt())
         }
         container.addView(header)
+
+        if (currentConn.connected) {
+            val recLabel = when (currentConn.recState) {
+                1 -> "● REC ${currentConn.formattedRecElapsed()}"
+                2 -> "❚❚ PAUSED ${currentConn.formattedRecElapsed()}"
+                else -> "REC: OFF"
+            }
+            val streamLabel = if (currentConn.streamDropWarn) "⚠ STREAM DROP" else "Stream OK"
+            val warnExtra = if (currentConn.voiceWhileMuted && currentConn.isMuted) "\n⚠ Mic signal detected while muted" else ""
+            val telemetryBanner = TextView(context).apply {
+                text = "$recLabel • $streamLabel$warnExtra"
+                setTextColor(
+                    when {
+                        currentConn.voiceWhileMuted && currentConn.isMuted -> Color.parseColor("#F59E0B")
+                        currentConn.streamDropWarn -> Color.parseColor("#EF4444")
+                        currentConn.recState == 1 -> Color.parseColor("#EF4444")
+                        else -> if (isDark) Color.parseColor("#CBD5E1") else Color.parseColor("#475569")
+                    }
+                )
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                val hp = (10 * density).roundToInt()
+                setPadding(hp, 0, hp, (6 * density).roundToInt())
+            }
+            container.addView(telemetryBanner)
+        }
+
+        if (currentConn.connected && currentConn.usingBridge) {
+            val deckDivider = View(context).apply { setBackgroundColor(dividerColor) }
+            container.addView(deckDivider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
+
+            val deckRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val pad = (6 * density).roundToInt()
+                setPadding(pad, pad, pad, pad)
+            }
+            val btnSurface = if (isDark) Color.parseColor("#383838") else Color.parseColor("#F1F5F9")
+            val recSurface = if (currentConn.recState == 1) Color.parseColor("#DC2626") else btnSurface
+            val recTextCol = if (currentConn.recState == 1) Color.WHITE else textColor
+
+            fun addDeckButton(label: String, bgCol: Int, fgCol: Int, closeAfter: Boolean, onTap: () -> Unit) {
+                val tv = TextView(context).apply {
+                    text = label
+                    gravity = Gravity.CENTER
+                    setTextColor(fgCol)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    val vp = (8 * density).roundToInt()
+                    setPadding((4 * density).roundToInt(), vp, (4 * density).roundToInt(), vp)
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = 6f * density
+                        setColor(bgCol)
+                    }
+                    isClickable = true
+                    isFocusable = false
+                    setOnClickListener {
+                        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        onTap()
+                        if (closeAfter) dismissQuickMenu()
+                    }
+                }
+                val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = (3 * density).roundToInt()
+                    marginEnd = (3 * density).roundToInt()
+                }
+                deckRow.addView(tv, lp)
+            }
+
+            addDeckButton("◀ Prev", btnSurface, textColor, closeAfter = false) {
+                connectionManager.sendPptPrev("quick_menu")
+            }
+            addDeckButton(
+                label = if (currentConn.recState == 1) "⏹ Stop" else "⏺ Rec",
+                bgCol = recSurface,
+                fgCol = recTextCol,
+                closeAfter = true
+            ) {
+                connectionManager.sendToggleRecord("quick_menu")
+            }
+            addDeckButton("Next ▶", btnSurface, textColor, closeAfter = false) {
+                connectionManager.sendPptNext("quick_menu")
+            }
+            container.addView(deckRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
 
         fun addMenuRow(label: String, onClick: () -> Unit) {
             val divider = View(context).apply { setBackgroundColor(dividerColor) }

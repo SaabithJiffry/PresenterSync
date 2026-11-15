@@ -85,6 +85,19 @@ class FloatingHudForegroundService : LifecycleService() {
                     is RemoteEvent.ToastMessage -> {
                         Toast.makeText(applicationContext, ev.message, Toast.LENGTH_SHORT).show()
                     }
+                    RemoteEvent.VoiceWhileMutedAlert -> {
+                        if (cfg.enableVoiceWhileMutedAlert) {
+                            val (anchor, pillH) = overlayManager.currentAnchorForToast()
+                            toastBannerManager.showAlertToast(
+                                message = "You're on mute — mic signal detected",
+                                accentDotColor = android.graphics.Color.parseColor("#F59E0B"),
+                                cfg = cfg,
+                                anchorX = anchor.x,
+                                anchorY = anchor.y,
+                                pillHeightPx = pillH
+                            )
+                        }
+                    }
                     RemoteEvent.CloseRemoteRequested -> {
                         stopRemoteCleanly()
                     }
@@ -192,7 +205,15 @@ class FloatingHudForegroundService : LifecycleService() {
             conn.connStatus == ConnStatus.AUTH_FAILED -> "✕ Auth Failed (Check Password)"
             conn.connected && conn.connStatus == ConnStatus.MIC_ERROR ->
                 "⚠ Mic '${cfg.targetMicName}' Not Found: ${conn.activeHost}"
-            conn.connected -> "● Connected: ${conn.activeHost} (${if (conn.isMuted) "MUTED" else "LIVE"})"
+            conn.connected -> {
+                val base = "● Connected: ${conn.activeHost} (${if (conn.isMuted) "MUTED" else "LIVE"})"
+                val parts = mutableListOf(base)
+                if (conn.recState == 1) parts += "REC ${conn.formattedRecElapsed()}"
+                else if (conn.recState == 2) parts += "PAUSED ${conn.formattedRecElapsed()}"
+                if (conn.streamDropWarn) parts += "⚠ STREAM WARN"
+                if (conn.voiceWhileMuted && conn.isMuted) parts += "⚠ MIC SIGNAL"
+                parts.joinToString(" • ")
+            }
             else -> "○ Searching for OBS Host..."
         }
         val statusText = if (cfg.hudClickThrough) "$baseStatus • Click-Through ON" else baseStatus

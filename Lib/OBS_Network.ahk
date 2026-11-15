@@ -547,6 +547,43 @@ ExecuteHostRemoteSetMute(cfg, state, targetMuted) {
     return true
 }
 
+ExecuteHostToggleRecord(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+        return SendObsRequest(state.obsWs, "ToggleRecord", "ClickToggleRec")
+    } else if (cfg.EnableZoom && state.zoomConnected && cfg.HasOwnProp("ZoomRecHotkey") && cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") {
+        confSpec := GetConferencingWindowSpec(cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom")
+        SetKeyDelay -1, 30
+        try ControlSend(FormatSendKey(cfg.ZoomRecHotkey), , confSpec)
+        SetKeyDelay 50, 50
+        state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
+        SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
+        return true
+    } else {
+        SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
+        return true
+    }
+}
+
+ExecuteHostRemotePptCommand(cfg, state, direction := "next") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    isPrev := (StrLower(Trim(String(direction))) = "prev")
+    fnProp := isPrev ? "pptPrevFn" : "pptNextFn"
+    if (state.HasOwnProp(fnProp) && IsObject(state.%fnProp%)) {
+        try {
+            res := state.%fnProp%.Call()
+            return (res != false)
+        } catch {
+            return false
+        }
+    }
+    if (!cfg.HasOwnProp("EnablePPT") || !cfg.EnablePPT)
+        return false
+    return false
+}
+
 _DispatchHostRemoteControlSend(cfg, state, nextMuted) {
     obsOpen := WinExist("ahk_exe obs64.exe")
     appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"

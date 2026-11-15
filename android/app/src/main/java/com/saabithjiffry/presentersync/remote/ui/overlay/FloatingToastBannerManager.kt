@@ -35,6 +35,32 @@ class FloatingToastBannerManager(
     private val dismissRunnable = Runnable { hide() }
 
     fun showMuteToast(isMuted: Boolean, cfg: RemoteConfig, anchorX: Int, anchorY: Int, pillHeightPx: Int) {
+        val text = if (isMuted) "Mic: MUTED" else "Mic: LIVE"
+        val dotColor = if (isMuted) Color.parseColor("#EF4444") else Color.parseColor("#22C55E")
+        showBanner(text, dotColor, cfg, anchorX, anchorY, pillHeightPx, AppConstants.TOOLTIP_DURATION_MS)
+    }
+
+    fun showAlertToast(
+        message: String,
+        accentDotColor: Int,
+        cfg: RemoteConfig,
+        anchorX: Int,
+        anchorY: Int,
+        pillHeightPx: Int,
+        durationMs: Long = 3200L
+    ) {
+        showBanner(message, accentDotColor, cfg, anchorX, anchorY, pillHeightPx, durationMs)
+    }
+
+    private fun showBanner(
+        message: String,
+        dotColor: Int,
+        cfg: RemoteConfig,
+        anchorX: Int,
+        anchorY: Int,
+        pillHeightPx: Int,
+        durationMs: Long
+    ) {
         if (!Settings.canDrawOverlays(context)) return
         handler.post {
             hideInternal()
@@ -52,7 +78,6 @@ class FloatingToastBannerManager(
             val surfaceColor = if (isDark) Color.parseColor("#2C2C2C") else Color.parseColor("#FFFFFF")
             val borderColor = if (isDark) Color.parseColor("#3D3D3D") else Color.parseColor("#E5E5E5")
             val textColor = if (isDark) Color.WHITE else Color.parseColor("#1A1A1A")
-            val dotColor = if (isMuted) Color.parseColor("#EF4444") else Color.parseColor("#22C55E")
 
             val container = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -80,7 +105,7 @@ class FloatingToastBannerManager(
             })
 
             val label = TextView(context).apply {
-                text = if (isMuted) "Mic: MUTED" else "Mic: LIVE"
+                text = message
                 setTextColor(textColor)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
                 typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -118,7 +143,7 @@ class FloatingToastBannerManager(
                 windowManager.addView(container, params)
                 bannerView = container
                 attached = true
-                handler.postDelayed(dismissRunnable, AppConstants.TOOLTIP_DURATION_MS)
+                handler.postDelayed(dismissRunnable, durationMs)
             }
         }
     }

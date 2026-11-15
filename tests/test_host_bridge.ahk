@@ -74,6 +74,7 @@ cfg.ConferencingApp := "Zoom"
 cfg.InternetPairingCode := "PS-BRDG-777"
 
 mockObsSent := []
+mockPptEvents := []
 st := {
     isMuted: false,
     obsConnected: false,
@@ -81,7 +82,13 @@ st := {
     zoomConnected: false,
     EnableWS: false,
     relayConnected: false,
-    relayWs: ""
+    relayWs: "",
+    recState: 0,
+    recElapsedSec: 0,
+    streamState: 0,
+    voiceWhileMuted: false,
+    pptNextFn: (*) => (mockPptEvents.Push("next"), true),
+    pptPrevFn: (*) => (mockPptEvents.Push("prev"), true)
 }
 
 if (serveMode) {
@@ -120,6 +127,30 @@ if (serveMode) {
             cfg.AudioRoutingMode := 3
             st.obsConnected := true
             mockObsSent.Length := 0
+        } else if (cmd = "OBS_REC_MODE") {
+            cfg.EnableWS := true
+            cfg.EnablePPT := true
+            st.obsConnected := true
+            mockObsSent.Length := 0
+            mockPptEvents.Length := 0
+            FileAppend("ok", readyPath ".rec_ready", "UTF-8")
+        } else if (cmd = "EMIT_TELEMETRY") {
+            st.recState := 1
+            st.recElapsedSec := 95
+            st.streamState := 2
+            st.voiceWhileMuted := true
+            HostBridgeBroadcastMuteState(cfg, st)
+        } else if (cmd = "DUMP_EVENTS") {
+            hasRec := false
+            for pkt in mockObsSent {
+                if (InStr(pkt, "ToggleRecord"))
+                    hasRec := true
+            }
+            pptStr := ""
+            for idx, ev in mockPptEvents
+                pptStr .= (idx > 1 ? "," : "") ev
+            try FileDelete(readyPath ".events")
+            FileAppend('{"ppt":"' pptStr '","obsCount":' mockObsSent.Length ',"hasToggleRecord":' (hasRec ? "true" : "false") '}', readyPath ".events", "UTF-8")
         } else if (cmd = "STOP") {
             ExitApp(0)
         }
@@ -148,6 +179,11 @@ Assert("HostCompanionBridge starts on ephemeral TCP & UDP ports",
 
 sum := GetHostBridgeStatusSummary()
 Assert("GetHostBridgeStatusSummary reports running state", sum.running && sum.tcpPort == b.boundTcpPort)
+
+serDev := _HB_SerializePairedDevice({ deviceId: "and-1", deviceName: "Hall, Main|Board", customName: true, platform: "Android", token: "tok_abc123", ip: "10.0.0.5", transport: "WS", pairedAt: "1700000" })
+parDev := _HB_ParsePairedDevice("and-1", serDev)
+Assert("_HB_SerializePairedDevice/_HB_ParsePairedDevice round-trips customName and escaped delimiter",
+    IsObject(parDev) && parDev.customName && parDev.deviceName == "Hall, Main|Board" && parDev.token == "tok_abc123" && parDev.transport == "WS")
 
 dlg := ShowRemoteCompanionInfo(cfg, st)
 dlg.GetClientPos(, , &cw, &ch)
