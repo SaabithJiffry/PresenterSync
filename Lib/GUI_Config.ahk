@@ -3214,33 +3214,33 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Remote Companion Connection Info")
     dlg._closed := false
     dlg.MarginX := 20
-    dlg.MarginY := 16
+    dlg.MarginY := 12
     Theme.ApplyToWindow(dlg)
     Theme.NamedWindows["Remote Companion Connection Info"] := dlg
 
     dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360", "Host Details for PresenterSync Remote"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440", "Host Details for PresenterSync Remote"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+4", "Configure how your secondary device (Smart Board / Laptop) connects:"), "Text", "muted")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440 y+2", "Configure how your secondary device (Smart Board / Laptop) connects:"), "Text", "muted")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Remote Network Mode:"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440 y+8", "Remote Network Mode:"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
     netChoice := (cfg.RemoteNetworkMode = "Internet") ? 2 : 1
-    ddlNetMode := dlg.Add("DropDownList", "xm w360 Choose" netChoice, [
+    ddlNetMode := dlg.Add("DropDownList", "xm w440 Choose" netChoice, [
         "1: Same Router / Local Wi-Fi or Ethernet (LAN - Default)",
         "2: Different Networks / Over the Internet (WAN Relay)"
     ])
     Theme.RegisterControl(dlg, ddlNetMode, "DropDownList")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Different Networks - Internet Pairing Code:"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440 y+8", "Different Networks - Internet Pairing Code:"), "Text")
     dlg.SetFont("s10 w700", Theme.UiFont)
-    editPair := dlg.Add("Edit", "xm w180 h28 ReadOnly Center", cfg.InternetPairingCode)
+    editPair := dlg.Add("Edit", "xm w240 h26 ReadOnly Center", cfg.InternetPairingCode)
     Theme.RegisterControl(dlg, editPair, "Edit", "accent")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    btnCopyPair := dlg.Add("Button", "x+8 yp w100 h28", "Copy Code")
-    btnNewPair := dlg.Add("Button", "x+8 yp w64 h28", "New")
+    btnCopyPair := dlg.Add("Button", "x+8 yp w112 h26", "Copy Code")
+    btnNewPair := dlg.Add("Button", "x+8 yp w72 h26", "New")
     Theme.RegisterControl(dlg, btnCopyPair, "Button", "accent")
     Theme.RegisterControl(dlg, btnNewPair, "Button")
 
@@ -3269,9 +3269,9 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     ddlNetMode.OnEvent("Change", OnNetModeChanged)
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Same Router (LAN) - Computer Name (mDNS):"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440 y+8", "Same Router (LAN) - Computer Name (mDNS):"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editHost := dlg.Add("Edit", "xm w360 ReadOnly -Wrap", A_ComputerName ".local")
+    editHost := dlg.Add("Edit", "xm w440 ReadOnly -Wrap", A_ComputerName ".local")
     Theme.RegisterControl(dlg, editHost, "Edit")
 
     ipListText := ""
@@ -3280,19 +3280,19 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     }
     if (ipListText != "") {
         dlg.SetFont("s9 w600", Theme.UiFont)
-        Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "Detected Local IP Addresses:"), "Text")
+        Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440 y+6", "Detected Local IP Addresses:"), "Text")
         dlg.SetFont("s9 w400", Theme.UiFont)
-        editIps := dlg.Add("Edit", "xm w360 r2 ReadOnly", RTrim(ipListText, "`n"))
+        editIps := dlg.Add("Edit", "xm w440 r2 ReadOnly", RTrim(ipListText, "`n"))
         Theme.RegisterControl(dlg, editIps, "Edit")
     }
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "Universal Connection String (Multi-Candidate LAN):"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440 y+6", "Universal Connection String (Multi-Candidate LAN):"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editUniv := dlg.Add("Edit", "xm w360 ReadOnly -Wrap", universalString)
+    editUniv := dlg.Add("Edit", "xm w440 ReadOnly -Wrap", universalString)
     Theme.RegisterControl(dlg, editUniv, "Edit")
 
-    btnCopy := dlg.Add("Button", "xm w360 h30 y+8", "Copy Universal String to Clipboard")
+    btnCopy := dlg.Add("Button", "xm w440 h28 y+6", "Copy Universal String to Clipboard")
     Theme.RegisterControl(dlg, btnCopy, "Button", "accent")
     ResetCopyBtn(*) {
         if (!dlg._closed && WinExist("ahk_id " dlg.Hwnd))
@@ -3308,15 +3308,15 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     if (!cfg.HasOwnProp("SessionPairingCode") || cfg.SessionPairingCode = "")
         cfg.SessionPairingCode := GenerateSessionPairingCode()
 
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Smart Board Pairing (Scan QR Code or Enter Session Code):"), "Text", "normal")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440 y+8", "Smart Board Pairing (Scan QR Code or Enter Session Code):"), "Text", "normal")
     qrUri := BuildHostPairingUri(cfg, endpoints.ips)
-    qrRes := QrCode.BuildHBitmap(qrUri, 128)
+    qrRes := QrCode.BuildHBitmap(qrUri, 114)
     hQrBmp := qrRes.hBitmap
 
-    editSession := dlg.Add("Edit", "xm Section w128 h26 ReadOnly Center y+6", cfg.SessionPairingCode)
+    editSession := dlg.Add("Edit", "xm Section w194 h26 ReadOnly Center y+6", cfg.SessionPairingCode)
     Theme.RegisterControl(dlg, editSession, "Edit", "accent")
-    btnCopySession := dlg.Add("Button", "x+4 yp w44 h26", "Copy")
-    btnNewSession := dlg.Add("Button", "x+4 yp w42 h26", "New")
+    btnCopySession := dlg.Add("Button", "x+6 yp w56 h26", "Copy")
+    btnNewSession := dlg.Add("Button", "x+6 yp w52 h26", "New")
     Theme.RegisterControl(dlg, btnCopySession, "Button")
     Theme.RegisterControl(dlg, btnNewSession, "Button")
 
@@ -3324,21 +3324,21 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     formatPairedList := (*) => _FormatHostBridgeDeviceText()
 
     dlg.SetFont("s8.5 w400", Theme.UiFont)
-    lblBridgeStatus := dlg.Add("Text", "xs w222 y+6", formatBridgeStatus.Call())
+    lblBridgeStatus := dlg.Add("Text", "xs w314 y+4", formatBridgeStatus.Call())
     Theme.RegisterControl(dlg, lblBridgeStatus, "Text", "muted")
-    editPairedDevs := dlg.Add("Edit", "xs w222 h74 ReadOnly Multi -WantReturn y+4", formatPairedList.Call())
+    editPairedDevs := dlg.Add("Edit", "xs w314 h60 ReadOnly Multi -WantReturn y+4", formatPairedList.Call())
     Theme.RegisterControl(dlg, editPairedDevs, "Edit")
     dlg.SetFont("s9 w400", Theme.UiFont)
 
-    picQr := dlg.Add("Picture", "x252 ys w128 h128 +0x800000", hQrBmp ? ("HBITMAP:" hQrBmp) : "")
+    picQr := dlg.Add("Picture", "x346 ys w114 h114 +0x800000", hQrBmp ? ("HBITMAP:" hQrBmp) : "")
 
     RefreshQrBitmap() {
         newUri := BuildHostPairingUri(cfg, endpoints.ips)
-        nextQr := QrCode.BuildHBitmap(newUri, 128)
+        nextQr := QrCode.BuildHBitmap(newUri, 114)
         if (nextQr.hBitmap) {
             oldBmp := hQrBmp
             hQrBmp := nextQr.hBitmap
-            try picQr.Value := "*w128 *h128 HBITMAP:" hQrBmp
+            try picQr.Value := "*w114 *h114 HBITMAP:" hQrBmp
             if (oldBmp)
                 DllCall("DeleteObject", "Ptr", oldBmp)
         }
@@ -3356,10 +3356,10 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     ))
 
     statusLine := "OBS Port: 4455  |  Password: " (cfg.obsPassword != "" ? "Configured" : "None") "  |  Mic: " cfg.targetMicName
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+12 Center", statusLine), "Text", "muted")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w440 y+10 Center", statusLine), "Text", "muted")
 
-    btnCloseRemote := dlg.Add("Button", "xm w176 h32 y+10", "Close Remote Companion...")
-    btnClose := dlg.Add("Button", "x+8 yp w176 h32 Default", "Close")
+    btnCloseRemote := dlg.Add("Button", "xm w216 h30 y+8", "Close Remote Companion...")
+    btnClose := dlg.Add("Button", "x+8 yp w216 h30 Default", "Close")
     Theme.RegisterControl(dlg, btnCloseRemote, "Button")
     Theme.RegisterControl(dlg, btnClose, "Button")
 
