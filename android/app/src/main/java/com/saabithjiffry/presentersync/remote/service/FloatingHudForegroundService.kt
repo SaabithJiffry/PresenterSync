@@ -19,11 +19,13 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.R
+import com.saabithjiffry.presentersync.remote.audio.AudioCuePlayer
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.network.ConnStatus
 import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
 import com.saabithjiffry.presentersync.remote.network.RemoteEvent
 import com.saabithjiffry.presentersync.remote.ui.overlay.FloatingMicOverlayManager
+import com.saabithjiffry.presentersync.remote.ui.overlay.FloatingToastBannerManager
 import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -31,6 +33,8 @@ import kotlinx.coroutines.launch
 class FloatingHudForegroundService : LifecycleService() {
     private lateinit var app: PresenterSyncRemoteApp
     private lateinit var overlayManager: FloatingMicOverlayManager
+    private lateinit var toastBannerManager: FloatingToastBannerManager
+    private lateinit var audioCuePlayer: AudioCuePlayer
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeReceiverRegistered = false
 
@@ -45,6 +49,8 @@ class FloatingHudForegroundService : LifecycleService() {
         super.onCreate()
         app = application as PresenterSyncRemoteApp
         overlayManager = FloatingMicOverlayManager(this, app.configStore, app.connectionManager)
+        toastBannerManager = FloatingToastBannerManager(this)
+        audioCuePlayer = AudioCuePlayer()
         acquireWifiLock()
         registerWakeReceiver()
         promoteToForeground(buildNotification(app.configStore.current, app.connectionManager.uiState.value))
@@ -57,13 +63,24 @@ class FloatingHudForegroundService : LifecycleService() {
             }.collect { (cfg, conn) ->
                 overlayManager.showOrUpdate(cfg, conn)
                 updateNotification(cfg, conn)
+                QuickToggleTileService.requestRefresh(this@FloatingHudForegroundService)
             }
         }
 
         lifecycleScope.launch {
             app.connectionManager.events.collect { ev ->
+                val cfg = app.configStore.current
                 when (ev) {
-                    is RemoteEvent.MuteChanged -> overlayManager.playMuteTransition(ev.isMuted)
+                    is RemoteEvent.MuteChanged -> {
+                        overlayManager.playMuteTransition(ev.isMuted)
+                        if (cfg.enableAudioCue) {
+                            audioCuePlayer.playMuteCue(ev.isMuted)
+                        }
+                        if (cfg.enableMuteToast) {
+                            val (anchor, pillH) = overlayManager.currentAnchorForToast()
+                            toastBannerManager.showMuteToast(ev.isMuted, cfg, anchor.x, anchor.y, pillH)
+                        }
+                    }
                     is RemoteEvent.ToastMessage -> {
                         Toast.makeText(applicationContext, ev.message, Toast.LENGTH_SHORT).show()
                     }
@@ -82,6 +99,9 @@ class FloatingHudForegroundService : LifecycleService() {
             ACTION_TOGGLE_INDICATOR -> {
                 app.configStore.update { it.copy(showIndicator = !it.showIndicator) }
             }
+            ACTION_DISABLE_CLICK_THROUGH -> {
+                app.configStore.update { it.copy(hudClickThrough = false) }
+            }
             ACTION_RECONNECT -> app.connectionManager.reconnectNow()
             ACTION_STOP -> stopRemoteCleanly()
         }
@@ -89,9 +109,12 @@ class FloatingHudForegroundService : LifecycleService() {
     }
 
     private fun stopRemoteCleanly() {
+        toastBannerManager.hide()
         overlayManager.hide()
+        audioCuePlayer.release()
         app.connectionManager.stop()
         releaseWifiLock()
+        QuickToggleTileService.requestRefresh(this)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -105,9 +128,12 @@ class FloatingHudForegroundService : LifecycleService() {
 
     override fun onDestroy() {
         unregisterWakeReceiver()
+        toastBannerManager.hide()
         overlayManager.hide()
+        audioCuePlayer.release()
         app.connectionManager.stop()
         releaseWifiLock()
+        QuickToggleTileService.requestRefresh(this)
         super.onDestroy()
     }
 
@@ -160,13 +186,14 @@ class FloatingHudForegroundService : LifecycleService() {
     }
 
     private fun buildNotification(cfg: RemoteConfig, conn: ConnectionUiState): Notification {
-        val statusText = when {
+        val baseStatus = when {
             conn.connStatus == ConnStatus.AUTH_FAILED -> "✕ Auth Failed (Check Password)"
             conn.connected && conn.connStatus == ConnStatus.MIC_ERROR ->
                 "⚠ Mic '${cfg.targetMicName}' Not Found: ${conn.activeHost}"
             conn.connected -> "● Connected: ${conn.activeHost} (${if (conn.isMuted) "MUTED" else "LIVE"})"
             else -> "○ Searching for OBS Host..."
         }
+        val statusText = if (cfg.hudClickThrough) "$baseStatus • Click-Through ON" else baseStatus
 
         val openPending = PendingIntent.getActivity(
             this,
@@ -184,10 +211,18 @@ class FloatingHudForegroundService : LifecycleService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val toggleHudPending = PendingIntent.getService(
+        val middleLabel = if (cfg.hudClickThrough) {
+            "Unlock Clicks"
+        } else if (cfg.showIndicator) {
+            "Hide Pill"
+        } else {
+            "Show Pill"
+        }
+        val middleAction = if (cfg.hudClickThrough) ACTION_DISABLE_CLICK_THROUGH else ACTION_TOGGLE_INDICATOR
+        val middlePending = PendingIntent.getService(
             this,
             12,
-            Intent(this, FloatingHudForegroundService::class.java).setAction(ACTION_TOGGLE_INDICATOR),
+            Intent(this, FloatingHudForegroundService::class.java).setAction(middleAction),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -206,7 +241,7 @@ class FloatingHudForegroundService : LifecycleService() {
             .setOnlyAlertOnce(true)
             .setContentIntent(openPending)
             .addAction(0, if (conn.isMuted) "Unmute" else "Mute", mutePending)
-            .addAction(0, if (cfg.showIndicator) "Hide Pill" else "Show Pill", toggleHudPending)
+            .addAction(0, middleLabel, middlePending)
             .addAction(0, "Stop", stopPending)
             .build()
     }
@@ -242,6 +277,7 @@ class FloatingHudForegroundService : LifecycleService() {
         const val ACTION_STOP = "com.saabithjiffry.presentersync.remote.STOP"
         const val ACTION_TOGGLE_MUTE = "com.saabithjiffry.presentersync.remote.TOGGLE_MUTE"
         const val ACTION_TOGGLE_INDICATOR = "com.saabithjiffry.presentersync.remote.TOGGLE_INDICATOR"
+        const val ACTION_DISABLE_CLICK_THROUGH = "com.saabithjiffry.presentersync.remote.DISABLE_CLICK_THROUGH"
         const val ACTION_RECONNECT = "com.saabithjiffry.presentersync.remote.RECONNECT"
 
         fun startService(context: Context, action: String = ACTION_START) {

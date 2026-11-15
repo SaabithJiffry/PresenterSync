@@ -268,7 +268,7 @@ private fun RemoteDashboardScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Text("Status & HUD", fontWeight = FontWeight.Medium)
+                                Text("Status & HUD", maxLines = 1, fontWeight = FontWeight.Medium)
                             }
                         }
                     )
@@ -280,8 +280,21 @@ private fun RemoteDashboardScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
+                                Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Text("HUD Style", maxLines = 1, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    )
+                    Tab(
+                        selected = selectedTabIndex == 2,
+                        onClick = { selectedTabIndex = 2 },
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
                                 Icon(Icons.Default.Keyboard, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Text("Pointer & Keys", fontWeight = FontWeight.Medium)
+                                Text("Pointer & Keys", maxLines = 1, fontWeight = FontWeight.Medium)
                             }
                         }
                     )
@@ -296,6 +309,8 @@ private fun RemoteDashboardScreen(
             contentAlignment = Alignment.TopCenter
         ) {
             if (selectedTabIndex == 1) {
+                HudAppearanceScreen(app = app)
+            } else if (selectedTabIndex == 2) {
                 PointerSettingsScreen(app = app)
             } else {
             Column(

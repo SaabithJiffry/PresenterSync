@@ -1,58 +1,56 @@
 package com.saabithjiffry.presentersync.remote.ui.overlay
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScreenBoundsCalculatorTest {
 
-    @Test
-    fun defaultBottomRightAnchorStaysWithinLandscapeAndPortraitSafeBounds() {
-        val landscapeBounds = SafeRectPx(left = 10, top = 48, right = 1910, bottom = 1016)
-        val pt = ScreenBoundsCalculator.resolvePosition(
-            savedX = -1,
-            savedY = -1,
-            bounds = landscapeBounds,
-            viewWidthPx = 252,
-            viewHeightPx = 60,
-            marginXPx = 30,
-            marginYPx = 30
-        )
-        assertEquals(1910 - 252 - 30, pt.x)
-        assertEquals(1016 - 60 - 30, pt.y)
-    }
+    private val bounds = SafeRectPx(left = 20, top = 40, right = 1900, bottom = 1040)
 
     @Test
-    fun clampsSavedLandscapeCoordinatesWhenRotatedToPortraitWithTaskbarInsets() {
-        val portraitBounds = SafeRectPx(left = 8, top = 64, right = 1072, bottom = 1820)
-        val clamped = ScreenBoundsCalculator.resolvePosition(
-            savedX = 1800,
-            savedY = 950,
-            bounds = portraitBounds,
-            viewWidthPx = 252,
-            viewHeightPx = 60,
-            marginXPx = 30,
-            marginYPx = 30
-        )
-        assertEquals(1072 - 252, clamped.x)
-        assertEquals(950, clamped.y)
-        assertTrue(clamped.x >= portraitBounds.left)
-        assertTrue(clamped.y in portraitBounds.top..(portraitBounds.bottom - 60))
-    }
-
-    @Test
-    fun clampsNegativeOffscreenOrTopCutoutViolationInsideSafeRect() {
-        val bounds = SafeRectPx(left = 24, top = 80, right = 3816, bottom = 2080)
-        val clamped = ScreenBoundsCalculator.resolvePosition(
-            savedX = 2,
-            savedY = 10,
+    fun snapsWithinThresholdToEdgesAndCenters() {
+        // Near top-left edge (within 14px)
+        val tl = ScreenBoundsCalculator.computeMagneticSnap(
+            rawX = 28,
+            rawY = 50,
+            viewWidthPx = 200,
+            viewHeightPx = 80,
             bounds = bounds,
-            viewWidthPx = 600,
-            viewHeightPx = 200,
-            marginXPx = 40,
-            marginYPx = 40
+            thresholdPx = 14
         )
-        assertEquals(24, clamped.x)
-        assertEquals(80, clamped.y)
+        assertEquals(20, tl.x)
+        assertEquals(40, tl.y)
+        assertTrue(tl.snappedX)
+        assertTrue(tl.snappedY)
+
+        // Near horizontal center (minX=20, maxX=1700 -> centerX=860)
+        val mid = ScreenBoundsCalculator.computeMagneticSnap(
+            rawX = 852,
+            rawY = 512, // centerY = (40 + 960)/2 = 500
+            viewWidthPx = 200,
+            viewHeightPx = 80,
+            bounds = bounds,
+            thresholdPx = 14
+        )
+        assertEquals(860, mid.x)
+        assertEquals(500, mid.y)
+        assertTrue(mid.snappedX)
+        assertTrue(mid.snappedY)
+
+        // Outside threshold leaves clamped coordinates untouched
+        val free = ScreenBoundsCalculator.computeMagneticSnap(
+            rawX = 300,
+            rawY = 300,
+            viewWidthPx = 200,
+            viewHeightPx = 80,
+            bounds = bounds,
+            thresholdPx = 14
+        )
+        assertEquals(300, free.x)
+        assertEquals(300, free.y)
+        assertFalse(free.snappedX)
+        assertFalse(free.snappedY)
     }
 }

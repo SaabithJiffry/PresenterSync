@@ -22,7 +22,67 @@ data class OverlayPointPx(
     val y: Int
 )
 
+data class MagneticSnapResult(
+    val x: Int,
+    val y: Int,
+    val snappedX: Boolean,
+    val snappedY: Boolean
+)
+
 object ScreenBoundsCalculator {
+
+    fun computeMagneticSnap(
+        rawX: Int,
+        rawY: Int,
+        viewWidthPx: Int,
+        viewHeightPx: Int,
+        bounds: SafeRectPx,
+        thresholdPx: Int
+    ): MagneticSnapResult {
+        val minX = bounds.left
+        val maxX = (bounds.right - viewWidthPx).coerceAtLeast(minX)
+        val minY = bounds.top
+        val maxY = (bounds.bottom - viewHeightPx).coerceAtLeast(minY)
+
+        val clampedX = rawX.coerceIn(minX, maxX)
+        val clampedY = rawY.coerceIn(minY, maxY)
+
+        val centerX = (minX + maxX) / 2
+        val centerY = (minY + maxY) / 2
+        val xTargets = listOf(minX, centerX, maxX)
+        val yTargets = listOf(minY, centerY, maxY)
+
+        var bestX = clampedX
+        var bestDx = thresholdPx + 1
+        var snappedX = false
+        for (tx in xTargets) {
+            val dx = kotlin.math.abs(tx - clampedX)
+            if (dx <= thresholdPx && dx < bestDx) {
+                bestDx = dx
+                bestX = tx
+                snappedX = true
+            }
+        }
+
+        var bestY = clampedY
+        var bestDy = thresholdPx + 1
+        var snappedY = false
+        for (ty in yTargets) {
+            val dy = kotlin.math.abs(ty - clampedY)
+            if (dy <= thresholdPx && dy < bestDy) {
+                bestDy = dy
+                bestY = ty
+                snappedY = true
+            }
+        }
+
+        return MagneticSnapResult(
+            x = bestX.coerceIn(minX, maxX),
+            y = bestY.coerceIn(minY, maxY),
+            snappedX = snappedX,
+            snappedY = snappedY
+        )
+    }
 
     fun computeDefaultPosition(
         bounds: SafeRectPx,
