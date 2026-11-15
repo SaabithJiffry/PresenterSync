@@ -8,6 +8,7 @@
 
 #Include "..\Lib\WebSocket.ahk"
 #Include "..\Lib\Crypto.ahk"
+#Include "..\Lib\RemoteBridgeClient.ahk"
 #Include "..\Lib\Gdip.ahk"
 #Include "..\Lib\GUI_Config.ahk"
 
@@ -110,7 +111,36 @@ Assert("ApplyMicAppearance (LIVE State) renders without error", renderOkLive != 
 
 renderOkMuted := ApplyMicAppearance(cfg, dummyState, 100, 100, 140, 40, 220, true)
 Assert("ApplyMicAppearance (MUTED State) renders without error", renderOkMuted != false)
+
+; --- TEST 7: Distinct PW REQ vs AUTH ERR HUD Pill States & Desktop Instance Shortcuts ---
+dummyState.activeHost := "127.0.0.1:4455"
+dummyState.obsConnected := false
+cfg.ShowText := true
+dummyState.connStatus := "searching"
+renderOkOff := ApplyMicAppearance(cfg, dummyState, 100, 100, 168, 40, 220, "")
+dummyState.connStatus := "pw_required"
+renderOkPwReq := ApplyMicAppearance(cfg, dummyState, 100, 100, 168, 40, 220, "")
+dummyState.connStatus := "auth_failed"
+renderOkAuthErr := ApplyMicAppearance(cfg, dummyState, 100, 100, 168, 40, 220, "")
+Assert("ApplyMicAppearance renders distinct OFFLINE, PW REQ, and AUTH ERR states cleanly",
+    renderOkOff != false && renderOkPwReq != false && renderOkAuthErr != false)
 dummyState.MicGui.Destroy()
+
+lnkDir := A_Temp "\ps_lnk_test_" A_TickCount
+cfg.ConfigFile := lnkDir "\PresenterSync_Remote_SmartBoard-101.ini"
+lnkRes := CreateRemoteInstanceDesktopShortcut(cfg, "SmartBoard-101", lnkDir, "", true)
+lnkTarget := "", lnkArgs := ""
+if (lnkRes.ok && FileExist(lnkRes.lnkPath)) {
+    try {
+        shObj := ComObject("WScript.Shell")
+        scObj := shObj.CreateShortcut(lnkRes.lnkPath)
+        lnkTarget := scObj.TargetPath
+        lnkArgs := scObj.Arguments
+    }
+}
+try DirDelete(lnkDir, true)
+Assert("CreateRemoteInstanceDesktopShortcut builds valid .lnk with -Instance and -Config flags",
+    lnkRes.ok && InStr(lnkTarget, ".exe") && InStr(lnkArgs, '-Instance "SmartBoard-101"') && InStr(lnkArgs, '-Config "'))
 
 ; --- CLEANUP & REPORT ---
 if FileExist(testIni)

@@ -299,6 +299,7 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
         extract_ahk_block(remote_src, "HandleRemoteObsMessage("),
         extract_ahk_block(remote_src, "RemoteHeartbeatTick("),
         extract_ahk_block(remote_src, "SyncRemoteMuteState("),
+        extract_ahk_block(remote_src, "SyncRemoteBridgeTelemetry("),
         extract_ahk_block(remote_src, "RemoveToolTip("),
         extract_ahk_block(remote_src, "OnRemoteClickerMute("),
         extract_ahk_block(remote_src, "RegisterRemotePointerHotkey("),
@@ -445,13 +446,23 @@ HandleRemoteObsClose(rCfg, rState, cand, rStaleWs, 4009, "Stale socket close")
 Assert("Remote ignores stale WebSocket message & close events",
     rState.obsConnected == true && rState.connStatus == "connected" && rState.isMuted == true)
 
-; Close with 4009 auth failure sets auth_failed cleanly
+; Close with 4009 auth failure sets auth_failed cleanly when password was supplied
 rState.obsConnected := false
 HandleRemoteObsClose(rCfg, rState, cand, rWs, 4009, "Auth failed")
 Assert("Remote HandleRemoteObsClose 4009 sets auth_failed", !rState.obsConnected && rState.connStatus == "auth_failed")
 SetTimer rState.reconnectTimerFn, 0
 SetTimer rState.heartbeatTimerFn, 0
 SetTimer rState.breathTimerFn, 0
+
+; Close with 4009 after Hello auth challenge & blank ObsPassword distinguishes pw_required cleanly
+savedPass := rCfg.ObsPassword
+rCfg.ObsPassword := ""
+rState._sawAuthChallenge := true
+HandleRemoteObsClose(rCfg, rState, cand, rWs, 4009, "Auth failed")
+Assert("Remote HandleRemoteObsClose 4009 w/ blank password + challenge sets pw_required",
+    !rState.obsConnected && rState.connStatus == "pw_required")
+rCfg.ObsPassword := savedPass
+SetTimer rState.reconnectTimerFn, 0
 
 ; =====================================================================
 ; TEST 2: Host OBS_Network + TriggerMute Real Handlers over TCP WS (No Auth)

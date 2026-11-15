@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 6.3.0
+; Version: 6.4.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 6.3.0.0
+;@Ahk2Exe-SetVersion 6.4.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -25,8 +25,8 @@ SetKeyDelay 50, 50
 
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => (StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => (StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+RegisterSelfUpdateBeforeRelaunch((*) => (UpdateAutoProfileTimer("", AppState), StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => (UpdateAutoProfileTimer("", AppState), StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSync.ico")
@@ -50,6 +50,7 @@ AppState.rebindHotkeysFn := (*) => RebindAllHostHotkeys(AppConfig, AppState)
 AppState.triggerMuteFn := (*) => TriggerMute(AppConfig, AppState, true)
 AppState.pptNextFn := (*) => SendToPPT(AppConfig, "{Right}")
 AppState.pptPrevFn := (*) => SendToPPT(AppConfig, "{Left}")
+AppState.autoProfileTimerFn := PollAutoProfileTrigger.Bind(AppConfig, AppState)
 BuildTrayMenu(AppConfig, AppState)
 InitHUD(AppConfig, AppState)
 
@@ -64,6 +65,7 @@ if (AppConfig.EnableWS)
 
 UpdateZoomMonitorTimer(AppConfig, AppState)
 UpdateHostInternetRelay(AppConfig, AppState)
+UpdateAutoProfileTimer(AppConfig, AppState)
 StartHostCompanionBridge(AppConfig, AppState, AppConfig.BridgePort)
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync.exe")
 
@@ -245,8 +247,11 @@ BuildTrayMenu(cfg, state) {
             ProfileMenu.Check(pName)
     }
     ProfileMenu.Add()
+    ProfileMenu.Add("Auto-Switch by Active App", ToggleAutoProfileSwitch.Bind(cfg, state))
+    if (cfg.HasOwnProp("EnableAutoProfileSwitch") && cfg.EnableAutoProfileSwitch)
+        ProfileMenu.Check("Auto-Switch by Active App")
     ProfileMenu.Add("Save Current as New Profile...", (*) => ShowProfileManagerUI(cfg, state))
-    ProfileMenu.Add("Manage Profiles...", (*) => ShowProfileManagerUI(cfg, state))
+    ProfileMenu.Add("Manage Profiles && Auto Rules...", (*) => ShowProfileManagerUI(cfg, state))
     SettingsMenu.Add("Configuration Profiles", ProfileMenu)
 
     SettingsMenu.Add()
@@ -283,6 +288,7 @@ BuildTrayMenu(cfg, state) {
 
     ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg, state))
+    A_TrayMenu.Add("Export Sanitized Diagnostics...", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
     A_TrayMenu.Add("About PresenterSync", ShowAboutWindow.Bind(cfg, state))
     A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))
     A_TrayMenu.Add()

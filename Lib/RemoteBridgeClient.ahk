@@ -585,3 +585,84 @@ SaveRemoteConnectionSettingsToIni(cfg) {
     cfg.WriteBool("Settings", "FirstRun", cfg.FirstRun)
 }
 
+GetDefaultRemoteShortcutFilename(instanceName := "") {
+    clean := Trim(String(instanceName))
+    if (clean = "")
+        return "PresenterSync Remote.lnk"
+    return "PresenterSync Remote (" SanitizeInstanceFileSlug(clean) ").lnk"
+}
+
+BuildRemoteShortcutLaunchSpec(instanceName := "", configPath := "") {
+    inst := RegExReplace(Trim(String(instanceName)), '["\r\n\t]', "")
+    cfgP := RegExReplace(Trim(String(configPath)), '["\r\n\t]', "")
+    targetExe := A_IsCompiled ? A_ScriptFullPath : A_AhkPath
+
+    args := ""
+    if (!A_IsCompiled)
+        args .= '"' A_ScriptFullPath '" '
+    if (inst != "")
+        args .= '-Instance "' inst '" '
+    if (cfgP != "")
+        args .= '-Config "' cfgP '" '
+
+    iconPath := ""
+    if (A_IsCompiled) {
+        iconPath := A_ScriptFullPath
+    } else if FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico") {
+        iconPath := A_ScriptDir "\assets\PresenterSyncRemote.ico"
+    } else if FileExist(A_ScriptDir "\..\assets\PresenterSyncRemote.ico") {
+        iconPath := A_ScriptDir "\..\assets\PresenterSyncRemote.ico"
+    }
+
+    return {
+        target: targetExe,
+        args: Trim(args),
+        workingDir: A_ScriptDir,
+        icon: iconPath,
+        instanceName: inst,
+        configPath: cfgP
+    }
+}
+
+CreateRemoteInstanceDesktopShortcut(cfg, instanceName := "", targetDir := "", shortcutName := "", includeConfigPath := false) {
+    inst := Trim(String(instanceName))
+    if (inst = "" && IsObject(cfg) && cfg.HasOwnProp("InstanceName"))
+        inst := Trim(String(cfg.InstanceName))
+
+    outDir := (Trim(String(targetDir)) != "") ? RTrim(Trim(String(targetDir)), "\/") : A_Desktop
+    rawName := Trim(String(shortcutName))
+    if (rawName != "") {
+        lnkBase := RegExReplace(rawName, '[\\/:*?"<>|\r\n\t]', "_")
+        lnkBase := RegExReplace(lnkBase, "i)\.lnk$", "")
+    } else {
+        lnkBase := RegExReplace(GetDefaultRemoteShortcutFilename(inst), "i)\.lnk$", "")
+    }
+    if (lnkBase = "")
+        lnkBase := "PresenterSync Remote"
+    outPath := outDir "\" lnkBase ".lnk"
+
+    cfgPathArg := (includeConfigPath && IsObject(cfg) && cfg.HasOwnProp("ConfigFile")) ? cfg.ConfigFile : ""
+    spec := BuildRemoteShortcutLaunchSpec(inst, cfgPathArg)
+    desc := "PresenterSync Remote" (inst != "" ? " [" inst "]" : "") " Companion"
+
+    try {
+        if (outDir != "" && !DirExist(outDir))
+            DirCreate(outDir)
+        FileCreateShortcut(spec.target, outPath, spec.workingDir, spec.args, desc, spec.icon)
+    } catch as e {
+        return {ok: false, lnkPath: outPath, target: spec.target, args: spec.args, workingDir: spec.workingDir, desc: desc, icon: spec.icon, instanceName: inst, error: e.Message}
+    }
+
+    return {
+        ok: (FileExist(outPath) != ""),
+        lnkPath: outPath,
+        target: spec.target,
+        args: spec.args,
+        workingDir: spec.workingDir,
+        desc: desc,
+        icon: spec.icon,
+        instanceName: inst,
+        error: (FileExist(outPath) != "") ? "" : "Shortcut file was not created."
+    }
+}
+

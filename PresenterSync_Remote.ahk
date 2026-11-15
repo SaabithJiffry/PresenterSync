@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 6.3.0
+; Version: 6.4.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 6.3.0.0
+;@Ahk2Exe-SetVersion 6.4.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -264,6 +264,7 @@ class RemoteState {
     obsWs := ""
     obsConnected := false
     connStatus := "searching"
+    _sawAuthChallenge := false
     activeHost := ""
     candidateIndex := 1
     candidates := []
@@ -447,6 +448,7 @@ ConnectToRemoteOBS(cfg, state) {
     }
 
     state.connStatus := "searching"
+    state._sawAuthChallenge := false
     state.activeHost := ""
     state.usingBridge := false
 
@@ -600,20 +602,26 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     state.animSeq += 1
 
     ; Visual feedback on HUD: Dim while disconnected
+    if (!wasConnected && status == 4009) {
+        isMissingPw := (cfg.ObsPassword = "" && (!state.HasOwnProp("_sawAuthChallenge") || state._sawAuthChallenge))
+        state._sawAuthChallenge := false
+        state.connStatus := isMissingPw ? "pw_required" : "auth_failed"
+        if (IsObject(state.MicGui)) {
+            state.currentAlpha := GetRemoteEffectiveAlpha(state)
+            ApplyMicAppearance(cfg, state)
+        }
+        SetTimer state.reconnectTimerFn, 0
+        state.NotifyTrayStatus()
+        TrayTip(isMissingPw ? "OBS WebSocket requires a password. Enter it in Change OBS Connection." : "OBS WebSocket authentication failed. Check password in Change OBS Connection.", "PresenterSync Remote", 3)
+        return
+    }
+
+    state._sawAuthChallenge := false
+    state.connStatus := "searching"
     if (IsObject(state.MicGui)) {
         state.currentAlpha := GetRemoteEffectiveAlpha(state)
         ApplyMicAppearance(cfg, state)
     }
-
-    if (!wasConnected && status == 4009) {
-        state.connStatus := "auth_failed"
-        SetTimer state.reconnectTimerFn, 0
-        state.NotifyTrayStatus()
-        TrayTip("OBS WebSocket authentication failed. Check password in Change OBS Connection.", "PresenterSync Remote", 3)
-        return
-    }
-
-    state.connStatus := "searching"
     state.NotifyTrayStatus()
 
     FailoverToNextCandidate(cfg, state)
@@ -632,6 +640,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             SetTimer state.reconnectTimerFn, 0
             state.obsConnected := true
             state.usingBridge := true
+            state._sawAuthChallenge := false
             state.connStatus := "connected"
             state.activeHost := candidate.raw
             keepAliveMs := Max(10000, cfg.HeartbeatSeconds * 1000)
@@ -652,7 +661,9 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             }
             state.NotifyTrayStatus()
         } else if (ev.kind = "auth_error") {
-            state.connStatus := "auth_failed"
+            isMissingPw := (cfg.ObsPassword = "" && InStr(StrLower(ev.reason), "password"))
+            state.connStatus := isMissingPw ? "pw_required" : "auth_failed"
+            state._sawAuthChallenge := false
             state.obsConnected := false
             state.usingBridge := false
             SetTimer state.reconnectTimerFn, 0
@@ -750,12 +761,15 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         ; Op 0: Hello - Handle SHA256 base64 auth challenge if required
         authString := ""
         if (RegExMatch(msg, '"salt"\s*:\s*"([^"]+)"', &matchSalt) && RegExMatch(msg, '"challenge"\s*:\s*"([^"]+)"', &matchChallenge)) {
+            state._sawAuthChallenge := true
             salt := matchSalt[1]
             challenge := matchChallenge[1]
 
             secret := HashSHA256_Base64(cfg.ObsPassword . salt)
             authResponse := HashSHA256_Base64(secret . challenge)
             authString := ',"authentication":"' authResponse '"'
+        } else {
+            state._sawAuthChallenge := false
         }
 
         ; Identify for standard events (excluding 20Hz volume meters)
@@ -766,6 +780,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         ; Op 2: Identified - Connection and Auth Succeeded!
         SetTimer state.reconnectTimerFn, 0
         state.obsConnected := true
+        state._sawAuthChallenge := false
         state.connStatus := "connected"
         state.activeHost := candidate.raw
 
@@ -1168,7 +1183,9 @@ RefreshRemoteHudAppearance(cfg, state) {
 ; --- TRAY MENU & COSMETIC ACTIONS ---
 
 GetRemoteTrayStatusText(state) {
-    if (state.connStatus = "auth_failed")
+    if (state.connStatus = "pw_required")
+        return "🔒 OBS Password Required (Check Connection)"
+    else if (state.connStatus = "auth_failed")
         return "✕ Auth Failed (Check Password)"
     else if (state.obsConnected && state.connStatus = "mic_error")
         return "⚠ Connected (Mic Not Found): " state.activeHost
@@ -1353,6 +1370,7 @@ BuildRemoteTrayMenu(cfg, state) {
     A_TrayMenu.Add("Start with Windows", ToggleStartWithWindows.Bind(cfg, state))
     if (cfg.StartWithWindows)
         A_TrayMenu.Check("Start with Windows")
+    A_TrayMenu.Add("Create Desktop Shortcut for Instance...", (*) => ShowCreateRemoteShortcutUI(cfg, state))
     A_TrayMenu.Add()
 
     ; 5. HELP, SAFETY & EXIT
@@ -1425,6 +1443,93 @@ SetRemoteTheme(cfg, state, mode, *) {
     Theme.SetMode(mode)
     Theme.ApplyMenuTheme()
     BuildRemoteTrayMenu(cfg, state)
+}
+
+ShowCreateRemoteShortcutUI(cfg, state := "", *) {
+    existing := Theme.FocusExistingWindow("Create Remote Instance Shortcut")
+    if IsObject(existing)
+        return existing
+
+    Theme.AcquireSuspend()
+
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Create Remote Instance Shortcut")
+    dlg._closed := false
+    dlg.MarginX := 20
+    dlg.MarginY := 16
+    Theme.ApplyToWindow(dlg)
+    Theme.NamedWindows["Create Remote Instance Shortcut"] := dlg
+
+    dlg.SetFont("s10 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360", "Quick-Launch Desktop Shortcut"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 h32 y+4", "Creates a Desktop .lnk launching PresenterSync Remote for a dedicated Smart Board or classroom instance."), "Text", "muted")
+
+    curInst := (IsObject(cfg) && cfg.HasOwnProp("InstanceName")) ? cfg.InstanceName : ""
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Instance Name (Optional, e.g. SmartBoard-101):"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    edInst := dlg.Add("Edit", "xm w360 y+4", curInst)
+    Theme.RegisterControl(dlg, edInst, "Edit")
+    DllCall("SendMessage", "Ptr", edInst.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "SmartBoard-Room101 (leave blank for Default)")
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Desktop Shortcut Filename:"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    defaultLnkName := RegExReplace(GetDefaultRemoteShortcutFilename(curInst), "i)\.lnk$", "")
+    edLnkName := dlg.Add("Edit", "xm w360 y+4", defaultLnkName)
+    Theme.RegisterControl(dlg, edLnkName, "Edit")
+
+    chkPinIni := dlg.Add("Checkbox", "xm w360 y+10", "Include explicit -Config INI path in shortcut")
+    Theme.RegisterControl(dlg, chkPinIni, "Checkbox")
+
+    initSpec := BuildRemoteShortcutLaunchSpec(curInst, "")
+    lblPreview := dlg.Add("Text", "xm w360 h34 y+8", "Args: " (initSpec.args != "" ? initSpec.args : "(default instance)"))
+    Theme.RegisterControl(dlg, lblPreview, "Text", "muted")
+
+    userEditedLnk := false
+    UpdatePreview(*) {
+        instNow := Trim(edInst.Value)
+        if (!userEditedLnk)
+            edLnkName.Value := RegExReplace(GetDefaultRemoteShortcutFilename(instNow), "i)\.lnk$", "")
+        cfgArg := (chkPinIni.Value && IsObject(cfg) && cfg.HasOwnProp("ConfigFile")) ? cfg.ConfigFile : ""
+        spec := BuildRemoteShortcutLaunchSpec(instNow, cfgArg)
+        lblPreview.Value := "Args: " (spec.args != "" ? spec.args : "(default instance)")
+    }
+    edInst.OnEvent("Change", UpdatePreview)
+    edLnkName.OnEvent("Change", (*) => (userEditedLnk := true))
+    chkPinIni.OnEvent("Click", UpdatePreview)
+
+    btnCreate := dlg.Add("Button", "xm w174 h32 y+14 Default", "Create Shortcut")
+    btnCancel := dlg.Add("Button", "x+12 yp w174 h32", "Cancel")
+    Theme.RegisterControl(dlg, btnCreate, "Button", "accent")
+    Theme.RegisterControl(dlg, btnCancel, "Button")
+
+    CloseDlg(*) {
+        if (dlg._closed)
+            return
+        dlg._closed := true
+        Theme.UnregisterWindow(dlg, "Create Remote Instance Shortcut")
+        Theme.ReleaseSuspend()
+        dlg.Destroy()
+    }
+
+    OnCreateClick(*) {
+        res := CreateRemoteInstanceDesktopShortcut(cfg, Trim(edInst.Value), "", Trim(edLnkName.Value), !!chkPinIni.Value)
+        if (res.ok) {
+            CloseDlg()
+            TrayTip("Created Desktop shortcut: " res.lnkPath, "PresenterSync Remote", 1)
+        } else {
+            dlg.Opt("+OwnDialogs")
+            MsgBox("Failed to create Desktop shortcut:`n`n" res.error, "Shortcut Error", "Icon!")
+        }
+    }
+
+    btnCreate.OnEvent("Click", OnCreateClick)
+    btnCancel.OnEvent("Click", CloseDlg)
+    dlg.OnEvent("Close", CloseDlg)
+    dlg.OnEvent("Escape", CloseDlg)
+    dlg.Show()
+    return dlg
 }
 
 ResetRemotePositionAction(cfg, state, *) {
@@ -1518,9 +1623,10 @@ ChangeRemoteAppHotkeysUI(cfg, state, *) {
 }
 
 BuildRemoteHelpStatusLine(cfg, state) {
-    connState := (state.connStatus = "auth_failed") ? "Auth Failed (Check Password)"
+    connState := (state.connStatus = "pw_required") ? "OBS Password Required (Set in Connection)"
+        : ((state.connStatus = "auth_failed") ? "Auth Failed (Check Password)"
         : ((state.obsConnected && state.connStatus = "mic_error") ? ("Connected - Mic '" cfg.TargetMicName "' Not Found")
-        : (state.obsConnected ? ("Connected to " state.activeHost) : "Searching / Disconnected"))
+        : (state.obsConnected ? ("Connected to " state.activeHost) : "Searching / Disconnected")))
     clickerText := FormatHK(cfg.HwMuteHotkey) (cfg.EnablePointerMute ? "" : " (Disabled)")
     hostText := IsRemoteUsingInternetChannel(cfg, state)
         ? (((state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback) ? "Relay Bridge (" : "Internet (") (cfg.InternetPairingCode != "" ? cfg.InternetPairingCode : "Not Set") ")")

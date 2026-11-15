@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v6.3.0", UIConstants.APP_VERSION == "6.3.0")
+Assert("APP_VERSION is active release v6.4.0", UIConstants.APP_VERSION == "6.4.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -2472,6 +2472,84 @@ Assert("ExecuteHostRemotePptCommand invokes Next and Prev handlers cleanly",
     && pptLog.Length == 2 && pptLog[1] == "N" && pptLog[2] == "P")
 Assert("ExecuteHostToggleRecord sends ToggleRecord to OBS when connected",
     ExecuteHostToggleRecord(cfgDeck, stDeck) && mockObsDeck.Length == 1 && InStr(mockObsDeck[1], "ToggleRecord"))
+
+; ==============================================================================
+; SECTION 23: v6.4.0 HOST & REMOTE QOL - AUTO-PROFILE TRIGGERS & DIAGNOSTICS
+; ==============================================================================
+if FileExist(testIni)
+    FileDelete(testIni)
+cfgAp := Config(testIni)
+cfgAp.AudioRoutingMode := 1
+cfgAp.SaveProfile("Default")
+cfgAp.AudioRoutingMode := 2
+cfgAp.ConferencingApp := "Zoom"
+cfgAp.SaveProfile("Zoom")
+cfgAp.AudioRoutingMode := 2
+cfgAp.ConferencingApp := "Microsoft Teams"
+cfgAp.SaveProfile("Teams")
+cfgAp.ApplyProfile("Default")
+
+parsedRules := ParseAutoProfileRules("C:\Program Files\obs-studio\bin\64bit\obs64.exe=Default|Zoom.exe=Zoom;ms-teams=Teams")
+Assert("ParseAutoProfileRules normalizes paths, deduplicates & preserves order",
+    parsedRules.Length == 3
+    && parsedRules[1].proc == "obs64.exe" && parsedRules[1].profile == "Default"
+    && parsedRules[2].proc == "zoom.exe" && parsedRules[2].profile == "Zoom"
+    && parsedRules[3].proc == "ms-teams" && parsedRules[3].profile == "Teams")
+
+cfgAp.AutoProfileRules := FormatAutoProfileRules(parsedRules)
+cfgAp.EnableAutoProfileSwitch := true
+cfgAp.WriteBool("Settings", "EnableAutoProfileSwitch", true)
+cfgAp.Write("Settings", "AutoProfileRules", cfgAp.AutoProfileRules)
+cfgApReload := Config(testIni)
+Assert("AutoProfileRules and EnableAutoProfileSwitch persist across Config reload",
+    cfgApReload.EnableAutoProfileSwitch == true && cfgApReload.AutoProfileRules == "obs64.exe=Default|zoom.exe=Zoom|ms-teams=Teams")
+
+stAp := OverlayState(cfgApReload)
+resZoom := EvaluateAutoProfileTrigger(cfgApReload, stAp, "Zoom.exe")
+Assert("EvaluateAutoProfileTrigger switches to matched Zoom profile & records Default base",
+    resZoom.changed == true && resZoom.action == "switched" && resZoom.baseProfile == "Default" && cfgApReload.ActiveProfile == "Zoom" && stAp._autoProfileBase == "Default")
+
+resZoomHold := EvaluateAutoProfileTrigger(cfgApReload, stAp, "zoom.exe")
+Assert("EvaluateAutoProfileTrigger holds already-active matched profile without churn",
+    resZoomHold.changed == false && resZoomHold.action == "held" && cfgApReload.ActiveProfile == "Zoom")
+
+resTeams := EvaluateAutoProfileTrigger(cfgApReload, stAp, "ms-teams.exe")
+Assert("EvaluateAutoProfileTrigger matches stem rule (ms-teams -> ms-teams.exe) & preserves original base",
+    resTeams.changed == true && resTeams.action == "switched" && cfgApReload.ActiveProfile == "Teams" && stAp._autoProfileBase == "Default")
+
+resLeave := EvaluateAutoProfileTrigger(cfgApReload, stAp, "POWERPNT.EXE")
+Assert("EvaluateAutoProfileTrigger restores base profile when focus leaves matching apps",
+    resLeave.changed == true && resLeave.action == "restored" && cfgApReload.ActiveProfile == "Default" && stAp._autoProfileMatched == "")
+
+; Test Sanitized Diagnostics Export with sensitive secrets & paired device tokens
+cfgDiag := Config(testIni)
+cfgDiag.obsPassword := "SuperSecretObsPass!99"
+cfgDiag.Write("Settings", "ObsPassword", "SuperSecretObsPass!99")
+cfgDiag.InternetPairingCode := "PS-SECR-ET99"
+cfgDiag.Write("Settings", "InternetPairingCode", "PS-SECR-ET99")
+cfgDiag.SessionPairingCode := "XYZ-789"
+cfgDiag.Write("Settings", "SessionPairingCode", "XYZ-789")
+cfgDiag.SessionToken := "tok_bridge_session_secret_42"
+cfgDiag.Write("Settings", "SessionToken", "tok_bridge_session_secret_42")
+cfgDiag.Write("HostBridgePairedDevices", "android-tab1", "v1|Smart%20Board|Android|tok_paired_device_999|2026-11-15|192.168.1.44|WS|1")
+
+diagPath := A_Temp "\ps_test_diag_bundle.txt"
+if FileExist(diagPath)
+    FileDelete(diagPath)
+diagRes := ExportSanitizedDiagnostics(cfgDiag, stAp, diagPath, false)
+diagText := diagRes.ok ? FileRead(diagPath, "UTF-8") : ""
+if FileExist(diagPath)
+    FileDelete(diagPath)
+Assert("ExportSanitizedDiagnostics writes diagnostic bundle cleanly",
+    diagRes.ok && diagText != "" && InStr(diagText, "SANITIZED CONFIGURATION (.INI)"))
+Assert("ExportSanitizedDiagnostics redacts ObsPassword, PairingCodes, SessionToken & PairedDevice tokens",
+    !InStr(diagText, "SuperSecretObsPass!99")
+    && !InStr(diagText, "PS-SECR-ET99")
+    && !InStr(diagText, "XYZ-789")
+    && !InStr(diagText, "tok_bridge_session_secret_42")
+    && !InStr(diagText, "tok_paired_device_999")
+    && InStr(diagText, "[REDACTED]")
+    && InStr(diagText, "Smart%20Board"))
 
 ; Cleanup test ini
 if FileExist(testIni)
