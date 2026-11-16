@@ -501,6 +501,7 @@ class FloatingMicOverlayManager(
         var startParamY = 0
         var movedPastSlop = false
         var lastStage = BubbleHoldStage.IDLE
+        var pttPillActive = false
 
         val scheduler = object : GestureScheduler {
             override fun schedule(delayMs: Long, task: () -> Unit): Any {
@@ -592,13 +593,20 @@ class FloatingMicOverlayManager(
                     startParamY = params.y
                     movedPastSlop = false
                     lastStage = BubbleHoldStage.IDLE
-                    val gestureCfg = currentConfig.toBubbleGestureConfig()
-                    recognizer.onDown(gestureCfg)
-                    if (gestureCfg.enabled &&
-                        (gestureCfg.longPressAction != BubbleGestureAction.NONE ||
-                            gestureCfg.veryLongPressAction != BubbleGestureAction.NONE)
-                    ) {
-                        startHoldVisualTick()
+                    if (currentConfig.enablePushToTalk && currentConfig.enableHudClickActions) {
+                        pttPillActive = true
+                        runCatching { view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                        connectionManager.setMuteFromHud(false)
+                    } else {
+                        pttPillActive = false
+                        val gestureCfg = currentConfig.toBubbleGestureConfig()
+                        recognizer.onDown(gestureCfg)
+                        if (gestureCfg.enabled &&
+                            (gestureCfg.longPressAction != BubbleGestureAction.NONE ||
+                                gestureCfg.veryLongPressAction != BubbleGestureAction.NONE)
+                        ) {
+                            startHoldVisualTick()
+                        }
                     }
                     true
                 }
@@ -618,6 +626,10 @@ class FloatingMicOverlayManager(
                         isDragging = true
                         stopHoldVisualTick()
                         recognizer.onDragCancelledGesture()
+                        if (pttPillActive) {
+                            pttPillActive = false
+                            connectionManager.setMuteFromHud(true)
+                        }
                         stopBreathing()
                     }
                     if (movedPastSlop) {
@@ -671,10 +683,18 @@ class FloatingMicOverlayManager(
                                 savedYRatio = ry
                             )
                         }
-                        recognizer.onUp()
+                        if (pttPillActive) {
+                            pttPillActive = false
+                            connectionManager.setMuteFromHud(true)
+                        } else {
+                            recognizer.onUp()
+                        }
                         if (currentConn.connected && currentConn.isMuted) {
                             startBreathing()
                         }
+                    } else if (pttPillActive) {
+                        pttPillActive = false
+                        connectionManager.setMuteFromHud(true)
                     } else {
                         recognizer.onUp()
                     }
@@ -682,6 +702,10 @@ class FloatingMicOverlayManager(
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     stopHoldVisualTick()
+                    if (pttPillActive) {
+                        pttPillActive = false
+                        connectionManager.setMuteFromHud(true)
+                    }
                     recognizer.onCancel()
                     isDragging = false
                     if (currentConn.connected && currentConn.isMuted) {
@@ -762,11 +786,17 @@ class FloatingMicOverlayManager(
                 else -> "REC: OFF"
             }
             val streamLabel = if (currentConn.streamDropWarn) "⚠ STREAM DROP" else "Stream OK"
+            val standbyLabel = if (currentConn.isStandby) " • BRB ON" else ""
+            val timerLabel = if (currentConn.timerState != "stopped") {
+                " • ${if (currentConn.timerState == "overtime") "OT " else "TMR "}${currentConn.formattedCountdown()}"
+            } else ""
             val warnExtra = if (currentConn.voiceWhileMuted && currentConn.isMuted) "\n⚠ Mic signal detected while muted" else ""
             val telemetryBanner = TextView(context).apply {
-                text = "$recLabel • $streamLabel$warnExtra"
+                text = "$recLabel • $streamLabel$standbyLabel$timerLabel$warnExtra"
                 setTextColor(
                     when {
+                        currentConn.timerState == "overtime" -> Color.parseColor("#EF4444")
+                        currentConn.isStandby -> Color.parseColor("#F59E0B")
                         currentConn.voiceWhileMuted && currentConn.isMuted -> Color.parseColor("#F59E0B")
                         currentConn.streamDropWarn -> Color.parseColor("#EF4444")
                         currentConn.recState == 1 -> Color.parseColor("#EF4444")
@@ -780,20 +810,15 @@ class FloatingMicOverlayManager(
             container.addView(telemetryBanner)
         }
 
-        if (currentConn.connected && currentConn.usingBridge) {
+        if (currentConn.connected && (currentConn.usingBridge || currentConn.usingRelayFallback)) {
             val deckDivider = View(context).apply { setBackgroundColor(dividerColor) }
             container.addView(deckDivider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
 
-            val deckRow = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val pad = (6 * density).roundToInt()
-                setPadding(pad, pad, pad, pad)
-            }
             val btnSurface = if (isDark) Color.parseColor("#383838") else Color.parseColor("#F1F5F9")
             val recSurface = if (currentConn.recState == 1) Color.parseColor("#DC2626") else btnSurface
             val recTextCol = if (currentConn.recState == 1) Color.WHITE else textColor
 
-            fun addDeckButton(label: String, bgCol: Int, fgCol: Int, closeAfter: Boolean, onTap: () -> Unit) {
+            fun addRowButton(row: LinearLayout, label: String, bgCol: Int, fgCol: Int, closeAfter: Boolean, onTap: () -> Unit) {
                 val tv = TextView(context).apply {
                     text = label
                     gravity = Gravity.CENTER
@@ -819,24 +844,62 @@ class FloatingMicOverlayManager(
                     marginStart = (3 * density).roundToInt()
                     marginEnd = (3 * density).roundToInt()
                 }
-                deckRow.addView(tv, lp)
+                row.addView(tv, lp)
             }
 
-            addDeckButton("◀ Prev", btnSurface, textColor, closeAfter = false) {
-                connectionManager.sendPptPrev("quick_menu")
+            if (currentConn.usingBridge) {
+                val deckRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val pad = (6 * density).roundToInt()
+                    setPadding(pad, pad, pad, (3 * density).roundToInt())
+                }
+                addRowButton(deckRow, "◀ Prev", btnSurface, textColor, closeAfter = false) {
+                    connectionManager.sendPptPrev("quick_menu")
+                }
+                addRowButton(
+                    deckRow,
+                    label = if (currentConn.recState == 1) "⏹ Stop" else "⏺ Rec",
+                    bgCol = recSurface,
+                    fgCol = recTextCol,
+                    closeAfter = true
+                ) {
+                    connectionManager.sendToggleRecord("quick_menu")
+                }
+                addRowButton(deckRow, "Next ▶", btnSurface, textColor, closeAfter = false) {
+                    connectionManager.sendPptNext("quick_menu")
+                }
+                container.addView(deckRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             }
-            addDeckButton(
-                label = if (currentConn.recState == 1) "⏹ Stop" else "⏺ Rec",
-                bgCol = recSurface,
-                fgCol = recTextCol,
+
+            val dirRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val pad = (6 * density).roundToInt()
+                setPadding(pad, (3 * density).roundToInt(), pad, pad)
+            }
+            val standbySurface = if (currentConn.isStandby) Color.parseColor("#D97706") else btnSurface
+            val standbyTextCol = if (currentConn.isStandby) Color.WHITE else textColor
+            addRowButton(
+                dirRow,
+                label = if (currentConn.recState == 2) "▶ Res" else "❚❚ Pause",
+                bgCol = btnSurface,
+                fgCol = textColor,
                 closeAfter = true
             ) {
-                connectionManager.sendToggleRecord("quick_menu")
+                connectionManager.sendPauseRecord("quick_menu")
             }
-            addDeckButton("Next ▶", btnSurface, textColor, closeAfter = false) {
-                connectionManager.sendPptNext("quick_menu")
+            addRowButton(dirRow, "Split", btnSurface, textColor, closeAfter = true) {
+                connectionManager.sendSplitRecord("quick_menu")
             }
-            container.addView(deckRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addRowButton(
+                dirRow,
+                label = if (currentConn.isStandby) "BRB ON" else "BRB",
+                bgCol = standbySurface,
+                fgCol = standbyTextCol,
+                closeAfter = true
+            ) {
+                connectionManager.sendToggleStandby("quick_menu")
+            }
+            container.addView(dirRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
 
         fun addMenuRow(label: String, onClick: () -> Unit) {
@@ -1112,4 +1175,7 @@ class FloatingMicOverlayManager(
 
     @VisibleForTesting
     internal fun isPillAttachedForTesting(): Boolean = pillView != null
+
+    @VisibleForTesting
+    internal fun currentPillViewForTesting(): MicPillCanvasView? = pillView
 }

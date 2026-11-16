@@ -67,7 +67,7 @@ class HudSnakeOverlayManager(
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
         val density = context.resources.displayMetrics.density.coerceAtLeast(0.75f)
         val formFactor = resolveFormFactor()
-        val pal = HudColorPalettes.get(cfg.hudColorPreset)
+        val pal = HudColorPalettes.get(cfg.hudColorPreset, cfg.customLiveHex, cfg.customMutedHex)
         val pillCol = if (isMuted) pal.mutedBg else pal.liveBg
         val nowNs = System.nanoTime()
 

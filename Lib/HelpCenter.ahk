@@ -1077,7 +1077,9 @@ BuildPrimaryHudDiagramBitmap(cfg, selectedIdx := 1, targetW := 776, targetH := 2
     iconFont := (Integer(StrSplit(A_OSVersion, ".")[3]) >= 22000) ? "Segoe Fluent Icons" : "Segoe MDL2 Assets"
 
     palName := (IsObject(cfg) && cfg.HasOwnProp("HudColorPreset")) ? cfg.HudColorPreset : "Standard"
-    pal := UIConstants.GetColorPalette(palName)
+    cLive := (IsObject(cfg) && cfg.HasOwnProp("CustomLiveHex")) ? cfg.CustomLiveHex : "107C10"
+    cMuted := (IsObject(cfg) && cfg.HasOwnProp("CustomMutedHex")) ? cfg.CustomMutedHex : "C42B1C"
+    pal := UIConstants.GetColorPalette(palName, cLive, cMuted)
     mono := IsObject(cfg) && cfg.HasOwnProp("MonoIcon") ? cfg.MonoIcon : false
 
     spec := GetPrimaryHudDiagramSpec(targetW, targetH)
@@ -1210,7 +1212,9 @@ BuildRemoteHudDiagramBitmap(cfg, selectedIdx := 1, targetW := 680, targetH := 19
     subMutedArgb := isDark ? 0xFFB2B8C4 : 0xFF525866
     iconFont := (Integer(StrSplit(A_OSVersion, ".")[3]) >= 22000) ? "Segoe Fluent Icons" : "Segoe MDL2 Assets"
 
-    pal := UIConstants.GetColorPalette((IsObject(cfg) && cfg.HasOwnProp("HudColorPreset")) ? cfg.HudColorPreset : "Standard")
+    cLive := (IsObject(cfg) && cfg.HasOwnProp("CustomLiveHex")) ? cfg.CustomLiveHex : "107C10"
+    cMuted := (IsObject(cfg) && cfg.HasOwnProp("CustomMutedHex")) ? cfg.CustomMutedHex : "C42B1C"
+    pal := UIConstants.GetColorPalette((IsObject(cfg) && cfg.HasOwnProp("HudColorPreset")) ? cfg.HudColorPreset : "Standard", cLive, cMuted)
     mono := IsObject(cfg) && cfg.HasOwnProp("MonoIcon") ? cfg.MonoIcon : false
     spec := GetRemoteHudDiagramSpec(targetW, targetH)
 

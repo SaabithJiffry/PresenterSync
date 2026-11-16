@@ -33,6 +33,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -247,7 +248,9 @@ fun HudAppearanceScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     HudColorPalettes.presetNames.forEach { name ->
-                        val pal = remember(name) { HudColorPalettes.get(name) }
+                        val pal = remember(name, cfg.customLiveHex, cfg.customMutedHex) {
+                            HudColorPalettes.get(name, cfg.customLiveHex, cfg.customMutedHex)
+                        }
                         val selected = cfg.hudColorPreset.equals(name, ignoreCase = true)
                         FilterChip(
                             selected = selected,
@@ -271,6 +274,43 @@ fun HudAppearanceScreen(
                                 }
                             },
                             label = { Text(name) }
+                        )
+                    }
+                }
+
+                if (cfg.hudColorPreset.equals("Custom", ignoreCase = true)) {
+                    var liveHexDraft by remember(cfg.customLiveHex) { mutableStateOf(cfg.customLiveHex) }
+                    var mutedHexDraft by remember(cfg.customMutedHex) { mutableStateOf(cfg.customMutedHex) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = liveHexDraft,
+                            onValueChange = { v ->
+                                liveHexDraft = v.take(7)
+                                val clean = v.trim().removePrefix("#").removePrefix("0x")
+                                if (clean.matches(Regex("^[0-9A-Fa-f]{6}$"))) {
+                                    app.configStore.update { it.copy(customLiveHex = "#${clean.uppercase()}") }
+                                }
+                            },
+                            label = { Text("Live Hex") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = mutedHexDraft,
+                            onValueChange = { v ->
+                                mutedHexDraft = v.take(7)
+                                val clean = v.trim().removePrefix("#").removePrefix("0x")
+                                if (clean.matches(Regex("^[0-9A-Fa-f]{6}$"))) {
+                                    app.configStore.update { it.copy(customMutedHex = "#${clean.uppercase()}") }
+                                }
+                            },
+                            label = { Text("Muted Hex") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -376,6 +416,19 @@ fun HudAppearanceScreen(
                     subtitle = "Anchor the bubble in place so casual touches or whiteboard sleeves cannot move it",
                     checked = cfg.lockHudPosition,
                     onCheckedChange = { v -> app.configStore.update { it.copy(lockHudPosition = v) } }
+                )
+                ExplorerSettingToggleRow(
+                    title = "Push-to-Talk Mode (Hold Pill to Unmute)",
+                    subtitle = "Press and hold floating pill to unmute; releasing immediately mutes mic again",
+                    checked = cfg.enablePushToTalk,
+                    onCheckedChange = { v ->
+                        app.configStore.update {
+                            it.copy(
+                                enablePushToTalk = v,
+                                enablePushToMute = if (v) false else it.enablePushToMute
+                            )
+                        }
+                    }
                 )
 
                 Text(

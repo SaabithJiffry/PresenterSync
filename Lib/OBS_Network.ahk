@@ -27,23 +27,41 @@ ExtractBaseKeyName(hk) {
     return Trim(s)
 }
 
-WaitPushToMuteRelease(cfg, hk, keyWaitFn := "") {
-    if (!IsObject(cfg) || !cfg.HasOwnProp("EnablePushToMute") || !cfg.EnablePushToMute)
-        return false
+_WaitKeyHoldAndRelease(hk, minHoldSec := 0.35, maxWaitSec := 15, keyWaitFn := "") {
     baseKey := ExtractBaseKeyName(hk)
     if (baseKey = "")
         return false
-    holdSec := (IsSet(UIConstants) && UIConstants.HasOwnProp("PUSH_TO_MUTE_HOLD_MS")) ? (UIConstants.PUSH_TO_MUTE_HOLD_MS / 1000.0) : 0.35
-    holdOpt := "T" Format("{:.3f}", holdSec)
-    if IsObject(keyWaitFn) {
-        if (keyWaitFn.Call(baseKey, holdOpt))
+    waitFn := IsObject(keyWaitFn) ? keyWaitFn : KeyWait
+    if (minHoldSec > 0.0) {
+        holdOpt := "T" Format("{:.3f}", minHoldSec)
+        if (waitFn.Call(baseKey, holdOpt))
             return false
-        keyWaitFn.Call(baseKey, "T15")
-        return true
     }
-    if (KeyWait(baseKey, holdOpt))
+    waitFn.Call(baseKey, "T" Integer(Max(1, maxWaitSec)))
+    return true
+}
+
+WaitPushToMuteRelease(cfg, hk, keyWaitFn := "") {
+    if (!IsObject(cfg) || !cfg.HasOwnProp("EnablePushToMute") || !cfg.EnablePushToMute)
         return false
-    KeyWait(baseKey, "T15")
+    holdSec := (IsSet(UIConstants) && UIConstants.HasOwnProp("PUSH_TO_MUTE_HOLD_MS")) ? (UIConstants.PUSH_TO_MUTE_HOLD_MS / 1000.0) : 0.35
+    return _WaitKeyHoldAndRelease(hk, holdSec, 15, keyWaitFn)
+}
+
+WaitPushToTalkRelease(cfg, hk, keyWaitFn := "") {
+    if (!IsObject(cfg) || !cfg.HasOwnProp("EnablePushToTalk") || !cfg.EnablePushToTalk)
+        return false
+    return _WaitKeyHoldAndRelease(hk, 0.0, 30, keyWaitFn)
+}
+
+ExecutePushToTalkHoldCycle(cfg, state, setMuteFn, hk, keyWaitFn := "") {
+    if (!IsObject(cfg) || !cfg.HasOwnProp("EnablePushToTalk") || !cfg.EnablePushToTalk)
+        return false
+    if (!IsObject(setMuteFn))
+        return false
+    setMuteFn.Call(false)
+    WaitPushToTalkRelease(cfg, hk, keyWaitFn)
+    setMuteFn.Call(true)
     return true
 }
 
@@ -420,6 +438,27 @@ PublishInternetRelayPacket(topic, packetStr, relayBaseUrl := "https://ntfy.sh", 
     }
 }
 
+BroadcastHostRelayDirectorState(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (!ShouldEnableHostInternetRelay(cfg))
+        return false
+    topic := GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : "")
+    if (topic = "")
+        return false
+    auth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
+    standby := (state.HasOwnProp("isStandby") && state.isStandby) ? "1" : "0"
+    recSt := state.HasOwnProp("recState") ? Integer(state.recState) : 0
+    tSt := state.HasOwnProp("timerState") ? String(state.timerState) : "stopped"
+    tRem := state.HasOwnProp("timerRemainingSec") ? Integer(state.timerRemainingSec) : 600
+    tPre := state.HasOwnProp("timerPresetSec") ? Integer(state.timerPresetSec) : 600
+    scene := state.HasOwnProp("currentSceneName") ? StrReplace(StrReplace(String(state.currentSceneName), "|", "/"), ";", ",") : "Scene"
+    payload := standby ";" recSt ";" tSt ";" tRem ";" tPre ";" scene
+    pkt := FormatRelayPacket("host", "dir_state", payload, auth)
+    mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+    return PublishInternetRelayPacket(topic, pkt, "https://ntfy.sh", mockWs)
+}
+
 BroadcastHostRelayMuteState(cfg, state) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
@@ -516,11 +555,41 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
 
     if (pkt.cmd = "sync_req") {
         BroadcastHostRelayMuteState(cfg, state)
+        hasDirActivity := (state.HasOwnProp("isStandby") && state.isStandby)
+            || (state.HasOwnProp("timerState") && state.timerState != "stopped")
+            || (state.HasOwnProp("recState") && state.recState > 0)
+        if (hasDirActivity)
+            BroadcastHostRelayDirectorState(cfg, state)
     } else if (pkt.cmd = "toggle_mute") {
         ExecuteHostRemoteToggleMute(cfg, state)
     } else if (pkt.cmd = "set_mute") {
         wantMuted := (StrLower(Trim(String(pkt.data))) = "1" || StrLower(Trim(String(pkt.data))) = "true")
         ExecuteHostRemoteSetMute(cfg, state, wantMuted)
+    } else if (pkt.cmd = "toggle_record") {
+        ExecuteHostToggleRecord(cfg, state)
+    } else if (pkt.cmd = "pause_record") {
+        ExecuteHostPauseRecord(cfg, state)
+    } else if (pkt.cmd = "split_record") {
+        ExecuteHostSplitRecord(cfg, state)
+    } else if (pkt.cmd = "toggle_standby") {
+        ExecuteHostToggleStandby(cfg, state)
+    } else if (pkt.cmd = "switch_scene") {
+        ExecuteHostSwitchScene(cfg, state, pkt.data)
+    } else if (pkt.cmd = "timer_start") {
+        dur := IsInteger(Trim(String(pkt.data))) ? Integer(Trim(String(pkt.data))) : 0
+        StartHostPresenterTimer(cfg, state, dur)
+    } else if (pkt.cmd = "timer_pause") {
+        PauseHostPresenterTimer(cfg, state)
+    } else if (pkt.cmd = "timer_reset") {
+        dur := IsInteger(Trim(String(pkt.data))) ? Integer(Trim(String(pkt.data))) : 0
+        ResetHostPresenterTimer(cfg, state, dur)
+    } else if (pkt.cmd = "stage_nudge") {
+        sep := InStr(pkt.data, ";")
+        if (!sep)
+            sep := InStr(pkt.data, "|")
+        nSender := sep > 0 ? SubStr(pkt.data, 1, sep - 1) : "Remote"
+        nMsg := sep > 0 ? SubStr(pkt.data, sep + 1) : pkt.data
+        BroadcastHostStageNudge(cfg, state, nMsg, nSender)
     }
 }
 
@@ -564,6 +633,246 @@ ExecuteHostToggleRecord(cfg, state) {
         SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
         return true
     }
+}
+
+ExecuteHostSwitchScene(cfg, state, sceneName) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    clean := Trim(String(sceneName))
+    if (clean = "")
+        return false
+    if (state.HasOwnProp("obsSceneSwitchFn") && IsObject(state.obsSceneSwitchFn)) {
+        res := state.obsSceneSwitchFn.Call(clean)
+        if (res = false)
+            return false
+        if (IsSet(SyncSceneState))
+            SyncSceneState(cfg, state, clean)
+        else
+            state.currentSceneName := clean
+        BroadcastHostRelayDirectorState(cfg, state)
+        return true
+    }
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+        ok := SendObsRequest(state.obsWs, "SetCurrentProgramScene", "SwitchScene", '{"sceneName":"' EscapeJsonStr(clean) '"}')
+        if (ok) {
+            if (IsSet(SyncSceneState))
+                SyncSceneState(cfg, state, clean)
+            else
+                state.currentSceneName := clean
+            BroadcastHostRelayDirectorState(cfg, state)
+        }
+        return ok
+    }
+    return false
+}
+
+ExecuteHostPauseRecord(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (state.HasOwnProp("obsRecPauseFn") && IsObject(state.obsRecPauseFn)) {
+        res := state.obsRecPauseFn.Call()
+        if (res = false)
+            return false
+        if (state.recState == 1 || state.recState == 2)
+            SyncRecState(cfg, state, state.recState == 1 ? 2 : 1)
+        return true
+    }
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+        ok := SendObsRequest(state.obsWs, "ToggleRecordPause", "HostPauseRec")
+        if (ok && (state.recState == 1 || state.recState == 2))
+            SyncRecState(cfg, state, state.recState == 1 ? 2 : 1)
+        return ok
+    }
+    if (cfg.EnableZoom && state.zoomConnected && cfg.HasOwnProp("ZoomPauseHotkey") && cfg.ZoomPauseHotkey != "" && cfg.ZoomPauseHotkey != "None") {
+        confSpec := GetConferencingWindowSpec(cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom")
+        SetKeyDelay -1, 30
+        try ControlSend(FormatSendKey(cfg.ZoomPauseHotkey), , confSpec)
+        SetKeyDelay 50, 50
+        state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
+        if (state.recState == 1 || state.recState == 2)
+            SyncRecState(cfg, state, state.recState == 1 ? 2 : 1)
+        return true
+    }
+    return false
+}
+
+ExecuteHostSplitRecord(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (state.HasOwnProp("obsRecSplitFn") && IsObject(state.obsRecSplitFn)) {
+        res := state.obsRecSplitFn.Call()
+        return (res != false)
+    }
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+        return SendObsRequest(state.obsWs, "SplitRecordFile", "HostSplitRec")
+    }
+    return false
+}
+
+ExecuteHostToggleStandby(cfg, state, enterStandby := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    curStandby := state.HasOwnProp("isStandby") ? !!state.isStandby : false
+    wantStandby := (enterStandby == "") ? !curStandby : !!enterStandby
+    if (wantStandby == curStandby)
+        return true
+
+    brbScene := (cfg.HasOwnProp("StandbySceneName") && Trim(cfg.StandbySceneName) != "") ? Trim(cfg.StandbySceneName) : "BRB"
+    if (wantStandby) {
+        prevScene := state.HasOwnProp("currentSceneName") ? String(state.currentSceneName) : "Scene"
+        state.standbySnapshot := {
+            muted: (state.HasOwnProp("isMuted") ? !!state.isMuted : false),
+            scene: prevScene,
+            recWasActive: (state.HasOwnProp("recState") && state.recState == 1)
+        }
+        if (!state.isMuted)
+            ExecuteHostRemoteSetMute(cfg, state, true)
+        if ((cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) || (state.HasOwnProp("obsSceneSwitchFn") && IsObject(state.obsSceneSwitchFn)))
+            ExecuteHostSwitchScene(cfg, state, brbScene)
+        if (state.HasOwnProp("recState") && state.recState == 1)
+            ExecuteHostPauseRecord(cfg, state)
+        state.isStandby := true
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("Standby Mode ON (" brbScene ") — Mic Muted & Rec Paused", "F59E0B", 3500, "Director")
+    } else {
+        snap := state.HasOwnProp("standbySnapshot") ? state.standbySnapshot : ""
+        state.isStandby := false
+        state.standbySnapshot := ""
+        if (IsObject(snap)) {
+            if (snap.HasOwnProp("scene") && snap.scene != "" && ((cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) || (state.HasOwnProp("obsSceneSwitchFn") && IsObject(state.obsSceneSwitchFn))))
+                ExecuteHostSwitchScene(cfg, state, snap.scene)
+            if (snap.HasOwnProp("recWasActive") && snap.recWasActive && state.HasOwnProp("recState") && state.recState == 2)
+                ExecuteHostPauseRecord(cfg, state)
+            if (snap.HasOwnProp("muted"))
+                ExecuteHostRemoteSetMute(cfg, state, snap.muted)
+        }
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("Standby Mode OFF — Session Restored", "10B981", 3200, "Director")
+    }
+    HostBridgeBroadcastMuteState(cfg, state)
+    BroadcastHostRelayDirectorState(cfg, state)
+    if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+        try state.rebuildTrayFn.Call()
+    if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
+    return true
+}
+
+StartHostPresenterTimer(cfg, state, durationSec := 0) {
+    if (!IsObject(state))
+        return false
+    if (Integer(durationSec) > 0) {
+        state.timerPresetSec := Integer(durationSec)
+        state.timerRemainingSec := Integer(durationSec)
+    } else if (!state.HasOwnProp("timerState") || state.timerState = "stopped") {
+        preset := (state.HasOwnProp("timerPresetSec") && Integer(state.timerPresetSec) > 0) ? Integer(state.timerPresetSec) : 600
+        state.timerPresetSec := preset
+        state.timerRemainingSec := preset
+    }
+    state.timerState := (state.timerRemainingSec <= 0) ? "overtime" : "running"
+    if (state.HasOwnProp("presenterTimerFn") && state.presenterTimerFn)
+        SetTimer(state.presenterTimerFn, 1000)
+    HostBridgeBroadcastMuteState(cfg, state)
+    BroadcastHostRelayDirectorState(cfg, state)
+    if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+        try state.rebuildTrayFn.Call()
+    return true
+}
+
+PauseHostPresenterTimer(cfg, state) {
+    if (!IsObject(state))
+        return false
+    cur := state.HasOwnProp("timerState") ? state.timerState : "stopped"
+    if (cur = "stopped")
+        return StartHostPresenterTimer(cfg, state, 0)
+    if (cur = "running" || cur = "overtime") {
+        state.timerState := "paused"
+        if (state.HasOwnProp("presenterTimerFn") && state.presenterTimerFn)
+            SetTimer(state.presenterTimerFn, 0)
+    } else if (cur = "paused") {
+        state.timerState := (state.timerRemainingSec <= 0) ? "overtime" : "running"
+        if (state.HasOwnProp("presenterTimerFn") && state.presenterTimerFn)
+            SetTimer(state.presenterTimerFn, 1000)
+    }
+    HostBridgeBroadcastMuteState(cfg, state)
+    BroadcastHostRelayDirectorState(cfg, state)
+    if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+        try state.rebuildTrayFn.Call()
+    return true
+}
+
+ResetHostPresenterTimer(cfg, state, durationSec := 0) {
+    if (!IsObject(state))
+        return false
+    if (state.HasOwnProp("presenterTimerFn") && state.presenterTimerFn)
+        SetTimer(state.presenterTimerFn, 0)
+    preset := (Integer(durationSec) > 0) ? Integer(durationSec) : ((state.HasOwnProp("timerPresetSec") && Integer(state.timerPresetSec) > 0) ? Integer(state.timerPresetSec) : 600)
+    state.timerPresetSec := preset
+    state.timerRemainingSec := preset
+    state.timerState := "stopped"
+    HostBridgeBroadcastMuteState(cfg, state)
+    BroadcastHostRelayDirectorState(cfg, state)
+    if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+        try state.rebuildTrayFn.Call()
+    return true
+}
+
+StepHostPresenterTimerTick(cfg, state) {
+    if (!IsObject(state))
+        return false
+    cur := state.HasOwnProp("timerState") ? state.timerState : "stopped"
+    if (cur != "running" && cur != "overtime")
+        return false
+    prevRem := Integer(state.timerRemainingSec)
+    state.timerRemainingSec := prevRem - 1
+    if (state.timerRemainingSec <= 0 && cur = "running") {
+        state.timerState := "overtime"
+        BroadcastHostStageNudge(cfg, state, "Time Up — Overtime (" FormatCountdownClock(state.timerRemainingSec) ")", "Timer", "EF4444")
+        return true
+    }
+    if (prevRem == 121 && state.timerRemainingSec == 120) {
+        BroadcastHostStageNudge(cfg, state, "2:00 Remaining", "Timer", "F59E0B")
+        return true
+    }
+    if (Mod(Abs(state.timerRemainingSec), 5) == 0) {
+        HostBridgeBroadcastMuteState(cfg, state)
+        BroadcastHostRelayDirectorState(cfg, state)
+    }
+    return true
+}
+
+PresenterTimerTick(cfg, state) {
+    if (!IsObject(state) || (state.timerState != "running" && state.timerState != "overtime")) {
+        if (IsObject(state) && state.HasOwnProp("presenterTimerFn") && state.presenterTimerFn)
+            SetTimer(state.presenterTimerFn, 0)
+        return
+    }
+    StepHostPresenterTimerTick(cfg, state)
+}
+
+BroadcastHostStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B") {
+    msgClean := SubStr(Trim(String(message)), 1, 140)
+    if (msgClean = "")
+        return false
+    senderClean := SubStr(Trim(String(sender)), 1, 40)
+    if (senderClean = "")
+        senderClean := "Stage"
+    accClean := IsSet(NormalizeColorHex) ? NormalizeColorHex(accentHex, "F59E0B") : "F59E0B"
+    if (IsSet(ShowStageNudgeBanner) && (!IsObject(state) || !state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+        ShowStageNudgeBanner(msgClean, accClean, 4500, senderClean)
+    HostBridgeBroadcastStageNudge(cfg, state, msgClean, senderClean, accClean)
+    if (ShouldEnableHostInternetRelay(cfg)) {
+        topic := GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : "")
+        if (topic != "") {
+            auth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
+            safeMsg := StrReplace(StrReplace(msgClean, "|", "/"), ";", ",")
+            safeSender := StrReplace(StrReplace(senderClean, "|", "/"), ";", ",")
+            pkt := FormatRelayPacket("host", "nudge", safeSender ";" safeMsg, auth)
+            mockWs := (IsObject(state) && state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+            PublishInternetRelayPacket(topic, pkt, "https://ntfy.sh", mockWs)
+        }
+    }
+    return true
 }
 
 ExecuteHostRemotePptCommand(cfg, state, direction := "next") {
@@ -983,8 +1292,14 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         }
         else if (InStr(msg, '"requestId":"InitSceneList"') || InStr(msg, '"requestId": "InitSceneList"')) {
             parsedScenes := ParseObsSceneList(msg)
-            if (parsedScenes.Length > 0)
+            if (parsedScenes.Length > 0) {
                 state.sceneList := parsedScenes
+                HostBridgeBroadcastMuteState(cfg, state)
+            }
+        }
+        else if (InStr(msg, '"requestId":"HostSplitRec"') || InStr(msg, '"requestId": "HostSplitRec"')) {
+            if (RegExMatch(msg, '"result"\s*:\s*true') && IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+                ShowStageNudgeBanner("Recording chapter file split saved", "10B981", 3000, "OBS")
         }
     }
 }

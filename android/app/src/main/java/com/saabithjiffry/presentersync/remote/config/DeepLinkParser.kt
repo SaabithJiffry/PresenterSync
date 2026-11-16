@@ -13,7 +13,10 @@ data class ParsedConnectionPayload(
     val targetMicName: String = AppConstants.DEFAULT_MIC_NAME,
     val networkMode: NetworkMode = NetworkMode.LAN,
     val internetPairingCode: String = "",
-    val hostUuid: String = ""
+    val hostUuid: String = "",
+    val hudColorPreset: String = "",
+    val customLiveHex: String = "",
+    val customMutedHex: String = ""
 )
 
 object DeepLinkParser {
@@ -72,7 +75,10 @@ object DeepLinkParser {
             targetMicName = mic,
             networkMode = mode,
             internetPairingCode = internetCode,
-            hostUuid = queryParams["uuid"].orEmpty().trim()
+            hostUuid = queryParams["uuid"].orEmpty().trim(),
+            hudColorPreset = queryParams["preset"].orEmpty().trim(),
+            customLiveHex = queryParams["clh"].orEmpty().ifBlank { queryParams["liveHex"].orEmpty() }.trim(),
+            customMutedHex = queryParams["cmh"].orEmpty().ifBlank { queryParams["mutedHex"].orEmpty() }.trim()
         )
     }
 
@@ -103,7 +109,10 @@ object DeepLinkParser {
                 targetMicName = mic,
                 networkMode = mode,
                 internetPairingCode = rc,
-                hostUuid = json.optString("uuid", json.optString("hostUuid", "")).trim()
+                hostUuid = json.optString("uuid", json.optString("hostUuid", "")).trim(),
+                hudColorPreset = json.optString("preset", "").trim(),
+                customLiveHex = json.optString("clh", json.optString("liveHex", "")).trim(),
+                customMutedHex = json.optString("cmh", json.optString("mutedHex", "")).trim()
             )
         }.getOrNull()
     }

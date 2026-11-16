@@ -18,6 +18,15 @@ interface RelaySessionCallbacks {
     fun onRelayConnected()
     fun onRelayAuthFailed()
     fun onRelayMuteState(muted: Boolean)
+    fun onRelayDirectorState(
+        isStandby: Boolean,
+        recState: Int,
+        timerState: String,
+        timerRemainingSec: Int,
+        timerPresetSec: Int,
+        activeScene: String
+    ) {}
+    fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {}
     fun onCloseRemoteSignal()
     fun onRelayDisconnected(reason: String)
 }
@@ -86,6 +95,26 @@ class RelayClient(
                     val muted = pkt.data == "1" || pkt.data.equals("true", ignoreCase = true)
                     callbacks.onRelayMuteState(muted)
                 }
+                "dir_state" -> {
+                    val parts = pkt.data.split(";")
+                    if (parts.size >= 5) {
+                        val standby = parts[0] == "1" || parts[0].equals("true", ignoreCase = true)
+                        val recSt = parts[1].toIntOrNull() ?: 0
+                        val tState = parts[2].ifBlank { "stopped" }
+                        val tRem = parts[3].toIntOrNull() ?: 600
+                        val tPre = (parts[4].toIntOrNull() ?: 600).coerceAtLeast(60)
+                        val scene = parts.getOrNull(5)?.takeIf { it.isNotBlank() } ?: "Scene"
+                        callbacks.onRelayDirectorState(standby, recSt, tState, tRem, tPre, scene)
+                    }
+                }
+                "nudge" -> {
+                    val idx = pkt.data.indexOf(';')
+                    val sender = if (idx > 0) pkt.data.substring(0, idx).ifBlank { "Host" } else "Host"
+                    val msg = if (idx >= 0) pkt.data.substring(idx + 1).trim() else pkt.data.trim()
+                    if (msg.isNotEmpty()) {
+                        callbacks.onStageNudgeReceived(msg, sender, "F59E0B")
+                    }
+                }
                 "close_remote" -> {
                     callbacks.onCloseRemoteSignal()
                 }
@@ -113,6 +142,31 @@ class RelayClient(
 
     fun sendSetMute(isMuted: Boolean): Boolean {
         return publishPacket("set_mute", if (isMuted) "1" else "0")
+    }
+
+    fun sendToggleRecord(): Boolean = publishPacket("toggle_record", "1")
+
+    fun sendPauseRecord(): Boolean = publishPacket("pause_record", "1")
+
+    fun sendSplitRecord(): Boolean = publishPacket("split_record", "1")
+
+    fun sendToggleStandby(): Boolean = publishPacket("toggle_standby", "1")
+
+    fun sendSwitchScene(sceneName: String): Boolean {
+        val clean = sceneName.trim().replace("|", "/")
+        return if (clean.isNotEmpty()) publishPacket("switch_scene", clean) else false
+    }
+
+    fun sendTimerCommand(action: String, durationSec: Int = 0): Boolean =
+        publishPacket(action, durationSec.toString())
+
+    fun sendStageNudge(message: String, sender: String = "Android"): Boolean {
+        val clean = message.trim().replace("|", "/").replace(";", ",").take(140)
+        return if (clean.isNotEmpty()) {
+            publishPacket("stage_nudge", "${sender.replace("|", "/").replace(";", ",")};$clean")
+        } else {
+            false
+        }
     }
 
     private fun publishPacket(cmd: String, data: String): Boolean {

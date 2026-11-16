@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v6.6.0", UIConstants.APP_VERSION == "6.6.0")
+Assert("APP_VERSION is active release v6.7.0", UIConstants.APP_VERSION == "6.7.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -696,8 +696,8 @@ Assert("WaitPushToMuteRelease detects hold (>=350ms) and waits for release",
 ; SECTION 10: STAGE 3 (v2.2.7) - CUSTOM HUD COLOR THEMES & TALLY PRESETS
 ; ==============================================================================
 presets := GetHudColorPresetNames()
-Assert("GetHudColorPresetNames exposes 5 presets",
-    presets.Length == 5 && presets[1] == "Standard" && presets[2] == "Colorblind Safe" && presets[5] == "Cyber Ocean")
+Assert("GetHudColorPresetNames exposes 6 presets including Custom",
+    presets.Length == 6 && presets[1] == "Standard" && presets[2] == "Colorblind Safe" && presets[5] == "Cyber Ocean" && presets[6] == "Custom")
 
 palStd := UIConstants.GetColorPalette("Standard")
 Assert("Standard palette matches baseline UIConstants LIVE/MUTED colors",
@@ -1497,8 +1497,8 @@ ccAuditLight := ShowControlCenterWindow(cfgAudit, stAudit)
 PostMessage(0x0010, 0, 0, ccAuditLight.Hwnd)
 Sleep(50)
 Theme.SetMode("System")
-Assert("Control Center registers all 26 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
-    ccChkTabCount == 26 && ccUiOk && Theme.SuspendLockCount == 0)
+Assert("Control Center registers all 27 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
+    ccChkTabCount == 27 && ccUiOk && Theme.SuspendLockCount == 0)
 
 ; 21.6 Scope Guard: PresenterSync_Remote remains strictly 1-tier Mic HUD (no multi-tier GUIs)
 remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
@@ -2690,6 +2690,111 @@ Assert("Remote & Primary wire v6.6.0 WM_POWERBROADCAST(0x218), PS_DISCOVER_V1 & 
     && InStr(rbcSrc, "DiscoverPublicHostsUdp")
     && InStr(rbcSrc, "FollowPairedHostIpShift")
     && InStr(rbcSrc, "ProbeHostBridgeHealth"))
+
+; ==============================================================================
+; SECTION 26: v6.7.0 DIRECTOR DECK, SYNCED TIMER, NUDGE, STANDBY, PTT & CUSTOM HEX
+; ==============================================================================
+Assert("NormalizeColorHex & PickReadableIconHex enforce WCAG contrast on light/dark backgrounds",
+    NormalizeColorHex("#0ea5e9") == "0EA5E9"
+    && NormalizeColorHex("bad", "107C10") == "107C10"
+    && PickReadableIconHex("FEF08A") == "111827"
+    && PickReadableIconHex("0F2E22") == "FFFFFF")
+
+if FileExist(testIni)
+    FileDelete(testIni)
+cfgM7 := Config(testIni)
+stM7 := OverlayState(cfgM7)
+stM7.suppressNudgeBanners := true
+stM7.obsConnected := true
+cfgM7.EnableWS := true
+stM7.currentSceneName := "Main Slides"
+stM7.sceneList := ["Main Slides", "Webcam Full", "BRB"]
+
+SetCustomHudColors(cfgM7, stM7, "#0EA5E9", "#FDE047", true)
+cfgM7Reload := Config(testIni)
+Assert("SetCustomHudColors persists Custom preset + Live/Muted hexes & updates OverlayState palette",
+    cfgM7Reload.HudColorPreset == "Custom"
+    && cfgM7Reload.CustomLiveHex == "0EA5E9"
+    && cfgM7Reload.CustomMutedHex == "FDE047"
+    && stM7.colors.live == "0EA5E9"
+    && stM7.colors.muted == "FDE047"
+    && stM7.colors.iconMuted == "111827")
+
+uriCustom := BuildHostPairingUri(cfgM7, ["192.168.10.50"])
+Assert("BuildHostPairingUri embeds Custom preset & live/muted hexes cleanly",
+    InStr(uriCustom, "&preset=Custom") && InStr(uriCustom, "&clh=0EA5E9") && InStr(uriCustom, "&cmh=FDE047"))
+
+; Push-to-Talk Hold-to-Unmute release cycle
+pttCalls := []
+cfgM7.EnablePushToTalk := true
+pttOk := ExecutePushToTalkHoldCycle(cfgM7, stM7, (m) => pttCalls.Push(m), "b", (k, o) => 1)
+Assert("ExecutePushToTalkHoldCycle unmutes immediately on press and re-mutes on release",
+    pttOk && pttCalls.Length == 2 && pttCalls[1] == false && pttCalls[2] == true)
+
+; OBS Scene Switch, Record Pause, Record Split & Standby Macro snapshot/restore
+obsReqsM7 := []
+stM7.obsSceneSwitchFn := (sc) => (obsReqsM7.Push("scene:" sc), true)
+stM7.obsRecPauseFn := (*) => (obsReqsM7.Push("pause"), true)
+stM7.obsRecSplitFn := (*) => (obsReqsM7.Push("split"), true)
+
+stM7.isMuted := false
+stM7.recState := 1
+cfgM7.AudioRoutingMode := 2 ; deterministic optimistic SyncUIState in offline test
+cfgM7.StandbySceneName := "BRB"
+enterBrb := ExecuteHostToggleStandby(cfgM7, stM7, true)
+duringStandbyOk := (stM7.isStandby == true && stM7.isMuted == true && stM7.currentSceneName == "BRB" && stM7.recState == 2)
+exitBrb := ExecuteHostToggleStandby(cfgM7, stM7, false)
+restoredStandbyOk := (stM7.isStandby == false && stM7.isMuted == false && stM7.currentSceneName == "Main Slides" && stM7.recState == 1)
+Assert("ExecuteHostToggleStandby snapshots mute/scene/rec on enter and restores exact state on exit",
+    enterBrb && duringStandbyOk && exitBrb && restoredStandbyOk)
+
+swOk := ExecuteHostSwitchScene(cfgM7, stM7, "Webcam Full")
+spOk := ExecuteHostSplitRecord(cfgM7, stM7)
+Assert("ExecuteHostSwitchScene & ExecuteHostSplitRecord invoke OBS actions cleanly",
+    swOk && spOk && stM7.currentSceneName == "Webcam Full" && obsReqsM7[obsReqsM7.Length] == "split")
+
+; Presenter Countdown Timer & Overtime transition
+StartHostPresenterTimer(cfgM7, stM7, 122)
+SetTimer(stM7.presenterTimerFn, 0) ; step deterministically in unit test
+StepHostPresenterTimerTick(cfgM7, stM7) ; 121
+StepHostPresenterTimerTick(cfgM7, stM7) ; 120
+atTwoMin := (stM7.timerRemainingSec == 120 && stM7.timerState == "running")
+PauseHostPresenterTimer(cfgM7, stM7)
+pausedOk := (stM7.timerState == "paused")
+StartHostPresenterTimer(cfgM7, stM7, 1)
+SetTimer(stM7.presenterTimerFn, 0)
+StepHostPresenterTimerTick(cfgM7, stM7) ; 0 -> overtime
+overtimeOk := (stM7.timerState == "overtime" && stM7.timerRemainingSec == 0)
+ResetHostPresenterTimer(cfgM7, stM7, 600)
+Assert("Presenter Countdown Timer steps cleanly through 2:00 checkpoint, pause, overtime & reset",
+    atTwoMin && pausedOk && overtimeOk && stM7.timerState == "stopped" && stM7.timerRemainingSec == 600 && FormatCountdownClock(-15) == "-00:15")
+
+; Relay Stage Nudge & Standby handling
+mockRelayM7 := { sent: [], SendText: (this, t) => this.sent.Push(t) }
+stM7.relayMockWs := mockRelayM7
+cfgM7.RemoteNetworkMode := "Internet"
+cfgM7.InternetPairingCode := "PS-M7-RELAY"
+cfgM7.obsPassword := "PwM7"
+authTokM7 := GetInternetRelayAuthToken(cfgM7.InternetPairingCode, cfgM7.obsPassword)
+HandleHostRelayMessage(cfgM7, stM7, "", FormatRelayPacket("remote", "switch_scene", "Main Slides", authTokM7))
+BroadcastHostStageNudge(cfgM7, stM7, "Wrap up Q&A", "Host", "F59E0B")
+relayHasNudge := false
+for sentPkt in mockRelayM7.sent {
+    parsedSent := ParseRelayPacket(sentPkt)
+    if (IsObject(parsedSent) && parsedSent.cmd == "nudge" && parsedSent.data == "Host;Wrap up Q&A")
+        relayHasNudge := true
+}
+Assert("WAN Relay executes M7 Director commands and broadcasts dir_state & stage nudges",
+    stM7.currentSceneName == "Main Slides" && relayHasNudge)
+
+remM7Src := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
+primM7Src := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
+Assert("Primary & Remote wire v6.7.0 Director Deck, Standby BRB, Stage Nudge, Push-to-Talk & Custom Colors",
+    InStr(primM7Src, "OBS Director")
+    && InStr(primM7Src, "ExecutePushToTalkHoldCycle")
+    && InStr(remM7Src, "SendRemoteSwitchScene")
+    && InStr(remM7Src, "SendRemoteStageNudge")
+    && InStr(remM7Src, "CustomLiveHex"))
 
 ; Cleanup test ini
 if FileExist(testIni)

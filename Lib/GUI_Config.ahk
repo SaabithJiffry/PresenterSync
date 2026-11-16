@@ -10,7 +10,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "6.6.0"
+    static APP_VERSION := "6.7.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -212,8 +212,28 @@ class UIConstants {
         }
     }
 
-    static GetColorPalette(presetName := "Standard") {
+    static GetColorPalette(presetName := "Standard", customLiveHex := "107C10", customMutedHex := "C42B1C") {
         switch NormalizeHudColorPreset(presetName) {
+            case "Custom":
+                cLive := NormalizeColorHex(customLiveHex, "107C10")
+                cMuted := NormalizeColorHex(customMutedHex, "C42B1C")
+                return UIConstants._MakePalette(
+                    cLive, PickReadableIconHex(cLive),
+                    cMuted, PickReadableIconHex(cMuted),
+                    UIConstants.COLOR_REC_OFF, UIConstants.ICON_REC_OFF,
+                    UIConstants.COLOR_REC_ACTIVE, UIConstants.ICON_REC_ACTIVE,
+                    UIConstants.COLOR_REC_PAUSED, UIConstants.ICON_REC_PAUSED,
+                    UIConstants.COLOR_STUDIO_OFF, UIConstants.ICON_STUDIO_OFF,
+                    UIConstants.COLOR_STUDIO_ON, UIConstants.ICON_STUDIO_ON,
+                    UIConstants.COLOR_SCENE, "FFFFFF",
+                    UIConstants.COLOR_CHAT_CLEAR, UIConstants.ICON_CHAT_CLEAR,
+                    UIConstants.COLOR_CHAT_ALERT, UIConstants.ICON_CHAT_ALERT,
+                    UIConstants.COLOR_STREAM_OFF, UIConstants.ICON_STREAM_OFF,
+                    UIConstants.COLOR_STREAM_LIVE, UIConstants.ICON_STREAM_LIVE,
+                    UIConstants.COLOR_STREAM_WARN, UIConstants.ICON_STREAM_WARN,
+                    UIConstants.COLOR_VCAM_OFF, UIConstants.ICON_VCAM_OFF,
+                    UIConstants.COLOR_VCAM_ON, UIConstants.ICON_VCAM_ON
+                )
             case "Colorblind Safe":
                 return UIConstants._MakePalette(
                     "0072B2", "002A45", "D55E00", "4A1E00",
@@ -276,8 +296,37 @@ class UIConstants {
     }
 }
 
+NormalizeColorHex(rawHex, fallback := "107C10") {
+    clean := RegExReplace(Trim(String(rawHex)), "^(#|0x|0X)", "")
+    if RegExMatch(clean, "^[0-9A-Fa-f]{6}$")
+        return StrUpper(clean)
+    fb := RegExReplace(Trim(String(fallback)), "^(#|0x|0X)", "")
+    return RegExMatch(fb, "^[0-9A-Fa-f]{6}$") ? StrUpper(fb) : "107C10"
+}
+
+_SrgbLinearize(channel255) {
+    chNorm := Float(channel255) / 255.0
+    return (chNorm <= 0.03928) ? (chNorm / 12.92) : (((chNorm + 0.055) / 1.055) ** 2.4)
+}
+
+ColorRelativeLuminance(hexStr) {
+    h := NormalizeColorHex(hexStr, "000000")
+    r := _SrgbLinearize(Integer("0x" SubStr(h, 1, 2)))
+    g := _SrgbLinearize(Integer("0x" SubStr(h, 3, 2)))
+    b := _SrgbLinearize(Integer("0x" SubStr(h, 5, 2)))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+PickReadableIconHex(bgHex) {
+    lumBg := ColorRelativeLuminance(bgHex)
+    lumDark := 0.008568 ; Relative luminance of #111827
+    contrastWhite := 1.05 / (lumBg + 0.05)
+    contrastDark := (Max(lumBg, lumDark) + 0.05) / (Min(lumBg, lumDark) + 0.05)
+    return (contrastDark > contrastWhite) ? "111827" : "FFFFFF"
+}
+
 GetHudColorPresetNames() {
-    return ["Standard", "Colorblind Safe", "OLED Stealth", "Broadcast Tally", "Cyber Ocean"]
+    return ["Standard", "Colorblind Safe", "OLED Stealth", "Broadcast Tally", "Cyber Ocean", "Custom"]
 }
 
 NormalizeHudColorPreset(name) {
@@ -1163,6 +1212,9 @@ class Config {
     ShowExtraHuds := true
     ThemeMode := "System"
     HudColorPreset := "Standard"
+    CustomLiveHex := "107C10"
+    CustomMutedHex := "C42B1C"
+    StandbySceneName := "BRB"
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -1189,6 +1241,7 @@ class Config {
     CatchTab := true
     CatchEsc := true
     EnablePushToMute := false
+    EnablePushToTalk := false
 
     PptHotkey := "^F12"
     WsHotkey := "!F12"
@@ -1292,6 +1345,8 @@ class Config {
         this.targetMicName := Trim(this.Read("Settings", "TargetMicName", "Mic/Aux"))
         if (this.targetMicName = "")
             this.targetMicName := "Mic/Aux"
+        rawBrb := Trim(this.Read("Settings", "StandbySceneName", "BRB"))
+        this.StandbySceneName := (rawBrb != "") ? rawBrb : "BRB"
 
         this.EnablePPT := this.ReadBool("Settings", "EnablePPT")
         this.EnableMicOnly := this.ReadBool("Settings", "EnableMicOnly")
@@ -1313,6 +1368,8 @@ class Config {
         this.ThemeMode := (rawTheme = "dark") ? "Dark" : ((rawTheme = "light") ? "Light" : "System")
         Theme.SetMode(this.ThemeMode)
         this.HudColorPreset := NormalizeHudColorPreset(this.Read("Settings", "HudColorPreset", "Standard"))
+        this.CustomLiveHex := NormalizeColorHex(this.Read("Settings", "CustomLiveHex", "107C10"), "107C10")
+        this.CustomMutedHex := NormalizeColorHex(this.Read("Settings", "CustomMutedHex", "C42B1C"), "C42B1C")
         this.ShowText := this.ReadBool("Settings", "ShowText")
         this.MonoIcon := this.ReadBool("Settings", "MonoIcon")
         this.SleekCorners := this.ReadBool("Settings", "SleekCorners")
@@ -1343,6 +1400,11 @@ class Config {
         this.CatchTab := this.ReadBool("Pointer", "CatchTab", true)
         this.CatchEsc := this.ReadBool("Pointer", "CatchEsc", true)
         this.EnablePushToMute := this.ReadBool("Pointer", "EnablePushToMute", false)
+        this.EnablePushToTalk := this.ReadBool("Pointer", "EnablePushToTalk", false)
+        if (this.EnablePushToTalk && this.EnablePushToMute) {
+            this.EnablePushToMute := false
+            this.WriteBool("Pointer", "EnablePushToMute", false)
+        }
 
         this.PptHotkey := this.Read("Settings", "PptHotkey", "^F12")
         this.WsHotkey := this.Read("Settings", "WsHotkey", "!F12")
@@ -1390,6 +1452,8 @@ class Config {
         this.ShowExtraHuds := true
         this.ThemeMode := "System"
         this.HudColorPreset := "Standard"
+        this.CustomLiveHex := "107C10"
+        this.CustomMutedHex := "C42B1C"
         this.ShowText := false
         this.MonoIcon := false
         this.SleekCorners := false
@@ -1409,6 +1473,8 @@ class Config {
         this.Write("Settings", "ShowExtraHuds", 1)
         this.Write("Settings", "ThemeMode", "System")
         this.Write("Settings", "HudColorPreset", "Standard")
+        this.Write("Settings", "CustomLiveHex", "107C10")
+        this.Write("Settings", "CustomMutedHex", "C42B1C")
         this.Write("Settings", "ShowText", 0)
         this.Write("Settings", "MonoIcon", 0)
         this.Write("Settings", "SleekCorners", 0)
@@ -1467,6 +1533,9 @@ class Config {
             { sec: "Settings", key: "ShowExtraHuds", prop: "ShowExtraHuds", kind: "bool" },
             { sec: "Settings", key: "ThemeMode", prop: "ThemeMode", kind: "str" },
             { sec: "Settings", key: "HudColorPreset", prop: "HudColorPreset", kind: "str" },
+            { sec: "Settings", key: "CustomLiveHex", prop: "CustomLiveHex", kind: "str" },
+            { sec: "Settings", key: "CustomMutedHex", prop: "CustomMutedHex", kind: "str" },
+            { sec: "Settings", key: "StandbySceneName", prop: "StandbySceneName", kind: "str" },
             { sec: "Settings", key: "ShowText", prop: "ShowText", kind: "bool" },
             { sec: "Settings", key: "MonoIcon", prop: "MonoIcon", kind: "bool" },
             { sec: "Settings", key: "SleekCorners", prop: "SleekCorners", kind: "bool" },
@@ -1492,6 +1561,7 @@ class Config {
             { sec: "Pointer", key: "CatchTab", prop: "CatchTab", kind: "bool" },
             { sec: "Pointer", key: "CatchEsc", prop: "CatchEsc", kind: "bool" },
             { sec: "Pointer", key: "EnablePushToMute", prop: "EnablePushToMute", kind: "bool" },
+            { sec: "Pointer", key: "EnablePushToTalk", prop: "EnablePushToTalk", kind: "bool" },
             { sec: "Position", key: "X", prop: "savedX", kind: "str" },
             { sec: "Position", key: "Y", prop: "savedY", kind: "str" }
         ]
@@ -1670,6 +1740,12 @@ class OverlayState {
     voiceMeterTimerFn := ""
     mutedVoiceTimerFn := ""
     recTimerFn := ""
+    presenterTimerFn := ""
+    isStandby := false
+    standbySnapshot := ""
+    timerState := "stopped"
+    timerPresetSec := 600
+    timerRemainingSec := 600
     voiceWhileMuted := false
     mutedVoiceAboveSince := 0
     mutedVoiceQuietSince := 0
@@ -1781,6 +1857,7 @@ class OverlayState {
         this.voiceMeterTimerFn := VoiceMeterTick.Bind(cfg, this)
         this.mutedVoiceTimerFn := MutedVoiceMonitorTick.Bind(cfg, this)
         this.recTimerFn := RecTimerTick.Bind(cfg, this)
+        this.presenterTimerFn := PresenterTimerTick.Bind(cfg, this)
         this.streamTimerFn := PollStreamStatus.Bind(cfg, this)
         this.autoDodgeTimerFn := AutoDodgeTick.Bind(cfg, this)
         this.obsTimerFn := ConnectToOBS.Bind(cfg, this)
@@ -1794,7 +1871,9 @@ class OverlayState {
     }
 
     ComputeDimensions(cfg) {
-        this.colors := UIConstants.GetColorPalette(cfg.HasOwnProp("HudColorPreset") ? cfg.HudColorPreset : "Standard")
+        cLive := (IsObject(cfg) && cfg.HasOwnProp("CustomLiveHex")) ? cfg.CustomLiveHex : "107C10"
+        cMuted := (IsObject(cfg) && cfg.HasOwnProp("CustomMutedHex")) ? cfg.CustomMutedHex : "C42B1C"
+        this.colors := UIConstants.GetColorPalette(cfg.HasOwnProp("HudColorPreset") ? cfg.HudColorPreset : "Standard", cLive, cMuted)
         this.baseWidth := Round((cfg.ShowText ? UIConstants.BASE_WIDTH_TEXT : UIConstants.BASE_WIDTH_ICON) * cfg.IndicatorScale)
         this.baseHeight := Round(UIConstants.BASE_HEIGHT * cfg.IndicatorScale)
         this.hudGap := Max(UIConstants.MIN_HUD_GAP, Round(UIConstants.HUD_GAP * cfg.IndicatorScale))
@@ -3600,7 +3679,8 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
     } else {
         bgRgb := mutedState ? state.colors.muted : state.colors.live
         brdBgr := mutedState ? state.colors.borderMuted : state.colors.borderLive
-        icHex := cfg.MonoIcon ? (mutedState ? state.colors.iconMuted : state.colors.iconLive) : "FFFFFF"
+        useCustomContrast := (cfg.HasOwnProp("HudColorPreset") && NormalizeHudColorPreset(cfg.HudColorPreset) = "Custom")
+        icHex := cfg.MonoIcon ? (mutedState ? state.colors.iconMuted : state.colors.iconLive) : (useCustomContrast ? PickReadableIconHex(bgRgb) : "FFFFFF")
         glyph := mutedState ? Chr(0xF781) : Chr(0xE720)
         lbl := mutedState ? "MUTED" : "LIVE"
     }
@@ -3843,11 +3923,14 @@ SyncSceneState(cfg, state, sceneName) {
         state.sceneMarqueeOffset := 0
         state.sceneMarqueePhase := "pause_start"
         state.sceneMarqueeTicks := 0
-        state.ComputeDimensions(cfg)
-        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && !state.isDraggingHud) {
+        if (state.HasMethod("ComputeDimensions"))
+            state.ComputeDimensions(cfg)
+        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && (!state.HasOwnProp("isDraggingHud") || !state.isDraggingHud) && state.HasOwnProp("SceneGui") && IsGuiValid(state.SceneGui)) {
             UpdateHudLayout(state, state.savedX, state.savedY)
             ApplySceneAppearance(cfg, state)
         }
+        if (IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, state)
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
             try state.refreshHelpFn.Call()
     }
@@ -4014,10 +4097,11 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1) {
 
     if (stateChanged || durProvided) {
         HostBridgeBroadcastMuteState(cfg, state)
-        oldW := state.recW
-        state.ComputeDimensions(cfg)
-        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds) {
-            if (state.recW != oldW && !state.isDraggingHud) {
+        oldW := state.HasOwnProp("recW") ? state.recW : 0
+        if (state.HasMethod("ComputeDimensions"))
+            state.ComputeDimensions(cfg)
+        if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && state.HasOwnProp("RecGui") && IsGuiValid(state.RecGui)) {
+            if (state.HasOwnProp("recW") && state.recW != oldW && (!state.HasOwnProp("isDraggingHud") || !state.isDraggingHud)) {
                 UpdateHudLayout(state, state.savedX, state.savedY)
                 ApplyChatAppearance(cfg, state)
             }
@@ -4107,6 +4191,308 @@ ToggleMuteToast(cfg, state := "", *) {
 
 TogglePushToMute(cfg, state := "", *) {
     ToggleBoolSetting(cfg, state, "EnablePushToMute", "Pointer", "Pointer")
+    if (cfg.EnablePushToMute && cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk) {
+        cfg.EnablePushToTalk := false
+        cfg.WriteBool("Pointer", "EnablePushToTalk", false)
+        if (IsObject(state)) {
+            if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+                try state.rebuildTrayFn.Call()
+            if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+                try state.refreshHelpFn.Call()
+        }
+    }
+}
+
+TogglePushToTalk(cfg, state := "", *) {
+    ToggleBoolSetting(cfg, state, "EnablePushToTalk", "Pointer", "Pointer")
+    if (cfg.EnablePushToTalk && cfg.HasOwnProp("EnablePushToMute") && cfg.EnablePushToMute) {
+        cfg.EnablePushToMute := false
+        cfg.WriteBool("Pointer", "EnablePushToMute", false)
+        if (IsObject(state)) {
+            if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+                try state.rebuildTrayFn.Call()
+            if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+                try state.refreshHelpFn.Call()
+        }
+    }
+}
+
+FormatCountdownClock(sec) {
+    s := Integer(sec)
+    neg := (s < 0)
+    absS := Abs(s)
+    hrs := absS // 3600
+    mins := Mod(absS, 3600) // 60
+    secs := Mod(absS, 60)
+    core := (hrs > 0) ? Format("{}:{:02}:{:02}", hrs, mins, secs) : Format("{:02}:{:02}", mins, secs)
+    return neg ? ("-" core) : core
+}
+
+global g_StageNudgeGui := ""
+global g_StageNudgeHideFn := ""
+
+HideStageNudgeBanner(*) {
+    global g_StageNudgeGui
+    if (IsObject(g_StageNudgeGui)) {
+        try g_StageNudgeGui.Destroy()
+    }
+    g_StageNudgeGui := ""
+}
+
+ShowStageNudgeBanner(message, accentHex := "F59E0B", durationMs := 4500, sender := "") {
+    global g_StageNudgeGui, g_StageNudgeHideFn
+    msgText := Trim(String(message))
+    if (msgText = "")
+        return false
+    senderTxt := Trim(String(sender))
+    fullText := (senderTxt != "") ? (senderTxt ": " msgText) : msgText
+    HideStageNudgeBanner()
+
+    try {
+        nGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20", "PresenterSyncStageBanner")
+        isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
+        bgHex := isDark ? "1E293B" : "FFFFFF"
+        fgHex := isDark ? "F8FAFC" : "0F172A"
+        accHex := NormalizeColorHex(accentHex, "F59E0B")
+        nGui.BackColor := bgHex
+        nGui.MarginX := 16
+        nGui.MarginY := 10
+        nGui.SetFont("s9 w700", Theme.UiFont)
+        nGui.Add("Text", "xm y8 c" accHex, "STAGE NUDGE")
+        nGui.SetFont("s11 w600", Theme.UiFont)
+        nGui.Add("Text", "xm y+2 w440 c" fgHex, fullText)
+        nGui.Show("AutoSize NoActivate Hide")
+        nGui.GetPos(,, &gw, &gh)
+        MonitorGetWorkArea(MonitorGetPrimary(), &mL, &mT, &mR, &mB)
+        xPos := mL + Round(((mR - mL) - gw) / 2)
+        yPos := mT + 22
+        nGui.Show("x" xPos " y" yPos " NoActivate")
+        WinSetAlwaysOnTop(1, "ahk_id " nGui.Hwnd)
+        g_StageNudgeGui := nGui
+        if (durationMs > 0) {
+            if (IsObject(g_StageNudgeHideFn))
+                SetTimer(g_StageNudgeHideFn, 0)
+            g_StageNudgeHideFn := HideStageNudgeBanner
+            SetTimer(g_StageNudgeHideFn, -Integer(durationMs))
+        }
+        return true
+    } catch {
+        return false
+    }
+}
+
+SetCustomHudColors(cfg, state, liveHex, mutedHex, activateCustom := true) {
+    if (!IsObject(cfg))
+        return false
+    cfg.CustomLiveHex := NormalizeColorHex(liveHex, cfg.HasOwnProp("CustomLiveHex") ? cfg.CustomLiveHex : "107C10")
+    cfg.CustomMutedHex := NormalizeColorHex(mutedHex, cfg.HasOwnProp("CustomMutedHex") ? cfg.CustomMutedHex : "C42B1C")
+    section := (cfg is Config) ? "Settings" : "Appearance"
+    cfg.Write(section, "CustomLiveHex", cfg.CustomLiveHex)
+    cfg.Write(section, "CustomMutedHex", cfg.CustomMutedHex)
+    if (activateCustom) {
+        cfg.HudColorPreset := "Custom"
+        cfg.Write(section, "HudColorPreset", "Custom")
+    }
+    if (IsObject(state)) {
+        state.colors := UIConstants.GetColorPalette(cfg.HudColorPreset, cfg.CustomLiveHex, cfg.CustomMutedHex)
+        if (state.HasOwnProp("refreshHudFn") && state.refreshHudFn)
+            try state.refreshHudFn.Call()
+        if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+            try state.refreshHelpFn.Call()
+    }
+    return true
+}
+
+ConfigureCustomHudColorsUI(cfg, state := "", *) {
+    existing := Theme.FocusExistingWindow("PresenterSync - Custom HUD Colors")
+    if IsObject(existing)
+        return existing
+    Theme.AcquireSuspend()
+    g := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync - Custom HUD Colors")
+    g._closed := false
+    g.MarginX := 20
+    g.MarginY := 16
+    Theme.ApplyToWindow(g)
+    Theme.NamedWindows["PresenterSync - Custom HUD Colors"] := g
+
+    g.SetFont("s10 w700", Theme.UiFont)
+    Theme.RegisterControl(g, g.Add("Text", "xm w340", "Custom HUD Hex Colors"), "Text")
+    g.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(g, g.Add("Text", "xm y+6 w340", "Enter 6-digit hex colors (e.g. #107C10, #C42B1C). Icon and text contrast adapt automatically (WCAG)."), "Text", "muted")
+
+    curLive := NormalizeColorHex(cfg.HasOwnProp("CustomLiveHex") ? cfg.CustomLiveHex : "107C10", "107C10")
+    curMuted := NormalizeColorHex(cfg.HasOwnProp("CustomMutedHex") ? cfg.CustomMutedHex : "C42B1C", "C42B1C")
+    g.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(g, g.Add("Text", "xm y+14 w150", "Live Mic Hex:"), "Text")
+    g.SetFont("s9 w400", Theme.UiFont)
+    edLive := g.Add("Edit", "xm y+4 w160", "#" curLive)
+    Theme.RegisterControl(g, edLive, "Edit")
+    swLive := g.Add("Progress", "x+12 yp w168 h24 Range0-100 Background" curLive, 0)
+
+    g.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(g, g.Add("Text", "xm y+12 w150", "Muted Mic Hex:"), "Text")
+    g.SetFont("s9 w400", Theme.UiFont)
+    edMuted := g.Add("Edit", "xm y+4 w160", "#" curMuted)
+    Theme.RegisterControl(g, edMuted, "Edit")
+    swMuted := g.Add("Progress", "x+12 yp w168 h24 Range0-100 Background" curMuted, 0)
+
+    UpdateSwatches(*) {
+        try swLive.Opt("+Background" NormalizeColorHex(edLive.Value, curLive))
+        try swMuted.Opt("+Background" NormalizeColorHex(edMuted.Value, curMuted))
+    }
+    edLive.OnEvent("Change", UpdateSwatches)
+    edMuted.OnEvent("Change", UpdateSwatches)
+
+    btnApply := g.Add("Button", "xm y+18 w164 h30 Default", "Apply Custom Theme")
+    btnCancel := g.Add("Button", "x+12 yp w164 h30", "Close")
+    Theme.RegisterControl(g, btnApply, "Button", "accent")
+    Theme.RegisterControl(g, btnCancel, "Button")
+
+    CloseDlg(*) {
+        if (g._closed)
+            return
+        g._closed := true
+        Theme.UnregisterWindow(g, "PresenterSync - Custom HUD Colors")
+        Theme.ReleaseSuspend()
+        g.Destroy()
+    }
+    btnApply.OnEvent("Click", (*) => (SetCustomHudColors(cfg, state, edLive.Value, edMuted.Value, true), CloseDlg()))
+    btnCancel.OnEvent("Click", CloseDlg)
+    g.OnEvent("Close", CloseDlg)
+    g.OnEvent("Escape", CloseDlg)
+    g.Show("AutoSize")
+    return g
+}
+
+ParseDurationToSeconds(rawInput, defaultSec := 600) {
+    s := Trim(String(rawInput))
+    if (s = "")
+        return defaultSec
+    if RegExMatch(s, "^(\d+):(\d{1,2})$", &m)
+        return Max(10, Min(14400, Integer(m[1]) * 60 + Integer(m[2])))
+    if RegExMatch(s, "^(\d+(?:\.\d+)?)\s*m?$", &m)
+        return Max(10, Min(14400, Round(Float(m[1]) * 60)))
+    return defaultSec
+}
+
+PromptCustomPresenterTimerUI(onStartFn, defaultSec := 600) {
+    existing := Theme.FocusExistingWindow("PresenterSync - Custom Timer")
+    if IsObject(existing)
+        return existing
+    Theme.AcquireSuspend()
+    g := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync - Custom Timer")
+    g._closed := false
+    g.MarginX := 20
+    g.MarginY := 16
+    Theme.ApplyToWindow(g)
+    Theme.NamedWindows["PresenterSync - Custom Timer"] := g
+
+    g.SetFont("s10 w700", Theme.UiFont)
+    Theme.RegisterControl(g, g.Add("Text", "xm w300", "Presenter Countdown Duration"), "Text")
+    g.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(g, g.Add("Text", "xm y+6 w300", "Enter minutes (e.g. 12) or MM:SS (e.g. 07:30):"), "Text", "muted")
+    defMin := Max(1, Round(Integer(defaultSec) / 60))
+    edDur := g.Add("Edit", "xm y+8 w300", String(defMin))
+    Theme.RegisterControl(g, edDur, "Edit")
+    btnGo := g.Add("Button", "xm y+14 w144 h30 Default", "Start Timer")
+    btnCan := g.Add("Button", "x+12 yp w144 h30", "Close")
+    Theme.RegisterControl(g, btnGo, "Button", "accent")
+    Theme.RegisterControl(g, btnCan, "Button")
+
+    CloseDlg(*) {
+        if (g._closed)
+            return
+        g._closed := true
+        Theme.UnregisterWindow(g, "PresenterSync - Custom Timer")
+        Theme.ReleaseSuspend()
+        g.Destroy()
+    }
+    btnGo.OnEvent("Click", (*) => (sec := ParseDurationToSeconds(edDur.Value, defaultSec), IsObject(onStartFn) ? onStartFn.Call(sec) : 0, CloseDlg()))
+    btnCan.OnEvent("Click", CloseDlg)
+    g.OnEvent("Close", CloseDlg)
+    g.OnEvent("Escape", CloseDlg)
+    g.Show("AutoSize")
+    return g
+}
+
+PromptSendStageNudgeUI(onSendFn) {
+    existing := Theme.FocusExistingWindow("PresenterSync - Send Stage Nudge")
+    if IsObject(existing)
+        return existing
+    Theme.AcquireSuspend()
+    g := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync - Send Stage Nudge")
+    g._closed := false
+    g.MarginX := 20
+    g.MarginY := 16
+    Theme.ApplyToWindow(g)
+    Theme.NamedWindows["PresenterSync - Send Stage Nudge"] := g
+
+    g.SetFont("s10 w700", Theme.UiFont)
+    Theme.RegisterControl(g, g.Add("Text", "xm w360", "Send Silent Stage Nudge Toast"), "Text")
+    g.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(g, g.Add("Text", "xm y+6 w360", "Displays a non-blocking banner on connected presenter displays (no steal focus):"), "Text", "muted")
+
+    CloseDlg(*) {
+        if (g._closed)
+            return
+        g._closed := true
+        Theme.UnregisterWindow(g, "PresenterSync - Send Stage Nudge")
+        Theme.ReleaseSuspend()
+        g.Destroy()
+    }
+    DispatchAndClose(msgText) {
+        clean := Trim(String(msgText))
+        if (clean != "" && IsObject(onSendFn))
+            onSendFn.Call(clean)
+        CloseDlg()
+    }
+
+    b1 := g.Add("Button", "xm y+10 w84 h28", "Slow Down")
+    b2 := g.Add("Button", "x+8 yp w84 h28", "Check Chat")
+    b3 := g.Add("Button", "x+8 yp w84 h28", "Wrap Up")
+    b4 := g.Add("Button", "x+8 yp w84 h28", "Cam Live")
+    for btn in [b1, b2, b3, b4]
+        Theme.RegisterControl(g, btn, "Button")
+    b1.OnEvent("Click", (*) => DispatchAndClose("Please slow down a touch"))
+    b2.OnEvent("Click", (*) => DispatchAndClose("Check meeting chat question"))
+    b3.OnEvent("Click", (*) => DispatchAndClose("2 minutes left — wrap up"))
+    b4.OnEvent("Click", (*) => DispatchAndClose("Camera is LIVE"))
+
+    edMsg := g.Add("Edit", "xm y+12 w360")
+    Theme.RegisterControl(g, edMsg, "Edit")
+    DllCall("SendMessage", "Ptr", edMsg.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "Type custom stage message...")
+    btnSend := g.Add("Button", "xm y+12 w174 h30 Default", "Send Nudge")
+    btnCan := g.Add("Button", "x+12 yp w174 h30", "Close")
+    Theme.RegisterControl(g, btnSend, "Button", "accent")
+    Theme.RegisterControl(g, btnCan, "Button")
+    btnSend.OnEvent("Click", (*) => DispatchAndClose(edMsg.Value))
+    btnCan.OnEvent("Click", CloseDlg)
+    g.OnEvent("Close", CloseDlg)
+    g.OnEvent("Escape", CloseDlg)
+    g.Show("AutoSize")
+    return g
+}
+
+BuildSharedPresenterTimerSubmenu(state, startFn, pauseFn, resetFn) {
+    TimerMenu := Menu()
+    tState := (IsObject(state) && state.HasOwnProp("timerState")) ? state.timerState : "stopped"
+    tRem := (IsObject(state) && state.HasOwnProp("timerRemainingSec")) ? Integer(state.timerRemainingSec) : 600
+    tPreset := (IsObject(state) && state.HasOwnProp("timerPresetSec")) ? Integer(state.timerPresetSec) : 600
+    statusLabel := "Timer: " FormatCountdownClock(tRem) " (" StrUpper(tState) ")"
+    TimerMenu.Add(statusLabel, (*) => 0)
+    TimerMenu.Disable(statusLabel)
+    TimerMenu.Add()
+    for mins in [5, 10, 15, 45] {
+        secVal := mins * 60
+        TimerMenu.Add("Start " mins " min (" FormatCountdownClock(secVal) ")", startFn.Bind(secVal))
+    }
+    TimerMenu.Add("Start Custom Duration...", (*) => PromptCustomPresenterTimerUI(startFn, tPreset))
+    TimerMenu.Add()
+    TimerMenu.Add((tState = "paused" || tState = "stopped") ? "Resume / Start Timer" : "Pause Timer", pauseFn)
+    TimerMenu.Add("Reset Timer", (*) => resetFn.Call(tPreset))
+    return TimerMenu
 }
 
 SetHudColorPreset(cfg, state, presetName, *) {
@@ -4115,7 +4501,9 @@ SetHudColorPreset(cfg, state, presetName, *) {
     section := (cfg is Config) ? "Settings" : "Appearance"
     cfg.Write(section, "HudColorPreset", normalized)
     if (IsObject(state)) {
-        state.colors := UIConstants.GetColorPalette(normalized)
+        cLive := cfg.HasOwnProp("CustomLiveHex") ? cfg.CustomLiveHex : "107C10"
+        cMuted := cfg.HasOwnProp("CustomMutedHex") ? cfg.CustomMutedHex : "C42B1C"
+        state.colors := UIConstants.GetColorPalette(normalized, cLive, cMuted)
         if (state.HasOwnProp("refreshHudFn") && state.refreshHudFn)
             try state.refreshHudFn.Call()
         if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
@@ -6367,7 +6755,7 @@ SyncTelemetryBackendsFromConfig(cfg, state) {
     if (!IsObject(state))
         return
     if (state.HasOwnProp("colors"))
-        state.colors := UIConstants.GetColorPalette(cfg.HudColorPreset)
+        state.colors := UIConstants.GetColorPalette(cfg.HudColorPreset, cfg.HasOwnProp("CustomLiveHex") ? cfg.CustomLiveHex : "107C10", cfg.HasOwnProp("CustomMutedHex") ? cfg.CustomMutedHex : "C42B1C")
     if (state.HasOwnProp("baseAlpha"))
         state.baseAlpha := cfg.OpacityLevel
 
@@ -6486,6 +6874,11 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.obsPassword := vals.obsPassword
             cfg.Write("Settings", "ObsPassword", cfg.obsPassword)
         }
+        if vals.HasOwnProp("StandbySceneName") {
+            brb := Trim(String(vals.StandbySceneName))
+            cfg.StandbySceneName := (brb != "") ? brb : "BRB"
+            cfg.Write("Settings", "StandbySceneName", cfg.StandbySceneName)
+        }
         if vals.HasOwnProp("ShowStreamHud") {
             cfg.ShowStreamHud := !!vals.ShowStreamHud
             cfg.WriteBool("Settings", "ShowStreamHud", cfg.ShowStreamHud)
@@ -6515,6 +6908,14 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.EnablePushToMute := !!vals.EnablePushToMute
             cfg.WriteBool("Pointer", "EnablePushToMute", cfg.EnablePushToMute)
         }
+        if vals.HasOwnProp("EnablePushToTalk") {
+            cfg.EnablePushToTalk := !!vals.EnablePushToTalk
+            if (cfg.EnablePushToTalk && cfg.EnablePushToMute) {
+                cfg.EnablePushToMute := false
+                cfg.WriteBool("Pointer", "EnablePushToMute", false)
+            }
+            cfg.WriteBool("Pointer", "EnablePushToTalk", cfg.EnablePushToTalk)
+        }
         for pKey in ["CatchArrows", "CatchPg", "CatchSpace", "CatchEnter", "CatchTab", "CatchEsc"] {
             if vals.HasOwnProp(pKey) {
                 cfg.%pKey% := !!vals.%pKey%
@@ -6536,6 +6937,14 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
                 cfg.OpacityLevel := op
                 cfg.Write("Settings", "OpacityLevel", op)
             }
+        }
+        if vals.HasOwnProp("CustomLiveHex") {
+            cfg.CustomLiveHex := NormalizeColorHex(vals.CustomLiveHex, cfg.CustomLiveHex)
+            cfg.Write("Settings", "CustomLiveHex", cfg.CustomLiveHex)
+        }
+        if vals.HasOwnProp("CustomMutedHex") {
+            cfg.CustomMutedHex := NormalizeColorHex(vals.CustomMutedHex, cfg.CustomMutedHex)
+            cfg.Write("Settings", "CustomMutedHex", cfg.CustomMutedHex)
         }
         if vals.HasOwnProp("HudColorPreset") {
             pName := NormalizeHudColorPreset(vals.HudColorPreset)
@@ -6738,6 +7147,12 @@ ShowControlCenterWindow(cfg, state := "", *) {
     edObsPause := ccGui.Add("Edit", "x250 y304 w430 h26", cfg.ObsPauseHotkey)
     Theme.RegisterControl(ccGui, edObsPause, "Edit")
 
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y348 w210", "Standby (BRB) OBS Scene:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edStandbyScene := ccGui.Add("Edit", "x250 y344 w430 h26", cfg.StandbySceneName)
+    Theme.RegisterControl(ccGui, edStandbyScene, "Edit")
+
     ; ==========================================================================
     ; TAB 3: POINTER & CLICKER
     ; ==========================================================================
@@ -6765,8 +7180,12 @@ ShowControlCenterWindow(cfg, state := "", *) {
     btnCapMute.OnEvent("Click", (*) => OpenPointerKeyCaptureDialog(edHwMute.Value, "Use Key", (newKey) => (edHwMute.Value := newKey)))
     btnPtrTester.OnEvent("Click", (*) => ShowPointerTester())
 
-    chkPushToMute := ccGui.Add("Checkbox", "x32 y178 w648 h24" (cfg.EnablePushToMute ? " Checked" : ""), "Enable Cough / Push-to-Mute Gesture (Holding mute button >= 350ms unmutes automatically on release)")
+    chkPushToMute := ccGui.Add("Checkbox", "x32 y178 w310 h24" (cfg.EnablePushToMute ? " Checked" : ""), "Cough / Push-to-Mute (Hold >= 350ms)")
+    chkPushToTalk := ccGui.Add("Checkbox", "x360 y178 w320 h24" (cfg.EnablePushToTalk ? " Checked" : ""), "Push-to-Talk Mode (Hold to Unmute)")
     Theme.RegisterControl(ccGui, chkPushToMute, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkPushToTalk, "Checkbox", "tabText")
+    chkPushToMute.OnEvent("Click", (*) => (chkPushToMute.Value ? (chkPushToTalk.Value := 0) : 0))
+    chkPushToTalk.OnEvent("Click", (*) => (chkPushToTalk.Value ? (chkPushToMute.Value := 0) : 0))
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y218 w648", "PowerPoint Background Slide Intercept Keys (Active in Full PPT + Mute Mode):"), "Text", "tabText")
@@ -6845,6 +7264,18 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, btnResetPos, "Button", "tabButton")
     Theme.RegisterControl(ccGui, btnResetApp, "Button", "tabButton")
     btnResetPos.OnEvent("Click", (*) => ResetTrayPosition(cfg, state))
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y388 w130", "Custom Live Hex:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edCustomLive := ccGui.Add("Edit", "x165 y384 w175 h26", "#" cfg.CustomLiveHex)
+    Theme.RegisterControl(ccGui, edCustomLive, "Edit")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x360 y388 w130", "Custom Muted Hex:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edCustomMuted := ccGui.Add("Edit", "x495 y384 w185 h26", "#" cfg.CustomMutedHex)
+    Theme.RegisterControl(ccGui, edCustomMuted, "Edit")
 
     ; ==========================================================================
     ; TAB 5: REMOTE COMPANION
@@ -7000,9 +7431,11 @@ ShowControlCenterWindow(cfg, state := "", *) {
         edObsMute.Value := cfg.ObsMuteHotkey
         edObsRec.Value := cfg.ObsRecHotkey
         edObsPause.Value := cfg.ObsPauseHotkey
+        edStandbyScene.Value := cfg.StandbySceneName
         ddlPointerMode.Choose(cfg.EnablePPT ? 1 : (cfg.EnableMicOnly ? 2 : 3))
         edHwMute.Value := cfg.HwMuteHotkey
         chkPushToMute.Value := cfg.EnablePushToMute ? 1 : 0
+        chkPushToTalk.Value := cfg.EnablePushToTalk ? 1 : 0
         chkArrows.Value := cfg.CatchArrows ? 1 : 0
         chkPg.Value := cfg.CatchPg ? 1 : 0
         chkSpace.Value := cfg.CatchSpace ? 1 : 0
@@ -7018,6 +7451,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
             if (StrLower(cfg.HudColorPreset) = StrLower(pName))
                 ddlPalette.Choose(idx)
         }
+        edCustomLive.Value := "#" cfg.CustomLiveHex
+        edCustomMuted.Value := "#" cfg.CustomMutedHex
         ddlTheme.Choose((cfg.ThemeMode = "Dark") ? 2 : ((cfg.ThemeMode = "Light") ? 3 : 1))
         chkShowInd.Value := cfg.ShowIndicator ? 1 : 0
         chkShowExtra.Value := cfg.ShowExtraHuds ? 1 : 0
@@ -7091,9 +7526,11 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ObsMuteHotkey: edObsMute.Value,
             ObsRecHotkey: edObsRec.Value,
             ObsPauseHotkey: edObsPause.Value,
+            StandbySceneName: edStandbyScene.Value,
             PointerMode: ddlPointerMode.Text,
             HwMuteHotkey: edHwMute.Value,
             EnablePushToMute: chkPushToMute.Value,
+            EnablePushToTalk: chkPushToTalk.Value,
             CatchArrows: chkArrows.Value,
             CatchPg: chkPg.Value,
             CatchSpace: chkSpace.Value,
@@ -7103,6 +7540,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
             IndicatorScale: scaleValues[ddlScale.Value],
             OpacityLevel: selOpacity,
             HudColorPreset: ddlPalette.Text,
+            CustomLiveHex: edCustomLive.Value,
+            CustomMutedHex: edCustomMuted.Value,
             ThemeMode: ddlTheme.Text,
             ShowIndicator: chkShowInd.Value,
             ShowExtraHuds: chkShowExtra.Value,

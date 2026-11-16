@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 6.6.0
+; Version: 6.7.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 6.6.0.0
+;@Ahk2Exe-SetVersion 6.7.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -34,8 +34,8 @@ if (g_RemoteMutex.alreadyExists) {
 
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => (HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => (HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
+RegisterSelfUpdateBeforeRelaunch((*) => ((AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn) ? SetTimer(AppState.presenterTickFn, 0) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => ((AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn) ? SetTimer(AppState.presenterTickFn, 0) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSyncRemote.ico")
@@ -62,12 +62,15 @@ class RemoteConfig {
     HwMuteHotkey := "b"
     EnablePointerMute := true
     EnablePushToMute := false
+    EnablePushToTalk := false
     PptHotkey := "^F12"
     ExitHotkey := "!+F12"
 
     ShowIndicator := true
     ThemeMode := "System"
     HudColorPreset := "Standard"
+    CustomLiveHex := "107C10"
+    CustomMutedHex := "C42B1C"
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -176,6 +179,11 @@ class RemoteConfig {
         this.HwMuteHotkey := this.Read("Pointer", "HwMuteHotkey", "b")
         this.EnablePointerMute := this.ReadBool("Pointer", "EnablePointerMute", 1)
         this.EnablePushToMute := this.ReadBool("Pointer", "EnablePushToMute", 0)
+        this.EnablePushToTalk := this.ReadBool("Pointer", "EnablePushToTalk", 0)
+        if (this.EnablePushToTalk && this.EnablePushToMute) {
+            this.EnablePushToMute := false
+            this.WriteBool("Pointer", "EnablePushToMute", 0)
+        }
 
         this.PptHotkey := this.Read("Shortcuts", "PptHotkey", "^F12")
         if (this.PptHotkey = "")
@@ -189,6 +197,8 @@ class RemoteConfig {
         this.ThemeMode := (rawTheme = "dark") ? "Dark" : ((rawTheme = "light") ? "Light" : "System")
         Theme.SetMode(this.ThemeMode)
         this.HudColorPreset := NormalizeHudColorPreset(this.Read("Appearance", "HudColorPreset", "Standard"))
+        this.CustomLiveHex := NormalizeColorHex(this.Read("Appearance", "CustomLiveHex", "107C10"), "107C10")
+        this.CustomMutedHex := NormalizeColorHex(this.Read("Appearance", "CustomMutedHex", "C42B1C"), "C42B1C")
 
         this.ShowText := this.ReadBool("Appearance", "ShowText", 0)
         this.MonoIcon := this.ReadBool("Appearance", "MonoIcon", 0)
@@ -243,6 +253,8 @@ class RemoteConfig {
         this.IndicatorScale := 1.0
         this.ThemeMode := "System"
         this.HudColorPreset := "Standard"
+        this.CustomLiveHex := "107C10"
+        this.CustomMutedHex := "C42B1C"
         Theme.SetMode("System")
 
         this.WriteBool("Appearance", "ShowText", false)
@@ -260,6 +272,8 @@ class RemoteConfig {
         this.Write("Appearance", "IndicatorScale", this.IndicatorScale)
         this.Write("Appearance", "ThemeMode", this.ThemeMode)
         this.Write("Appearance", "HudColorPreset", this.HudColorPreset)
+        this.Write("Appearance", "CustomLiveHex", this.CustomLiveHex)
+        this.Write("Appearance", "CustomMutedHex", this.CustomMutedHex)
     }
 }
 
@@ -279,7 +293,15 @@ class RemoteState {
     recSeconds := 0
     streamDropWarn := false
     voiceWhileMuted := false
+    activeScene := "Scene"
+    scenes := []
+    isStandby := false
+    standbyScene := "BRB"
+    timerState := "stopped"
+    timerRemainingSec := 600
+    timerPresetSec := 600
     _lastVoiceWarnTick := 0
+    presenterTickFn := ""
     baseAlpha := 220
     currentAlpha := 220
     breathDir := -5
@@ -352,6 +374,7 @@ class RemoteState {
         this.reconnectTimerFn := ConnectToRemoteOBS.Bind(cfg, this)
         this.heartbeatTimerFn := RemoteHeartbeatTick.Bind(cfg, this)
         this.lanRepromoteTimerFn := TryPromoteRemoteWanToLan.Bind(cfg, this)
+        this.presenterTickFn := RemoteLocalTimerTick.Bind(cfg, this)
         this.pointerHotIfFn := CheckRemotePointerEnable.Bind(cfg)
 
         this.ComputeDimensions(cfg)
@@ -367,7 +390,9 @@ class RemoteState {
     }
 
     ComputeDimensions(cfg) {
-        this.colors := UIConstants.GetColorPalette(cfg.HasOwnProp("HudColorPreset") ? cfg.HudColorPreset : "Standard")
+        cLive := (IsObject(cfg) && cfg.HasOwnProp("CustomLiveHex")) ? cfg.CustomLiveHex : "107C10"
+        cMuted := (IsObject(cfg) && cfg.HasOwnProp("CustomMutedHex")) ? cfg.CustomMutedHex : "C42B1C"
+        this.colors := UIConstants.GetColorPalette(cfg.HasOwnProp("HudColorPreset") ? cfg.HudColorPreset : "Standard", cLive, cMuted)
         this.baseWidth := Round((cfg.ShowText ? UIConstants.BASE_WIDTH_TEXT : UIConstants.BASE_WIDTH_ICON) * cfg.IndicatorScale)
         this.baseHeight := Round(UIConstants.BASE_HEIGHT * cfg.IndicatorScale)
         this.iconSize := Max(1, Round(UIConstants.MIC_ICON_SIZE * cfg.IndicatorScale))
@@ -423,6 +448,20 @@ if (g_RemoteCli.pairingUri != "") {
             AppConfig.InternetPairingCode := parsedUri.internetPairingCode
         if (parsedUri.HasOwnProp("hostUuid") && parsedUri.hostUuid != "")
             AppConfig.PairedHostUuid := parsedUri.hostUuid
+        if (parsedUri.HasOwnProp("hudColorPreset") && parsedUri.hudColorPreset != "") {
+            AppConfig.HudColorPreset := NormalizeHudColorPreset(parsedUri.hudColorPreset)
+            AppConfig.Write("Appearance", "HudColorPreset", AppConfig.HudColorPreset)
+        }
+        if (parsedUri.HasOwnProp("customLiveHex") && parsedUri.customLiveHex != "") {
+            AppConfig.CustomLiveHex := NormalizeColorHex(parsedUri.customLiveHex, AppConfig.CustomLiveHex)
+            AppConfig.Write("Appearance", "CustomLiveHex", AppConfig.CustomLiveHex)
+        }
+        if (parsedUri.HasOwnProp("customMutedHex") && parsedUri.customMutedHex != "") {
+            AppConfig.CustomMutedHex := NormalizeColorHex(parsedUri.customMutedHex, AppConfig.CustomMutedHex)
+            AppConfig.Write("Appearance", "CustomMutedHex", AppConfig.CustomMutedHex)
+        }
+        AppState.ComputeDimensions(AppConfig)
+        ApplyMicAppearance(AppConfig, AppState)
         if (AppConfig.SessionPairingCode != "" && AppConfig.NetworkMode = "LAN") {
             pairRes := PairRemoteWithHostBridge(AppConfig.HostAddress, AppConfig.BridgePort, AppConfig.SessionPairingCode, AppConfig.DeviceId, GetRemoteDisplayDeviceName(AppConfig))
             if (pairRes.ok)
@@ -699,6 +738,11 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     state.recSeconds := 0
     state.streamDropWarn := false
     state.voiceWhileMuted := false
+    state.isStandby := false
+    state.timerState := "stopped"
+    state.scenes := []
+    if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
+        SetTimer state.presenterTickFn, 0
     SetTimer state.heartbeatTimerFn, 0
     if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
         SetTimer state.lanRepromoteTimerFn, 0
@@ -805,6 +849,9 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             }
             SyncRemoteMuteState(cfg, state, ev.isMuted)
             SyncRemoteBridgeTelemetry(cfg, state, ev)
+        } else if (ev.kind = "stage_nudge") {
+            if (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)
+                ShowStageNudgeBanner(ev.message, (ev.accentHex != "" ? ev.accentHex : "F59E0B"), 4500, ev.sender)
         } else if (ev.kind = "close_remote") {
             if (state.HasOwnProp("onRemoteCloseSignal") && IsObject(state.onRemoteCloseSignal))
                 state.onRemoteCloseSignal.Call()
@@ -848,6 +895,27 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.NotifyTrayStatus()
             }
             SyncRemoteMuteState(cfg, state, (pkt.data = "1" || pkt.data = "true"))
+        } else if (pkt.cmd = "dir_state") {
+            dParts := StrSplit(pkt.data, ";")
+            if (dParts.Length >= 5) {
+                SyncRemoteBridgeTelemetry(cfg, state, {
+                    recState: IsInteger(dParts[2]) ? Integer(dParts[2]) : state.recState,
+                    recSeconds: state.recSeconds,
+                    streamDropWarn: state.streamDropWarn,
+                    voiceWhileMuted: state.voiceWhileMuted,
+                    isStandby: (dParts[1] = "1" || dParts[1] = "true"),
+                    timerState: dParts[3],
+                    timerRemainingSec: IsInteger(dParts[4]) ? Integer(dParts[4]) : state.timerRemainingSec,
+                    timerPresetSec: IsInteger(dParts[5]) ? Integer(dParts[5]) : state.timerPresetSec,
+                    activeScene: (dParts.Length >= 6 && dParts[6] != "") ? dParts[6] : state.activeScene
+                })
+            }
+        } else if (pkt.cmd = "nudge") {
+            nSep := InStr(pkt.data, ";")
+            nSender := nSep > 0 ? SubStr(pkt.data, 1, nSep - 1) : "Host"
+            nMsg := nSep > 0 ? SubStr(pkt.data, nSep + 1) : pkt.data
+            if (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)
+                ShowStageNudgeBanner(nMsg, "F59E0B", 4500, nSender)
         } else if (pkt.cmd = "close_remote") {
             if (state.HasOwnProp("onRemoteCloseSignal") && IsObject(state.onRemoteCloseSignal))
                 state.onRemoteCloseSignal.Call()
@@ -1008,17 +1076,54 @@ SyncRemoteMuteState(cfg, state, newMuted) {
     }
 }
 
+RemoteLocalTimerTick(cfg, state) {
+    if (!IsObject(state) || (state.timerState != "running" && state.timerState != "overtime")) {
+        if (IsObject(state) && state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
+            SetTimer state.presenterTickFn, 0
+        return
+    }
+    state.timerRemainingSec -= 1
+    if (state.timerRemainingSec <= 0 && state.timerState = "running")
+        state.timerState := "overtime"
+    state.NotifyTrayStatus()
+}
+
 SyncRemoteBridgeTelemetry(cfg, state, ev) {
     if (!IsObject(state) || !IsObject(ev))
         return
     prevRec := state.recState
     prevWarn := state.streamDropWarn
     prevVoiceWarn := state.voiceWhileMuted
+    prevStandby := state.HasOwnProp("isStandby") ? !!state.isStandby : false
+    prevTimerSt := state.HasOwnProp("timerState") ? state.timerState : "stopped"
+    prevTimerRem := state.HasOwnProp("timerRemainingSec") ? state.timerRemainingSec : 600
+    prevScene := state.HasOwnProp("activeScene") ? state.activeScene : "Scene"
 
     state.recState := ev.HasOwnProp("recState") ? ev.recState : 0
     state.recSeconds := ev.HasOwnProp("recSeconds") ? Max(0, ev.recSeconds) : 0
     state.streamDropWarn := ev.HasOwnProp("streamDropWarn") ? !!ev.streamDropWarn : false
     state.voiceWhileMuted := (state.isMuted && ev.HasOwnProp("voiceWhileMuted")) ? !!ev.voiceWhileMuted : false
+    if (ev.HasOwnProp("activeScene") && ev.activeScene != "")
+        state.activeScene := ev.activeScene
+    if (ev.HasOwnProp("scenes") && IsObject(ev.scenes) && ev.scenes.Length > 0)
+        state.scenes := ev.scenes
+    if (ev.HasOwnProp("isStandby"))
+        state.isStandby := !!ev.isStandby
+    if (ev.HasOwnProp("standbyScene") && ev.standbyScene != "")
+        state.standbyScene := ev.standbyScene
+    if (ev.HasOwnProp("timerState") && ev.timerState != "")
+        state.timerState := ev.timerState
+    if (ev.HasOwnProp("timerRemainingSec"))
+        state.timerRemainingSec := Integer(ev.timerRemainingSec)
+    if (ev.HasOwnProp("timerPresetSec") && Integer(ev.timerPresetSec) > 0)
+        state.timerPresetSec := Integer(ev.timerPresetSec)
+
+    if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn)) {
+        if (state.timerState = "running" || state.timerState = "overtime")
+            SetTimer state.presenterTickFn, 1000
+        else
+            SetTimer state.presenterTickFn, 0
+    }
 
     if (state.voiceWhileMuted && !prevVoiceWarn && (!cfg.HasOwnProp("EnableVoiceWhileMutedAlert") || cfg.EnableVoiceWhileMutedAlert)) {
         if ((A_TickCount - state._lastVoiceWarnTick) >= 5000) {
@@ -1028,17 +1133,72 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
         }
     }
 
-    if (prevRec != state.recState || prevWarn != state.streamDropWarn || prevVoiceWarn != state.voiceWhileMuted || state.recState > 0)
-        state.NotifyTrayStatus()
+    changed := (prevRec != state.recState || prevWarn != state.streamDropWarn || prevVoiceWarn != state.voiceWhileMuted
+        || prevStandby != state.isStandby || prevTimerSt != state.timerState || prevTimerRem != state.timerRemainingSec
+        || prevScene != state.activeScene || state.recState > 0)
+    if (changed) {
+        if (prevStandby != state.isStandby && IsObject(state.rebuildTrayFn)) {
+            try state.rebuildTrayFn.Call()
+        } else {
+            state.NotifyTrayStatus()
+        }
+    }
+}
+
+_SendRemoteRelayAction(cfg, state, cmd, data := "1") {
+    if (!IsRemoteUsingInternetChannel(cfg, state))
+        return false
+    topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+    authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+    mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+    return PublishInternetRelayPacket(topic, FormatRelayPacket("remote", cmd, data, authTok), "https://ntfy.sh", mockWs)
 }
 
 SendRemoteBridgeDeckCommand(cfg, state, actionType) {
+    if (IsRemoteUsingInternetChannel(cfg, state))
+        return _SendRemoteRelayAction(cfg, state, actionType, "1")
     if (!IsRemoteUsingBridgeChannel(cfg, state)) {
-        TrayTip("Slide & Record Deck commands require an active Primary Host Bridge LAN connection.", "PresenterSync Remote", 2)
+        TrayTip("Director commands require an active Primary Host Bridge or Relay connection.", "PresenterSync Remote", 2)
         return false
     }
     payload := BuildRemoteBridgeDeckJson(cfg, actionType)
     return TrySendWsText(state.obsWs, payload)
+}
+
+SendRemoteSwitchScene(cfg, state, sceneName) {
+    clean := Trim(String(sceneName))
+    if (clean = "")
+        return false
+    if (IsRemoteUsingInternetChannel(cfg, state))
+        return _SendRemoteRelayAction(cfg, state, "switch_scene", clean)
+    if (IsRemoteUsingBridgeChannel(cfg, state))
+        return TrySendWsText(state.obsWs, BuildRemoteBridgeSceneJson(cfg, clean))
+    if (IsObject(state) && state.obsConnected && IsObject(state.obsWs))
+        return SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteSwitchScene", '{"sceneName":"' EscapeJsonStr(clean) '"}')
+    return false
+}
+
+SendRemoteTimerCommand(cfg, state, action, durationSec := 0) {
+    if (IsRemoteUsingInternetChannel(cfg, state))
+        return _SendRemoteRelayAction(cfg, state, action, String(Integer(durationSec)))
+    if (!IsRemoteUsingBridgeChannel(cfg, state)) {
+        TrayTip("Presenter timer requires a Primary Host Bridge or Relay connection.", "PresenterSync Remote", 2)
+        return false
+    }
+    return TrySendWsText(state.obsWs, BuildRemoteBridgeTimerJson(cfg, action, durationSec))
+}
+
+SendRemoteStageNudge(cfg, state, message) {
+    clean := Trim(String(message))
+    if (clean = "")
+        return false
+    if (IsRemoteUsingInternetChannel(cfg, state))
+        return _SendRemoteRelayAction(cfg, state, "stage_nudge", StrReplace(StrReplace(GetRemoteDisplayDeviceName(cfg), "|", "/"), ";", ",") ";" StrReplace(StrReplace(clean, "|", "/"), ";", ","))
+    if (!IsRemoteUsingBridgeChannel(cfg, state)) {
+        TrayTip("Stage nudges require a Primary Host Bridge or Relay connection.", "PresenterSync Remote", 2)
+        return false
+    }
+    return TrySendWsText(state.obsWs, BuildRemoteBridgeNudgeJson(cfg, clean))
 }
 
 ; --- REMOTE CLICKER MUTE TRANSMISSION ---
@@ -1068,7 +1228,10 @@ OnRemoteClickerMute(cfg, state, *) {
 
     inHold := true
     try {
-        if (DispatchRemoteMuteToggle(cfg, state)) {
+        if (cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk) {
+            ExecutePushToTalkHoldCycle(cfg, state, (m) => DispatchRemoteSetMute(cfg, state, m), cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")
+            lastTick := A_TickCount
+        } else if (DispatchRemoteMuteToggle(cfg, state)) {
             if (WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
                 DispatchRemoteMuteToggle(cfg, state)
                 lastTick := A_TickCount
@@ -1304,10 +1467,14 @@ GetRemoteTrayStatusText(state) {
         return "⚠ Connected (Mic Not Found): " state.activeHost
     else if (state.obsConnected) {
         txt := "● Connected: " state.activeHost
+        if (state.HasOwnProp("isStandby") && state.isStandby)
+            txt .= " | STANDBY"
         if (state.recState == 1)
             txt .= " | REC " FormatElapsedShort(state.recSeconds)
         else if (state.recState == 2)
             txt .= " | PAUSED " FormatElapsedShort(state.recSeconds)
+        if (state.HasOwnProp("timerState") && state.timerState != "stopped")
+            txt .= " | " (state.timerState = "overtime" ? "OT " : "TMR ") FormatCountdownClock(state.timerRemainingSec)
         if (state.streamDropWarn)
             txt .= " | ⚠ STREAM WARN"
         if (state.voiceWhileMuted && state.isMuted)
@@ -1452,6 +1619,8 @@ BuildRemoteTrayMenu(cfg, state) {
         if (cfg.HudColorPreset = pName)
             PresetMenu.Check(pName)
     }
+    PresetMenu.Add()
+    PresetMenu.Add("Configure Custom Colors...", ConfigureCustomHudColorsUI.Bind(cfg, state))
     AppearanceMenu.Add("HUD Color Preset", PresetMenu)
 
     AppearanceMenu.Add()
@@ -1462,7 +1631,28 @@ BuildRemoteTrayMenu(cfg, state) {
     DeckMenu := Menu()
     DeckMenu.Add("Next Slide (Host PowerPoint)", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_next"))
     DeckMenu.Add("Previous Slide (Host PowerPoint)", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_prev"))
+    DeckMenu.Add()
+    DeckSceneMenu := Menu()
+    if (IsObject(state) && state.HasOwnProp("scenes") && IsObject(state.scenes) && state.scenes.Length > 0) {
+        for scItem in state.scenes {
+            DeckSceneMenu.Add(scItem, ((s, *) => SendRemoteSwitchScene(cfg, state, s)).Bind(scItem))
+            if (state.HasOwnProp("activeScene") && state.activeScene == scItem)
+                DeckSceneMenu.Check(scItem)
+        }
+    } else {
+        DeckSceneMenu.Add("Connect Primary Bridge for scenes", (*) => 0)
+        DeckSceneMenu.Disable("Connect Primary Bridge for scenes")
+    }
+    DeckMenu.Add("Switch Host Scene", DeckSceneMenu)
+    DeckMenu.Add("Toggle Standby / `"BRB`" Curtain", (*) => SendRemoteBridgeDeckCommand(cfg, state, "toggle_standby"))
+    if (IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby)
+        DeckMenu.Check("Toggle Standby / `"BRB`" Curtain")
     DeckMenu.Add("Start / Stop Host Recording", (*) => SendRemoteBridgeDeckCommand(cfg, state, "toggle_record"))
+    DeckMenu.Add("Pause / Resume Host Recording", (*) => SendRemoteBridgeDeckCommand(cfg, state, "pause_record"))
+    DeckMenu.Add("Split Host Recording Chapter", (*) => SendRemoteBridgeDeckCommand(cfg, state, "split_record"))
+    DeckMenu.Add()
+    DeckMenu.Add("Presenter Countdown Timer", BuildSharedPresenterTimerSubmenu(state, (sec, *) => SendRemoteTimerCommand(cfg, state, "timer_start", sec), (*) => SendRemoteTimerCommand(cfg, state, "timer_pause", 0), (sec, *) => SendRemoteTimerCommand(cfg, state, "timer_reset", sec)))
+    DeckMenu.Add("Send Stage Nudge to Host...", (*) => PromptSendStageNudgeUI((msg) => SendRemoteStageNudge(cfg, state, msg)))
     A_TrayMenu.Add("Host Deck Control (Bridge)", DeckMenu)
     A_TrayMenu.Add()
 
@@ -1474,6 +1664,9 @@ BuildRemoteTrayMenu(cfg, state) {
     PointerMenu.Add("Enable Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state))
     if (cfg.EnablePushToMute)
         PointerMenu.Check("Enable Cough / Push-to-Mute (Hold)")
+    PointerMenu.Add("Enable Push-to-Talk (Hold to Unmute)", TogglePushToTalk.Bind(cfg, state))
+    if (cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk)
+        PointerMenu.Check("Enable Push-to-Talk (Hold to Unmute)")
     PointerMenu.Add("Change Pointer Mute Button...", (*) => ChangeRemotePointerKeyUI(cfg, state))
     PointerMenu.Add("Launch Clicker Tester...", (*) => ShowPointerTester())
     A_TrayMenu.Add("Pointer Controls", PointerMenu)

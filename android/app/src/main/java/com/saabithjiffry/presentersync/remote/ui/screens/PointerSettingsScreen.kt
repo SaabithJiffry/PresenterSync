@@ -218,7 +218,39 @@ fun PointerSettingsScreen(
                     Switch(
                         checked = cfg.enablePushToMute,
                         onCheckedChange = { enabled ->
-                            app.configStore.update { it.copy(enablePushToMute = enabled) }
+                            app.configStore.update {
+                                it.copy(
+                                    enablePushToMute = enabled,
+                                    enablePushToTalk = if (enabled) false else it.enablePushToTalk
+                                )
+                            }
+                        }
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Push-to-Talk Mode (Hold to Unmute)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Walkie-talkie style: mic unmutes only while button is held down and re-mutes immediately on release",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = cfg.enablePushToTalk,
+                        onCheckedChange = { enabled ->
+                            app.configStore.update {
+                                it.copy(
+                                    enablePushToTalk = enabled,
+                                    enablePushToMute = if (enabled) false else it.enablePushToMute
+                                )
+                            }
                         }
                     )
                 }

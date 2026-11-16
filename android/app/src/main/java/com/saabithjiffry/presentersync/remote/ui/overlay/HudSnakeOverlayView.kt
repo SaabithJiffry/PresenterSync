@@ -250,7 +250,7 @@ class HudSnakeOverlayView(
         super.onDraw(canvas)
         if (width <= 0 || height <= 0 || engine.phase == SnakePhase.IDLE) return
 
-        val palette = HudColorPalettes.get(config.hudColorPreset)
+        val palette = HudColorPalettes.get(config.hudColorPreset, config.customLiveHex, config.customMutedHex)
         val isDark = isDarkMode()
         val g = engine.grid
         val opacity = config.opacityLevel.coerceIn(72, 255)

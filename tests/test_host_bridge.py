@@ -235,11 +235,44 @@ def main() -> int:
             if time.time() - t0 > 5:
                 raise RuntimeError("OBS_REC_MODE timeout")
 
-        for act in ("ppt_next", "ppt_prev", "toggle_record"):
+        for act in ("ppt_next", "ppt_prev", "toggle_record", "pause_record", "split_record", "toggle_standby"):
             ws_send_text(s_ok, json.dumps({"type": act, "source": "test_py"}))
-            ack = ws_recv_json(s_ok, buf_ok)
-            assert ack["type"] == "ack" and ack["action"] == act and ack["ok"] is True, f"Unexpected ack: {ack}"
-        print("[PASS] WS deck commands (ppt_next, ppt_prev, toggle_record) ACKed")
+            ack = None
+            for _ in range(6):
+                pkt = ws_recv_json(s_ok, buf_ok)
+                if pkt.get("type") == "ack" and pkt.get("action") == act:
+                    ack = pkt
+                    break
+            assert ack is not None and ack["ok"] is True, f"Unexpected ack for {act}: {ack}"
+
+        ws_send_text(s_ok, json.dumps({"type": "switch_scene", "sceneName": "Slides", "source": "test_py"}))
+        sw_ack = None
+        for _ in range(6):
+            pkt = ws_recv_json(s_ok, buf_ok)
+            if pkt.get("type") == "ack" and pkt.get("action") == "switch_scene":
+                sw_ack = pkt
+                break
+        assert sw_ack is not None and sw_ack["ok"] is True
+
+        ws_send_text(s_ok, json.dumps({"type": "timer_start", "durationSec": 300, "source": "test_py"}))
+        tm_ack = None
+        for _ in range(6):
+            pkt = ws_recv_json(s_ok, buf_ok)
+            if pkt.get("type") == "ack" and pkt.get("action") == "timer_start":
+                tm_ack = pkt
+                break
+        assert tm_ack is not None and tm_ack["ok"] is True
+
+        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+            f.write("EMIT_NUDGE")
+        nudge_pkt = None
+        for _ in range(8):
+            pkt = ws_recv_json(s_ok, buf_ok)
+            if pkt.get("type") == "stage_nudge":
+                nudge_pkt = pkt
+                break
+        assert nudge_pkt is not None and nudge_pkt.get("message") == "2 minutes remaining", f"Missing stage_nudge: {nudge_pkt}"
+        print("[PASS] WS Director deck (scene/pause/split/standby/timer) & stage_nudge verified")
 
         with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
             f.write("EMIT_TELEMETRY")
@@ -249,8 +282,8 @@ def main() -> int:
             if pkt.get("type") == "mute_state" and pkt.get("recState") == 1:
                 tel = pkt
                 break
-        assert tel is not None and tel.get("recSeconds") == 95 and tel.get("streamDropWarn") is True and tel.get("voiceWhileMuted") is True, f"Missing telemetry: {tel}"
-        print("[PASS] WS mute_state mirrors v6.2.0 telemetry (recState, recSeconds, streamDropWarn, voiceWhileMuted)")
+        assert tel is not None and tel.get("recSeconds") == 95 and tel.get("streamDropWarn") is True and tel.get("voiceWhileMuted") is True and tel.get("activeScene") == "Slides" and tel.get("scenes") == ["Main", "Slides", "BRB"], f"Missing telemetry: {tel}"
+        print("[PASS] WS mute_state mirrors v6.7.0 telemetry + scenes/standby/timer")
 
         with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
             f.write("DUMP_EVENTS")
@@ -261,8 +294,8 @@ def main() -> int:
         time.sleep(0.05)
         with open(READY_FILE + ".events", "r", encoding="utf-8-sig") as f:
             ev = json.load(f)
-        assert ev["ppt"] == "next,prev" and ev["hasToggleRecord"] is True, f"Unexpected host events: {ev}"
-        print("[PASS] Host Bridge executed real PPT handlers & OBS ToggleRecord")
+        assert ev["ppt"] == "next,prev" and ev["hasToggleRecord"] is True and ev["hasSwitchScene"] is True and ev["hasPauseRec"] is True and ev["hasSplitRec"] is True and ev["isStandby"] is True and ev["timerState"] == "running", f"Unexpected host events: {ev}"
+        print("[PASS] Host Bridge executed real PPT handlers, OBS Director commands, Standby & Timer")
 
         ws_send_text(s_ok, json.dumps({"type": "unpair"}))
         try:
