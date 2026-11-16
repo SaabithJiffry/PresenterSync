@@ -274,16 +274,16 @@ class QrCode {
 
         ; Alignment patterns
         coords := this._ALIGN_COORDS[ver]
-        for ar in coords {
-            for ac in coords {
-                if (isFunc[ar + 1][ac + 1])
+        for alignRow in coords {
+            for alignCol in coords {
+                if (isFunc[alignRow + 1][alignCol + 1])
                     continue
                 Loop 5 {
                     dr := A_Index - 3
                     Loop 5 {
                         dc := A_Index - 3
                         dark := (Max(Abs(dr), Abs(dc)) != 1)
-                        SetFunc(ar + dr, ac + dc, dark)
+                        SetFunc(alignRow + dr, alignCol + dc, dark)
                     }
                 }
             }

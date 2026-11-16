@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 6.9.0
+; Version: 6.9.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 6.9.0.0
+;@Ahk2Exe-SetVersion 6.9.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -1571,57 +1571,12 @@ BuildRemoteTrayMenu(cfg, state) {
 
     AppearanceMenu.Add()
 
-    OpacityMenu := Menu()
-    OpacityMenu.Add("Solid (100%)", SetRemoteOpacity.Bind(cfg, state, UIConstants.OPACITY_SOLID))
-    OpacityMenu.Add("Frosted (85%)", SetRemoteOpacity.Bind(cfg, state, UIConstants.OPACITY_FROSTED))
-    OpacityMenu.Add("Ghost (50%)", SetRemoteOpacity.Bind(cfg, state, UIConstants.OPACITY_GHOST))
-    if (cfg.OpacityLevel == UIConstants.OPACITY_SOLID)
-        OpacityMenu.Check("Solid (100%)")
-    else if (cfg.OpacityLevel == UIConstants.OPACITY_FROSTED)
-        OpacityMenu.Check("Frosted (85%)")
-    else if (cfg.OpacityLevel == UIConstants.OPACITY_GHOST)
-        OpacityMenu.Check("Ghost (50%)")
-    AppearanceMenu.Add("Transparency Level", OpacityMenu)
-
-    ScaleMenu := Menu()
-    ScaleOptions := [
-        {label: "Tiny (x0.25)", val: 0.25},
-        {label: "Small (x0.5)", val: 0.5},
-        {label: "Normal (x1.0)", val: 1.0},
-        {label: "Large (x1.5)", val: 1.5},
-        {label: "Huge (x2.0)", val: 2.0},
-        {label: "Massive (x2.5)", val: 2.5},
-        {label: "Colossal (x3.0)", val: 3.0},
-        {label: "Gigantic (x5.0)", val: 5.0}
-    ]
-    for opt in ScaleOptions {
-        ScaleMenu.Add(opt.label, SetRemoteScale.Bind(cfg, state, opt.val))
-        if (Abs(cfg.IndicatorScale - opt.val) < 0.001)
-            ScaleMenu.Check(opt.label)
-    }
-    AppearanceMenu.Add("Indicator Scale", ScaleMenu)
-
-    ThemeMenu := Menu()
-    ThemeMenu.Add("Follow System", SetRemoteTheme.Bind(cfg, state, "System"))
-    ThemeMenu.Add("Dark Mode", SetRemoteTheme.Bind(cfg, state, "Dark"))
-    ThemeMenu.Add("Light Mode", SetRemoteTheme.Bind(cfg, state, "Light"))
-    if (cfg.ThemeMode = "Dark")
-        ThemeMenu.Check("Dark Mode")
-    else if (cfg.ThemeMode = "Light")
-        ThemeMenu.Check("Light Mode")
-    else
-        ThemeMenu.Check("Follow System")
-    AppearanceMenu.Add("App Theme", ThemeMenu)
-
-    PresetMenu := Menu()
-    for pName in GetHudColorPresetNames() {
-        PresetMenu.Add(pName, SetHudColorPreset.Bind(cfg, state, pName))
-        if (cfg.HudColorPreset = pName)
-            PresetMenu.Check(pName)
-    }
-    PresetMenu.Add()
-    PresetMenu.Add("Configure Custom Colors...", ConfigureCustomHudColorsUI.Bind(cfg, state))
-    AppearanceMenu.Add("HUD Color Preset", PresetMenu)
+    BuildSharedAppearanceSubmenus(
+        AppearanceMenu, cfg, state,
+        SetRemoteOpacity.Bind(cfg, state),
+        SetRemoteScale.Bind(cfg, state),
+        SetRemoteTheme.Bind(cfg, state)
+    )
 
     AppearanceMenu.Add()
     AppearanceMenu.Add("Reset Indicator Position", ResetRemotePositionAction.Bind(cfg, state))
@@ -1692,49 +1647,12 @@ BuildRemoteTrayMenu(cfg, state) {
         try state.refreshHelpFn.Call()
 }
 
-ToggleRemoteIndicator(cfg, state, *) {
-    cfg.ShowIndicator := !cfg.ShowIndicator
-    cfg.WriteBool("Appearance", "ShowIndicator", cfg.ShowIndicator)
-    RefreshRemoteHudAppearance(cfg, state)
-    BuildRemoteTrayMenu(cfg, state)
-}
-
-ToggleRemoteText(cfg, state, *) {
-    cfg.ShowText := !cfg.ShowText
-    cfg.WriteBool("Appearance", "ShowText", cfg.ShowText)
-    RefreshRemoteHudAppearance(cfg, state)
-    BuildRemoteTrayMenu(cfg, state)
-}
-
-ToggleRemoteMono(cfg, state, *) {
-    cfg.MonoIcon := !cfg.MonoIcon
-    cfg.WriteBool("Appearance", "MonoIcon", cfg.MonoIcon)
-    RefreshRemoteHudAppearance(cfg, state)
-    BuildRemoteTrayMenu(cfg, state)
-}
-
-ToggleRemoteCorners(cfg, state, *) {
-    cfg.SleekCorners := !cfg.SleekCorners
-    cfg.WriteBool("Appearance", "SleekCorners", cfg.SleekCorners)
-    RefreshRemoteHudAppearance(cfg, state)
-    BuildRemoteTrayMenu(cfg, state)
-}
-
-ToggleRemotePulse(cfg, state, *) {
-    cfg.AggressivePulse := !cfg.AggressivePulse
-    cfg.WriteBool("Appearance", "AggressivePulse", cfg.AggressivePulse)
-    RefreshRemoteHudAppearance(cfg, state)
-    BuildRemoteTrayMenu(cfg, state)
-}
-
-SetRemoteOpacity(cfg, state, val, *) {
-    cfg.OpacityLevel := val
-    cfg.Write("Appearance", "OpacityLevel", val)
-    state.baseAlpha := val
-    state.currentAlpha := GetRemoteEffectiveAlpha(state)
-    RefreshRemoteHudAppearance(cfg, state)
-    BuildRemoteTrayMenu(cfg, state)
-}
+ToggleRemoteIndicator(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowIndicator", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
+ToggleRemoteText(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowText", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
+ToggleRemoteMono(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "MonoIcon", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
+ToggleRemoteCorners(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "SleekCorners", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
+ToggleRemotePulse(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "AggressivePulse", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
+SetRemoteOpacity(cfg, state, val, *) => SetHudOpacityAndRebuild(cfg, state, val, "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu, GetRemoteEffectiveAlpha)
 
 SetRemoteScale(cfg, state, val, *) {
     cfg.IndicatorScale := val
@@ -1743,10 +1661,8 @@ SetRemoteScale(cfg, state, val, *) {
     BuildRemoteTrayMenu(cfg, state)
 }
 
-SetRemoteTheme(cfg, state, mode, *) {
-    cfg.ThemeMode := mode
-    cfg.Write("Appearance", "ThemeMode", mode)
-    Theme.SetMode(mode)
+SetRemoteTheme(cfg, state, themeMenu, mode, *) {
+    SetThemeMode(cfg, themeMenu, mode)
     Theme.ApplyMenuTheme()
     BuildRemoteTrayMenu(cfg, state)
 }

@@ -581,11 +581,8 @@ class HudSnakeOverlayView(
         if (ensureSnakeLayer(width, height)) {
             val lCanvas = snakeLayerCanvas!!
             val lBitmap = snakeLayerBitmap!!
-            prevDirtyBounds?.let { prev ->
-                lBitmap.eraseColor(Color.TRANSPARENT)
-                // Clean dirty reset ensures zero lingering alpha across frames
-                prevDirtyBounds = null
-            } ?: lBitmap.eraseColor(Color.TRANSPARENT)
+            lBitmap.eraseColor(Color.TRANSPARENT)
+            prevDirtyBounds = null
 
             val pad = tubeW / 2f + rimW + 6f * d
             val bx = max(0, floor(minX - pad).toInt())

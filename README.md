@@ -1,134 +1,142 @@
-# PresenterSync v6.0.0 🎙️📊
+# PresenterSync — Smart Streaming, Conferencing & Classroom Presenter Suite
 
-PresenterSync is a lightweight, standalone Windows utility designed for live streamers, educators, and corporate professionals. It bridges OBS Studio, Zoom / Microsoft Teams / Google Meet, and Microsoft PowerPoint, allowing you to control your slides, track recording/stream/vcam/studio/scene/chat telemetry, and manage your microphone without ever losing window focus or broadcasting a hot mic.
+**PresenterSync** is a lightweight cross-platform presenter control suite bridging **OBS Studio**, **Zoom / Microsoft Teams / Google Meet**, **Microsoft PowerPoint**, **65"+ Android Smart Boards**, and **Android Phones**. Manage mic mute/unmute, switch OBS scenes cleanly, trigger timed presenter alerts, export video editor chapter timelines, and keep presenters in sync across the podium laptop, Smart Board, and handheld phone without losing focus or broadcasting a hot mic.
 
-## 🚀 Features
+[![Download Portal](https://img.shields.io/badge/Portal-SaabithJiffry.github.io-10B981?style=for-the-badge)](https://saabithjiffry.github.io)
+[![GitHub Release](https://img.shields.io/github/v/release/SaabithJiffry/PresenterSync?style=for-the-badge&color=0EA5E9)](https://github.com/SaabithJiffry/PresenterSync/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
-*   **Interactive Help Center, Live Visual HUD Guide & Instant Search:** Explore an annotated **Live HUD Diagram** with numbered arrow callouts explaining every pill, color state, click/drag/hold/Alt gesture, and the CoreAudio Voice Activity bar; browse every **System Tray menu and submenu**; read the categorized **Features A-Z** guide; and search any feature, menu item, or shortcut instantly in both PresenterSync and PresenterSync Remote (with Remote's **About** & **Setup & Help Guide** strictly curated to its streamlined 1-tier companion capabilities).
-*   **Undocumented Desktop Surprise (`Alt + Ctrl + Shift + S`):** Curious explorers who press **`Alt + Ctrl + Shift + S`** while PresenterSync is active will find their floating HUD transforming into something unexpected right on the desktop (intentionally absent from the System Tray and Control Center—*try at your own risk!*).
-*   **Unified Fluent Control Center Dashboard:** Configure every subsystem in one Windows 11 Fluent 6-tab dashboard (**Audio & Conf**, **OBS & Stream**, **Pointer**, **HUD & Theme**, **Remote**, **Profiles & Sys**) and click **Apply & Save** to validate hotkeys, update settings, rebind hotkeys, tear down or switch telemetry backends, and refresh the HUD and tray menu live without restarting.
-*   **3 Audio Routing Profiles & Multi-Platform Conferencing (`Zoom`, `Microsoft Teams`, `Google Meet`):**
-    1. **Pro OBS Setup (VB-Cable):** Controls OBS mic directly.
-    2. **Standard Direct Mic (Conferencing-Only):** Controls Zoom, Microsoft Teams, or Google Meet mic directly without OBS.
-    3. **Dual App Sync (OBS + Conferencing Direct):** Keeps OBS and your active conferencing platform (`Zoom`, `Teams`, or `Meet`) mic states synchronized 2-way.
-*   **OBS WebSocket v5 Integration & 4th-Tier Live Stream / VCam HUD:** Real-time 2-way synchronization with OBS for Mic Mute, 3-state Recording (`NOT REC` / `REC` / `PAUSED`) with **Live Elapsed Recording Timer**, Studio Mode indicator, Active Program Scene pill, plus a **4th HUD Layer** for **OBS Live Stream Status** (`OFFLINE` / `LIVE` / `RECONNECT` / `DROP WARN` dropped-frames alert) and **OBS Virtual Camera (`VCAM`)**.
-*   **Native Windows UIA Conferencing Monitoring (`Lib\UIA.ahk`):** Real-time background inspection of **Zoom**, **Microsoft Teams**, and **Google Meet** controls for 2-way Mic sync, Recording telemetry, and a universal **Unread Chat Counter** (`CHAT` / `X NEW`).
-*   **Adaptive 4-Tier Interactive HUD Overlay:**
-    *   **Basic Mode:** 1-tier live/muted Mic pill with a real-time **CoreAudio Voice Activity / Peak VU Meter Bar** along the bottom edge of the `LIVE` pill.
-    *   **Conferencing Mode:** 2-tier stack adding Recording Status (with elapsed timer) + Unread Chat badge.
-    *   **Pro OBS Mode:** 3-tier & 4-tier stack adding OBS Studio Mode + Active Program Scene (with **smooth horizontal marquee scrolling**) and optional Row 4 **Live Stream + Virtual Camera** pills.
-    *   **Interactive Clickable HUD Pills:** Short-clicking (`<= 3px` movement, `< 400ms`) any HUD pill triggers quick actions: toggle Mic Mute, toggle OBS/Conferencing Recording, focus the Conferencing Chat window, toggle OBS Studio Mode, open a live **Popup OBS Scene Switcher Menu**, toggle Virtual Camera, or inspect live stream health—while dragging any pill moves the entire stack smoothly.
-    *   **Magnetic Edge/Window Snapping, Auto-Dodge & Click-Through Mode:** Automatically snaps the HUD stack within `14px` of monitor work-area edges/centers and active `OBS` / `PowerPoint` / `Zoom` / `Teams` window borders. Optional **Auto-Dodge on Hover** fades the HUD to `15%` click-through ghost opacity when the mouse approaches, and **Click-Through Mode** lets clicks pass straight through (hold `Alt` to drag).
-*   **5 Curated HUD Color Palettes & Tally Presets:** Choose between **Standard**, **Colorblind Safe** (Okabe-Ito Blue/Orange), **OLED Stealth**, **Broadcast Tally**, and **Cyber Ocean**, plus optional **Two-Tone Acoustic Audio Chime** and **Mute Status Toast** feedback.
-*   **Smart PowerPoint Controls & Cough Hold-to-Mute Gesture:** Safely route arrow/page/slide keys directly to PowerPoint in the background, and optionally enable **Cough / Push-to-Mute** so holding your clicker mute button (`>= 350ms`) mutes while held and automatically unmutes back to `LIVE` on release.
-*   **Persistent Named Configuration Profiles & System Utilities:** Save, load, switch, and delete named configuration profiles (`[Profile:<Name>]`) from the Tray Menu or Control Center, toggle **Start with Windows** (strictly `OFF` by default), and check for new releases via the built-in **GitHub Update Checker**.
-*   **Smart Board & Mobile Remote Companions (`PresenterSync_Remote.apk` for Android 12–15+ & `PresenterSync_Remote.exe` for Windows):** Standalone **1-tier Mic HUD** companions for 65"+ classroom Smart Boards, Android phones (Galaxy A07, Redmi Note 12, Poco M3 class), and Windows OPS/presenter laptops.
-    *   **Simultaneous Multi-Remote Host Bridge (`:4456`):** Pair and run **multiple Android and Windows remotes at the same time** (e.g., Smart Board + Presenter Phone + Secondary Laptop via `-Instance <name>`) connected to one Primary PC Host, with bidirectional sync across Mode 1 OBS, Mode 2 Conferencing-Only, Mode 3 Dual, and WAN Relay, monitored live inside **Remote Companion Info...**.
-    *   **Adaptive Smart Board & Phone Layouts:** Automatic form-factor detection (`Auto`, `Smart Board`, `Mobile Phone`) keeps controls crisp from compact 360dp portrait phones (`Android 12+`) up to 65"+ 4K landscape Smart Boards (`Android 14+`) with floating pill scales from `0.25x` up to `5.0x`.
-    *   **Triple-Method Pairing (QR, Session Code, WAN Relay):** Scan the host's live QR code (`presentersync://connect?...`) in Android, enter the 6-character LAN **Session Code (`XXX-XXX`)** on camera-less Smart Boards or Windows Remote via Host Bridge port `4456`, use **WAN Relay (`PS-XXXX-XXXX`)** across separate networks/hotspots, or enter manual Host/Port directly.
-    *   **Customizable Floating Bubble Multi-Gestures & Position Lock:** Configure **Single Tap**, **Double Tap**, **Long Press** (`600ms`), and **Very Long Press** (`1400ms`) independently—defaulting to Single Tap disabled (`None`) to prevent accidental Smart Board touches, `Long Press` to Toggle Mute (with animated progress arc), and `Double Tap` for Quick Menu—plus optional split Hold Mute / Very Long Unmute and **Lock Pill Position**.
-    *   **Play Protect-Safe Touch + PC Clicker Architecture:** Android keeps a minimal permission footprint (no `BIND_ACCESSIBILITY_SERVICE`), avoiding Play Protect sideload blocks cleanly. Keep your presenter clicker plugged into the Primary Windows PC (which syncs live mute status to Android) or control mute straight from the Android floating bubble gestures (`Long Press` / `Double Tap`).
-    *   **Safe Manual Remote Shutdown:** Use **Close Remote Companion...** in the Primary system tray (or **Remote Companion Info...**) to shut down all connected Windows or Android companions safely.
-    *   **Touchscreen Drag, Scale & Safety:** Magnetic screen-edge/center snapping, hover Auto-Dodge, Click-Through Mode (with persistent notification & Quick Tile unlock), two-tone acoustic chime, and 5 color presets.
+---
 
-## ⚙️ Prerequisites: OBS WebSocket & Zoom Setup
+## Core Capabilities
 
-### OBS Studio (WebSocket v5)
-Before connecting PresenterSync to OBS, enable the WebSocket server inside OBS Studio (OBS Studio v28.0+):
+### 1. Adaptive Floating Mic & 4-Tier HUD (Windows Host + Primary Secondary Mic Pill)
+* **Adaptive 4-Tier Host Stack (`PresenterSync.exe`):**
+  * **Tier 1:** High-contrast `LIVE` / `MUTED` Mic pill with live **CoreAudio Voice Activity VU Meter** and **Speaking-While-Muted Alert** (triggers if audio peaks while muted).
+  * **Tier 2:** Recording status (`REC` / `PAUSED` / `NOT REC`) with live elapsed timer + universal UIA **Unread Chat Counter** (`CHAT` / `X NEW`) for Zoom, Microsoft Teams, and Google Meet.
+  * **Tier 3:** OBS **Studio Mode** toggle + scrolling **Active Program Scene** pill (short-click opens live Scene Switcher menu).
+  * **Tier 4:** Optional **OBS Live Stream Health** (`OFFLINE` / `LIVE` / `RECONNECT` / `DROP WARN`) + **Virtual Camera (`VCAM`)** controls.
+* **Toggleable Secondary Independent Mic Pill (Primary App Only):** Need a second pure mic-status indicator on your teleprompter, second monitor, or presenter notes corner? Toggle **Show Secondary Mic Pill (Mic-Only)** from the System Tray or Control Center Tab 4 (`HUD & Theme`). It renders **only** the Mic pill layer (`LIVE`/`MUTED`, voice meter, custom colors, breathing pulse), drags and snaps **independently** into `[SecondaryPosition]`, syncs live mute state and click-to-mute with the Primary stack, and stays strictly off Remote companion builds.
+* **Interactive & Non-Intrusive:** Short-click any pill for instant action; left-drag for `14px` magnetic edge/window snapping; optional **Auto-Dodge on Hover** (`15%` ghost opacity) and **Click-Through Mode** (hold `Alt` to drag).
+* **Custom Hex Theme Colors & Tallies:** Pick **Standard**, **Colorblind Safe** (Okabe-Ito Blue/Orange), **OLED Stealth**, **Broadcast Tally**, **Cyber Ocean**, or **Custom** `#RRGGBB` live/muted hex colors with automatic WCAG icon contrast — synced across QR/deep-link to Android Remotes and HUD Snake.
 
-1. Open OBS Studio.
-2. Navigate to the top menu bar and click **Tools** > **WebSocket Server Settings**.
-3. Check the box for **Enable WebSocket server**.
-4. Ensure the **Server Port** is set to `4455` (the default).
-5. Check the box for **Enable Authentication**.
-6. Click **Generate Password** (or type a custom password). Click **Apply** and **OK**. 
-*Keep this password handy - PresenterSync will ask for it the first time you enable OBS WebSocket Sync.*
+### 2. Director Deck, Presenter Countdown Timer, Silent Stage Nudge & Push-to-Talk
+* **Wireless OBS Director Deck:** Switch OBS Program scenes, **Pause/Resume** or **Split Recording Chapter** cleanly across Windows Primary, Windows Remote, and Android Remote (`Status & HUD` Director Deck card & Quick Menu).
+* **Standby / `"BRB"` Curtain Macro:** 1-tap macro snapshots your active mic mute state & scene, switches cleanly to your configured `BRB` standby scene and mutes mic, then restores your exact previous scene & mute state on return.
+* **Synchronized Presenter Countdown Timer:** Presets (`5:00`, `10:00`, `15:00`, `45:00`) or custom durations synchronized via Host Bridge & WAN Relay, with `2:00` remaining alert, live overtime counting (`-00:15`), and floating pill badge display on Windows & Android.
+* **Silent Stage Nudge Toasts:** Send unobtrusive on-screen cues (e.g., `"2 mins left"`, `"Switch to Q&A"`) from Producer/Control laptop or Android to floating banner overlays on Windows (`ShowStageNudgeBanner`) and Android (`FloatingToastBannerManager`) — never captured by OBS Display/Game scenes.
+* **Push-to-Talk & Cough Hold-to-Mute Modes:** Choose classic toggle, **Cough / Push-to-Mute** (hold clicker >= 350ms to mute, release to restore `LIVE`), or **Push-to-Talk** (stay muted by default; hold clicker or Android floating pill >= 300ms to unmute while speaking, release to auto-mute).
 
-### Zoom (UIA Background Monitoring)
-To let PresenterSync read Zoom's Mute, Recording, and Unread Chat controls reliably in the background:
+### 3. Session Activity Timeline, Chapter CSV/Markdown Export & Guided Setup Wizards
+* **Bounded Activity Timeline & Video Editor Exports (`Lib\SessionTimeline.ahk`):** Automatically logs mic transitions, OBS recording start/pause/chapter-splits, scene switches, Standby toggles, slide clicks, countdown checkpoints, muted-voice alerts, and remote join/leave events in a bounded `2,000`-entry rolling buffer. Export with 1 click to **Video Editor Chapter CSV** (RFC-4180 escaped with spreadsheet formula injection guard), **Markdown Session Summary (`.md`)**, or **YouTube Chapters (`00:00` block)** copied to clipboard.
+* **Guided First-Run Setup Wizards:** Both Windows (`ShowGuidedSetupWizard`) and Android (`OnboardingWizardCard`) include 4-step live hardware/permission/LAN checklists with 1-tap **Scan Classroom (`:4457`)**, **Grant Overlay**, **Allow Notifications (`API 33+`)**, **Test Floating HUD**, and **Flash Pill** probes.
 
-1. Open Zoom Settings > **Accessibility** (or **General**).
-2. Enable **Always show meeting controls**.
+### 4. Zero-Config Multi-Remote Companions & Classroom Failover (`Android` + `Windows Remote`)
+* **Simultaneous Multi-Remote Host Bridge (`TCP :4456`):** Pair and run **multiple Android phones, Android Smart Boards, and Windows Remotes simultaneously** (launch extra isolated Windows remotes with `-Instance <name>`). Monitor connected devices or cleanly **Close Remote Companion...** from the host tray.
+* **Zero-Config Classroom UDP Discovery (`:4457`) & Smart Failover:** Remotes discover nearby classroom hosts broadcast on UDP `:4457` (`PS_DISCOVER_V1`) without manual IP typing, track `hostUuid` to auto-follow DHCP IP shifts across reconnects, auto-failover between LAN <-> WAN Relay (`PS-XXXX-XXXX`), and recover automatically after Windows sleep/wake (`WM_POWERBROADCAST`) or Wi-Fi/hotspot swaps.
+* **3 Audio Routing Profiles + Multi-App UIA:**
+  1. **Mode 1 — Pro OBS Setup (VB-Cable):** Controls OBS mic directly over WebSocket v5 (`:4455`).
+  2. **Mode 2 — Standard Direct Mic (Conferencing-Only):** Controls Zoom, Microsoft Teams, or Google Meet directly without OBS.
+  3. **Mode 3 — Dual App Sync:** Keeps OBS and your active conferencing platform synchronized 2-way.
+* **Smart Board & Phone Form-Factor Ergonomics:** Responsive layouts (`Auto`, `Smart Board`, `Mobile Phone`) from `360dp` compact phones up to `65"+` 4K Smart Boards; configurable Single Tap (off by default on Smart Boards to prevent accidental touches), Double Tap, Long Press, and Very Long Press gestures; `keepScreenOn`, idle dimming, saved host profiles, and **Lock Pill Position**.
+* **1-Tap In-App Self-Updaters:** Both Windows (`Lib\SelfUpdater.ahk` WinINet streaming + `bcrypt` SHA-256 verification + atomic `.exe`/`.old` swap) and Android (`ApkSelfInstaller` + `FileProvider` + `REQUEST_INSTALL_PACKAGES` + HUD auto-restore) check GitHub Releases and verify `SHA256SUMS.txt` signatures before installing.
+* **Undocumented HUD Snake Easter Egg:** Press `Alt + Ctrl + Shift + S` on Windows (or double-tap the Android pill to open Quick Menu -> hold `"Try at your own risk"` for 5 seconds) to morph the floating HUD into playable translucent desktop/overlay Snake with keyboard arrows, `WASD`, swipe/touch, and hardware controller/D-Pad support (`auto-hiding` live HUDs cleanly until exit).
 
-## 🛠️ Installation & Usage
+---
 
-You can run PresenterSync in two ways:
+## Prerequisites & Setup
 
-### Option A: Ready-to-Run Portable Executables (Recommended)
-Zero-dependency portable executables (`PresenterSync.exe` and `PresenterSync_Remote.exe` for x64 Windows) can be built directly from the repository or obtained via releases:
-👉 **[PresenterSync on Gumroad](https://saabithjiffry.gumroad.com/l/presentersync)**
+### OBS Studio (WebSocket v5 — Modes 1 & 3)
+1. In **OBS Studio v28+**, open **Tools > WebSocket Server Settings**.
+2. Enable **Enable WebSocket server** on port `4455` (recommended: enable authentication & copy password).
+3. In PresenterSync, enable **OBS WebSocket Sync** (`Alt + F12` or Tray / Control Center). Mode 2 (**Conferencing-Only**) works without OBS via Host Bridge (`:4456`).
 
-### Option B: Run from Source
-If you prefer to run the raw script or compile it yourself:
-1. Download and install [AutoHotkey v2](https://www.autohotkey.com/).
-2. Clone or download this repository.
-3. Ensure the `Lib` folder contains the supporting modules (`WebSocket.ahk`, `UIA.ahk`, `Crypto.ahk`, `Gdip.ahk`, `OBS_Network.ahk`, `GUI_Config.ahk`, `HelpCenter.ahk`, etc.).
-4. Run `PresenterSync.ahk` on the primary streaming laptop.
-5. Run `PresenterSync_Remote.ahk` on the smart board / secondary laptop.
+### Conferencing Apps (`Zoom`, `Microsoft Teams`, `Google Meet`)
+* **Zoom:** Enable **Settings > Accessibility > Always show meeting controls** so UIA monitoring reads Mute, Record, and Chat status reliably in the background.
 
-### Option C: 1-Click Portable Executable & APK Build
-You can build standalone, zero-dependency `.exe` binaries for both Windows apps (or `build_android.bat` for the signed Android APK):
-1. Ensure AutoHotkey v2 with compiler tools is installed.
-2. Double-click **`build.bat`** (outputs to `dist\`).
-3. It compiles:
-   * **`dist\PresenterSync.exe`** (Primary Streaming Host)
-   * **`dist\PresenterSync_Remote.exe`** (Smart Board Companion)
-4. Copy `dist\PresenterSync_Remote.exe` to a USB drive or smart board OPS module and run it portably without any installation! (Or install `dist\PresenterSync_Remote.apk` on Android Smart Boards & phones.)
+### Firewall (Classroom Multi-Remote LAN)
+Allow Private Network inbound **TCP `4455`** (if direct OBS), **TCP `4456`** (Host Bridge & HTTP pairing), and **UDP `4456` / `4457`** (Host Bridge & Classroom discovery) on the Primary Host PC.
 
-## 📁 Repository Layout
-* `PresenterSync.ahk`, `PresenterSync_Remote.ahk` — Primary Host & Remote Companion AutoHotkey v2 entrypoints (`Lib\` holds shared modules)
-* `android/` — Native Kotlin/Compose Android Smart Board & Phone Remote project (`build_android.bat`)
-* `assets/` — Application icon files (`PresenterSync.ico`, `PresenterSyncRemote.ico`)
-* `dist/` — Built release binaries (`PresenterSync.exe`, `PresenterSync_Remote.exe`, `PresenterSync_Remote.apk`)
-* `tests/` — Automated AutoHotkey & Python regression/E2E suites
+---
 
-## 📡 Multi-Remote Smart Board & Phone Setup
-1. **Host Firewall & Companion Bridge:** Enable OBS Studio WebSocket v5 (`Tools` > `WebSocket Server Settings`, port `4455`) if using OBS (Mode 1/3)—Mode 2 Zoom/Teams/Meet works without OBS via Host Bridge—and allow TCP ports `4455` & `4456` plus UDP `4456` on Private Firewall.
-2. **Instant Pair Multiple Remotes:** Open **Settings** > **Remote Companion Info...** on the Primary host PC:
-   * **Android (Phone / Smart Board):** Tap **Scan QR** in `PresenterSync_Remote.apk` or type the 6-character **Session Code (`XXX-XXX`)** -> **Pair Code** (works simultaneously on both your presenter phone and 65" Smart Board).
-   * **Windows Remote (`PresenterSync_Remote.exe`):** Enter the **Session Code** in **Host Bridge Session Code** -> **Pair by Code**, or paste the **Universal Connection String**. Launch additional isolated Windows companions anytime using `-Instance <name>` (or `-Config <path.ini>`).
-   * **Separate Networks (WAN Relay):** Enable **Different Networks (Internet)** and enter your `PS-XXXX-XXXX` code on any remote.
-3. **Customize Controls Per Device:** On Android Smart Boards, leave **Single Tap = None** and use **Long Press** / **Very Long Press** gestures (or split Mute / Unmute holds) plus **Lock Pill Position** so interactive board taps don't accidentally toggle mute. Connect your presenter clicker to the Primary Windows PC to sync mute state across all screens cleanly.
-4. **Live Connected Roster:** Watch all paired/live Windows & Android remotes update live inside **Remote Companion Info...**, or safely shut them down together with **Close Remote Companion...**.
+## Installation & Building from Source
 
-## 🎮 How It Works
+* **Portal & Prebuilt Releases:** [saabithjiffry.github.io](https://saabithjiffry.github.io) or [GitHub Releases](https://github.com/SaabithJiffry/PresenterSync/releases/latest) (`PresenterSync.exe`, `PresenterSync_Remote.exe`, signed `PresenterSync_Remote.apk`, `SHA256SUMS.txt`).
+* **Build Windows Executables:** Install [AutoHotkey v2](https://www.autohotkey.com/) (`v2.0+` with compiler) and run:
+  ```bat
+  build.bat
+  ```
+  Outputs portable binaries `dist\PresenterSync.exe` and `dist\PresenterSync_Remote.exe`.
+* **Build Signed Android APK & Run JVM Tests:** Requires JDK 17 + Android SDK (`local.properties` or `signing.properties` / keystore configured):
+  ```bat
+  build_android.bat
+  ```
+  Runs JVM unit tests and builds signed `dist\PresenterSync_Remote.apk`.
 
-1. **Initial Setup:** On your first launch, choose your Audio Routing Mode (`1`, `2`, or `3`) and configure your OBS / Zoom fallback shortcuts.
-2. **Choose Monitoring Engine:** Right-click the PresenterSync tray icon (or right-click directly on any HUD pill) to enable **OBS WebSocket Sync** or **Conferencing Monitoring** (`Zoom`, `Microsoft Teams`, or `Google Meet`, mutually exclusive).
-3. **Interactive Help & Remote Guide:** Open **Help & Shortcuts** in the tray menu for an interactive **Visual HUD** diagram, **Tray Menus**, **Features A-Z**, instant **Search Help**, **Shortcuts**, **Remote Setup**, and **Live Status**.
-4. **Customize Live:** Left-drag any HUD pill to reposition the whole stack (coordinates save automatically), or use **Indicator Appearance** to change scale, labels, opacity, corner style, and **App Theme** (**Follow System**, **Dark Mode**, or **Light Mode**) live without interrupting your active session.
+---
 
-**Default System Shortcuts (Primary Host):**
-*   `Ctrl + F12` : Cycle Pointer Modes (Full PPT + Mute / Mute Only / OFF)
-*   `Alt + F12` : Toggle OBS WebSocket Sync ON/OFF
-*   `Ctrl + Alt + F12` : Toggle Conferencing Monitoring ON/OFF (`Zoom` / `Teams` / `Meet`)
-*   `Ctrl + Shift + F12` : Hide/Unhide the HUD Indicator
-*   `Ctrl + Alt + Shift + F12` : Suspend All Hotkeys
-*   `Alt + Shift + F12` : Exit Application
-*   `Alt + Ctrl + Shift + S` : Try at your own risk...
+## Default Shortcuts
 
-**Default System Shortcuts (Remote Companion):**
-*   `Ctrl + F12` : Toggle Pointer Mute Control ON/OFF (HUD continues displaying live mic status when OFF)
-*   `Alt + Shift + F12` : Exit PresenterSync Remote
+| App | Shortcut | Action |
+| :--- | :--- | :--- |
+| **Primary Host** | `Ctrl + F12` | Cycle Pointer Mode (PPT + Mute / Mute Only / OFF) |
+| **Primary Host** | `Alt + F12` | Toggle OBS WebSocket Sync ON/OFF |
+| **Primary Host** | `Ctrl + Alt + F12` | Toggle Conferencing Monitor (`Zoom` / `Teams` / `Meet`) |
+| **Primary Host** | `Ctrl + Shift + F12` | Show / Hide Primary HUD Stack |
+| **Primary Host** | `Ctrl + Alt + Shift + F12` | Suspend / Resume All Hotkeys |
+| **Primary Host** | `Alt + Shift + F12` | Exit PresenterSync |
+| **Primary + Remote** | `Alt + Ctrl + Shift + S` | Toggle HUD Snake Easter Egg |
+| **Windows Remote** | `Ctrl + F12` | Toggle Pointer Mute Control ON/OFF (HUD stays synced) |
+| **Windows Remote** | `Alt + Shift + F12` | Exit PresenterSync Remote |
 
-## 📄 License
-This project is licensed under the MIT License - see the LICENSE file for details.
+---
 
-## 🤝 Acknowledgments
-* WebSocket communication is powered by the [AutoHotkey-WebSocket](https://github.com/thqby/ahk2_lib) library by [thqby](https://github.com/thqby).
+## Repository Architecture
 
+```text
+PresenterSync/
+├── PresenterSync.ahk               # Primary Host entrypoint, hotkeys, PowerPoint COM/ControlSend, Tray
+├── PresenterSync_Remote.ahk        # Windows Remote Companion (strictly 1-tier Mic HUD + Bridge/Relay client)
+├── Lib/
+│   ├── GUI_Config.ahk              # Core config/profile/theme/state classes & facade #Include entrypoint
+│   ├── HudRenderer.ahk             # GDI+ layered pills, Secondary Independent Mic Pill, animations, snap & dodge
+│   ├── ControlCenter.ahk           # Fluent 6-tab Control Center, Help/About/Profile UIs, sanitized diagnostics
+│   ├── SetupWizard.ahk             # Guided 4-step Setup Wizard, LAN/WAN pairing QR & probe helpers
+│   ├── SelfUpdater.ahk             # GitHub Releases API, WinINet streamer, SHA-256 verifier & .exe/.old swapper
+│   ├── SessionTimeline.ahk         # Bounded 2,000-entry timeline ring buffer, Chapter CSV / MD / YouTube export
+│   ├── HelpCenter.ahk              # Searchable A-Z Help entries & visual anatomy catalog
+│   ├── HostBridge.ahk              # Multi-remote HTTP/WS/UDP bridge server (:4456) & Classroom beacon (:4457)
+│   ├── RemoteBridgeClient.ahk      # Windows Remote LAN UDP discovery, DHCP IP-shift follower & failover
+│   ├── OBS_Network.ahk             # OBS WebSocket v5, Director Deck macros, Timer, Stage Nudge & WAN Relay
+│   ├── HudSnakeGame.ahk            # Playable translucent desktop Snake engine (keyboard + XInput/D-Pad)
+│   ├── UIA.ahk / WebSocket.ahk / Crypto.ahk / Gdip.ahk / QrCode.ahk
+├── android/                        # Kotlin + Jetpack Compose Remote Companion (API 26..34+)
+│   └── app/src/main/.../remote/
+│       ├── ui/screens/             # MainActivity, MainShellChrome, StatusAndHudScreen, DirectorControlsSheet,
+│       │                           # OnboardingWizardCard, UpdateBannerCard, ConnectionDialogScreen, QrScannerScreen, ...
+│       ├── ui/overlay/             # FloatingMicOverlayManager (pill + Quick Menu + 5s Snake), FloatingToastBannerManager,
+│       │                           # HudSnakeOverlayView, HudSnakeEngine
+│       ├── network/                # ConnectionManager (LAN <-> WAN failover), UdpHostDiscoveryClient, HostBridgeClient,
+│       │                           # ObsWebSocketClient, RelayClient, AppUpdater, ApkSelfInstaller
+│       ├── input/                  # ClickerMuteController, BubbleGestureRecognizer, KeyCapture
+│       └── service/                # FloatingHudForegroundService & Quick Settings Tile
+├── tests/                          # 6 AutoHotkey suites + 5 Python live process/network E2E suites
+└── dist/                           # Portable PresenterSync.exe, PresenterSync_Remote.exe, PresenterSync_Remote.apk
+```
 
-## ⚠️️ Known Limitations & Background Animation Declaration
+---
 
-**Background PowerPoint Animations (Windows DWM / DirectX GPU Throttling)**
-PresenterSync uses a **Hybrid COM (`ComObjActive`) + `ControlSend` fallback architecture** paired with a **150ms hardware debounce shield** to dispatch native slide transitions (`View.Next()` / `View.Previous()`) without stealing window focus, triggering synthetic key-hold fast-forwarding, or breaking `{Tab}` + `{Enter}` hyperlink navigation.
+## Known Limitations: Background PowerPoint Animations
 
-However, when PowerPoint's fullscreen slideshow (`ahk_class screenClass`) is running in the background (e.g., while OBS Studio or Zoom is your active foreground window), **Windows OS aggressively throttles PowerPoint's DirectX GPU rendering loop** to conserve system resources. Because of this hardcoded OS behavior, duration-based slide animations (like Fades, Wipes, or Morphs) may still freeze or snap to their final frame unless Windows is prevented from throttling the unfocused presentation window.
+PresenterSync dispatches native background PowerPoint slide transitions via Hybrid **COM (`ComObjActive`) + `ControlSend`** with a `150ms` hardware debounce shield so slide navigation never steals focus. When PowerPoint's fullscreen slideshow (`ahk_class screenClass`) runs unfocused, Windows OS aggressively throttles unfocused DirectX DWM animations:
+* **Appear** transitions render instantaneously and cleanly.
+* For timed **Fade / Wipe / Morph** animations under OBS Studio, use **Window Capture** with **Capture Method = `Windows 10 (1903 and up)`** and set `POWERPNT.EXE` to **High performance** under **Windows Settings > Display > Graphics**.
 
-* **Instantaneous Animations:** Standard "Appear" effects (for bullet points, code, or equations) are completely unaffected and render seamlessly.
-* **Input & UAC Stability:** Slide progression and clicker inputs remain 100% functionally stable. If PresenterSync and PowerPoint run under different privilege levels (e.g., Administrator vs. Standard User), PresenterSync automatically falls back from COM to `ControlSend`.
-* **Recommended Setup for Smooth Background Animations:**
-  1. In OBS Studio, capture the PowerPoint Slide Show using **Window Capture** with **Capture Method** set to **`Windows 10 (1903 and up)`** (uses the Windows Graphics Capture API to signal active frame consumption).
-  2. In **Windows Settings > System > Display > Graphics**, set `POWERPNT.EXE` to **High performance**.
+See [Issue #16](https://github.com/SaabithJiffry/PresenterSync/issues/16) for detailed test matrices and GPU workarounds.
 
-For full technical details, historical test logs, and advanced multi-monitor/GPU workarounds, please refer to [Issue #16](https://github.com/SaabithJiffry/PresenterSync/issues/16).
+---
+
+## License & Acknowledgments
+
+* Licensed under the [MIT License](LICENSE).
+* WebSocket communication built with [AutoHotkey-WebSocket](https://github.com/thqby/ahk2_lib) by [thqby](https://github.com/thqby).
