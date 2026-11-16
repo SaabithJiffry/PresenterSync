@@ -10,7 +10,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "6.7.0"
+    static APP_VERSION := "6.8.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1187,6 +1187,8 @@ GenerateHostUuid() {
         hex .= Format("{:02x}", NumGet(b, A_Index - 1, "UChar"))
     return SubStr(hex, 1, 8) "-" SubStr(hex, 9, 4) "-" SubStr(hex, 13, 4) "-" SubStr(hex, 17, 4) "-" SubStr(hex, 21, 12)
 }
+
+#Include "%A_LineFile%\..\SessionTimeline.ahk"
 
 class Config {
     ConfigFile := ""
@@ -3931,6 +3933,8 @@ SyncSceneState(cfg, state, sceneName) {
         }
         if (IsSet(HostBridgeBroadcastMuteState))
             try HostBridgeBroadcastMuteState(cfg, state)
+        if (IsSet(SessionTimeline) && (cfg is Config))
+            SessionTimeline.Record("Scene", "Scene -> " sceneName, state, (state.HasOwnProp("obsConnected") && state.obsConnected) ? "OBS Program" : "")
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
             try state.refreshHelpFn.Call()
     }
@@ -4096,6 +4100,11 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1) {
     }
 
     if (stateChanged || durProvided) {
+        if (stateChanged && IsSet(SessionTimeline) && (cfg is Config)) {
+            recEvt := (newState == 1) ? ((prevState == 2) ? "Recording Resumed" : "Recording Started")
+                : ((newState == 2) ? "Recording Paused" : "Recording Stopped")
+            SessionTimeline.Record("Recording", recEvt, state)
+        }
         HostBridgeBroadcastMuteState(cfg, state)
         oldW := state.HasOwnProp("recW") ? state.recW : 0
         if (state.HasMethod("ComputeDimensions"))
@@ -4495,6 +4504,151 @@ BuildSharedPresenterTimerSubmenu(state, startFn, pauseFn, resetFn) {
     return TimerMenu
 }
 
+RunWindowsSetupProbes(cfg, state := "", overrides := "") {
+    obsListening := (IsObject(overrides) && overrides.HasOwnProp("obsPortListening"))
+        ? !!overrides.obsPortListening
+        : IsLocalTcpPortListening(4455)
+    obsConnected := (IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected)
+    wsEnabled := (IsObject(cfg) && cfg.HasOwnProp("EnableWS") && cfg.EnableWS)
+    s1Ok := (obsConnected || (wsEnabled && obsListening))
+    s1Detail := obsConnected
+        ? "Connected to OBS Studio (:4455)"
+        : (obsListening ? (wsEnabled ? "OBS WS :4455 listening (connecting...)" : "OBS :4455 reachable — enable OBS WebSocket Sync in Tray") : "OBS Studio WebSocket :4455 not listening yet")
+
+    rMode := (IsObject(cfg) && cfg.HasOwnProp("AudioRoutingMode")) ? Integer(cfg.AudioRoutingMode) : 0
+    micNm := (IsObject(cfg) && cfg.HasOwnProp("targetMicName") && cfg.targetMicName != "") ? cfg.targetMicName : "Mic/Aux"
+    cApp := (IsObject(cfg) && cfg.HasOwnProp("ConferencingApp") && cfg.ConferencingApp != "") ? cfg.ConferencingApp : "Zoom"
+    meterOk := (IsObject(overrides) && overrides.HasOwnProp("audioMeterAvailable"))
+        ? !!overrides.audioMeterAvailable
+        : (IsSet(AudioMeter) ? (AudioMeter.GetPeak() >= 0.0) : false)
+    s2Ok := (rMode >= 1 && rMode <= 3) && meterOk
+    s2Detail := (rMode >= 1 && rMode <= 3)
+        ? ("Mode " rMode " | Target: " micNm " | Conf: " cApp (meterOk ? " | CoreAudio Ready" : " | CoreAudio Idle"))
+        : "Audio Routing Mode not configured yet (select Pro/Direct/Dual)"
+
+    hudEnabled := (IsObject(cfg) && (!cfg.HasOwnProp("ShowIndicator") || cfg.ShowIndicator))
+    hudGuiOk := (IsObject(state) && state.HasOwnProp("MicGui") && IsGuiValid(state.MicGui))
+    s3Ok := hudEnabled && (hudGuiOk || !IsObject(state))
+    s3Detail := hudEnabled
+        ? (hudGuiOk ? "Floating HUD active on screen (" Round(cfg.IndicatorScale, 2) "x scale)" : "Floating HUD enabled")
+        : "Floating HUD currently hidden (enable Show Mute Indicator)"
+
+    epObj := (IsObject(overrides) && overrides.HasOwnProp("lanIps") && IsObject(overrides.lanIps))
+        ? { ips: overrides.lanIps }
+        : GetLocalNetworkEndpoints()
+    bridgeSum := (IsObject(overrides) && overrides.HasOwnProp("bridgeSummary") && IsObject(overrides.bridgeSummary))
+        ? overrides.bridgeSummary
+        : GetHostBridgeStatusSummary()
+    ipCount := IsObject(epObj.ips) ? epObj.ips.Length : 0
+    s4Ok := (bridgeSum.running && ipCount > 0)
+    s4Detail := bridgeSum.running
+        ? ("Bridge TCP :" bridgeSum.tcpPort " & UDP :" bridgeSum.discoverPort " ready (" ipCount " LAN IP)")
+        : "Host Bridge listener inactive"
+
+    steps := [
+        { id: 1, title: "1. OBS WebSocket v5 (:4455)", ok: s1Ok, detail: s1Detail },
+        { id: 2, title: "2. Audio Routing & Mic Probe", ok: s2Ok, detail: s2Detail },
+        { id: 3, title: "3. Floating Mic HUD Overlay", ok: s3Ok, detail: s3Detail },
+        { id: 4, title: "4. Classroom UDP Discovery & QR", ok: s4Ok, detail: s4Detail }
+    ]
+    passed := 0
+    for stp in steps {
+        if (stp.ok)
+            passed += 1
+    }
+    return { passedCount: passed, totalCount: steps.Length, steps: steps }
+}
+
+ShowGuidedSetupWizard(cfg, state := "", *) {
+    existing := Theme.FocusExistingWindow("PresenterSync - Guided Setup Wizard")
+    if IsObject(existing)
+        return existing
+    Theme.AcquireSuspend()
+
+    wGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync - Guided Setup Wizard")
+    wGui._closed := false
+    wGui.MarginX := 20
+    wGui.MarginY := 16
+    Theme.ApplyToWindow(wGui)
+    Theme.NamedWindows["PresenterSync - Guided Setup Wizard"] := wGui
+
+    wGui.SetFont("s11 w700", Theme.UiFont)
+    Theme.RegisterControl(wGui, wGui.Add("Text", "xm w480", "PresenterSync 4-Step Live Setup Checklist"), "Text")
+    wGui.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(wGui, wGui.Add("Text", "xm y+4 w480", "Verify OBS WebSocket, CoreAudio routing, floating HUD visibility, and Classroom QR discovery."), "Text", "muted")
+
+    rowCtrls := []
+    Loop 4 {
+        wGui.SetFont("s9 w700", Theme.UiFont)
+        lblTitle := wGui.Add("Text", "xm y+12 w480", "Step " A_Index)
+        Theme.RegisterControl(wGui, lblTitle, "Text")
+        wGui.SetFont("s9 w400", Theme.UiFont)
+        lblDet := wGui.Add("Text", "xm+14 y+2 w466", "Checking...")
+        Theme.RegisterControl(wGui, lblDet, "Text", "muted")
+        rowCtrls.Push({ title: lblTitle, detail: lblDet })
+    }
+
+    lblScore := wGui.Add("Text", "xm y+14 w480", "")
+    Theme.RegisterControl(wGui, lblScore, "Text", "accent")
+
+    RefreshProbes(*) {
+        res := RunWindowsSetupProbes(cfg, state)
+        for idx, s in res.steps {
+            badge := s.ok ? "[PASS] " : "[CHECK] "
+            rowCtrls[idx].title.Value := badge . s.title
+            rowCtrls[idx].detail.Value := s.detail
+        }
+        lblScore.Value := "Readiness Score: " res.passedCount " / " res.totalCount " checks ready"
+    }
+    RefreshProbes()
+
+    btnReprobe := wGui.Add("Button", "xm y+14 w112 h30", "Re-Probe All")
+    btnFlash := wGui.Add("Button", "x+8 yp w112 h30", "Flash HUD Pill")
+    btnQr := wGui.Add("Button", "x+8 yp w122 h30", "Show Pairing QR")
+    btnCc := wGui.Add("Button", "x+8 yp w110 h30", "Control Center")
+    for b in [btnReprobe, btnFlash, btnQr, btnCc]
+        Theme.RegisterControl(wGui, b, "Button")
+
+    btnFinish := wGui.Add("Button", "xm y+12 w480 h32 Default", "Save & Finish Setup")
+    Theme.RegisterControl(wGui, btnFinish, "Button", "accent")
+
+    FlashHudTest(*) {
+        if (IsObject(cfg) && !cfg.ShowIndicator) {
+            cfg.ShowIndicator := true
+            cfg.WriteBool("Settings", "ShowIndicator", true)
+        }
+        if (IsObject(state) && IsGuiValid(state.MicGui)) {
+            PlayMuteAnimation(cfg, state)
+            TrayTip("Floating HUD indicator flashed! Drag it anywhere on screen.", "PresenterSync Setup", 1)
+        } else {
+            TrayTip("HUD overlay will appear when primary indicator is active.", "PresenterSync Setup", 1)
+        }
+        RefreshProbes()
+    }
+
+    CloseWizard(*) {
+        if (wGui._closed)
+            return
+        wGui._closed := true
+        Theme.UnregisterWindow(wGui, "PresenterSync - Guided Setup Wizard")
+        Theme.ReleaseSuspend()
+        wGui.Destroy()
+    }
+
+    btnReprobe.OnEvent("Click", (*) => RefreshProbes())
+    btnFlash.OnEvent("Click", FlashHudTest)
+    btnQr.OnEvent("Click", (*) => ShowRemoteCompanionInfo(cfg, state))
+    btnCc.OnEvent("Click", (*) => ShowControlCenterWindow(cfg, state))
+    btnFinish.OnEvent("Click", (*) => (
+        (IsObject(cfg) ? (cfg.FirstRun := false, cfg.WriteBool("Settings", "FirstRun", false)) : 0),
+        CloseWizard()
+    ))
+    wGui.OnEvent("Close", CloseWizard)
+    wGui.OnEvent("Escape", CloseWizard)
+    wGui.Show("AutoSize")
+    return wGui
+}
+
 SetHudColorPreset(cfg, state, presetName, *) {
     normalized := NormalizeHudColorPreset(presetName)
     cfg.HudColorPreset := normalized
@@ -4587,6 +4741,8 @@ EvaluateMutedVoiceAlert(cfg, state, rawPeak, nowTick := "") {
             state.mutedVoiceAboveSince := nowTick
         if (!state.voiceWhileMuted && (nowTick - state.mutedVoiceAboveSince) >= UIConstants.MUTED_VOICE_TRIGGER_MS) {
             state.voiceWhileMuted := true
+            if (IsSet(SessionTimeline) && (cfg is Config))
+                SessionTimeline.Record("Alert", "Speaking-While-Muted Alert", state)
             return true
         }
     } else {
@@ -4655,6 +4811,8 @@ SyncUIState(cfg, state, obsIsMuted) {
             PlayMuteAudioCue(obsIsMuted)
         if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
             ShowMuteToast(obsIsMuted)
+        if (IsSet(SessionTimeline) && (cfg is Config))
+            SessionTimeline.Record("Mic", obsIsMuted ? "Mic Muted" : "Mic Live", state, cfg.targetMicName)
         BroadcastHostRelayMuteState(cfg, state)
     }
 }

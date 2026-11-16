@@ -1003,6 +1003,8 @@ class HostCompanionBridge {
                 }
             }
             this.pairedDevices[c.deviceId].connected := stillConnected
+            if (!stillConnected && c.authenticated && IsSet(SessionTimeline))
+                SessionTimeline.Record("Remote", "Remote Disconnected: " (c.deviceName != "" ? c.deviceName : c.deviceId), this.state, c.platform)
         }
     }
 
@@ -1393,6 +1395,8 @@ class HostCompanionBridge {
             }
             this._QueueWsFrame(c, 0x1, '{"type":"auth_ok","hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"}')
             this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            if (IsSet(SessionTimeline))
+                SessionTimeline.Record("Remote", "Remote Joined: " (c.deviceName != "" ? c.deviceName : c.deviceId), this.state, c.platform)
             return
         }
 

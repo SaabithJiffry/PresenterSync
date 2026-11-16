@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v6.7.0", UIConstants.APP_VERSION == "6.7.0")
+Assert("APP_VERSION is active release v6.8.0", UIConstants.APP_VERSION == "6.8.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -2795,6 +2795,113 @@ Assert("Primary & Remote wire v6.7.0 Director Deck, Standby BRB, Stage Nudge, Pu
     && InStr(remM7Src, "SendRemoteSwitchScene")
     && InStr(remM7Src, "SendRemoteStageNudge")
     && InStr(remM7Src, "CustomLiveHex"))
+
+; ==============================================================================
+; SECTION 27: v6.8.0 SESSION TIMELINE, CHAPTER CSV/MD EXPORT & SETUP WIZARD
+; ==============================================================================
+
+SessionTimeline.Clear()
+Assert("SessionTimeline clears cleanly", SessionTimeline.GetEntries().Length == 0)
+Assert("FormatHms formats 0s and 3665s accurately",
+    SessionTimeline.FormatHms(0) == "00:00:00" && SessionTimeline.FormatHms(3665) == "01:01:05")
+Assert("FormatYouTubeTimestamp formats <1h and >=1h timestamps",
+    SessionTimeline.FormatYouTubeTimestamp(65) == "01:05" && SessionTimeline.FormatYouTubeTimestamp(3665) == "1:01:05")
+
+SessionTimeline.Record("Mic", "Mic Muted", "MUTED", "", 0, "2026-11-16T08:00:00Z")
+SessionTimeline.Record("Scene", "=SUM(A1:A2)", "", 'Quote, "Deck"', 65, "2026-11-16T08:01:05Z")
+SessionTimeline.Record("Recording", "Split Recording", "", "chapter", 3665, "2026-11-16T09:01:05Z")
+Assert("SessionTimeline records and filters categories",
+    SessionTimeline.GetEntries("All").Length == 3 && SessionTimeline.GetEntries("Scene").Length == 1)
+
+csvOut := SessionTimeline.ExportChapterCsv()
+Assert("CSV export includes header, quoted comma/quote escaping & formula guard",
+    InStr(csvOut, "Timecode,Seconds,Color,Category,Marker Name,Notes")
+    && InStr(csvOut, "'=SUM(A1:A2)")
+    && InStr(csvOut, '""Deck""')
+    && InStr(csvOut, "01:01:05,3665,Red,Recording,Split Recording"))
+
+ytOut := SessionTimeline.ExportYouTubeChapters()
+Assert("YouTube chapter block includes chronological timestamps",
+    InStr(ytOut, "00:00 Session Start") && InStr(ytOut, "01:05 =SUM(A1:A2)") && InStr(ytOut, "1:01:05 Split Recording"))
+
+tmpCsv := A_Temp "\ps_test_timeline_" A_TickCount ".csv"
+tmpMd := A_Temp "\ps_test_timeline_" A_TickCount ".md"
+Assert("SaveExportToFile writes CSV chapter file",
+    SessionTimeline.SaveExportToFile(tmpCsv, "csv") && FileExist(tmpCsv))
+Assert("SaveExportToFile writes Markdown summary file",
+    SessionTimeline.SaveExportToFile(tmpMd, "md") && FileExist(tmpMd) && InStr(FileRead(tmpMd, "UTF-8"), "| Timecode |"))
+if FileExist(tmpCsv)
+    FileDelete(tmpCsv)
+if FileExist(tmpMd)
+    FileDelete(tmpMd)
+
+; Bounded ring buffer eviction test (> 2000 entries -> retains newest 2000)
+SessionTimeline.Clear()
+Loop 2050 {
+    SessionTimeline.Record("Mic", "Evt " A_Index, "", "", A_Index)
+}
+boundedEntries := SessionTimeline.GetEntries()
+Assert("SessionTimeline bounds capacity at 2000 entries and evicts oldest FIFO",
+    boundedEntries.Length == SessionTimeline.MAX_ENTRIES
+    && boundedEntries[1].summary == "Evt 51"
+    && boundedEntries[2000].summary == "Evt 2050")
+
+; Live runtime integration hooks
+SessionTimeline.Clear()
+tlState := OverlayState(cfg)
+tlState.isMuted := false
+tlState.obsConnected := true
+tlState.scenes := ["Main", "Workshop"]
+tlState.activeScene := "Main"
+prevHookMuted := cfg.IsMuted
+SyncUIState(cfg, tlState, true)
+SyncRecState(cfg, tlState, 1, 15000)
+SyncSceneState(cfg, tlState, "Workshop")
+EvaluateMutedVoiceAlert(cfg, tlState, 0.35, 1000)
+EvaluateMutedVoiceAlert(cfg, tlState, 0.35, 1000 + UIConstants.MUTED_VOICE_TRIGGER_MS + 50)
+cfg.IsMuted := prevHookMuted
+cfg.WriteBool("Settings", "IsMuted", prevHookMuted)
+hookCsv := SessionTimeline.ExportChapterCsv()
+Assert("Live UI/OBS hooks automatically append Mic, Recording, Scene & Alert timeline entries",
+    InStr(hookCsv, ",Mic,") && InStr(hookCsv, ",Recording,") && InStr(hookCsv, ",Scene,") && InStr(hookCsv, ",Alert,"))
+
+; Setup Wizard hardware/network probes (override-driven deterministic checks)
+probeCfg := {
+    EnableWS: true, AudioRoutingMode: 2, targetMicName: "Rode NT", ConferencingApp: "Teams",
+    ShowIndicator: true, IndicatorScale: 1.0
+}
+probeOk := RunWindowsSetupProbes(probeCfg, 0, {
+    obsPortListening: true,
+    audioMeterAvailable: true,
+    lanIps: ["192.168.50.10"],
+    bridgeSummary: { running: true, tcpPort: 4456, discoverPort: 4457 }
+})
+probeNoGui := RunWindowsSetupProbes(probeCfg, tlState, {
+    obsPortListening: true,
+    audioMeterAvailable: true,
+    lanIps: ["192.168.50.10"],
+    bridgeSummary: { running: true, tcpPort: 4456, discoverPort: 4457 }
+})
+probeEmpty := RunWindowsSetupProbes({ EnableWS: false, AudioRoutingMode: 0, ShowIndicator: false }, 0, {
+    obsPortListening: false,
+    audioMeterAvailable: false,
+    lanIps: [],
+    bridgeSummary: { running: false, tcpPort: 4456, discoverPort: 4457 }
+})
+Assert("RunWindowsSetupProbes evaluates 4 checks accurately for ready vs unconfigured states",
+    probeOk.totalCount == 4 && probeOk.passedCount == 4
+    && probeNoGui.passedCount == 3 && !probeNoGui.steps[3].ok
+    && probeEmpty.totalCount == 4 && probeEmpty.passedCount == 0)
+
+primM8Src := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
+remM8Src := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
+obsNetSrc := FileRead(A_ScriptDir "\..\Lib\OBS_Network.ahk", "UTF-8")
+bridgeM8Src := FileRead(A_ScriptDir "\..\Lib\HostBridge.ahk", "UTF-8")
+Assert("Windows v6.8.0 source files declare 6.8.0 & wire Timeline + Guided Setup Wizard",
+    InStr(primM8Src, "6.8.0") && InStr(remM8Src, "6.8.0")
+    && InStr(primM8Src, "ShowGuidedSetupWizard") && InStr(primM8Src, "ShowTimelineWindow")
+    && InStr(obsNetSrc, "SessionTimeline.Record") && InStr(bridgeM8Src, "SessionTimeline.Record"))
+SessionTimeline.Clear()
 
 ; Cleanup test ini
 if FileExist(testIni)

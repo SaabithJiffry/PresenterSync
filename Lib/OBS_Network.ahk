@@ -699,6 +699,8 @@ ExecuteHostPauseRecord(cfg, state) {
 ExecuteHostSplitRecord(cfg, state) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
+    if (IsSet(SessionTimeline))
+        SessionTimeline.Record("Recording", "Chapter Split Marker", state, cfg.targetMicName)
     if (state.HasOwnProp("obsRecSplitFn") && IsObject(state.obsRecSplitFn)) {
         res := state.obsRecSplitFn.Call()
         return (res != false)
@@ -751,6 +753,8 @@ ExecuteHostToggleStandby(cfg, state, enterStandby := "") {
     }
     HostBridgeBroadcastMuteState(cfg, state)
     BroadcastHostRelayDirectorState(cfg, state)
+    if (IsSet(SessionTimeline))
+        SessionTimeline.Record("Standby", wantStandby ? ("Standby Mode ON (" brbScene ")") : "Standby Mode OFF", state)
     if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
         try state.rebuildTrayFn.Call()
     if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
@@ -774,6 +778,8 @@ StartHostPresenterTimer(cfg, state, durationSec := 0) {
         SetTimer(state.presenterTimerFn, 1000)
     HostBridgeBroadcastMuteState(cfg, state)
     BroadcastHostRelayDirectorState(cfg, state)
+    if (IsSet(SessionTimeline))
+        SessionTimeline.Record("Timer", "Countdown Started", state, FormatCountdownClock(state.timerRemainingSec))
     if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
         try state.rebuildTrayFn.Call()
     return true
@@ -796,6 +802,8 @@ PauseHostPresenterTimer(cfg, state) {
     }
     HostBridgeBroadcastMuteState(cfg, state)
     BroadcastHostRelayDirectorState(cfg, state)
+    if (IsSet(SessionTimeline))
+        SessionTimeline.Record("Timer", (state.timerState = "paused") ? "Countdown Paused" : "Countdown Resumed", state, FormatCountdownClock(state.timerRemainingSec))
     if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
         try state.rebuildTrayFn.Call()
     return true
@@ -812,6 +820,8 @@ ResetHostPresenterTimer(cfg, state, durationSec := 0) {
     state.timerState := "stopped"
     HostBridgeBroadcastMuteState(cfg, state)
     BroadcastHostRelayDirectorState(cfg, state)
+    if (IsSet(SessionTimeline))
+        SessionTimeline.Record("Timer", "Countdown Reset", state, FormatCountdownClock(preset))
     if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
         try state.rebuildTrayFn.Call()
     return true
@@ -883,6 +893,8 @@ ExecuteHostRemotePptCommand(cfg, state, direction := "next") {
     if (state.HasOwnProp(fnProp) && IsObject(state.%fnProp%)) {
         try {
             res := state.%fnProp%.Call()
+            if (res != false && IsSet(SessionTimeline))
+                SessionTimeline.Record("Slide", isPrev ? "Slide Previous" : "Slide Next", state, "Remote")
             return (res != false)
         } catch {
             return false
