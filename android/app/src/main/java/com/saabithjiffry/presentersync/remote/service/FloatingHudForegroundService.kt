@@ -111,6 +111,22 @@ class FloatingHudForegroundService : LifecycleService() {
                     is RemoteEvent.ToastMessage -> {
                         Toast.makeText(applicationContext, ev.message, Toast.LENGTH_SHORT).show()
                     }
+                    is RemoteEvent.StageNudge -> {
+                        val (anchor, pillH) = overlayManager.currentAnchorForToast()
+                        val accentCol = runCatching {
+                            val h = com.saabithjiffry.presentersync.remote.config.HudColorPalettes.normalizeColorHex(ev.accentHex, "#F59E0B")
+                            android.graphics.Color.parseColor(h)
+                        }.getOrDefault(android.graphics.Color.parseColor("#F59E0B"))
+                        toastBannerManager.showAlertToast(
+                            message = "${ev.sender}: ${ev.message}",
+                            accentDotColor = accentCol,
+                            cfg = cfg,
+                            anchorX = anchor.x,
+                            anchorY = anchor.y,
+                            pillHeightPx = pillH,
+                            durationMs = 4500L
+                        )
+                    }
                     RemoteEvent.VoiceWhileMutedAlert -> {
                         if (cfg.enableVoiceWhileMutedAlert) {
                             val (anchor, pillH) = overlayManager.currentAnchorForToast()
@@ -243,8 +259,10 @@ class FloatingHudForegroundService : LifecycleService() {
             conn.connected -> {
                 val base = "● Connected: ${conn.activeHost} (${if (conn.isMuted) "MUTED" else "LIVE"})"
                 val parts = mutableListOf(base)
+                if (conn.isStandby) parts += "STANDBY"
                 if (conn.recState == 1) parts += "REC ${conn.formattedRecElapsed()}"
                 else if (conn.recState == 2) parts += "PAUSED ${conn.formattedRecElapsed()}"
+                if (conn.timerState != "stopped") parts += "${if (conn.timerState == "overtime") "OT" else "TMR"} ${conn.formattedCountdown()}"
                 if (conn.streamDropWarn) parts += "⚠ STREAM WARN"
                 if (conn.voiceWhileMuted && conn.isMuted) parts += "⚠ MIC SIGNAL"
                 parts.joinToString(" • ")

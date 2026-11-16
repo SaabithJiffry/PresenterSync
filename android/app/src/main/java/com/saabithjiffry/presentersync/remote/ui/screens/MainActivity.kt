@@ -58,6 +58,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -234,11 +235,13 @@ class MainActivity : ComponentActivity() {
                         app.connectionManager.toggleMuteFromClicker()
                         return true
                     }
-                    ClickerDecision.CONSUME_COUGH_HOLD_MUTE -> {
+                    ClickerDecision.CONSUME_COUGH_HOLD_MUTE,
+                    ClickerDecision.CONSUME_PTT_RELEASE_MUTE -> {
                         app.connectionManager.setMuteFromClicker(true)
                         return true
                     }
-                    ClickerDecision.CONSUME_COUGH_RELEASE_UNMUTE -> {
+                    ClickerDecision.CONSUME_COUGH_RELEASE_UNMUTE,
+                    ClickerDecision.CONSUME_PTT_HOLD_UNMUTE -> {
                         app.connectionManager.setMuteFromClicker(false)
                         return true
                     }
@@ -560,6 +563,17 @@ private fun RemoteDashboardScreen(
                                     }
                                 )
 
+                                DirectorDeckAndTimerCard(
+                                    conn = conn,
+                                    formFactor = formFactor,
+                                    onPauseRecord = { app.connectionManager.sendPauseRecord("dashboard") },
+                                    onSplitRecord = { app.connectionManager.sendSplitRecord("dashboard") },
+                                    onToggleStandby = { app.connectionManager.sendToggleStandby("dashboard") },
+                                    onSwitchScene = { s -> app.connectionManager.sendSwitchScene(s, "dashboard") },
+                                    onTimerCommand = { act, dur -> app.connectionManager.sendTimerCommand(act, dur, "dashboard") },
+                                    onSendNudge = { msg -> app.connectionManager.sendStageNudge(msg) }
+                                )
+
                                 FormFactorOptimizationCard(
                                     cfg = cfg,
                                     formFactor = formFactor,
@@ -637,6 +651,17 @@ private fun RemoteDashboardScreen(
                             }
                         )
 
+                        DirectorDeckAndTimerCard(
+                            conn = conn,
+                            formFactor = formFactor,
+                            onPauseRecord = { app.connectionManager.sendPauseRecord("dashboard") },
+                            onSplitRecord = { app.connectionManager.sendSplitRecord("dashboard") },
+                            onToggleStandby = { app.connectionManager.sendToggleStandby("dashboard") },
+                            onSwitchScene = { s -> app.connectionManager.sendSwitchScene(s, "dashboard") },
+                            onTimerCommand = { act, dur -> app.connectionManager.sendTimerCommand(act, dur, "dashboard") },
+                            onSendNudge = { msg -> app.connectionManager.sendStageNudge(msg) }
+                        )
+
                         FormFactorOptimizationCard(
                             cfg = cfg,
                             formFactor = formFactor,
@@ -708,6 +733,250 @@ private fun RemoteDashboardScreen(
             app = app,
             onDismiss = { showAboutDialog = false }
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DirectorDeckAndTimerCard(
+    conn: ConnectionUiState,
+    formFactor: ResolvedFormFactor,
+    onPauseRecord: () -> Unit,
+    onSplitRecord: () -> Unit,
+    onToggleStandby: () -> Unit,
+    onSwitchScene: (String) -> Unit,
+    onTimerCommand: (String, Int) -> Unit,
+    onSendNudge: (String) -> Unit
+) {
+    if (!conn.connected || (!conn.usingBridge && !conn.usingRelayFallback)) return
+
+    var nudgeDraft by remember { mutableStateOf("") }
+    var customMinDraft by remember { mutableStateOf("12") }
+    val timerWarningAmber = conn.timerState == "running" && conn.timerRemainingSec in 1..120
+    val timerOvertimeRed = conn.timerState == "overtime" || (conn.timerState == "running" && conn.timerRemainingSec <= 0)
+    val timerColor = when {
+        timerOvertimeRed -> Color(0xFFDC2626)
+        timerWarningAmber -> Color(0xFFD97706)
+        conn.timerState == "running" -> Color(0xFF10B981)
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+
+    ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "OBS Director & Presenter Timer",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (conn.isStandby) {
+                            "Standby Active (${conn.standbyScene}) • Mic Muted"
+                        } else {
+                            "Live Scene: ${conn.activeScene}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (conn.isStandby) Color(0xFFD97706) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Button(
+                    onClick = onToggleStandby,
+                    contentPadding = CompactExplorerButtonPadding,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (conn.isStandby) Color(0xFFD97706) else MaterialTheme.colorScheme.secondary
+                    )
+                ) {
+                    Text(if (conn.isStandby) "Exit BRB" else "Standby BRB", maxLines = 1, softWrap = false)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onPauseRecord,
+                    contentPadding = CompactExplorerButtonPadding,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        if (conn.recState == 2) "Resume Rec" else "Pause Rec",
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                OutlinedButton(
+                    onClick = onSplitRecord,
+                    contentPadding = CompactExplorerButtonPadding,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Split Chapter", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                }
+            }
+
+            if (conn.scenes.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Switch OBS Scene",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        conn.scenes.forEach { sceneName ->
+                            val selected = sceneName == conn.activeScene
+                            FilterChip(
+                                selected = selected,
+                                onClick = { onSwitchScene(sceneName) },
+                                label = { Text(sceneName, maxLines = 1, softWrap = false) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Presenter Countdown",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = conn.timerState.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = timerColor
+                    )
+                }
+                Text(
+                    text = conn.formattedCountdown(),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = timerColor
+                )
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(5, 10, 15, 45).forEach { mins ->
+                    FilterChip(
+                        selected = conn.timerPresetSec == mins * 60 && conn.timerState != "stopped",
+                        onClick = { onTimerCommand("timer_start", mins * 60) },
+                        label = { Text("${mins}m") }
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        if (conn.timerState == "stopped") {
+                            val sec = (customMinDraft.trim().toIntOrNull()?.coerceIn(1, 240) ?: 10) * 60
+                            onTimerCommand("timer_start", sec)
+                        } else {
+                            onTimerCommand("timer_pause", 0)
+                        }
+                    },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text(
+                        when (conn.timerState) {
+                            "running", "overtime" -> "Pause"
+                            "paused" -> "Resume"
+                            else -> "Start"
+                        }
+                    )
+                }
+                OutlinedButton(
+                    onClick = { onTimerCommand("timer_reset", conn.timerPresetSec) },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Reset")
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = customMinDraft,
+                    onValueChange = { v -> customMinDraft = v.filter { ch -> ch.isDigit() }.take(3) },
+                    label = { Text("Custom (min)") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedButton(
+                    onClick = {
+                        val sec = (customMinDraft.trim().toIntOrNull()?.coerceIn(1, 240) ?: 10) * 60
+                        onTimerCommand("timer_start", sec)
+                    },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Set & Go")
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            Text(
+                text = "Silent Stage Nudge",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf("Slow Down", "Check Chat", "2m Left").forEach { quick ->
+                    OutlinedButton(
+                        onClick = { onSendNudge(quick) },
+                        contentPadding = CompactExplorerButtonPadding
+                    ) {
+                        Text(quick, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = nudgeDraft,
+                    onValueChange = { nudgeDraft = it.take(140) },
+                    label = { Text("Send whisper toast...") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = {
+                        val clean = nudgeDraft.trim()
+                        if (clean.isNotEmpty()) {
+                            onSendNudge(clean)
+                            nudgeDraft = ""
+                        }
+                    },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Send")
+                }
+            }
+        }
     }
 }
 

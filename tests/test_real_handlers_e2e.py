@@ -301,6 +301,7 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
         extract_ahk_block(remote_src, "HandleRemoteObsMessage("),
         extract_ahk_block(remote_src, "RemoteHeartbeatTick("),
         extract_ahk_block(remote_src, "SyncRemoteMuteState("),
+        extract_ahk_block(remote_src, "RemoteLocalTimerTick("),
         extract_ahk_block(remote_src, "SyncRemoteBridgeTelemetry("),
         extract_ahk_block(remote_src, "RemoveToolTip("),
         extract_ahk_block(remote_src, "OnRemoteClickerMute("),

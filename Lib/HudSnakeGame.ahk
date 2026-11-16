@@ -467,7 +467,9 @@ class HudSnake {
 
     static _GetActivePalette() {
         palName := (IsObject(this._cfg) && this._cfg.HasOwnProp("HudColorPreset")) ? this._cfg.HudColorPreset : "Standard"
-        return UIConstants.GetColorPalette(palName)
+        cLive := (IsObject(this._cfg) && this._cfg.HasOwnProp("CustomLiveHex")) ? this._cfg.CustomLiveHex : "107C10"
+        cMuted := (IsObject(this._cfg) && this._cfg.HasOwnProp("CustomMutedHex")) ? this._cfg.CustomMutedHex : "C42B1C"
+        return UIConstants.GetColorPalette(palName, cLive, cMuted)
     }
 
     static _ResolveSnakeColors(snakePal) {

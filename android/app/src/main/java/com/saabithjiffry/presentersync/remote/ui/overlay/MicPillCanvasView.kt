@@ -93,7 +93,7 @@ class MicPillCanvasView(context: Context) : View(context) {
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        val palette = HudColorPalettes.get(config.hudColorPreset)
+        val palette = HudColorPalettes.get(config.hudColorPreset, config.customLiveHex, config.customMutedHex)
         val isOffline = overrideMuted == null && !connState.connected
         val muted = overrideMuted ?: connState.isMuted
 
@@ -115,6 +115,8 @@ class MicPillCanvasView(context: Context) : View(context) {
             borderColor = bgColor
             iconHexColor = if (config.monoIcon) {
                 if (muted) palette.mutedIcon else palette.liveIcon
+            } else if (palette.name == "Custom") {
+                HudColorPalettes.pickReadableIconRgb(bgColor)
             } else {
                 Color.WHITE
             }

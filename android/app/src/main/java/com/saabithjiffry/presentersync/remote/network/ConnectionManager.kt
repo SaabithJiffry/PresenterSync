@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.util.Log
 import com.saabithjiffry.presentersync.remote.config.AppConstants
+import com.saabithjiffry.presentersync.remote.config.HudColorPalettes
 import com.saabithjiffry.presentersync.remote.config.NetworkMode
 import com.saabithjiffry.presentersync.remote.config.ParsedConnectionPayload
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
@@ -54,7 +55,14 @@ data class ConnectionUiState(
     val recState: Int = 0,
     val recSeconds: Int = 0,
     val streamDropWarn: Boolean = false,
-    val voiceWhileMuted: Boolean = false
+    val voiceWhileMuted: Boolean = false,
+    val activeScene: String = "Scene",
+    val scenes: List<String> = emptyList(),
+    val isStandby: Boolean = false,
+    val standbyScene: String = "BRB",
+    val timerState: String = "stopped",
+    val timerRemainingSec: Int = 600,
+    val timerPresetSec: Int = 600
 ) {
     val transportName: String
         get() = when {
@@ -74,11 +82,23 @@ data class ConnectionUiState(
         return if (hrs > 0) String.format("%d:%02d:%02d", hrs, mins, secs)
         else String.format("%02d:%02d", mins, secs)
     }
+
+    fun formattedCountdown(): String {
+        val neg = timerRemainingSec < 0
+        val absSec = kotlin.math.abs(timerRemainingSec)
+        val hrs = absSec / 3600
+        val mins = (absSec % 3600) / 60
+        val secs = absSec % 60
+        val core = if (hrs > 0) String.format("%d:%02d:%02d", hrs, mins, secs)
+        else String.format("%02d:%02d", mins, secs)
+        return if (neg) "-$core" else core
+    }
 }
 
 sealed interface RemoteEvent {
     data class MuteChanged(val isMuted: Boolean) : RemoteEvent
     data class ToastMessage(val message: String) : RemoteEvent
+    data class StageNudge(val message: String, val sender: String, val accentHex: String = "F59E0B") : RemoteEvent
     data object VoiceWhileMutedAlert : RemoteEvent
     data object CloseRemoteRequested : RemoteEvent
 }
@@ -114,6 +134,7 @@ class ConnectionManager(
     private var connectLoopJob: Job? = null
     private var heartbeatJob: Job? = null
     private var recTickerJob: Job? = null
+    private var presenterTimerJob: Job? = null
     private var networkDebounceJob: Job? = null
     private var lanRepromoteJob: Job? = null
     private var networkCallbackRegistered = false
@@ -193,6 +214,7 @@ class ConnectionManager(
         connectLoopJob?.cancel()
         heartbeatJob?.cancel()
         recTickerJob?.cancel()
+        presenterTimerJob?.cancel()
         lanRepromoteJob?.cancel()
         closeActiveClients()
         unregisterNetworkCallback()
@@ -205,7 +227,10 @@ class ConnectionManager(
             recState = 0,
             recSeconds = 0,
             streamDropWarn = false,
-            voiceWhileMuted = false
+            voiceWhileMuted = false,
+            isStandby = false,
+            timerState = "stopped",
+            scenes = emptyList()
         )
     }
 
@@ -429,6 +454,11 @@ class ConnectionManager(
                     applyBridgeTelemetry(gen, telemetry)
                 }
 
+                override fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {
+                    if (gen != generation.get()) return
+                    _events.tryEmit(RemoteEvent.StageNudge(message, sender, accentHex))
+                }
+
                 override fun onCloseRemoteSignal() {
                     if (gen != generation.get()) return
                     _events.tryEmit(RemoteEvent.CloseRemoteRequested)
@@ -438,6 +468,7 @@ class ConnectionManager(
                     Log.w("PresenterSync", "Host Bridge disconnected ($wsUrl): $reason")
                     heartbeatJob?.cancel()
                     recTickerJob?.cancel()
+                    presenterTimerJob?.cancel()
                     if (gen == generation.get() && _uiState.value.connStatus != ConnStatus.AUTH_FAILED) {
                         _uiState.value = _uiState.value.copy(
                             connected = false,
@@ -447,7 +478,10 @@ class ConnectionManager(
                             recState = 0,
                             recSeconds = 0,
                             streamDropWarn = false,
-                            voiceWhileMuted = false
+                            voiceWhileMuted = false,
+                            isStandby = false,
+                            timerState = "stopped",
+                            scenes = emptyList()
                         )
                     }
                     done.complete(SessionOutcome.DISCONNECTED)
@@ -613,6 +647,38 @@ class ConnectionManager(
                     applyNewMuteState(muted)
                 }
 
+                override fun onRelayDirectorState(
+                    isStandby: Boolean,
+                    recState: Int,
+                    timerState: String,
+                    timerRemainingSec: Int,
+                    timerPresetSec: Int,
+                    activeScene: String
+                ) {
+                    if (gen != generation.get()) return
+                    applyBridgeTelemetry(
+                        gen,
+                        BridgeTelemetryState(
+                            recState = recState,
+                            recSeconds = _uiState.value.recSeconds,
+                            streamDropWarn = _uiState.value.streamDropWarn,
+                            voiceWhileMuted = _uiState.value.voiceWhileMuted,
+                            activeScene = activeScene,
+                            scenes = _uiState.value.scenes,
+                            isStandby = isStandby,
+                            standbyScene = _uiState.value.standbyScene,
+                            timerState = timerState,
+                            timerRemainingSec = timerRemainingSec,
+                            timerPresetSec = timerPresetSec
+                        )
+                    )
+                }
+
+                override fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {
+                    if (gen != generation.get()) return
+                    _events.tryEmit(RemoteEvent.StageNudge(message, sender, accentHex))
+                }
+
                 override fun onCloseRemoteSignal() {
                     if (gen != generation.get()) return
                     _events.tryEmit(RemoteEvent.CloseRemoteRequested)
@@ -620,6 +686,7 @@ class ConnectionManager(
 
                 override fun onRelayDisconnected(reason: String) {
                     heartbeatJob?.cancel()
+                    presenterTimerJob?.cancel()
                     if (gen == generation.get() && _uiState.value.connStatus != ConnStatus.AUTH_FAILED) {
                         _uiState.value = _uiState.value.copy(
                             connected = false,
@@ -629,7 +696,10 @@ class ConnectionManager(
                             recState = 0,
                             recSeconds = 0,
                             streamDropWarn = false,
-                            voiceWhileMuted = false
+                            voiceWhileMuted = false,
+                            isStandby = false,
+                            timerState = "stopped",
+                            scenes = emptyList()
                         )
                     }
                     done.complete(SessionOutcome.DISCONNECTED)
@@ -729,7 +799,14 @@ class ConnectionManager(
             recState = telemetry.recState,
             recSeconds = telemetry.recSeconds,
             streamDropWarn = telemetry.streamDropWarn,
-            voiceWhileMuted = activeVoiceWarn
+            voiceWhileMuted = activeVoiceWarn,
+            activeScene = telemetry.activeScene,
+            scenes = if (telemetry.scenes.isNotEmpty()) telemetry.scenes else prev.scenes,
+            isStandby = telemetry.isStandby,
+            standbyScene = telemetry.standbyScene,
+            timerState = telemetry.timerState,
+            timerRemainingSec = telemetry.timerRemainingSec,
+            timerPresetSec = telemetry.timerPresetSec
         )
         if (activeVoiceWarn && !prev.voiceWhileMuted && configStore.current.enableVoiceWhileMutedAlert) {
             _events.tryEmit(RemoteEvent.VoiceWhileMutedAlert)
@@ -748,6 +825,28 @@ class ConnectionManager(
             }
         } else {
             recTickerJob?.cancel()
+        }
+
+        if (telemetry.timerState == "running" || telemetry.timerState == "overtime") {
+            if (presenterTimerJob?.isActive != true) {
+                presenterTimerJob = scope.launch {
+                    while (gen == generation.get() && _uiState.value.connected &&
+                        (_uiState.value.timerState == "running" || _uiState.value.timerState == "overtime")
+                    ) {
+                        delay(1000L)
+                        val cur = _uiState.value
+                        if (gen == generation.get() && cur.connected &&
+                            (cur.timerState == "running" || cur.timerState == "overtime")
+                        ) {
+                            val nextSec = cur.timerRemainingSec - 1
+                            val nextState = if (nextSec <= 0) "overtime" else cur.timerState
+                            _uiState.value = cur.copy(timerRemainingSec = nextSec, timerState = nextState)
+                        }
+                    }
+                }
+            }
+        } else {
+            presenterTimerJob?.cancel()
         }
     }
 
@@ -770,7 +869,46 @@ class ConnectionManager(
         sendBridgeDeckAction { it.sendPptPrev(source) }
 
     fun sendToggleRecord(source: String = "quick_menu"): Boolean =
-        sendBridgeDeckAction { it.sendToggleRecord(source) }
+        sendDirectorAction(
+            bridgeAction = { it.sendToggleRecord(source) },
+            relayAction = { it.sendToggleRecord() }
+        )
+
+    fun sendPauseRecord(source: String = "quick_menu"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendPauseRecord(source) },
+            relayAction = { it.sendPauseRecord() }
+        )
+
+    fun sendSplitRecord(source: String = "quick_menu"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendSplitRecord(source) },
+            relayAction = { it.sendSplitRecord() }
+        )
+
+    fun sendToggleStandby(source: String = "quick_menu"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendToggleStandby(source) },
+            relayAction = { it.sendToggleStandby() }
+        )
+
+    fun sendSwitchScene(sceneName: String, source: String = "director"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendSwitchScene(sceneName, source) },
+            relayAction = { it.sendSwitchScene(sceneName) }
+        )
+
+    fun sendTimerCommand(action: String, durationSec: Int = 0, source: String = "director"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendTimerCommand(action, durationSec, source) },
+            relayAction = { it.sendTimerCommand(action, durationSec) }
+        )
+
+    fun sendStageNudge(message: String, accentHex: String = "F59E0B"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendStageNudge(message, accentHex = accentHex) },
+            relayAction = { it.sendStageNudge(message) }
+        )
 
     private fun sendBridgeDeckAction(action: (HostBridgeClient) -> Boolean): Boolean {
         val st = _uiState.value
@@ -780,6 +918,23 @@ class ConnectionManager(
             return false
         }
         return action(bridge)
+    }
+
+    private fun sendDirectorAction(
+        bridgeAction: (HostBridgeClient) -> Boolean,
+        relayAction: (RelayClient) -> Boolean
+    ): Boolean {
+        val st = _uiState.value
+        val bridge = bridgeClient
+        if (st.connected && bridge != null && st.usingBridge) {
+            return bridgeAction(bridge)
+        }
+        val relay = relayClient
+        if (st.connected && relay != null) {
+            return relayAction(relay)
+        }
+        _events.tryEmit(RemoteEvent.ToastMessage("Director controls require an active Primary Host Bridge or Relay connection."))
+        return false
     }
 
     fun toggleMuteFromHud(): Boolean = toggleMuteInternal("hud")
@@ -916,6 +1071,21 @@ class ConnectionManager(
                 sessionPairingCode = payload.sessionCode.ifBlank { prev.sessionPairingCode },
                 internetPairingCode = payload.internetPairingCode.ifBlank { prev.internetPairingCode },
                 pairedHostUuid = payload.hostUuid.ifBlank { prev.pairedHostUuid },
+                hudColorPreset = if (payload.hudColorPreset.isNotBlank()) {
+                    HudColorPalettes.normalize(payload.hudColorPreset)
+                } else {
+                    prev.hudColorPreset
+                },
+                customLiveHex = if (payload.customLiveHex.isNotBlank()) {
+                    HudColorPalettes.normalizeColorHex(payload.customLiveHex, prev.customLiveHex)
+                } else {
+                    prev.customLiveHex
+                },
+                customMutedHex = if (payload.customMutedHex.isNotBlank()) {
+                    HudColorPalettes.normalizeColorHex(payload.customMutedHex, prev.customMutedHex)
+                } else {
+                    prev.customMutedHex
+                },
                 firstRun = false
             )
         }

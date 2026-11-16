@@ -14,6 +14,8 @@ enum class ClickerDecision {
     CONSUME_TOGGLE,
     CONSUME_COUGH_HOLD_MUTE,
     CONSUME_COUGH_RELEASE_UNMUTE,
+    CONSUME_PTT_HOLD_UNMUTE,
+    CONSUME_PTT_RELEASE_MUTE,
     TRIGGER_TOGGLE_SHORTCUT,
     TRIGGER_EXIT_SHORTCUT
 }
@@ -32,6 +34,7 @@ class ClickerMuteController(
     private var isDownActive: Boolean = false
     private var downAtMs: Long = 0L
     private var coughHoldActive: Boolean = false
+    private var pttHoldActive: Boolean = false
     private var pressedWithoutToggle: Boolean = false
 
     @Synchronized
@@ -85,11 +88,18 @@ class ClickerMuteController(
                     lastToggleAtMs = now
                     downAtMs = now
                     pressedWithoutToggle = false
-                    coughHoldActive = config.enablePushToMute
-                    if (config.enablePushToMute) {
-                        ClickerDecision.CONSUME_COUGH_HOLD_MUTE
+                    if (config.enablePushToTalk) {
+                        pttHoldActive = true
+                        coughHoldActive = false
+                        ClickerDecision.CONSUME_PTT_HOLD_UNMUTE
                     } else {
-                        ClickerDecision.CONSUME_TOGGLE
+                        pttHoldActive = false
+                        coughHoldActive = config.enablePushToMute
+                        if (config.enablePushToMute) {
+                            ClickerDecision.CONSUME_COUGH_HOLD_MUTE
+                        } else {
+                            ClickerDecision.CONSUME_TOGGLE
+                        }
                     }
                 }
             }
@@ -101,12 +111,18 @@ class ClickerMuteController(
                 if (pressedWithoutToggle) {
                     pressedWithoutToggle = false
                     coughHoldActive = false
+                    pttHoldActive = false
                     return ClickerDecision.CONSUME_NOOP
                 }
                 val heldDuration = now - downAtMs
                 val wasCoughHold = coughHoldActive
+                val wasPttHold = pttHoldActive
                 coughHoldActive = false
-                if (wasCoughHold && config.enablePushToMute && heldDuration >= AppConstants.PUSH_TO_MUTE_HOLD_MS) {
+                pttHoldActive = false
+                if (wasPttHold && config.enablePushToTalk) {
+                    lastToggleAtMs = now
+                    ClickerDecision.CONSUME_PTT_RELEASE_MUTE
+                } else if (wasCoughHold && config.enablePushToMute && heldDuration >= AppConstants.PUSH_TO_MUTE_HOLD_MS) {
                     lastToggleAtMs = now
                     ClickerDecision.CONSUME_COUGH_RELEASE_UNMUTE
                 } else {
@@ -120,6 +136,7 @@ class ClickerMuteController(
     fun resetHoldState() {
         isDownActive = false
         coughHoldActive = false
+        pttHoldActive = false
         pressedWithoutToggle = false
     }
 

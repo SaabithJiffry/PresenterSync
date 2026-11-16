@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 6.6.0
+; Version: 6.7.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 6.6.0.0
+;@Ahk2Exe-SetVersion 6.7.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -25,8 +25,8 @@ SetKeyDelay 50, 50
 
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => (UpdateAutoProfileTimer("", AppState), StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => (UpdateAutoProfileTimer("", AppState), StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+RegisterSelfUpdateBeforeRelaunch((*) => (UpdateAutoProfileTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0, StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => (UpdateAutoProfileTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0, StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSync.ico")
@@ -208,6 +208,8 @@ BuildTrayMenu(cfg, state) {
         if (cfg.HudColorPreset = pName)
             PresetMenu.Check(pName)
     }
+    PresetMenu.Add()
+    PresetMenu.Add("Configure Custom Colors...", ConfigureCustomHudColorsUI.Bind(cfg, state))
     AppearanceMenu.Add("HUD Color Preset", PresetMenu)
 
     AppearanceMenu.Add()
@@ -215,6 +217,29 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("Restore Default Appearance", ApplyResetAppearanceLive.Bind(cfg, state))
 
     A_TrayMenu.Add("Indicator Appearance", AppearanceMenu)
+
+    DirectorMenu := Menu()
+    DirectorMenu.Add("Toggle Standby / `"BRB`" Curtain", (*) => ExecuteHostToggleStandby(cfg, state))
+    if (IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby)
+        DirectorMenu.Check("Toggle Standby / `"BRB`" Curtain")
+    SceneSwitchMenu := Menu()
+    if (IsObject(state) && state.HasOwnProp("sceneList") && IsObject(state.sceneList) && state.sceneList.Length > 0) {
+        for scName in state.sceneList {
+            SceneSwitchMenu.Add(scName, ((s, *) => ExecuteHostSwitchScene(cfg, state, s)).Bind(scName))
+            if (state.HasOwnProp("currentSceneName") && state.currentSceneName == scName)
+                SceneSwitchMenu.Check(scName)
+        }
+    } else {
+        SceneSwitchMenu.Add("Connect OBS for scenes", (*) => 0)
+        SceneSwitchMenu.Disable("Connect OBS for scenes")
+    }
+    DirectorMenu.Add("Switch OBS Scene", SceneSwitchMenu)
+    DirectorMenu.Add("Pause / Resume Recording", (*) => ExecuteHostPauseRecord(cfg, state))
+    DirectorMenu.Add("Split Recording Chapter", (*) => ExecuteHostSplitRecord(cfg, state))
+    DirectorMenu.Add()
+    DirectorMenu.Add("Presenter Countdown Timer", BuildSharedPresenterTimerSubmenu(state, (sec, *) => StartHostPresenterTimer(cfg, state, sec), (*) => PauseHostPresenterTimer(cfg, state), (sec, *) => ResetHostPresenterTimer(cfg, state, sec)))
+    DirectorMenu.Add("Send Stage Nudge...", (*) => PromptSendStageNudgeUI((msg) => BroadcastHostStageNudge(cfg, state, msg, "Primary Host")))
+    A_TrayMenu.Add("OBS Director && Standby", DirectorMenu)
 
     A_TrayMenu.Add()
 
@@ -274,6 +299,9 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Enable Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state))
     if (cfg.EnablePushToMute)
         SettingsMenu.Check("Enable Cough / Push-to-Mute (Hold)")
+    SettingsMenu.Add("Enable Push-to-Talk (Hold to Unmute)", TogglePushToTalk.Bind(cfg, state))
+    if (cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk)
+        SettingsMenu.Check("Enable Push-to-Talk (Hold to Unmute)")
     SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI.Bind(cfg))
     SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
     SettingsMenu.Add()
@@ -876,7 +904,10 @@ TriggerMute(cfg, state, fromHudClick := false) {
 
     inHold := true
     try {
-        if (DispatchHostMuteToggle(cfg, state)) {
+        if (!fromHudClick && cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk) {
+            ExecutePushToTalkHoldCycle(cfg, state, (m) => ExecuteHostRemoteSetMute(cfg, state, m), cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")
+            lastTick := A_TickCount
+        } else if (DispatchHostMuteToggle(cfg, state)) {
             if (!fromHudClick && WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
                 DispatchHostMuteToggle(cfg, state)
                 lastTick := A_TickCount

@@ -142,6 +142,13 @@ _HB_JsonExtractBool(jsonStr, key, defaultVal := false) {
     return defaultVal
 }
 
+_HB_JsonExtractInt(jsonStr, key, defaultVal := 0) {
+    pattern := '"' key '"\s*:\s*(-?\d+)'
+    if (RegExMatch(jsonStr, pattern, &m))
+        return Integer(m[1])
+    return defaultVal
+}
+
 _HB_UrlDecode(str) {
     out := StrReplace(String(str), "+", " ")
     pos := 1
@@ -623,6 +630,13 @@ class HostCompanionBridge {
         if (!this.running)
             return 0
         return this._BroadcastJsonToAuthenticated(this._BuildSyncResyncJson(reason))
+    }
+
+    BroadcastStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B") {
+        if (!this.running)
+            return 0
+        payload := '{"type":"stage_nudge","message":"' _HB_JsonEscape(message) '","sender":"' _HB_JsonEscape(sender) '","accentHex":"' _HB_JsonEscape(accentHex) '","timestamp":' A_TickCount '}'
+        return this._BroadcastJsonToAuthenticated(payload)
     }
 
     _BroadcastJsonToAuthenticated(payload) {
@@ -1402,6 +1416,41 @@ class HostCompanionBridge {
                 ok := ExecuteHostToggleRecord(this.cfg, this.state)
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_record","ok":' (ok ? "true" : "false") '}')
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "pause_record":
+                ok := ExecuteHostPauseRecord(this.cfg, this.state)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"pause_record","ok":' (ok ? "true" : "false") '}')
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "split_record":
+                ok := ExecuteHostSplitRecord(this.cfg, this.state)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"split_record","ok":' (ok ? "true" : "false") '}')
+            case "switch_scene":
+                sName := _HB_JsonExtractStr(msg, "sceneName")
+                ok := ExecuteHostSwitchScene(this.cfg, this.state, sName)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"switch_scene","ok":' (ok ? "true" : "false") '}')
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "toggle_standby":
+                ok := ExecuteHostToggleStandby(this.cfg, this.state)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_standby","ok":' (ok ? "true" : "false") '}')
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "timer_start":
+                dur := _HB_JsonExtractInt(msg, "durationSec", 0)
+                ok := StartHostPresenterTimer(this.cfg, this.state, dur)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"timer_start","ok":' (ok ? "true" : "false") '}')
+            case "timer_pause":
+                ok := PauseHostPresenterTimer(this.cfg, this.state)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"timer_pause","ok":' (ok ? "true" : "false") '}')
+            case "timer_reset":
+                dur := _HB_JsonExtractInt(msg, "durationSec", 0)
+                ok := ResetHostPresenterTimer(this.cfg, this.state, dur)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"timer_reset","ok":' (ok ? "true" : "false") '}')
+            case "stage_nudge":
+                nMsg := _HB_JsonExtractStr(msg, "message")
+                nSnd := _HB_JsonExtractStr(msg, "sender")
+                nAcc := _HB_JsonExtractStr(msg, "accentHex")
+                if (nSnd = "")
+                    nSnd := (c.deviceName != "") ? c.deviceName : "Remote"
+                ok := BroadcastHostStageNudge(this.cfg, this.state, nMsg, nSnd, nAcc != "" ? nAcc : "F59E0B")
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"stage_nudge","ok":' (ok ? "true" : "false") '}')
             case "sync_req":
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "ping":
@@ -1422,8 +1471,21 @@ class HostCompanionBridge {
         streamWarnStr := (this.state.HasOwnProp("streamState") && this.state.streamState == 2) ? "true" : "false"
         voiceMutedStr := (this.state.HasOwnProp("voiceWhileMuted") && this.state.voiceWhileMuted) ? "true" : "false"
         obsConnStr := (this.state.HasOwnProp("obsConnected") && this.state.obsConnected) ? "true" : "false"
+        activeScene := this.state.HasOwnProp("currentSceneName") ? String(this.state.currentSceneName) : "Scene"
+        scenesJson := "["
+        if (this.state.HasOwnProp("sceneList") && IsObject(this.state.sceneList)) {
+            for idx, scName in this.state.sceneList {
+                scenesJson .= (idx > 1 ? "," : "") '"' _HB_JsonEscape(scName) '"'
+            }
+        }
+        scenesJson .= "]"
+        standbyStr := (this.state.HasOwnProp("isStandby") && this.state.isStandby) ? "true" : "false"
+        standbyScene := (this.cfg.HasOwnProp("StandbySceneName") && this.cfg.StandbySceneName != "") ? String(this.cfg.StandbySceneName) : "BRB"
+        tState := this.state.HasOwnProp("timerState") ? String(this.state.timerState) : "stopped"
+        tRem := this.state.HasOwnProp("timerRemainingSec") ? Integer(this.state.timerRemainingSec) : 600
+        tPre := this.state.HasOwnProp("timerPresetSec") ? Integer(this.state.timerPresetSec) : 600
         hostUuid := EnsureHostUuid(this.cfg)
-        return '"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","recState":' recSt ',"recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount
+        return '"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","recState":' recSt ',"recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount
     }
 
     _BuildMuteStateJson() {
@@ -1548,6 +1610,13 @@ HostBridgeBroadcastMuteState(cfg, state) {
     return 0
 }
 
+HostBridgeBroadcastStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B") {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.BroadcastStageNudge(cfg, state, message, sender, accentHex)
+    return 0
+}
+
 HostBridgeBroadcastCloseRemote() {
     global g_HostCompanionBridge
     if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
@@ -1653,6 +1722,9 @@ BuildHostPairingUri(cfg, candidateIps := "") {
     netMode := (IsObject(cfg) && cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet") ? "internet" : "lan"
     rc := (IsObject(cfg) && cfg.HasOwnProp("InternetPairingCode")) ? cfg.InternetPairingCode : ""
     uuid := EnsureHostUuid(cfg)
+    preset := (IsObject(cfg) && cfg.HasOwnProp("HudColorPreset")) ? cfg.HudColorPreset : "Standard"
+    cLive := (IsObject(cfg) && cfg.HasOwnProp("CustomLiveHex")) ? cfg.CustomLiveHex : "107C10"
+    cMuted := (IsObject(cfg) && cfg.HasOwnProp("CustomMutedHex")) ? cfg.CustomMutedHex : "C42B1C"
 
     uri := "presentersync://connect?hosts=" UriEncodeComponent(hostStr)
         . "&port=" obsPort
@@ -1666,6 +1738,12 @@ BuildHostPairingUri(cfg, candidateIps := "") {
         uri .= "&pw=" UriEncodeComponent(obsPw)
     if (rc != "")
         uri .= "&rc=" UriEncodeComponent(rc)
+    if (preset != "" && preset != "Standard")
+        uri .= "&preset=" UriEncodeComponent(preset)
+    if (cLive != "")
+        uri .= "&clh=" UriEncodeComponent(cLive)
+    if (cMuted != "")
+        uri .= "&cmh=" UriEncodeComponent(cMuted)
     return uri
 }
 

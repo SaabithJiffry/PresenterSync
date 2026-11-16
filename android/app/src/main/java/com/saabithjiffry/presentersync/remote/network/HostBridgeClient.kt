@@ -6,13 +6,21 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class BridgeTelemetryState(
     val recState: Int = 0,
     val recSeconds: Int = 0,
     val streamDropWarn: Boolean = false,
-    val voiceWhileMuted: Boolean = false
+    val voiceWhileMuted: Boolean = false,
+    val activeScene: String = "Scene",
+    val scenes: List<String> = emptyList(),
+    val isStandby: Boolean = false,
+    val standbyScene: String = "BRB",
+    val timerState: String = "stopped",
+    val timerRemainingSec: Int = 600,
+    val timerPresetSec: Int = 600
 )
 
 interface HostBridgeCallbacks {
@@ -21,6 +29,7 @@ interface HostBridgeCallbacks {
     fun onBridgeAuthFailed(reason: String)
     fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String)
     fun onTelemetryChanged(telemetry: BridgeTelemetryState) {}
+    fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {}
     fun onSyncResync(reason: String, hostUuid: String) {}
     fun onCloseRemoteSignal()
     fun onBridgeDisconnected(reason: String)
@@ -105,11 +114,25 @@ class HostBridgeClient(
                         val muted = obj.optBoolean("isMuted", false)
                         val mode = obj.optInt("routingMode", 0)
                         val mic = obj.optString("targetMicName", "")
+                        val scenesList = buildList {
+                            val arr = obj.optJSONArray("scenes") ?: JSONArray()
+                            for (idx in 0 until arr.length()) {
+                                val s = arr.optString(idx, "").trim()
+                                if (s.isNotEmpty()) add(s)
+                            }
+                        }
                         val telemetry = BridgeTelemetryState(
                             recState = obj.optInt("recState", 0),
                             recSeconds = obj.optInt("recSeconds", 0).coerceAtLeast(0),
                             streamDropWarn = obj.optBoolean("streamDropWarn", false),
-                            voiceWhileMuted = obj.optBoolean("voiceWhileMuted", false)
+                            voiceWhileMuted = obj.optBoolean("voiceWhileMuted", false),
+                            activeScene = obj.optString("activeScene", "Scene").ifBlank { "Scene" },
+                            scenes = scenesList,
+                            isStandby = obj.optBoolean("isStandby", false),
+                            standbyScene = obj.optString("standbyScene", "BRB").ifBlank { "BRB" },
+                            timerState = obj.optString("timerState", "stopped").ifBlank { "stopped" },
+                            timerRemainingSec = obj.optInt("timerRemainingSec", 600),
+                            timerPresetSec = obj.optInt("timerPresetSec", 600).coerceAtLeast(60)
                         )
                         callbacks.onMuteStateChanged(muted, mode, mic)
                         callbacks.onTelemetryChanged(telemetry)
@@ -118,6 +141,14 @@ class HostBridgeClient(
                                 obj.optString("reason", "resync"),
                                 obj.optString("hostUuid", "").trim()
                             )
+                        }
+                    }
+                    "stage_nudge" -> {
+                        val nMsg = obj.optString("message", "").trim()
+                        val nSender = obj.optString("sender", "Stage").ifBlank { "Stage" }
+                        val nAccent = obj.optString("accentHex", "F59E0B").ifBlank { "F59E0B" }
+                        if (nMsg.isNotEmpty()) {
+                            callbacks.onStageNudgeReceived(nMsg, nSender, nAccent)
                         }
                     }
                     "close_remote" -> {
@@ -164,6 +195,51 @@ class HostBridgeClient(
     fun sendPptPrev(source: String = "quick_menu"): Boolean = sendDeviceAction("ppt_prev", source)
 
     fun sendToggleRecord(source: String = "quick_menu"): Boolean = sendDeviceAction("toggle_record", source)
+
+    fun sendPauseRecord(source: String = "quick_menu"): Boolean = sendDeviceAction("pause_record", source)
+
+    fun sendSplitRecord(source: String = "quick_menu"): Boolean = sendDeviceAction("split_record", source)
+
+    fun sendToggleStandby(source: String = "quick_menu"): Boolean = sendDeviceAction("toggle_standby", source)
+
+    fun sendSwitchScene(sceneName: String, source: String = "director"): Boolean {
+        val clean = sceneName.trim()
+        if (!authenticated || clean.isEmpty()) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "switch_scene")
+            put("sceneName", clean)
+            put("deviceId", deviceId)
+            put("source", source)
+        }.toString()
+        return ws.send(payload)
+    }
+
+    fun sendTimerCommand(action: String, durationSec: Int = 0, source: String = "director"): Boolean {
+        if (!authenticated) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", action)
+            if (durationSec > 0) put("durationSec", durationSec)
+            put("deviceId", deviceId)
+            put("source", source)
+        }.toString()
+        return ws.send(payload)
+    }
+
+    fun sendStageNudge(message: String, sender: String = deviceName, accentHex: String = "F59E0B"): Boolean {
+        val clean = message.trim()
+        if (!authenticated || clean.isEmpty()) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "stage_nudge")
+            put("message", clean.take(140))
+            put("sender", sender.ifBlank { deviceName })
+            put("accentHex", accentHex)
+            put("deviceId", deviceId)
+        }.toString()
+        return ws.send(payload)
+    }
 
     private fun sendDeviceAction(type: String, source: String): Boolean {
         if (!authenticated) return false

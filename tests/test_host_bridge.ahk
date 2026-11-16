@@ -87,6 +87,13 @@ st := {
     recElapsedSec: 0,
     streamState: 0,
     voiceWhileMuted: false,
+    currentSceneName: "Main",
+    sceneList: ["Main", "Slides", "BRB"],
+    isStandby: false,
+    timerState: "stopped",
+    timerRemainingSec: 600,
+    timerPresetSec: 600,
+    suppressNudgeBanners: true,
     pptNextFn: (*) => (mockPptEvents.Push("next"), true),
     pptPrevFn: (*) => (mockPptEvents.Push("prev"), true)
 }
@@ -134,6 +141,8 @@ if (serveMode) {
             mockObsSent.Length := 0
             mockPptEvents.Length := 0
             FileAppend("ok", readyPath ".rec_ready", "UTF-8")
+        } else if (cmd = "EMIT_NUDGE") {
+            BroadcastHostStageNudge(cfg, st, "2 minutes remaining", "Director", "F59E0B")
         } else if (cmd = "EMIT_TELEMETRY") {
             st.recState := 1
             st.recElapsedSec := 95
@@ -149,15 +158,24 @@ if (serveMode) {
             FileAppend("resumed:" bridge.boundTcpPort ":" bridge.boundDiscoverPort, readyPath ".power", "UTF-8")
         } else if (cmd = "DUMP_EVENTS") {
             hasRec := false
+            hasSwitchScene := false
+            hasPauseRec := false
+            hasSplitRec := false
             for pkt in mockObsSent {
-                if (InStr(pkt, "ToggleRecord"))
+                if (InStr(pkt, "ToggleRecordPause"))
+                    hasPauseRec := true
+                else if (InStr(pkt, "ToggleRecord"))
                     hasRec := true
+                if (InStr(pkt, "SetCurrentProgramScene"))
+                    hasSwitchScene := true
+                if (InStr(pkt, "SplitRecordFile"))
+                    hasSplitRec := true
             }
             pptStr := ""
             for idx, ev in mockPptEvents
                 pptStr .= (idx > 1 ? "," : "") ev
             try FileDelete(readyPath ".events")
-            FileAppend('{"ppt":"' pptStr '","obsCount":' mockObsSent.Length ',"hasToggleRecord":' (hasRec ? "true" : "false") '}', readyPath ".events", "UTF-8")
+            FileAppend('{"ppt":"' pptStr '","obsCount":' mockObsSent.Length ',"hasToggleRecord":' (hasRec ? "true" : "false") ',"hasSwitchScene":' (hasSwitchScene ? "true" : "false") ',"hasPauseRec":' (hasPauseRec ? "true" : "false") ',"hasSplitRec":' (hasSplitRec ? "true" : "false") ',"activeScene":"' st.currentSceneName '","isStandby":' (st.isStandby ? "true" : "false") ',"timerState":"' st.timerState '"}', readyPath ".events", "UTF-8")
         } else if (cmd = "STOP") {
             ExitApp(0)
         }

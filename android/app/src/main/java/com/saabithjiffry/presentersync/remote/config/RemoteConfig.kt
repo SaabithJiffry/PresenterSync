@@ -133,6 +133,7 @@ data class RemoteConfig(
     val hwMuteHotkey: String = "KEYCODE_B",
     val enablePointerMute: Boolean = true,
     val enablePushToMute: Boolean = false,
+    val enablePushToTalk: Boolean = false,
     val toggleMuteShortcut: String = "Ctrl+F12",
     val exitShortcut: String = "Alt+Shift+F12",
     val hotkeysSuspended: Boolean = false,
@@ -140,6 +141,8 @@ data class RemoteConfig(
     val showIndicator: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val hudColorPreset: String = "Standard",
+    val customLiveHex: String = "#107C10",
+    val customMutedHex: String = "#C42B1C",
     val showText: Boolean = false,
     val monoIcon: Boolean = false,
     val sleekCorners: Boolean = false,
@@ -225,6 +228,8 @@ class RemoteConfigStore(context: Context) {
         val veryLongPress = prefs.getString("veryLongPressAction", null)?.let { BubbleGestureAction.fromRaw(it) }
             ?: BubbleGestureAction.NONE
 
+        val rawPtm = prefs.getBoolean("enablePushToMute", false)
+        val rawPtt = prefs.getBoolean("enablePushToTalk", false)
         return RemoteConfig(
             networkMode = NetworkMode.fromRaw(prefs.getString("networkMode", "LAN")),
             enableRelayFallback = prefs.getBoolean("enableRelayFallback", true),
@@ -240,13 +245,16 @@ class RemoteConfigStore(context: Context) {
             heartbeatSeconds = validHb,
             hwMuteHotkey = prefs.getString("hwMuteHotkey", "KEYCODE_B").orEmpty().ifBlank { "KEYCODE_B" },
             enablePointerMute = prefs.getBoolean("enablePointerMute", true),
-            enablePushToMute = prefs.getBoolean("enablePushToMute", false),
+            enablePushToMute = if (rawPtt) false else rawPtm,
+            enablePushToTalk = rawPtt,
             toggleMuteShortcut = prefs.getString("toggleMuteShortcut", "Ctrl+F12").orEmpty().ifBlank { "Ctrl+F12" },
             exitShortcut = prefs.getString("exitShortcut", "Alt+Shift+F12").orEmpty().ifBlank { "Alt+Shift+F12" },
             hotkeysSuspended = prefs.getBoolean("hotkeysSuspended", false),
             showIndicator = prefs.getBoolean("showIndicator", true),
             themeMode = ThemeMode.fromRaw(prefs.getString("themeMode", "System")),
             hudColorPreset = HudColorPalettes.normalize(prefs.getString("hudColorPreset", "Standard").orEmpty()),
+            customLiveHex = HudColorPalettes.normalizeColorHex(prefs.getString("customLiveHex", "#107C10").orEmpty(), "#107C10"),
+            customMutedHex = HudColorPalettes.normalizeColorHex(prefs.getString("customMutedHex", "#C42B1C").orEmpty(), "#C42B1C"),
             showText = prefs.getBoolean("showText", false),
             monoIcon = prefs.getBoolean("monoIcon", false),
             sleekCorners = prefs.getBoolean("sleekCorners", false),
@@ -389,7 +397,9 @@ class RemoteConfigStore(context: Context) {
             opacityLevel = AppConstants.OPACITY_FROSTED,
             indicatorScale = 1.0f,
             themeMode = ThemeMode.SYSTEM,
-            hudColorPreset = "Standard"
+            hudColorPreset = "Standard",
+            customLiveHex = "#107C10",
+            customMutedHex = "#C42B1C"
         )
     }
 
@@ -482,12 +492,15 @@ class RemoteConfigStore(context: Context) {
             .putString("hwMuteHotkey", c.hwMuteHotkey)
             .putBoolean("enablePointerMute", c.enablePointerMute)
             .putBoolean("enablePushToMute", c.enablePushToMute)
+            .putBoolean("enablePushToTalk", c.enablePushToTalk)
             .putString("toggleMuteShortcut", c.toggleMuteShortcut)
             .putString("exitShortcut", c.exitShortcut)
             .putBoolean("hotkeysSuspended", c.hotkeysSuspended)
             .putBoolean("showIndicator", c.showIndicator)
             .putString("themeMode", c.themeMode.label)
             .putString("hudColorPreset", c.hudColorPreset)
+            .putString("customLiveHex", HudColorPalettes.normalizeColorHex(c.customLiveHex, "#107C10"))
+            .putString("customMutedHex", HudColorPalettes.normalizeColorHex(c.customMutedHex, "#C42B1C"))
             .putBoolean("showText", c.showText)
             .putBoolean("monoIcon", c.monoIcon)
             .putBoolean("sleekCorners", c.sleekCorners)

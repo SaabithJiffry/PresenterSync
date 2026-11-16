@@ -172,9 +172,12 @@ ParseRemotePairingUri(rawUri) {
     modeRaw := params.Has("mode") ? StrLower(params["mode"]) : "lan"
     hostVal := params.Has("hosts") ? params["hosts"] : (params.Has("host") ? params["host"] : "")
     portVal := params.Has("port") ? params["port"] : "4455"
-    bPortVal := params.Has("bridgeport") ? params["bridgeport"] : "4456"
+    bPortVal := params.Has("bp") ? params["bp"] : (params.Has("bridgeport") ? params["bridgeport"] : "4456")
     codeVal := params.Has("code") ? params["code"] : (params.Has("session") ? params["session"] : "")
-    inetCode := params.Has("pair") ? params["pair"] : (params.Has("internet") ? params["internet"] : (params.Has("internetcode") ? params["internetcode"] : ""))
+    inetCode := params.Has("rc") ? params["rc"] : (params.Has("pair") ? params["pair"] : (params.Has("internet") ? params["internet"] : (params.Has("internetcode") ? params["internetcode"] : "")))
+    presetVal := params.Has("preset") ? Trim(params["preset"]) : ""
+    clhVal := params.Has("clh") ? Trim(params["clh"]) : (params.Has("livehex") ? Trim(params["livehex"]) : "")
+    cmhVal := params.Has("cmh") ? Trim(params["cmh"]) : (params.Has("mutedhex") ? Trim(params["mutedhex"]) : "")
 
     return {
         networkMode: (modeRaw = "internet" || modeRaw = "wan") ? "Internet" : "LAN",
@@ -185,7 +188,10 @@ ParseRemotePairingUri(rawUri) {
         obsPassword: params.Has("pw") ? params["pw"] : "",
         targetMicName: params.Has("mic") && params["mic"] != "" ? params["mic"] : "Mic/Aux",
         internetPairingCode: inetCode,
-        hostUuid: params.Has("uuid") ? Trim(params["uuid"]) : ""
+        hostUuid: params.Has("uuid") ? Trim(params["uuid"]) : "",
+        hudColorPreset: presetVal,
+        customLiveHex: clhVal,
+        customMutedHex: cmhVal
     }
 }
 
@@ -722,6 +728,22 @@ BuildRemoteBridgeDeckJson(cfg, actionType) {
     return '{"type":"' _RBC_JsonEscape(actionType) '","deviceId":"' _RBC_JsonEscape(devId) '","source":"tray"}'
 }
 
+BuildRemoteBridgeSceneJson(cfg, sceneName) {
+    devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
+    return '{"type":"switch_scene","sceneName":"' _RBC_JsonEscape(sceneName) '","deviceId":"' _RBC_JsonEscape(devId) '","source":"tray"}'
+}
+
+BuildRemoteBridgeTimerJson(cfg, action, durationSec := 0) {
+    devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
+    return '{"type":"' _RBC_JsonEscape(action) '","durationSec":' Integer(durationSec) ',"deviceId":"' _RBC_JsonEscape(devId) '","source":"tray"}'
+}
+
+BuildRemoteBridgeNudgeJson(cfg, message, sender := "", accentHex := "F59E0B") {
+    devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
+    snd := (Trim(String(sender)) != "") ? Trim(String(sender)) : GetRemoteDisplayDeviceName(cfg)
+    return '{"type":"stage_nudge","message":"' _RBC_JsonEscape(message) '","sender":"' _RBC_JsonEscape(snd) '","accentHex":"' _RBC_JsonEscape(accentHex) '","deviceId":"' _RBC_JsonEscape(devId) '"}'
+}
+
 ParseHostBridgeWsEvent(rawText) {
     t := _RBC_JsonGetStr(rawText, "type")
     if (t = "")
@@ -736,6 +758,16 @@ ParseHostBridgeWsEvent(rawText) {
         recSeconds: _RBC_JsonGetInt(rawText, "recSeconds", 0),
         streamDropWarn: _RBC_JsonGetBool(rawText, "streamDropWarn", false),
         voiceWhileMuted: _RBC_JsonGetBool(rawText, "voiceWhileMuted", false),
+        activeScene: _RBC_JsonGetStr(rawText, "activeScene"),
+        scenes: _RBC_JsonGetStrArray(rawText, "scenes"),
+        isStandby: _RBC_JsonGetBool(rawText, "isStandby", false),
+        standbyScene: _RBC_JsonGetStr(rawText, "standbyScene"),
+        timerState: _RBC_JsonGetStr(rawText, "timerState"),
+        timerRemainingSec: _RBC_JsonGetInt(rawText, "timerRemainingSec", 600),
+        timerPresetSec: _RBC_JsonGetInt(rawText, "timerPresetSec", 600),
+        message: _RBC_JsonGetStr(rawText, "message"),
+        sender: _RBC_JsonGetStr(rawText, "sender"),
+        accentHex: _RBC_JsonGetStr(rawText, "accentHex"),
         hostUuid: _RBC_JsonGetStr(rawText, "hostUuid"),
         hostName: _RBC_JsonGetStr(rawText, "hostName"),
         reason: _RBC_JsonGetStr(rawText, "reason"),
