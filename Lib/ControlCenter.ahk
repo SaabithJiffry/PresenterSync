@@ -1,4 +1,4 @@
-﻿; ==============================================================================
+; ==============================================================================
 ; Module: ControlCenter.ahk
 ; Description: Tabbed Control Center UI, Help/About/Pointer dialogs, Profiles & Diagnostics
 ; ==============================================================================
@@ -392,10 +392,10 @@ ShowHelpWindow(cfg, state := "", *) {
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x238 y122 w572 h206", scCol2), "Text", "tabText")
 
     shortcutNotes := "HOW SHORTCUTS WORK`r`n"
-        . "â€¢ Hardware Clicker Mute Button: Works in Full PPT + Mute and Pointer Mute Only modes, protected by a 150ms hardware debounce and automatic pause while any PresenterSync settings window is active.`r`n"
-        . "â€¢ Mutual Exclusion Shield: Binding PgDn, Esc, Tab, or F5 as your Clicker Mute Button automatically excludes it from PowerPoint slide forwarding so one button press never changes a slide AND mutes at once.`r`n"
-        . "â€¢ Fallback Shortcuts (OBS / Zoom / Teams / Meet): Fired automatically when OBS WebSocket Sync is disabled (Mode 1 / 3) or when syncing Conferencing mute in Mode 2 / Mode 3.`r`n"
-        . "â€¢ Disable Any Key: Clear a shortcut box or enter 'None' to leave it unbound."
+        . "• Hardware Clicker Mute Button: Works in Full PPT + Mute and Pointer Mute Only modes, protected by a 150ms hardware debounce and automatic pause while any PresenterSync settings window is active.`r`n"
+        . "• Mutual Exclusion Shield: Binding PgDn, Esc, Tab, or F5 as your Clicker Mute Button automatically excludes it from PowerPoint slide forwarding so one button press never changes a slide AND mutes at once.`r`n"
+        . "• Fallback Shortcuts (OBS / Zoom / Teams / Meet): Fired automatically when OBS WebSocket Sync is disabled (Mode 1 / 3) or when syncing Conferencing mute in Mode 2 / Mode 3.`r`n"
+        . "• Disable Any Key: Clear a shortcut box or enter 'None' to leave it unbound."
     AddHelpGuideEdit(helpGui, 30, 336, 780, 152, shortcutNotes)
 
     btnAppHk := helpGui.Add("Button", "x30 y498 w186 h34", "Edit App Shortcuts")
@@ -601,12 +601,12 @@ ShowAboutWindow(cfg := "", state := "", *) {
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
     primCapsText := "Full presenter host suite engineered for live lecturing, streaming & hybrid classrooms.`r`n`r`n"
         . "CORE PRIMARY HOST CAPABILITIES:`r`n"
-        . "â€¢ 4-Tier Live HUD Stack: Mic + live CoreAudio VU bar, Rec, Conf Chat, Studio Mode, Scene, Stream & Virtual Cam pills with 0.25x-5.0x scale.`r`n"
-        . "â€¢ 3 Audio Routing Modes: (1) Pro OBS VB-Cable, (2) Direct Mic Conferencing-Only, (3) Dual App Sync across Zoom, MS Teams & Google Meet.`r`n"
-        . "â€¢ Hardware Clicker Control: Dedicated Mute Button routing, Cough Hold (>= 350ms), Mutual Exclusion Shield, PowerPoint forwarding & Tester.`r`n"
-        . "â€¢ Remote Companion Host: Streams synced HUD state to Windows & Android Smart Board companions via live QR code, LAN Session Code (:4456) or WAN Relay.`r`n"
-        . "â€¢ Visuals & Ergonomics: Dark/Light/System themes, Solid/Frosted/Ghost opacity, 5 palettes, Mono icons, 14px Magnetic Snap, Auto-Dodge & Click-Through.`r`n"
-        . "â€¢ Control Center & Profiles: Unified settings hub, interactive searchable Help Guide, saved workflow profiles & GitHub auto-update checker."
+        . Chr(0x2022) " 4-Tier Live HUD Stack & Secondary Mic Pill: Mic (w/ CoreAudio VU bar), Rec, Conf Chat, Studio Mode, Scene, Stream & VCam pills, plus toggleable primary-only Secondary Mic Pill (0.25x-5.0x scale).`r`n"
+        . Chr(0x2022) " Director Deck, Standby BRB, Countdown Timer & Stage Nudge: Multi-device OBS scenes, chapter split/pause, synchronized timer, silent floating alerts & Push-to-Talk mode.`r`n"
+        . Chr(0x2022) " Session Timeline & Chapter Export: Bounded 2,000-entry timeline exporting to Video Editor CSV chapters, Markdown tables & YouTube timestamps.`r`n"
+        . Chr(0x2022) " 3 Audio Routing Modes & Clicker Control: OBS VB-Cable, Direct Conf (Zoom/Teams/Meet) & Dual Sync + Cough Hold, Mutual Exclusion Shield & PowerPoint forwarding.`r`n"
+        . Chr(0x2022) " Remote Companion Host (UDP :4457, Bridge :4456 & WAN Relay): Zero-config LAN discovery, mDNS failover & Internet Pairing across Windows & Android Smart Board/Phone clients.`r`n"
+        . Chr(0x2022) " Custom Hex Colors, Control Center, Guided Setup Wizard, Named App-Trigger Profiles & SHA-256 GitHub Self-Updater."
     AddHelpGuideEdit(aboutGui, 20, 214, 430, 224, primCapsText)
 
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)

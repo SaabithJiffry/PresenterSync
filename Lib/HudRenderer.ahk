@@ -1,4 +1,4 @@
-﻿; ==============================================================================
+; ==============================================================================
 ; Module: HudRenderer.ahk
 ; Description: Layered GDI+ HUD rendering, Secondary Mic Pill, Animations, Snap & Auto-Dodge
 ; ==============================================================================
@@ -893,7 +893,7 @@ PromptSendStageNudgeUI(onSendFn) {
         Theme.RegisterControl(g, btn, "Button")
     b1.OnEvent("Click", (*) => DispatchAndClose("Please slow down a touch"))
     b2.OnEvent("Click", (*) => DispatchAndClose("Check meeting chat question"))
-    b3.OnEvent("Click", (*) => DispatchAndClose("2 minutes left â€” wrap up"))
+    b3.OnEvent("Click", (*) => DispatchAndClose("2 minutes left — wrap up"))
     b4.OnEvent("Click", (*) => DispatchAndClose("Camera is LIVE"))
 
     edMsg := g.Add("Edit", "xm y+12 w360")

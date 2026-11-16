@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 6.9.1
+; Version: 7.0.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 6.9.1.0
+;@Ahk2Exe-SetVersion 7.0.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -2078,12 +2078,13 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
     remCapsText := "Streamlined companion engineered strictly for Smart Boards & secondary PCs.`r`n`r`n"
         . "WHAT REMOTE INCLUDES:`r`n"
         . "• Dedicated 1-Tier LIVE / MUTED Mic HUD: Syncs via OBS WebSocket v5 (Port 4455) OR Mode 2 Host Relay Bridge (Conferencing-Only setup).`r`n"
-        . "• Dual Network Failover: Same Router (LAN mDNS + multi-IP failover) or Different Networks (Internet Pairing Code PS-XXXX-XXXX) with safe heartbeat.`r`n"
-        . "• Secondary Clicker Control: Assign mute button, Cough Hold (>= 350ms), local Clicker Tester & Ctrl+F12 arming toggle.`r`n"
-        . "• Large-Board Visuals: 0.25x-5.0x scale, Dark/Light/System theme, 5 color palettes, text label, monochrome icons, pulse, cue & toast.`r`n"
-        . "• Smart Ergonomics & System: 14px Magnetic Snap, Auto-Dodge hover ghost, Click-Through (hold Alt), Startup (OFF by default) & Updates.`r`n`r`n"
+        . "• Host Deck Control (Bridge): Remote Scene switching, Standby / `"BRB`" Curtain, Host Recording controls, Countdown Timer & Stage Nudge.`r`n"
+        . "• Zero-Config LAN & WAN Discovery: Scan Classroom LAN (UDP :4457 + mDNS failover) or Internet Pairing Code PS-XXXX-XXXX with safe heartbeat.`r`n"
+        . "• Clicker & Mic Modes: Assign mute button, Cough Hold (Push-to-Mute >= 350ms), Push-to-Talk (hold to unmute), Clicker Tester & Ctrl+F12.`r`n"
+        . "• Large-Board Visuals & Themes: 0.25x-5.0x scale, Dark/Light/System theme, 5 palettes + Custom Hex colors, monochrome icons, pulse & toast.`r`n"
+        . "• Smart Ergonomics & System: 14px Magnetic Snap, Auto-Dodge hover ghost, Click-Through (hold Alt), Startup (OFF by default) & SHA-256 Updates.`r`n`r`n"
         . "STREAMLINED BY DESIGN (HOST-ONLY MODULES OMITTED):`r`n"
-        . "• Omits multi-tier overlay panels, CoreAudio voice bar, UIA meeting monitoring, Control Center, Setup Wizard, and PowerPoint forwarding."
+        . "• Omits multi-tier overlay panels, secondary desktop pills, CoreAudio voice bar, UIA meeting monitoring, Control Center, Setup Wizard, and PowerPoint forwarding."
     AddHelpGuideEdit(aboutGui, 20, 214, 430, 214, remCapsText)
 
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)

@@ -1,4 +1,4 @@
-﻿package com.saabithjiffry.presentersync.remote.ui.screens
+package com.saabithjiffry.presentersync.remote.ui.screens
 
 import android.content.Intent
 import android.net.Uri

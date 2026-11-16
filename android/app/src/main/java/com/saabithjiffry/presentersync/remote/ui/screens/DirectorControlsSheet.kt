@@ -1,4 +1,4 @@
-﻿package com.saabithjiffry.presentersync.remote.ui.screens
+package com.saabithjiffry.presentersync.remote.ui.screens
 
 import android.Manifest
 import android.content.Intent
@@ -155,7 +155,7 @@ internal fun DirectorDeckAndTimerCard(
                     )
                     Text(
                         text = if (conn.isStandby) {
-                            "Standby Active (${conn.standbyScene}) â€¢ Mic Muted"
+                            "Standby Active (${conn.standbyScene}) • Mic Muted"
                         } else {
                             "Live Scene: ${conn.activeScene}"
                         },

@@ -1,4 +1,4 @@
-﻿; ==============================================================================
+; ==============================================================================
 ; Module: GUI_Config.ahk
 ; Description: UIConstants, Config & OverlayState classes, Settings GUIs, HUD layout & animations
 ; ==============================================================================
@@ -10,7 +10,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "6.9.1"
+    static APP_VERSION := "7.0.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168

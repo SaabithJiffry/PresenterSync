@@ -198,6 +198,30 @@ private val HELP_TOPICS = listOf(
         "Open Pointer & Keys tab to test USB/BT presenter keycodes in-app or configure focused-window mute & cough-hold keys."
     ),
     HelpTopic(
+        "Connection",
+        "Zero-Config Classroom UDP Discovery (:4457) & LAN/WAN Failover",
+        "Auto-discover classroom hosts without typing IPs and auto-follow DHCP IP shifts.",
+        "Tap 'Scan Classroom' in Guided Setup Wizard or Connection Setup to detect PresenterSync Host beacons broadcast on UDP :4457. Paired hostUuid lets Remotes automatically follow IP changes or switch smoothly between LAN and WAN Relay (PS-XXXX-XXXX)."
+    ),
+    HelpTopic(
+        "Connection",
+        "Guided First-Run Setup Wizard",
+        "Step-by-step checklist for permissions, Classroom pairing & HUD verification.",
+        "Automatically greets new installs on Status & HUD (or open anytime via 'Guided Setup Wizard' button). Verifies Display Over Other Apps, API 33+ Notifications, Classroom LAN scan / QR pairing, and 1-tap Floating HUD test."
+    ),
+    HelpTopic(
+        "Director Deck",
+        "OBS Scenes, Split Chapter, Standby BRB, Countdown Timer & Stage Nudge",
+        "Control scene transitions, split recording markers, standby curtain & presenter countdowns.",
+        "Use the Director Deck card on Status & HUD (or Long-Press / Double-Tap Quick Menu) to switch OBS scenes, Pause or Split recording, toggle Standby BRB, start 5/10/15/45m synchronized timers, or send unobtrusive Stage Nudges to the host."
+    ),
+    HelpTopic(
+        "Floating HUD",
+        "Push-to-Talk Mode & Custom Hex Theme Colors",
+        "Hold pill to speak while muted by default, and customize #RRGGBB live/muted colors.",
+        "Enable Push-to-Talk in Pointer & Keys so your mic stays MUTED until holding down the floating pill (or clicker hotkey) >= 300ms. Open HUD Style to customize Custom Live Hex & Custom Muted Hex colors with automatic contrast."
+    ),
+    HelpTopic(
         "Troubleshooting",
         "Session Locked After 5 Wrong Codes / Wrong Password",
         "Primary Host protects Session Codes with a 30s rate limit.",
