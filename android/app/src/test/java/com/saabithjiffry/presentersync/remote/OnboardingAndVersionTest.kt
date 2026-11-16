@@ -14,8 +14,8 @@ import org.junit.Test
 class OnboardingAndVersionTest {
 
     @Test
-    fun activeAppVersionMatchesMilestone8() {
-        assertEquals("6.8.0", AppConstants.APP_VERSION)
+    fun activeAppVersionMatchesMilestone9() {
+        assertEquals("6.9.0", AppConstants.APP_VERSION)
     }
 
     @Test
