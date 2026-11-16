@@ -36,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
@@ -84,6 +85,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -317,7 +319,8 @@ private fun RemoteDashboardScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    var showConnectionDialog by rememberSaveable { mutableStateOf(cfg.firstRun) }
+    var showSetupWizard by rememberSaveable { mutableStateOf(cfg.firstRun) }
+    var showConnectionDialog by rememberSaveable { mutableStateOf(false) }
     var showQuickQrScanner by rememberSaveable { mutableStateOf(false) }
     var showHelpDialog by rememberSaveable { mutableStateOf(false) }
     var showAboutDialog by rememberSaveable { mutableStateOf(false) }
@@ -489,6 +492,63 @@ private fun RemoteDashboardScreen(
                 ) {
                     UpdateReadyInlineBanner(app = app)
 
+                    if (showSetupWizard) {
+                        OnboardingWizardCard(
+                            cfg = cfg,
+                            conn = conn,
+                            hasOverlayPerm = hasOverlayPerm,
+                            hasNotifPerm = hasNotifPerm,
+                            formFactor = formFactor,
+                            onRequestOverlayPermission = onRequestOverlayPermission,
+                            onRequestNotificationPermission = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    hasNotifPerm = true
+                                }
+                            },
+                            onScanClassroomHosts = { app.connectionManager.scanClassroomHosts(1400L) },
+                            onSelectDiscoveredHost = { host ->
+                                app.configStore.update { prev ->
+                                    prev.copy(
+                                        networkMode = NetworkMode.LAN,
+                                        hostAddress = host.hostIp,
+                                        bridgePort = host.bridgePort,
+                                        hostPort = host.obsPort,
+                                        pairedHostUuid = host.hostUuid,
+                                        firstRun = false
+                                    )
+                                }
+                                app.connectionManager.reconnectNow()
+                                Toast.makeText(
+                                    context,
+                                    "Selected ${host.deviceName} (${host.hostIp}:${host.bridgePort}).",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                showConnectionDialog = true
+                            },
+                            onOpenQrScanner = { showQuickQrScanner = true },
+                            onOpenConnectionSetup = { showConnectionDialog = true },
+                            onTestFloatingHud = {
+                                if (!Settings.canDrawOverlays(context)) {
+                                    onRequestOverlayPermission()
+                                } else {
+                                    FloatingHudForegroundService.startService(context)
+                                }
+                            },
+                            onCompleteWizard = {
+                                app.configStore.update { it.copy(firstRun = false) }
+                                showSetupWizard = false
+                            },
+                            onDismissWizard = {
+                                if (cfg.firstRun) {
+                                    app.configStore.update { it.copy(firstRun = false) }
+                                }
+                                showSetupWizard = false
+                            }
+                        )
+                    }
+
                     if (!hasOverlayPerm) {
                         PermissionWarningCard(
                             icon = Icons.Default.Layers,
@@ -546,6 +606,7 @@ private fun RemoteDashboardScreen(
                                     onOpenQr = { showQuickQrScanner = true },
                                     onOpenHelp = { showHelpDialog = true },
                                     onOpenAbout = { showAboutDialog = true },
+                                    onOpenSetupWizard = { showSetupWizard = true },
                                     onPptPrev = { app.connectionManager.sendPptPrev("status_card") },
                                     onPptNext = { app.connectionManager.sendPptNext("status_card") },
                                     onToggleRecord = { app.connectionManager.sendToggleRecord("status_card") },
@@ -634,6 +695,7 @@ private fun RemoteDashboardScreen(
                             onOpenQr = { showQuickQrScanner = true },
                             onOpenHelp = { showHelpDialog = true },
                             onOpenAbout = { showAboutDialog = true },
+                            onOpenSetupWizard = { showSetupWizard = true },
                             onPptPrev = { app.connectionManager.sendPptPrev("status_card") },
                             onPptNext = { app.connectionManager.sendPptNext("status_card") },
                             onToggleRecord = { app.connectionManager.sendToggleRecord("status_card") },
@@ -994,6 +1056,7 @@ private fun StatusAndActionsCard(
     onOpenQr: () -> Unit,
     onOpenHelp: () -> Unit,
     onOpenAbout: () -> Unit,
+    onOpenSetupWizard: () -> Unit = {},
     onPptPrev: () -> Unit = {},
     onPptNext: () -> Unit = {},
     onToggleRecord: () -> Unit = {},
@@ -1321,6 +1384,18 @@ private fun StatusAndActionsCard(
                         Text("About", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                 }
+            }
+
+            OutlinedButton(
+                onClick = onOpenSetupWizard,
+                contentPadding = CompactExplorerButtonPadding,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("open_setup_wizard_btn")
+            ) {
+                Icon(Icons.Default.Checklist, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Guided Setup Wizard", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             }
         }
     }

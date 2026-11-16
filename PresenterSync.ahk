@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 6.7.0
+; Version: 6.8.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 6.7.0.0
+;@Ahk2Exe-SetVersion 6.8.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -57,7 +57,7 @@ InitHUD(AppConfig, AppState)
 if (AppConfig.FirstRun) {
     AppConfig.FirstRun := false
     AppConfig.WriteBool("Settings", "FirstRun", false)
-    ShowHelpWindow(AppConfig, AppState)
+    ShowGuidedSetupWizard(AppConfig, AppState)
 }
 
 if (AppConfig.EnableWS)
@@ -239,6 +239,7 @@ BuildTrayMenu(cfg, state) {
     DirectorMenu.Add()
     DirectorMenu.Add("Presenter Countdown Timer", BuildSharedPresenterTimerSubmenu(state, (sec, *) => StartHostPresenterTimer(cfg, state, sec), (*) => PauseHostPresenterTimer(cfg, state), (sec, *) => ResetHostPresenterTimer(cfg, state, sec)))
     DirectorMenu.Add("Send Stage Nudge...", (*) => PromptSendStageNudgeUI((msg) => BroadcastHostStageNudge(cfg, state, msg, "Primary Host")))
+    DirectorMenu.Add("View && Export Session Timeline...", (*) => SessionTimeline.ShowTimelineWindow(cfg, state))
     A_TrayMenu.Add("OBS Director && Standby", DirectorMenu)
 
     A_TrayMenu.Add()
@@ -256,6 +257,7 @@ BuildTrayMenu(cfg, state) {
             RoutingMenu.Check(rm.label)
     }
     SettingsMenu.Add("Audio Routing Mode", RoutingMenu)
+    SettingsMenu.Add("Guided Setup Wizard (4-Step Check)...", (*) => ShowGuidedSetupWizard(cfg, state))
     SettingsMenu.Add("Run Audio Setup Wizard...", (*) => PromptForSetup(cfg, false))
 
     ConfMenu := Menu()
@@ -316,6 +318,7 @@ BuildTrayMenu(cfg, state) {
     A_TrayMenu.Add("Settings", SettingsMenu)
 
     ; 5. HELP, SAFETY & EXIT
+    A_TrayMenu.Add("Guided Setup Wizard...", (*) => ShowGuidedSetupWizard(cfg, state))
     A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg, state))
     A_TrayMenu.Add("Export Sanitized Diagnostics...", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
     A_TrayMenu.Add("About PresenterSync", ShowAboutWindow.Bind(cfg, state))
@@ -733,6 +736,8 @@ SendToPPT(cfg, Key) {
     LastSignal := A_TickCount
 
     if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
+        if (IsSet(SessionTimeline))
+            SessionTimeline.Record("Slide", "Slide Control", "", Key)
         comHandled := false
         if (Key = "{Down}" || Key = "{Right}" || Key = "{PgDn}" || Key = "{Space}") {
             try {
