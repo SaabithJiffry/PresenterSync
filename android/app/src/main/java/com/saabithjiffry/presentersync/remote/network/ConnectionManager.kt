@@ -115,7 +115,11 @@ class ConnectionManager(
     private var heartbeatJob: Job? = null
     private var recTickerJob: Job? = null
     private var networkDebounceJob: Job? = null
+    private var lanRepromoteJob: Job? = null
     private var networkCallbackRegistered = false
+    internal var discoverPortOverride: Int = AppConstants.DEFAULT_DISCOVERY_PORT
+    internal var failoverBudgetMs: Long = AppConstants.LAN_FAILOVER_DEADLINE_MS
+    internal var repromoteIntervalMs: Long = AppConstants.LAN_REPROMOTE_INTERVAL_MS
 
     private val connectivityManager =
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -150,6 +154,11 @@ class ConnectionManager(
     fun verifyOrReconnect() {
         val st = _uiState.value
         if (!st.serviceRunning || st.connStatus == ConnStatus.AUTH_FAILED) return
+        if (st.usingRelayFallback) {
+            val activeGen = generation.get()
+            scope.launch { checkAndPromoteLanIfHealthy(activeGen) }
+            return
+        }
         if (!st.connected) {
             reconnectNow()
         } else {
@@ -159,6 +168,14 @@ class ConnectionManager(
                 reconnectNow()
             }
         }
+    }
+
+    suspend fun scanClassroomHosts(timeoutMs: Long = 900L): List<DiscoveredPublicHost> {
+        return UdpHostDiscoveryClient.scanClassroomHosts(
+            context = context,
+            discoverPort = discoverPortOverride,
+            timeoutMs = timeoutMs
+        )
     }
 
     fun start() {
@@ -176,6 +193,7 @@ class ConnectionManager(
         connectLoopJob?.cancel()
         heartbeatJob?.cancel()
         recTickerJob?.cancel()
+        lanRepromoteJob?.cancel()
         closeActiveClients()
         unregisterNetworkCallback()
         _uiState.value = _uiState.value.copy(
@@ -196,6 +214,7 @@ class ConnectionManager(
         connectLoopJob?.cancel()
         heartbeatJob?.cancel()
         recTickerJob?.cancel()
+        lanRepromoteJob?.cancel()
         closeActiveClients()
         _uiState.value = _uiState.value.copy(
             connected = false,
@@ -235,25 +254,59 @@ class ConnectionManager(
                 continue
             }
 
-            // LAN Multi-candidate failover loop
-            val candidates = EndpointParser.parseCandidateEndpoints(cfg.hostAddress, cfg.hostPort)
+            // Auto-follow DHCP IP shift on paired HostUuid before cycling LAN endpoints
+            val lanCycleStartMs = System.currentTimeMillis()
+            var effectiveCfg = cfg
+            if (effectiveCfg.pairedHostUuid.isNotBlank()) {
+                val beacons = UdpHostDiscoveryClient.scanClassroomHosts(
+                    context = context,
+                    discoverPort = discoverPortOverride,
+                    timeoutMs = 450L
+                )
+                val shift = UdpHostDiscoveryClient.followHostUuidIpShift(
+                    currentHostsCsv = effectiveCfg.hostAddress,
+                    pairedHostUuid = effectiveCfg.pairedHostUuid,
+                    beacons = beacons,
+                    currentBridgePort = effectiveCfg.bridgePort
+                )
+                if (shift != null) {
+                    configStore.update { prev ->
+                        prev.copy(hostAddress = shift.first, bridgePort = shift.second)
+                    }
+                    effectiveCfg = configStore.current
+                    Log.i("PresenterSync", "Auto-followed HostUuid DHCP shift -> ${shift.first}:${shift.second}")
+                }
+            }
+
+            // LAN Multi-candidate failover loop (bounded <= failoverBudgetMs when WAN Relay fallback is ready)
+            val hasWanFallback = effectiveCfg.enableRelayFallback && effectiveCfg.internetPairingCode.isNotBlank()
+            val candidates = EndpointParser.parseCandidateEndpoints(effectiveCfg.hostAddress, effectiveCfg.hostPort)
             var authFailed = false
             var succeededOrStopped = false
 
             for (cand in candidates) {
                 if (gen != generation.get()) return
+                val elapsedMs = System.currentTimeMillis() - lanCycleStartMs
+                if (hasWanFallback && FailoverPolicy.shouldFallbackToWan(effectiveCfg, elapsedMs, failoverBudgetMs)) {
+                    Log.i("PresenterSync", "LAN probe budget (${elapsedMs}ms) reached; switching to WAN Relay")
+                    break
+                }
+
+                val remBudgetMs = FailoverPolicy.perCandidateBudgetRemainingMs(lanCycleStartMs, System.currentTimeMillis(), failoverBudgetMs)
                 val resolvedHost = if (cand.host.endsWith(".local", ignoreCase = true)) {
-                    mdnsResolver.resolveHost(cand.host)
+                    kotlinx.coroutines.withTimeoutOrNull(minOf(1100L, remBudgetMs.coerceAtLeast(350L))) {
+                        mdnsResolver.resolveHost(cand.host)
+                    } ?: cand.host
                 } else {
                     cand.host
                 }
 
                 // Prefer Primary Host Companion Bridge (4456) when Session Code or Token is present
                 var bridgeAuthRejected = false
-                if (cfg.sessionToken.isNotBlank() || cfg.sessionPairingCode.isNotBlank()) {
-                    val bridgeUrl = "ws://$resolvedHost:${cfg.bridgePort}/ws"
-                    Log.i("PresenterSync", "Attempting Host Bridge WebSocket: $bridgeUrl (hasToken=${cfg.sessionToken.isNotBlank()})")
-                    when (attemptBridgeSession(gen, cfg, "${cand.host}:${cfg.bridgePort}", bridgeUrl)) {
+                if (effectiveCfg.sessionToken.isNotBlank() || effectiveCfg.sessionPairingCode.isNotBlank()) {
+                    val bridgeUrl = "ws://$resolvedHost:${effectiveCfg.bridgePort}/ws"
+                    Log.i("PresenterSync", "Attempting Host Bridge WebSocket: $bridgeUrl (hasToken=${effectiveCfg.sessionToken.isNotBlank()})")
+                    when (attemptBridgeSession(gen, effectiveCfg, "${cand.host}:${effectiveCfg.bridgePort}", bridgeUrl)) {
                         SessionOutcome.CANCELLED -> {
                             succeededOrStopped = true
                             break
@@ -265,9 +318,17 @@ class ConnectionManager(
                     }
                 }
                 if (gen != generation.get()) return
+                if (hasWanFallback && FailoverPolicy.shouldFallbackToWan(
+                        effectiveCfg,
+                        System.currentTimeMillis() - lanCycleStartMs,
+                        failoverBudgetMs
+                    )
+                ) {
+                    break
+                }
 
                 val effectiveUrl = "${cand.scheme}://$resolvedHost:${cand.port}${cand.path}"
-                val outcome = attemptObsSession(gen, cfg, cand.raw, effectiveUrl)
+                val outcome = attemptObsSession(gen, effectiveCfg, cand.raw, effectiveUrl)
                 when (outcome) {
                     SessionOutcome.AUTH_FAILED -> {
                         authFailed = true
@@ -278,7 +339,7 @@ class ConnectionManager(
                         break
                     }
                     SessionOutcome.DISCONNECTED -> {
-                        if (bridgeAuthRejected && cfg.obsPassword.isBlank()) {
+                        if (bridgeAuthRejected && effectiveCfg.obsPassword.isBlank()) {
                             _uiState.value = _uiState.value.copy(
                                 connected = false,
                                 connStatus = ConnStatus.AUTH_FAILED,
@@ -296,8 +357,8 @@ class ConnectionManager(
             if (authFailed || succeededOrStopped || gen != generation.get()) return
 
             // Fallback to Internet Relay if configured (matching ShouldRemoteFallbackToRelay)
-            if (cfg.enableRelayFallback && cfg.internetPairingCode.isNotBlank()) {
-                val relayOutcome = attemptRelaySession(gen, cfg, isFallback = true)
+            if (effectiveCfg.enableRelayFallback && effectiveCfg.internetPairingCode.isNotBlank()) {
+                val relayOutcome = attemptRelaySession(gen, effectiveCfg, isFallback = true)
                 if (relayOutcome == SessionOutcome.AUTH_FAILED || gen != generation.get()) return
             }
 
@@ -334,6 +395,21 @@ class ConnectionManager(
                         usingBridge = true
                     )
                     startHeartbeat(gen, cfg.heartbeatSeconds)
+                }
+
+                override fun onBridgeHostUuidReceived(hostUuid: String) {
+                    if (gen != generation.get() || hostUuid.isBlank()) return
+                    if (!configStore.current.pairedHostUuid.equals(hostUuid, ignoreCase = true)) {
+                        configStore.update { it.copy(pairedHostUuid = hostUuid) }
+                    }
+                }
+
+                override fun onSyncResync(reason: String, hostUuid: String) {
+                    if (gen != generation.get()) return
+                    if (hostUuid.isNotBlank() && !configStore.current.pairedHostUuid.equals(hostUuid, ignoreCase = true)) {
+                        configStore.update { it.copy(pairedHostUuid = hostUuid) }
+                    }
+                    Log.i("PresenterSync", "Received host sync_resync ($reason)")
                 }
 
                 override fun onBridgeAuthFailed(reason: String) {
@@ -506,6 +582,9 @@ class ConnectionManager(
                         usingRelayFallback = isFallback
                     )
                     startHeartbeat(gen, cfg.heartbeatSeconds)
+                    if (FailoverPolicy.canRepromoteToLan(cfg, isFallback)) {
+                        startLanRepromotionMonitor(gen)
+                    }
                 }
 
                 override fun onRelayAuthFailed() {
@@ -564,9 +643,69 @@ class ConnectionManager(
             done.await()
         } finally {
             heartbeatJob?.cancel()
+            lanRepromoteJob?.cancel()
             client.close()
             if (relayClient === client) relayClient = null
         }
+    }
+
+    private fun startLanRepromotionMonitor(gen: Int) {
+        lanRepromoteJob?.cancel()
+        lanRepromoteJob = scope.launch {
+            while (gen == generation.get() && _uiState.value.usingRelayFallback) {
+                delay(repromoteIntervalMs.coerceAtLeast(1500L))
+                if (gen != generation.get() || !_uiState.value.usingRelayFallback) break
+                if (checkAndPromoteLanIfHealthy(gen)) break
+            }
+        }
+    }
+
+    internal suspend fun checkAndPromoteLanIfHealthy(gen: Int): Boolean {
+        if (gen != generation.get()) return false
+        var cfg = configStore.current
+        if (!FailoverPolicy.canRepromoteToLan(cfg, _uiState.value.usingRelayFallback || cfg.networkMode == NetworkMode.LAN)) {
+            return false
+        }
+        if (cfg.pairedHostUuid.isNotBlank()) {
+            val beacons = UdpHostDiscoveryClient.scanClassroomHosts(
+                context = context,
+                discoverPort = discoverPortOverride,
+                timeoutMs = 450L
+            )
+            val shift = UdpHostDiscoveryClient.followHostUuidIpShift(
+                currentHostsCsv = cfg.hostAddress,
+                pairedHostUuid = cfg.pairedHostUuid,
+                beacons = beacons,
+                currentBridgePort = cfg.bridgePort
+            )
+            if (shift != null) {
+                configStore.update { prev ->
+                    prev.copy(hostAddress = shift.first, bridgePort = shift.second)
+                }
+                cfg = configStore.current
+            }
+        }
+        val candidates = EndpointParser.parseCandidateEndpoints(cfg.hostAddress, cfg.hostPort)
+        for (cand in candidates) {
+            if (gen != generation.get()) return false
+            val host = if (cand.host.endsWith(".local", ignoreCase = true)) {
+                kotlinx.coroutines.withTimeoutOrNull(900L) { mdnsResolver.resolveHost(cand.host) } ?: cand.host
+            } else {
+                cand.host
+            }
+            val healthy = UdpHostDiscoveryClient.probeHostBridgeHealth(
+                httpClient = httpClient,
+                host = host,
+                bridgePort = cfg.bridgePort,
+                expectedHostUuid = cfg.pairedHostUuid
+            )
+            if (healthy && gen == generation.get()) {
+                Log.i("PresenterSync", "LAN Host Bridge recovered ($host:${cfg.bridgePort}); promoting back from WAN Relay")
+                reconnectNow()
+                return true
+            }
+        }
+        return false
     }
 
     private fun startHeartbeat(gen: Int, heartbeatSeconds: Int) {
@@ -736,6 +875,7 @@ class ConnectionManager(
                         networkMode = NetworkMode.LAN,
                         sessionPairingCode = cleanCode.uppercase(),
                         sessionToken = b.sessionToken,
+                        pairedHostUuid = b.hostUuid.ifBlank { prev.pairedHostUuid },
                         hostAddress = candidates,
                         hostPort = b.obsPort,
                         bridgePort = b.bridgePort,
@@ -775,6 +915,7 @@ class ConnectionManager(
                 targetMicName = payload.targetMicName.ifBlank { prev.targetMicName },
                 sessionPairingCode = payload.sessionCode.ifBlank { prev.sessionPairingCode },
                 internetPairingCode = payload.internetPairingCode.ifBlank { prev.internetPairingCode },
+                pairedHostUuid = payload.hostUuid.ifBlank { prev.pairedHostUuid },
                 firstRun = false
             )
         }

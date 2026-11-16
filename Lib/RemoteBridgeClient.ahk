@@ -5,6 +5,8 @@
 ;              Mirrors Android HostBridgeClient/SessionPairingClient semantics.
 ; ==============================================================================
 
+#DllLoad ws2_32.dll
+
 ParseRemoteCliArgs(args) {
     out := { configPath: "", instanceName: "", pairingUri: "", cleanupOldExe: "" }
     if (!IsObject(args))
@@ -182,7 +184,8 @@ ParseRemotePairingUri(rawUri) {
         sessionCode: codeVal,
         obsPassword: params.Has("pw") ? params["pw"] : "",
         targetMicName: params.Has("mic") && params["mic"] != "" ? params["mic"] : "Mic/Aux",
-        internetPairingCode: inetCode
+        internetPairingCode: inetCode,
+        hostUuid: params.Has("uuid") ? Trim(params["uuid"]) : ""
     }
 }
 
@@ -283,8 +286,7 @@ DiscoverHostBridgeUdp(sessionCode, udpPort := 4456, timeoutMs := 450) {
                 text := StrGet(rxBuf, rx, "UTF-8")
                 parts := StrSplit(Trim(text), "|")
                 if (parts.Length >= 4 && parts[1] = "PSYNC_OFFER") {
-                    ipPtr := DllCall("ws2_32\inet_ntoa", "UInt", NumGet(srcAddr, 4, "UInt"), "Ptr")
-                    senderIp := ipPtr ? StrGet(ipPtr, "AStr") : ""
+                    senderIp := NumGet(srcAddr, 4, "UChar") "." NumGet(srcAddr, 5, "UChar") "." NumGet(srcAddr, 6, "UChar") "." NumGet(srcAddr, 7, "UChar")
                     return {
                         ok: true,
                         senderIp: senderIp,
@@ -302,6 +304,201 @@ DiscoverHostBridgeUdp(sessionCode, udpPort := 4456, timeoutMs := 450) {
         DllCall("ws2_32\closesocket", "Ptr", sock)
     }
     return ""
+}
+
+ParsePublicDiscoveryBeaconJson(rawJson, senderIp := "") {
+    proto := _RBC_JsonGetStr(rawJson, "proto")
+    uuid := Trim(_RBC_JsonGetStr(rawJson, "hostUuid"))
+    devName := Trim(_RBC_JsonGetStr(rawJson, "deviceName"))
+    bPort := _RBC_JsonGetInt(rawJson, "bridgePort", 0)
+    oPort := _RBC_JsonGetInt(rawJson, "obsPort", 4455)
+    cleanIp := Trim(String(senderIp))
+    if (proto != "PS_DISCOVER_V1" || uuid = "" || bPort < 1 || bPort > 65535 || cleanIp = "")
+        return ""
+    if (devName = "")
+        devName := cleanIp
+    return {
+        ok: true,
+        proto: proto,
+        hostUuid: uuid,
+        deviceName: devName,
+        senderIp: cleanIp,
+        bridgePort: String(bPort),
+        obsPort: String((oPort >= 1 && oPort <= 65535) ? oPort : 4455),
+        networkMode: _RBC_JsonGetStr(rawJson, "networkMode"),
+        audioRoutingMode: _RBC_JsonGetInt(rawJson, "audioRoutingMode", 1),
+        version: _RBC_JsonGetStr(rawJson, "version")
+    }
+}
+
+DiscoverPublicHostsUdp(discoverPort := 4457, timeoutMs := 650, extraTargets := "") {
+    results := []
+    if (!IsInteger(discoverPort) || Integer(discoverPort) < 1 || Integer(discoverPort) > 65535)
+        return results
+
+    wsaBuf := Buffer(408, 0)
+    if (DllCall("ws2_32\WSAStartup", "UShort", 0x0202, "Ptr", wsaBuf.Ptr, "Int") != 0)
+        return results
+
+    sock := DllCall("ws2_32\socket", "Int", 2, "Int", 2, "Int", 17, "UPtr")
+    if (sock = -1 || sock = 0xFFFFFFFFFFFFFFFF)
+        return results
+
+    seen := Map()
+    try {
+        bBroadcast := Buffer(4, 0)
+        NumPut("Int", 1, bBroadcast, 0)
+        DllCall("ws2_32\setsockopt", "Ptr", sock, "Int", 0xFFFF, "Int", 0x0020, "Ptr", bBroadcast.Ptr, "Int", 4, "Int")
+
+        nonBlk := Buffer(4, 0)
+        NumPut("UInt", 1, nonBlk, 0)
+        DllCall("ws2_32\ioctlsocket", "Ptr", sock, "UInt", 0x8004667E, "Ptr", nonBlk.Ptr, "Int")
+
+        bindAddr := Buffer(16, 0)
+        NumPut("Short", 2, bindAddr, 0)
+        DllCall("ws2_32\bind", "Ptr", sock, "Ptr", bindAddr.Ptr, "Int", 16, "Int")
+
+        pktStr := "PS_DISCOVER_V1"
+        pktBytes := Buffer(StrPut(pktStr, "UTF-8"), 0)
+        nBytes := StrPut(pktStr, pktBytes, "UTF-8") - 1
+
+        targets := ["255.255.255.255", "127.0.0.1"]
+        if IsObject(extraTargets) {
+            for _, t in extraTargets {
+                ts := Trim(String(t))
+                if (ts != "")
+                    targets.Push(ts)
+            }
+        }
+        portNet := DllCall("ws2_32\htons", "UShort", Integer(discoverPort), "UShort")
+        for _, dstIp in targets {
+            dstAddr := Buffer(16, 0)
+            NumPut("Short", 2, dstAddr, 0)
+            NumPut("UShort", portNet, dstAddr, 2)
+            NumPut("UInt", DllCall("ws2_32\inet_addr", "AStr", dstIp, "UInt"), dstAddr, 4)
+            DllCall("ws2_32\sendto", "Ptr", sock, "Ptr", pktBytes.Ptr, "Int", nBytes, "Int", 0, "Ptr", dstAddr.Ptr, "Int", 16, "Int")
+        }
+
+        deadline := A_TickCount + Max(120, timeoutMs)
+        rxBuf := Buffer(2048, 0)
+        srcAddr := Buffer(16, 0)
+        srcLen := Buffer(4, 0)
+        while (A_TickCount <= deadline) {
+            NumPut("Int", 16, srcLen, 0)
+            rx := DllCall("ws2_32\recvfrom", "Ptr", sock, "Ptr", rxBuf.Ptr, "Int", 2047, "Int", 0, "Ptr", srcAddr.Ptr, "Ptr", srcLen.Ptr, "Int")
+            if (rx > 0) {
+                NumPut("UChar", 0, rxBuf, rx)
+                text := StrGet(rxBuf, rx, "UTF-8")
+                senderIp := NumGet(srcAddr, 4, "UChar") "." NumGet(srcAddr, 5, "UChar") "." NumGet(srcAddr, 6, "UChar") "." NumGet(srcAddr, 7, "UChar")
+                parsed := ParsePublicDiscoveryBeaconJson(text, senderIp)
+                if IsObject(parsed) {
+                    key := StrLower(parsed.hostUuid)
+                    if (!seen.Has(key)) {
+                        seen[key] := true
+                        results.Push(parsed)
+                    }
+                }
+            } else {
+                Sleep(20)
+            }
+        }
+    } finally {
+        DllCall("ws2_32\closesocket", "Ptr", sock)
+    }
+    return results
+}
+
+FollowPairedHostIpShift(cfg, beacons) {
+    if (!IsObject(cfg) || !IsObject(beacons) || !cfg.HasOwnProp("PairedHostUuid"))
+        return { shifted: false, newIp: "", hostsCsv: "" }
+    targetUuid := StrLower(Trim(cfg.PairedHostUuid))
+    if (targetUuid = "")
+        return { shifted: false, newIp: "", hostsCsv: "" }
+
+    matched := ""
+    for _, b in beacons {
+        if (IsObject(b) && b.HasOwnProp("hostUuid") && StrLower(Trim(b.hostUuid)) == targetUuid && Trim(b.senderIp) != "") {
+            matched := b
+            break
+        }
+    }
+    if (!IsObject(matched))
+        return { shifted: false, newIp: "", hostsCsv: "" }
+
+    newIp := Trim(matched.senderIp)
+    newBPort := (matched.HasOwnProp("bridgePort") && IsInteger(matched.bridgePort)) ? String(Integer(matched.bridgePort)) : (cfg.HasOwnProp("BridgePort") ? cfg.BridgePort : "4456")
+    curEps := ParseCandidateEndpoints(cfg.HasOwnProp("HostAddress") ? cfg.HostAddress : "", cfg.HasOwnProp("HostPort") ? cfg.HostPort : "4455")
+    curFirstHost := (curEps.Length >= 1) ? Trim(curEps[1].host) : ""
+    curBPort := cfg.HasOwnProp("BridgePort") ? String(cfg.BridgePort) : "4456"
+    if (StrLower(curFirstHost) == StrLower(newIp) && curBPort == newBPort)
+        return { shifted: false, newIp: newIp, hostsCsv: cfg.HostAddress }
+
+    ordered := [newIp]
+    seen := Map(StrLower(newIp), true)
+    for _, ep in curEps {
+        hLow := StrLower(Trim(ep.host))
+        if (hLow != "" && !seen.Has(hLow) && ordered.Length < 4) {
+            seen[hLow] := true
+            ordered.Push(Trim(ep.host))
+        }
+    }
+    csv := ""
+    for idx, item in ordered
+        csv .= (idx > 1 ? ", " : "") item
+
+    cfg.HostAddress := csv
+    cfg.BridgePort := newBPort
+    if (cfg.HasMethod("Write")) {
+        try cfg.Write("Connection", "HostAddress", csv)
+        try cfg.Write("Connection", "BridgePort", newBPort)
+    }
+    return { shifted: true, newIp: newIp, hostsCsv: csv, bridgePort: newBPort }
+}
+
+ProbeHostBridgeHealth(host, bridgePort, expectedUuid := "", timeoutMs := 750) {
+    cleanHost := Trim(String(host))
+    bPort := (IsInteger(bridgePort) && Integer(bridgePort) >= 1 && Integer(bridgePort) <= 65535) ? String(Integer(bridgePort)) : "4456"
+    if (cleanHost = "")
+        return { ok: false }
+    if (IsLoopbackHost(cleanHost) && !IsLocalTcpPortListening(bPort))
+        return { ok: false }
+    url := "http://" cleanHost ":" bPort "/health"
+    try {
+        whr := ComObject("WinHttp.WinHttpRequest.5.1")
+        whr.SetTimeouts(250, 450, 450, Max(350, timeoutMs))
+        whr.Open("GET", url, true)
+        whr.Send()
+        deadline := A_TickCount + Max(350, timeoutMs)
+        ready := false
+        while (A_TickCount <= deadline) {
+            if (whr.WaitForResponse(0)) {
+                ready := true
+                break
+            }
+            Sleep(15)
+        }
+        if (!ready) {
+            try whr.Abort()
+            return { ok: false }
+        }
+        if (Integer(whr.Status) != 200)
+            return { ok: false }
+        body := String(whr.ResponseText)
+        if (!_RBC_JsonGetBool(body, "ok", false))
+            return { ok: false }
+        gotUuid := Trim(_RBC_JsonGetStr(body, "hostUuid"))
+        if (expectedUuid != "" && gotUuid != "" && StrLower(gotUuid) != StrLower(Trim(expectedUuid)))
+            return { ok: false }
+        return {
+            ok: true,
+            host: cleanHost,
+            bridgePort: bPort,
+            hostUuid: gotUuid,
+            hostName: _RBC_JsonGetStr(body, "hostName")
+        }
+    } catch {
+        return { ok: false }
+    }
 }
 
 HttpPostBridgePair(host, bridgePort, sessionCode, deviceId, deviceName) {
@@ -345,6 +542,7 @@ HttpPostBridgePair(host, bridgePort, sessionCode, deviceId, deviceName) {
                 ok: true,
                 status: 200,
                 host: cleanHost,
+                hostUuid: _RBC_JsonGetStr(body, "hostUuid"),
                 hostName: _RBC_JsonGetStr(body, "hostName"),
                 bridgePort: String(_RBC_JsonGetInt(body, "bridgePort", Integer(bPort))),
                 obsPort: String(_RBC_JsonGetInt(body, "obsPort", 4455)),
@@ -538,6 +736,7 @@ ParseHostBridgeWsEvent(rawText) {
         recSeconds: _RBC_JsonGetInt(rawText, "recSeconds", 0),
         streamDropWarn: _RBC_JsonGetBool(rawText, "streamDropWarn", false),
         voiceWhileMuted: _RBC_JsonGetBool(rawText, "voiceWhileMuted", false),
+        hostUuid: _RBC_JsonGetStr(rawText, "hostUuid"),
         hostName: _RBC_JsonGetStr(rawText, "hostName"),
         reason: _RBC_JsonGetStr(rawText, "reason"),
         action: _RBC_JsonGetStr(rawText, "action"),
@@ -564,6 +763,8 @@ ApplyBridgePairResultToConfig(cfg, pairRes) {
         cfg.TargetMicName := pairRes.targetMicName
     if (pairRes.HasOwnProp("internetPairingCode") && pairRes.internetPairingCode != "")
         cfg.InternetPairingCode := pairRes.internetPairingCode
+    if (pairRes.HasOwnProp("hostUuid") && pairRes.hostUuid != "")
+        cfg.PairedHostUuid := pairRes.hostUuid
     return true
 }
 
@@ -577,6 +778,8 @@ SaveRemoteConnectionSettingsToIni(cfg) {
     cfg.Write("Connection", "BridgePort", cfg.BridgePort)
     cfg.Write("Connection", "SessionPairingCode", cfg.SessionPairingCode)
     cfg.Write("Connection", "SessionToken", cfg.SessionToken)
+    if (cfg.HasOwnProp("PairedHostUuid"))
+        cfg.Write("Connection", "PairedHostUuid", cfg.PairedHostUuid)
     cfg.Write("Connection", "ObsPassword", cfg.ObsPassword)
     cfg.Write("Connection", "TargetMicName", cfg.TargetMicName)
     cfg.Write("Connection", "DeviceId", cfg.DeviceId)

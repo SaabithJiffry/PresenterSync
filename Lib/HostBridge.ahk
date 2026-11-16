@@ -1,11 +1,12 @@
 ; ==============================================================================
 ; Module: HostBridge.ahk
 ; Description: Non-blocking WinSock2 (WSAAsyncSelect) Companion Bridge Server
-;              on UDP + TCP port 4456 (configurable/ephemeral for tests).
+;              on TCP :4456, UDP Pair :4456, and UDP Discovery :4457.
 ;              Provides:
-;                1) UDP LAN Session Code Discovery (PSYNC_DISCOVER -> PSYNC_OFFER)
-;                2) HTTP Session Pairing (POST /pair, GET /health) w/ rate limit
-;                3) Direct RFC 6455 WebSocket Bridge (ws://<host>:4456/ws)
+;                1) UDP Public Classroom Discovery (PS_DISCOVER_V1 -> public JSON beacon, zero secrets)
+;                2) UDP LAN Session Code Discovery (PSYNC_DISCOVER -> PSYNC_OFFER)
+;                3) HTTP Session Pairing (POST /pair, GET /health) w/ rate limit
+;                4) Direct RFC 6455 WebSocket Bridge (ws://<host>:4456/ws) + sync_resync
 ;              Zero blocking calls — driven completely by Win32 window messages.
 ; ==============================================================================
 
@@ -13,6 +14,8 @@
 
 class HostBridgeConstants {
     static DEFAULT_PORT := 4456
+    static DEFAULT_DISCOVERY_PORT := 4457
+    static DISCOVER_V1_PROTO := "PS_DISCOVER_V1"
     static MAX_BUFFER_BYTES := 65536
     static AUTH_TIMEOUT_MS := 3000
     static KEEP_ALIVE_MS := 20000
@@ -20,6 +23,74 @@ class HostBridgeConstants {
     static PAIR_LOCKOUT_MS := 30000
     static UDP_COOLDOWN_MS := 200
     static WS_GUID := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+}
+
+EnsureHostUuid(cfg := "") {
+    if (IsObject(cfg) && cfg.HasOwnProp("HostUuid") && Trim(cfg.HostUuid) != "")
+        return Trim(cfg.HostUuid)
+    if (IsSet(GenerateHostUuid))
+        uuid := GenerateHostUuid()
+    else {
+        b := Buffer(16, 0)
+        Loop 16
+            NumPut("UChar", Random(0, 255), b, A_Index - 1)
+        NumPut("UChar", (NumGet(b, 6, "UChar") & 0x0F) | 0x40, b, 6)
+        NumPut("UChar", (NumGet(b, 8, "UChar") & 0x3F) | 0x80, b, 8)
+        hex := ""
+        Loop 16
+            hex .= Format("{:02x}", NumGet(b, A_Index - 1, "UChar"))
+        uuid := SubStr(hex, 1, 8) "-" SubStr(hex, 9, 4) "-" SubStr(hex, 13, 4) "-" SubStr(hex, 17, 4) "-" SubStr(hex, 21, 12)
+    }
+    if (IsObject(cfg)) {
+        cfg.HostUuid := uuid
+        if (cfg.HasMethod("Write"))
+            try cfg.Write("Settings", "HostUuid", uuid)
+    }
+    return uuid
+}
+
+_HB_GetEndpointsSignature(endpoints) {
+    if (!IsObject(endpoints) || !endpoints.HasOwnProp("ips"))
+        return ""
+    ipsCopy := []
+    for _, ip in endpoints.ips {
+        s := Trim(String(ip))
+        if (s != "")
+            ipsCopy.Push(s)
+    }
+    if (ipsCopy.Length > 1) {
+        i := 2
+        while (i <= ipsCopy.Length) {
+            key := ipsCopy[i]
+            j := i - 1
+            while (j >= 1 && StrCompare(ipsCopy[j], key) > 0) {
+                ipsCopy[j + 1] := ipsCopy[j]
+                j -= 1
+            }
+            ipsCopy[j + 1] := key
+            i += 1
+        }
+    }
+    joined := ""
+    for idx, item in ipsCopy
+        joined .= (idx > 1 ? "," : "") item
+    mdnsVal := endpoints.HasOwnProp("mdns") ? endpoints.mdns : ""
+    return mdnsVal "|" joined
+}
+
+BuildPublicDiscoveryBeaconJson(cfg, bridgePort := 4456, obsPort := 4455) {
+    uuid := EnsureHostUuid(cfg)
+    netMode := (IsObject(cfg) && cfg.HasOwnProp("RemoteNetworkMode")) ? cfg.RemoteNetworkMode : "LAN"
+    mode := (IsObject(cfg) && cfg.HasOwnProp("AudioRoutingMode")) ? Integer(cfg.AudioRoutingMode) : 0
+    return '{"proto":"' HostBridgeConstants.DISCOVER_V1_PROTO '"'
+        . ',"hostUuid":"' _HB_JsonEscape(uuid) '"'
+        . ',"deviceName":"' _HB_JsonEscape(A_ComputerName) '"'
+        . ',"bridgePort":' Integer(bridgePort)
+        . ',"obsPort":' Integer(obsPort)
+        . ',"networkMode":"' _HB_JsonEscape(netMode) '"'
+        . ',"audioRoutingMode":' mode
+        . ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"'
+        . '}'
 }
 
 global g_HostCompanionBridge := ""
@@ -143,37 +214,47 @@ class HostCompanionBridge {
     state := ""
     requestedTcpPort := 4456
     requestedUdpPort := 4456
+    requestedDiscoverPort := 4457
     boundTcpPort := 0
     boundUdpPort := 0
+    boundDiscoverPort := 0
     running := false
     wsaStarted := false
     msgGui := ""
     hwnd := 0
     wmTcp := 0x0551
     wmUdp := 0x0552
+    wmDiscover := 0x0553
     tcpListenSock := -1
     udpSock := -1
+    discoverSock := -1
     clients := Map()
     pairedDevices := Map()
     validTokens := Map()
     rateLimits := Map()
     tcpMsgFn := ""
     udpMsgFn := ""
+    discoverMsgFn := ""
     maintTimerFn := ""
     _tcpEventQueue := []
     _tcpDispatching := false
     cachedEndpoints := ""
     cachedEndpointsTick := 0
+    lastEndpointsSig := ""
+    lastAdapterCheckTick := 0
+    lastWakeRefreshTick := 0
     lastError := ""
 
-    Start(cfg, state, tcpPort := 4456, udpPort := -1) {
+    Start(cfg, state, tcpPort := 4456, udpPort := -1, discoverPort := -1) {
         this.Stop()
         this.cfg := cfg
         this.state := state
         this.requestedTcpPort := tcpPort
         this.requestedUdpPort := (udpPort = -1) ? tcpPort : udpPort
+        this.requestedDiscoverPort := (discoverPort = -1) ? ((tcpPort = HostBridgeConstants.DEFAULT_PORT) ? HostBridgeConstants.DEFAULT_DISCOVERY_PORT : 0) : discoverPort
         this.lastError := ""
 
+        EnsureHostUuid(cfg)
         if (!cfg.HasOwnProp("SessionPairingCode") || cfg.SessionPairingCode = "") {
             cfg.SessionPairingCode := GenerateSessionPairingCode()
             if (cfg.HasMethod("Write"))
@@ -192,21 +273,55 @@ class HostCompanionBridge {
         this._tcpDispatching := false
         this.cachedEndpoints := GetLocalNetworkEndpoints()
         this.cachedEndpointsTick := A_TickCount
+        this.lastEndpointsSig := _HB_GetEndpointsSignature(this.cachedEndpoints)
+        this.lastAdapterCheckTick := A_TickCount
 
         this.msgGui := Gui("-Caption +ToolWindow", "PresenterSync_HostBridgeMsg")
         this.hwnd := this.msgGui.Hwnd
 
         this.tcpMsgFn := ObjBindMethod(this, "_OnTcpMessage")
         this.udpMsgFn := ObjBindMethod(this, "_OnUdpMessage")
+        this.discoverMsgFn := ObjBindMethod(this, "_OnDiscoverMessage")
         ; MaxThreads = 255 guarantees AHK never silently drops edge-triggered WSAAsyncSelect messages
         OnMessage(this.wmTcp, this.tcpMsgFn, 255)
         OnMessage(this.wmUdp, this.udpMsgFn, 255)
+        OnMessage(this.wmDiscover, this.discoverMsgFn, 255)
 
-        ; 1) Bind TCP Listener (HTTP /pair + /health + RFC 6455 WS /ws)
+        if (!this._BindListeners(this.requestedTcpPort, this.requestedUdpPort, this.requestedDiscoverPort)) {
+            this.Stop()
+            return false
+        }
+
+        this.running := true
+        this.maintTimerFn := ObjBindMethod(this, "_OnMaintenanceTick")
+        SetTimer(this.maintTimerFn, 1000)
+        return true
+    }
+
+    _BindListeners(tcpPort, udpPort, discoverPort) {
+        if (!this._BindTcpListenSocket(tcpPort))
+            return false
+        if (udpPort >= 0) {
+            uSock := -1
+            uBound := 0
+            this._BindUdpSocket(udpPort, this.wmUdp, &uSock, &uBound)
+            this.udpSock := uSock
+            this.boundUdpPort := uBound
+        }
+        if (discoverPort >= 0) {
+            dSock := -1
+            dBound := 0
+            this._BindUdpSocket(discoverPort, this.wmDiscover, &dSock, &dBound)
+            this.discoverSock := dSock
+            this.boundDiscoverPort := dBound
+        }
+        return true
+    }
+
+    _BindTcpListenSocket(tcpPort) {
         this.tcpListenSock := DllCall("ws2_32\socket", "Int", 2, "Int", 1, "Int", 6, "Ptr")
         if (this.tcpListenSock = -1) {
             this.lastError := "TCP socket create failed: " DllCall("ws2_32\WSAGetLastError", "Int")
-            this.Stop()
             return false
         }
 
@@ -214,10 +329,9 @@ class HostCompanionBridge {
         NumPut("Int", 1, optOn, 0)
         DllCall("ws2_32\setsockopt", "Ptr", this.tcpListenSock, "Int", 0xFFFF, "Int", 4, "Ptr", optOn, "Int", 4, "Int")
 
-        tcpAddr := _HB_MakeSockAddrIn(this.requestedTcpPort, 0)
+        tcpAddr := _HB_MakeSockAddrIn(tcpPort, 0)
         if (DllCall("ws2_32\bind", "Ptr", this.tcpListenSock, "Ptr", tcpAddr, "Int", 16, "Int") != 0) {
-            this.lastError := "TCP bind port " this.requestedTcpPort " failed: " DllCall("ws2_32\WSAGetLastError", "Int")
-            this.Stop()
+            this.lastError := "TCP bind port " tcpPort " failed: " DllCall("ws2_32\WSAGetLastError", "Int")
             return false
         }
 
@@ -228,40 +342,71 @@ class HostCompanionBridge {
 
         if (DllCall("ws2_32\listen", "Ptr", this.tcpListenSock, "Int", 16, "Int") != 0) {
             this.lastError := "TCP listen failed: " DllCall("ws2_32\WSAGetLastError", "Int")
-            this.Stop()
             return false
         }
 
         ; FD_READ(1) | FD_WRITE(2) | FD_ACCEPT(8) | FD_CLOSE(32) = 0x2B
         if (DllCall("ws2_32\WSAAsyncSelect", "Ptr", this.tcpListenSock, "Ptr", this.hwnd, "UInt", this.wmTcp, "Int", 0x2B, "Int") != 0) {
             this.lastError := "TCP WSAAsyncSelect failed"
-            this.Stop()
             return false
         }
+        return true
+    }
 
-        ; 2) Bind UDP Discovery Socket (best-effort if udpPort >= 0)
-        if (this.requestedUdpPort >= 0) {
-            this.udpSock := DllCall("ws2_32\socket", "Int", 2, "Int", 2, "Int", 17, "Ptr")
-            if (this.udpSock != -1) {
-                DllCall("ws2_32\setsockopt", "Ptr", this.udpSock, "Int", 0xFFFF, "Int", 4, "Ptr", optOn, "Int", 4, "Int")
-                DllCall("ws2_32\setsockopt", "Ptr", this.udpSock, "Int", 0xFFFF, "Int", 0x0020, "Ptr", optOn, "Int", 4, "Int")
-                udpAddr := _HB_MakeSockAddrIn(this.requestedUdpPort, 0)
-                if (DllCall("ws2_32\bind", "Ptr", this.udpSock, "Ptr", udpAddr, "Int", 16, "Int") = 0) {
-                    uOut := Buffer(16, 0)
-                    uLen := 16
-                    DllCall("ws2_32\getsockname", "Ptr", this.udpSock, "Ptr", uOut, "Int*", &uLen, "Int")
-                    this.boundUdpPort := _HB_htons(NumGet(uOut, 2, "UShort"))
-                    DllCall("ws2_32\WSAAsyncSelect", "Ptr", this.udpSock, "Ptr", this.hwnd, "UInt", this.wmUdp, "Int", 1, "Int")
-                } else {
-                    DllCall("ws2_32\closesocket", "Ptr", this.udpSock)
-                    this.udpSock := -1
-                }
-            }
+    _BindUdpSocket(udpPort, wmMsg, &outSock, &outBoundPort) {
+        outSock := -1
+        outBoundPort := 0
+        sock := DllCall("ws2_32\socket", "Int", 2, "Int", 2, "Int", 17, "Ptr")
+        if (sock = -1)
+            return false
+        optOn := Buffer(4, 0)
+        NumPut("Int", 1, optOn, 0)
+        DllCall("ws2_32\setsockopt", "Ptr", sock, "Int", 0xFFFF, "Int", 4, "Ptr", optOn, "Int", 4, "Int")
+        DllCall("ws2_32\setsockopt", "Ptr", sock, "Int", 0xFFFF, "Int", 0x0020, "Ptr", optOn, "Int", 4, "Int")
+        udpAddr := _HB_MakeSockAddrIn(udpPort, 0)
+        if (DllCall("ws2_32\bind", "Ptr", sock, "Ptr", udpAddr, "Int", 16, "Int") = 0) {
+            uOut := Buffer(16, 0)
+            uLen := 16
+            DllCall("ws2_32\getsockname", "Ptr", sock, "Ptr", uOut, "Int*", &uLen, "Int")
+            outBoundPort := _HB_htons(NumGet(uOut, 2, "UShort"))
+            DllCall("ws2_32\WSAAsyncSelect", "Ptr", sock, "Ptr", this.hwnd, "UInt", wmMsg, "Int", 1, "Int")
+            outSock := sock
+            return true
+        }
+        DllCall("ws2_32\closesocket", "Ptr", sock)
+        return false
+    }
+
+    RefreshNetworkListeners(reason := "wake") {
+        if (!this.running || !this.hwnd)
+            return false
+        prevTcp := (this.boundTcpPort > 0) ? this.boundTcpPort : this.requestedTcpPort
+        prevUdp := (this.boundUdpPort > 0) ? this.boundUdpPort : this.requestedUdpPort
+        prevDisc := (this.boundDiscoverPort > 0) ? this.boundDiscoverPort : this.requestedDiscoverPort
+
+        if (this.tcpListenSock != -1) {
+            try DllCall("ws2_32\closesocket", "Ptr", this.tcpListenSock)
+            this.tcpListenSock := -1
+        }
+        if (this.udpSock != -1) {
+            try DllCall("ws2_32\closesocket", "Ptr", this.udpSock)
+            this.udpSock := -1
+        }
+        if (this.discoverSock != -1) {
+            try DllCall("ws2_32\closesocket", "Ptr", this.discoverSock)
+            this.discoverSock := -1
         }
 
-        this.running := true
-        this.maintTimerFn := ObjBindMethod(this, "_OnMaintenanceTick")
-        SetTimer(this.maintTimerFn, 1000)
+        if (!this._BindListeners(prevTcp, prevUdp, prevDisc)) {
+            if (!this._BindListeners(this.requestedTcpPort, this.requestedUdpPort, this.requestedDiscoverPort))
+                return false
+        }
+        this.cachedEndpoints := GetLocalNetworkEndpoints()
+        this.cachedEndpointsTick := A_TickCount
+        this.lastEndpointsSig := _HB_GetEndpointsSignature(this.cachedEndpoints)
+        this.lastAdapterCheckTick := A_TickCount
+        this.lastWakeRefreshTick := A_TickCount
+        this.BroadcastSyncResync(this.cfg, this.state, reason)
         return true
     }
 
@@ -281,6 +426,10 @@ class HostCompanionBridge {
             try OnMessage(this.wmUdp, this.udpMsgFn, 0)
             this.udpMsgFn := ""
         }
+        if (this.discoverMsgFn) {
+            try OnMessage(this.wmDiscover, this.discoverMsgFn, 0)
+            this.discoverMsgFn := ""
+        }
 
         sockKeys := []
         for k, _ in this.clients
@@ -299,6 +448,10 @@ class HostCompanionBridge {
             try DllCall("ws2_32\closesocket", "Ptr", this.udpSock)
             this.udpSock := -1
         }
+        if (this.discoverSock != -1) {
+            try DllCall("ws2_32\closesocket", "Ptr", this.discoverSock)
+            this.discoverSock := -1
+        }
         if (IsObject(this.msgGui)) {
             try this.msgGui.Destroy()
             this.msgGui := ""
@@ -306,6 +459,7 @@ class HostCompanionBridge {
         this.hwnd := 0
         this.boundTcpPort := 0
         this.boundUdpPort := 0
+        this.boundDiscoverPort := 0
         if (this.wsaStarted) {
             try DllCall("ws2_32\WSACleanup")
             this.wsaStarted := false
@@ -462,7 +616,16 @@ class HostCompanionBridge {
     BroadcastMuteState(cfg, state) {
         if (!this.running)
             return 0
-        payload := this._BuildMuteStateJson()
+        return this._BroadcastJsonToAuthenticated(this._BuildMuteStateJson())
+    }
+
+    BroadcastSyncResync(cfg, state, reason := "wake") {
+        if (!this.running)
+            return 0
+        return this._BroadcastJsonToAuthenticated(this._BuildSyncResyncJson(reason))
+    }
+
+    _BroadcastJsonToAuthenticated(payload) {
         sent := 0
         for _, cli in this.clients {
             if (cli.kind = "ws" && cli.authenticated) {
@@ -477,19 +640,12 @@ class HostCompanionBridge {
         if (!this.running)
             return 0
         payload := '{"type":"close_remote","command":"CloseRemote","presenterSyncAction":"CloseRemote","timestamp":' A_TickCount '}'
-        sent := 0
-        for _, cli in this.clients {
-            if (cli.kind = "ws" && cli.authenticated) {
-                this._QueueWsFrame(cli, 0x1, payload)
-                sent += 1
-            }
-        }
-        return sent
+        return this._BroadcastJsonToAuthenticated(payload)
     }
 
     _GetRateLimit(ip) {
         if (!this.rateLimits.Has(ip))
-            this.rateLimits[ip] := { fails: 0, lockUntil: 0, lastUdpTick: 0 }
+            this.rateLimits[ip] := { fails: 0, lockUntil: 0, lastUdpTick: 0, lastV1Tick: 0 }
         return this.rateLimits[ip]
     }
 
@@ -530,14 +686,32 @@ class HostCompanionBridge {
         }
         for cli in toClose
             this._CloseClient(cli)
-        if ((now - this.cachedEndpointsTick) >= 30000) {
-            this.cachedEndpoints := GetLocalNetworkEndpoints()
-            this.cachedEndpointsTick := A_TickCount
+        if ((now - this.lastAdapterCheckTick) >= 5000) {
+            this.lastAdapterCheckTick := now
+            latestEps := GetLocalNetworkEndpoints()
+            latestSig := _HB_GetEndpointsSignature(latestEps)
+            if (latestSig != "" && this.lastEndpointsSig != "" && latestSig != this.lastEndpointsSig) {
+                this.cachedEndpoints := latestEps
+                this.cachedEndpointsTick := now
+                this.lastEndpointsSig := latestSig
+                this.BroadcastSyncResync(this.cfg, this.state, "adapter_change")
+            } else if ((now - this.cachedEndpointsTick) >= 30000) {
+                this.cachedEndpoints := latestEps
+                this.cachedEndpointsTick := now
+            }
         }
     }
 
     _OnUdpMessage(wParam, lParam, msg, hwnd) {
-        if (!this.running || this.udpSock = -1)
+        this._HandleUdpSocket(this.udpSock, lParam)
+    }
+
+    _OnDiscoverMessage(wParam, lParam, msg, hwnd) {
+        this._HandleUdpSocket(this.discoverSock, lParam)
+    }
+
+    _HandleUdpSocket(targetSock, lParam) {
+        if (!this.running || targetSock = -1)
             return
         ev := lParam & 0xFFFF
         if (ev != 1)
@@ -547,19 +721,32 @@ class HostCompanionBridge {
         fromAddr := Buffer(16, 0)
         Loop {
             fromLen := 16
-            n := DllCall("ws2_32\recvfrom", "Ptr", this.udpSock, "Ptr", rxBuf, "Int", 2048, "Int", 0, "Ptr", fromAddr, "Int*", &fromLen, "Int")
+            n := DllCall("ws2_32\recvfrom", "Ptr", targetSock, "Ptr", rxBuf, "Int", 2048, "Int", 0, "Ptr", fromAddr, "Int*", &fromLen, "Int")
             if (n <= 0)
                 break
             NumPut("UChar", 0, rxBuf, Min(n, 2047))
-            pkt := StrGet(rxBuf, "UTF-8")
+            pkt := Trim(StrGet(rxBuf, "UTF-8"))
             ip := _HB_FormatIp(fromAddr)
             rl := this._GetRateLimit(ip)
             now := A_TickCount
+            if (this._IsPairingRateLimited(ip))
+                continue
+
+            ; Public classroom discovery v1 (PS_DISCOVER_V1 -> safe zero-secret JSON beacon)
+            if (pkt = HostBridgeConstants.DISCOVER_V1_PROTO || SubStr(pkt, 1, StrLen(HostBridgeConstants.DISCOVER_V1_PROTO) + 1) = HostBridgeConstants.DISCOVER_V1_PROTO "|") {
+                if ((now - rl.lastV1Tick) < 80)
+                    continue
+                rl.lastV1Tick := now
+                reply := BuildPublicDiscoveryBeaconJson(this.cfg, this.boundTcpPort, 4455)
+                rLen := 0
+                rBuf := _HB_StrToUtf8Buf(reply, &rLen)
+                DllCall("ws2_32\sendto", "Ptr", targetSock, "Ptr", rBuf, "Int", rLen, "Int", 0, "Ptr", fromAddr, "Int", 16, "Int")
+                continue
+            }
+
             if ((now - rl.lastUdpTick) < HostBridgeConstants.UDP_COOLDOWN_MS)
                 continue
             rl.lastUdpTick := now
-            if (this._IsPairingRateLimited(ip))
-                continue
 
             parts := StrSplit(pkt, "|")
             if (parts.Length >= 2 && parts[1] = "PSYNC_DISCOVER") {
@@ -571,7 +758,7 @@ class HostCompanionBridge {
                     reply := "PSYNC_OFFER|" A_ComputerName "|" this.boundTcpPort "|4455|" UIConstants.APP_VERSION "|" mode
                     rLen := 0
                     rBuf := _HB_StrToUtf8Buf(reply, &rLen)
-                    DllCall("ws2_32\sendto", "Ptr", this.udpSock, "Ptr", rBuf, "Int", rLen, "Int", 0, "Ptr", fromAddr, "Int", 16, "Int")
+                    DllCall("ws2_32\sendto", "Ptr", targetSock, "Ptr", rBuf, "Int", rLen, "Int", 0, "Ptr", fromAddr, "Int", 16, "Int")
                 } else {
                     this._RecordPairingFailure(ip)
                 }
@@ -843,7 +1030,8 @@ class HostCompanionBridge {
             if (method = "GET" && cleanPath = "/health") {
                 c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
                 mode := this.cfg.HasOwnProp("AudioRoutingMode") ? this.cfg.AudioRoutingMode : 0
-                body := '{"ok":true,"hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","bridgePort":' this.boundTcpPort ',"obsPort":4455,"routingMode":' mode '}'
+                uuid := EnsureHostUuid(this.cfg)
+                body := '{"ok":true,"hostUuid":"' _HB_JsonEscape(uuid) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","bridgePort":' this.boundTcpPort ',"obsPort":4455,"routingMode":' mode '}'
                 this._SendHttpResponse(c, "200 OK", body)
                 return
             }
@@ -951,8 +1139,10 @@ class HostCompanionBridge {
         micName := this.cfg.HasOwnProp("targetMicName") ? this.cfg.targetMicName : "Mic/Aux"
         relayCode := this.cfg.HasOwnProp("InternetPairingCode") ? this.cfg.InternetPairingCode : ""
 
+        hostUuid := EnsureHostUuid(this.cfg)
         resp := '{'
             . '"ok":true,'
+            . '"hostUuid":"' _HB_JsonEscape(hostUuid) '",'
             . '"hostName":"' _HB_JsonEscape(A_ComputerName) '",'
             . '"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '",'
             . '"bridgePort":' this.boundTcpPort ','
@@ -1004,7 +1194,7 @@ class HostCompanionBridge {
                 this._FlushSendQueue(c)
                 return
             }
-            this._QueueWsFrame(c, 0x1, '{"type":"auth_ok","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"}')
+            this._QueueWsFrame(c, 0x1, '{"type":"auth_ok","hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"}')
             this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
         }
 
@@ -1187,7 +1377,7 @@ class HostCompanionBridge {
                 this._FlushSendQueue(c)
                 return
             }
-            this._QueueWsFrame(c, 0x1, '{"type":"auth_ok","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"}')
+            this._QueueWsFrame(c, 0x1, '{"type":"auth_ok","hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"}')
             this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             return
         }
@@ -1222,7 +1412,7 @@ class HostCompanionBridge {
         }
     }
 
-    _BuildMuteStateJson() {
+    _BuildStateFieldsJson() {
         isMutedStr := (this.state.HasOwnProp("isMuted") && this.state.isMuted) ? "true" : "false"
         mode := this.cfg.HasOwnProp("AudioRoutingMode") ? this.cfg.AudioRoutingMode : 0
         micName := this.cfg.HasOwnProp("targetMicName") ? this.cfg.targetMicName : "Mic/Aux"
@@ -1231,15 +1421,25 @@ class HostCompanionBridge {
         recSec := this.state.HasOwnProp("recElapsedSec") ? Max(0, Integer(this.state.recElapsedSec)) : 0
         streamWarnStr := (this.state.HasOwnProp("streamState") && this.state.streamState == 2) ? "true" : "false"
         voiceMutedStr := (this.state.HasOwnProp("voiceWhileMuted") && this.state.voiceWhileMuted) ? "true" : "false"
-        return '{"type":"mute_state","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","recState":' recSt ',"recSeconds":' recSec ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount '}'
+        obsConnStr := (this.state.HasOwnProp("obsConnected") && this.state.obsConnected) ? "true" : "false"
+        hostUuid := EnsureHostUuid(this.cfg)
+        return '"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","recState":' recSt ',"recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount
+    }
+
+    _BuildMuteStateJson() {
+        return '{"type":"mute_state",' this._BuildStateFieldsJson() '}'
+    }
+
+    _BuildSyncResyncJson(reason := "wake") {
+        return '{"type":"sync_resync","reason":"' _HB_JsonEscape(reason) '",' this._BuildStateFieldsJson() '}'
     }
 }
 
-StartHostCompanionBridge(cfg, state, tcpPort := 4456, udpPort := -1) {
+StartHostCompanionBridge(cfg, state, tcpPort := 4456, udpPort := -1, discoverPort := -1) {
     global g_HostCompanionBridge
     StopHostCompanionBridge()
     bridge := HostCompanionBridge()
-    if (bridge.Start(cfg, state, tcpPort, udpPort)) {
+    if (bridge.Start(cfg, state, tcpPort, udpPort, discoverPort)) {
         g_HostCompanionBridge := bridge
         return bridge
     }
@@ -1362,6 +1562,8 @@ GetHostBridgeStatusSummary() {
             running: true,
             tcpPort: g_HostCompanionBridge.boundTcpPort,
             udpPort: g_HostCompanionBridge.boundUdpPort,
+            discoverPort: g_HostCompanionBridge.boundDiscoverPort,
+            hostUuid: EnsureHostUuid(g_HostCompanionBridge.cfg),
             connectedCount: g_HostCompanionBridge.GetConnectedClientCount(),
             devices: g_HostCompanionBridge.GetDeviceList()
         }
@@ -1370,6 +1572,8 @@ GetHostBridgeStatusSummary() {
         running: false,
         tcpPort: 0,
         udpPort: 0,
+        discoverPort: 0,
+        hostUuid: "",
         connectedCount: 0,
         devices: []
     }
@@ -1448,6 +1652,7 @@ BuildHostPairingUri(cfg, candidateIps := "") {
     micName := (IsObject(cfg) && cfg.HasOwnProp("targetMicName")) ? cfg.targetMicName : "Mic/Aux"
     netMode := (IsObject(cfg) && cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet") ? "internet" : "lan"
     rc := (IsObject(cfg) && cfg.HasOwnProp("InternetPairingCode")) ? cfg.InternetPairingCode : ""
+    uuid := EnsureHostUuid(cfg)
 
     uri := "presentersync://connect?hosts=" UriEncodeComponent(hostStr)
         . "&port=" obsPort
@@ -1455,9 +1660,50 @@ BuildHostPairingUri(cfg, candidateIps := "") {
         . "&code=" UriEncodeComponent(sessCode)
         . "&mic=" UriEncodeComponent(micName)
         . "&mode=" netMode
+    if (uuid != "")
+        uri .= "&uuid=" UriEncodeComponent(uuid)
     if (obsPw != "")
         uri .= "&pw=" UriEncodeComponent(obsPw)
     if (rc != "")
         uri .= "&rc=" UriEncodeComponent(rc)
     return uri
+}
+
+RefreshHostNetworkingAfterWake(cfg, state, reason := "wake") {
+    global g_HostCompanionBridge
+    bridgeRefreshed := false
+    syncSent := 0
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running) {
+        bridgeRefreshed := g_HostCompanionBridge.RefreshNetworkListeners(reason)
+        syncSent := g_HostCompanionBridge.GetConnectedClientCount()
+    }
+    if (IsObject(cfg) && IsObject(state)) {
+        state.lastWakeRefreshTick := A_TickCount
+        state.lastWakeReason := reason
+        if (IsSet(UpdateHostInternetRelay))
+            try UpdateHostInternetRelay(cfg, state)
+        if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && state.HasOwnProp("obsConnected") && !state.obsConnected
+            && state.HasOwnProp("obsTimerFn") && state.obsTimerFn != "") {
+            try SetTimer(state.obsTimerFn, -200)
+        }
+        if (IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, state)
+    }
+    return { refreshed: bridgeRefreshed, syncSent: syncSent, reason: reason }
+}
+
+HandleHostPowerEvent(cfg, state, wParam, lParam := 0) {
+    wp := Integer(wParam)
+    if (wp == 4) { ; PBT_APMSUSPEND
+        if (IsObject(state))
+            state.isSystemSuspending := true
+        return "suspend"
+    }
+    if (wp == 7 || wp == 18) { ; PBT_APMRESUMESUSPEND / PBT_APMRESUMEAUTOMATIC
+        if (IsObject(state))
+            state.isSystemSuspending := false
+        RefreshHostNetworkingAfterWake(cfg, state, wp == 18 ? "power_resume_auto" : "power_resume")
+        return "resume"
+    }
+    return ""
 }

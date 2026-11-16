@@ -48,6 +48,7 @@ data class SavedHostProfile(
     val internetPairingCode: String = "",
     val sessionToken: String = "",
     val sessionPairingCode: String = "",
+    val pairedHostUuid: String = "",
     val targetMicName: String = AppConstants.DEFAULT_MIC_NAME,
     val heartbeatSeconds: Int = AppConstants.DEFAULT_HEARTBEAT_SECONDS
 )
@@ -67,6 +68,7 @@ object SavedHostProfileCodec {
                 .put("internetPairingCode", p.internetPairingCode)
                 .put("sessionToken", p.sessionToken)
                 .put("sessionPairingCode", p.sessionPairingCode)
+                .put("pairedHostUuid", p.pairedHostUuid)
                 .put("targetMicName", p.targetMicName)
                 .put("heartbeatSeconds", p.heartbeatSeconds)
             arr.put(obj)
@@ -102,6 +104,7 @@ object SavedHostProfileCodec {
                         internetPairingCode = obj.optString("internetPairingCode", "").trim(),
                         sessionToken = obj.optString("sessionToken", "").trim(),
                         sessionPairingCode = obj.optString("sessionPairingCode", "").trim(),
+                        pairedHostUuid = obj.optString("pairedHostUuid", "").trim(),
                         targetMicName = obj.optString("targetMicName", AppConstants.DEFAULT_MIC_NAME)
                             .trim().ifEmpty { AppConstants.DEFAULT_MIC_NAME },
                         heartbeatSeconds = hb
@@ -119,6 +122,7 @@ data class RemoteConfig(
     val internetPairingCode: String = "",
     val sessionPairingCode: String = "",
     val sessionToken: String = "",
+    val pairedHostUuid: String = "",
     val hostAddress: String = "127.0.0.1",
     val hostPort: Int = AppConstants.DEFAULT_OBS_PORT,
     val bridgePort: Int = AppConstants.DEFAULT_BRIDGE_PORT,
@@ -227,6 +231,7 @@ class RemoteConfigStore(context: Context) {
             internetPairingCode = prefs.getString("internetPairingCode", "").orEmpty().trim(),
             sessionPairingCode = prefs.getString("sessionPairingCode", "").orEmpty().trim(),
             sessionToken = prefs.getString("sessionToken", "").orEmpty().trim(),
+            pairedHostUuid = prefs.getString("pairedHostUuid", "").orEmpty().trim(),
             hostAddress = prefs.getString("hostAddress", "127.0.0.1").orEmpty(),
             hostPort = validPort,
             bridgePort = validBridgePort,
@@ -413,6 +418,7 @@ class RemoteConfigStore(context: Context) {
             internetPairingCode = prev.internetPairingCode,
             sessionToken = prev.sessionToken,
             sessionPairingCode = prev.sessionPairingCode,
+            pairedHostUuid = prev.pairedHostUuid,
             targetMicName = prev.targetMicName,
             heartbeatSeconds = prev.heartbeatSeconds
         )
@@ -439,6 +445,7 @@ class RemoteConfigStore(context: Context) {
                 internetPairingCode = target.internetPairingCode,
                 sessionToken = target.sessionToken,
                 sessionPairingCode = target.sessionPairingCode,
+                pairedHostUuid = target.pairedHostUuid,
                 targetMicName = target.targetMicName,
                 heartbeatSeconds = target.heartbeatSeconds,
                 activeProfileId = target.id,
@@ -465,6 +472,7 @@ class RemoteConfigStore(context: Context) {
             .putString("internetPairingCode", c.internetPairingCode)
             .putString("sessionPairingCode", c.sessionPairingCode)
             .putString("sessionToken", c.sessionToken)
+            .putString("pairedHostUuid", c.pairedHostUuid)
             .putString("hostAddress", c.hostAddress)
             .putInt("hostPort", c.hostPort)
             .putInt("bridgePort", c.bridgePort)

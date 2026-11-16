@@ -1,7 +1,7 @@
 package com.saabithjiffry.presentersync.remote.config
 
 object AppConstants {
-    const val APP_VERSION = "6.5.0"
+    const val APP_VERSION = "6.6.0"
 
     // Base HUD dimensions & layout ratios (matching GUI_Config.ahk UIConstants)
     const val BASE_WIDTH_TEXT = 168
@@ -46,10 +46,15 @@ object AppConstants {
     // Networking defaults
     const val DEFAULT_OBS_PORT = 4455
     const val DEFAULT_BRIDGE_PORT = 4456
+    const val DEFAULT_DISCOVERY_PORT = 4457
+    const val UDP_DISCOVER_V1_PROBE = "PS_DISCOVER_V1"
     const val DEFAULT_MIC_NAME = "Mic/Aux"
     const val DEFAULT_HEARTBEAT_SECONDS = 30
     const val WS_CONNECT_TIMEOUT_MS = 2500L
     const val RECONNECT_DELAY_MS = 2500L
+    const val LAN_FAILOVER_DEADLINE_MS = 5500L
+    const val LAN_REPROMOTE_INTERVAL_MS = 12000L
+    const val LAN_REPROMOTE_PROBE_TIMEOUT_MS = 1200L
     const val NTFY_BASE_URL = "https://ntfy.sh"
     const val NTFY_WS_BASE_URL = "wss://ntfy.sh"
     const val GITHUB_RELEASES_API = "https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest"

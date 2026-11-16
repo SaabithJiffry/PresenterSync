@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 6.5.0
+; Version: 6.6.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 6.5.0.0
+;@Ahk2Exe-SetVersion 6.6.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -52,6 +52,7 @@ class RemoteConfig {
     BridgePort := "4456"
     SessionPairingCode := ""
     SessionToken := ""
+    PairedHostUuid := ""
     DeviceId := ""
     InstanceName := ""
     ObsPassword := ""
@@ -156,6 +157,7 @@ class RemoteConfig {
         this.BridgePort := (IsInteger(rawBPort) && Integer(rawBPort) >= 1 && Integer(rawBPort) <= 65535) ? String(Integer(rawBPort)) : "4456"
         this.SessionPairingCode := Trim(this.Read("Connection", "SessionPairingCode", ""))
         this.SessionToken := Trim(this.Read("Connection", "SessionToken", ""))
+        this.PairedHostUuid := Trim(this.Read("Connection", "PairedHostUuid", ""))
         this.DeviceId := Trim(this.Read("Connection", "DeviceId", ""))
         if (this.DeviceId = "") {
             this.DeviceId := GenerateRemoteDeviceId("win")
@@ -290,6 +292,12 @@ class RemoteState {
     autoDodgeTimerFn := ""
     reconnectTimerFn := ""
     heartbeatTimerFn := ""
+    lanRepromoteTimerFn := ""
+    lanFailoverBudgetMs := 5500
+    lanRepromoteIntervalMs := 12000
+    discoverPort := 4457
+    _lanCycleStartTick := 0
+    _didUdpShiftFollow := false
     rebuildTrayFn := ""
     syncTrayStatusFn := ""
     refreshHelpFn := ""
@@ -343,6 +351,7 @@ class RemoteState {
         this.autoDodgeTimerFn := AutoDodgeTick.Bind(cfg, this)
         this.reconnectTimerFn := ConnectToRemoteOBS.Bind(cfg, this)
         this.heartbeatTimerFn := RemoteHeartbeatTick.Bind(cfg, this)
+        this.lanRepromoteTimerFn := TryPromoteRemoteWanToLan.Bind(cfg, this)
         this.pointerHotIfFn := CheckRemotePointerEnable.Bind(cfg)
 
         this.ComputeDimensions(cfg)
@@ -412,6 +421,8 @@ if (g_RemoteCli.pairingUri != "") {
             AppConfig.TargetMicName := parsedUri.targetMicName
         if (parsedUri.internetPairingCode != "")
             AppConfig.InternetPairingCode := parsedUri.internetPairingCode
+        if (parsedUri.HasOwnProp("hostUuid") && parsedUri.hostUuid != "")
+            AppConfig.PairedHostUuid := parsedUri.hostUuid
         if (AppConfig.SessionPairingCode != "" && AppConfig.NetworkMode = "LAN") {
             pairRes := PairRemoteWithHostBridge(AppConfig.HostAddress, AppConfig.BridgePort, AppConfig.SessionPairingCode, AppConfig.DeviceId, GetRemoteDisplayDeviceName(AppConfig))
             if (pairRes.ok)
@@ -440,6 +451,8 @@ GetRemoteEffectiveAlpha(state) {
 ConnectToRemoteOBS(cfg, state) {
     SetTimer state.reconnectTimerFn, 0
     SetTimer state.heartbeatTimerFn, 0
+    if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
+        SetTimer state.lanRepromoteTimerFn, 0
 
     if (state.obsConnected)
         return
@@ -486,6 +499,12 @@ ConnectToRemoteOBS(cfg, state) {
             state.activeHost := candidate.raw
             keepAliveMs := Max(10000, cfg.HeartbeatSeconds * 1000)
             SetTimer state.heartbeatTimerFn, keepAliveMs
+            if (state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback
+                && state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn)
+                && (Trim(cfg.HostAddress) != "" || (cfg.HasOwnProp("PairedHostUuid") && Trim(cfg.PairedHostUuid) != ""))) {
+                repromoteMs := state.HasOwnProp("lanRepromoteIntervalMs") ? Max(1500, Integer(state.lanRepromoteIntervalMs)) : 12000
+                SetTimer state.lanRepromoteTimerFn, repromoteMs
+            }
             state.currentAlpha := GetRemoteEffectiveAlpha(state)
             if IsObject(state.MicGui)
                 ApplyMicAppearance(cfg, state)
@@ -510,6 +529,10 @@ ConnectToRemoteOBS(cfg, state) {
         return
     }
 
+    if (!state.HasOwnProp("_lanCycleStartTick") || state._lanCycleStartTick <= 0 || state.candidateIndex <= 1) {
+        state._lanCycleStartTick := A_TickCount
+        state._didUdpShiftFollow := false
+    }
     if (state.candidates.Length == 0 || state.candidateIndex > state.candidates.Length) {
         state.candidates := BuildRemoteLanCandidateQueue(cfg)
         state.candidateIndex := 1
@@ -552,28 +575,105 @@ ConnectToRemoteOBS(cfg, state) {
     }
 }
 
+ShouldStopLanFailoverForWan(elapsedMs, budgetMs := 5500, canFallbackToRelay := true) {
+    return canFallbackToRelay && (elapsedMs >= Max(500, budgetMs))
+}
+
+TryPromoteRemoteWanToLan(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (!state.HasOwnProp("usingRelayFallback") || !state.usingRelayFallback || cfg.NetworkMode = "Internet")
+        return false
+    if ((state.HasOwnProp("_trayMenuOpen") && state._trayMenuOpen) || (state.HasOwnProp("_trayMenuCloseUntil") && A_TickCount < state._trayMenuCloseUntil))
+        return false
+
+    dPort := state.HasOwnProp("discoverPort") ? Integer(state.discoverPort) : 4457
+    if (cfg.HasOwnProp("PairedHostUuid") && Trim(cfg.PairedHostUuid) != "") {
+        beacons := DiscoverPublicHostsUdp(dPort, 360)
+        FollowPairedHostIpShift(cfg, beacons)
+    }
+
+    bPort := (cfg.HasOwnProp("BridgePort") && IsInteger(cfg.BridgePort)) ? String(Integer(cfg.BridgePort)) : "4456"
+    expectedUuid := cfg.HasOwnProp("PairedHostUuid") ? Trim(cfg.PairedHostUuid) : ""
+    for _, ep in ParseCandidateEndpoints(cfg.HostAddress, cfg.HostPort) {
+        probe := ProbeHostBridgeHealth(ep.host, bPort, expectedUuid, 550)
+        if (IsObject(probe) && probe.ok) {
+            if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
+                SetTimer state.lanRepromoteTimerFn, 0
+            state.usingRelayFallback := false
+            state._lanCycleStartTick := 0
+            state.candidates := BuildRemoteLanCandidateQueue(cfg)
+            state.candidateIndex := 1
+            if IsObject(state.obsWs) {
+                try state.obsWs.shutdown()
+                state.obsWs := ""
+            }
+            state.obsConnected := false
+            state.NotifyTrayStatus()
+            SetTimer state.reconnectTimerFn, -30
+            return true
+        }
+    }
+    return false
+}
+
 FailoverToNextCandidate(cfg, state) {
     if (cfg.NetworkMode = "Internet") {
         state.usingRelayFallback := false
+        if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
+            SetTimer state.lanRepromoteTimerFn, 0
         SetTimer state.reconnectTimerFn, -2500
         state.NotifyTrayStatus()
         return
     }
     if (state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback) {
         state.usingRelayFallback := false
+        if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
+            SetTimer state.lanRepromoteTimerFn, 0
         state.candidateIndex := 1
+        state._lanCycleStartTick := 0
         SetTimer state.reconnectTimerFn, -2500
         state.NotifyTrayStatus()
         return
     }
+
+    canFallback := ShouldRemoteFallbackToRelay(cfg, state)
+    elapsedMs := (state.HasOwnProp("_lanCycleStartTick") && state._lanCycleStartTick > 0) ? (A_TickCount - state._lanCycleStartTick) : 0
+    budgetMs := state.HasOwnProp("lanFailoverBudgetMs") ? Integer(state.lanFailoverBudgetMs) : 5500
+
+    if (ShouldStopLanFailoverForWan(elapsedMs, budgetMs, canFallback)) {
+        state.candidateIndex := 1
+        state._lanCycleStartTick := 0
+        state.usingRelayFallback := true
+        SetTimer state.reconnectTimerFn, -50
+        state.NotifyTrayStatus()
+        return
+    }
+
     state.candidateIndex += 1
     if (state.candidateIndex <= state.candidates.Length) {
         ; Probe next candidate immediately
         SetTimer state.reconnectTimerFn, -50
     } else {
+        ; If we have a paired HostUuid, perform one fast UDP PS_DISCOVER_V1 scan before falling back to WAN
+        if (cfg.HasOwnProp("PairedHostUuid") && Trim(cfg.PairedHostUuid) != ""
+            && (!state.HasOwnProp("_didUdpShiftFollow") || !state._didUdpShiftFollow)) {
+            state._didUdpShiftFollow := true
+            dPort := state.HasOwnProp("discoverPort") ? Integer(state.discoverPort) : 4457
+            beacons := DiscoverPublicHostsUdp(dPort, 360)
+            shiftRes := FollowPairedHostIpShift(cfg, beacons)
+            if (IsObject(shiftRes) && shiftRes.shifted) {
+                state.candidates := BuildRemoteLanCandidateQueue(cfg)
+                state.candidateIndex := 1
+                SetTimer state.reconnectTimerFn, -30
+                state.NotifyTrayStatus()
+                return
+            }
+        }
         ; All LAN candidates exhausted: seamlessly bridge via Internet Relay if configured (e.g., Mode 2 Host without OBS)
         state.candidateIndex := 1
-        if (ShouldRemoteFallbackToRelay(cfg, state)) {
+        state._lanCycleStartTick := 0
+        if (canFallback) {
             state.usingRelayFallback := true
             SetTimer state.reconnectTimerFn, -100
         } else {
@@ -600,6 +700,8 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     state.streamDropWarn := false
     state.voiceWhileMuted := false
     SetTimer state.heartbeatTimerFn, 0
+    if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
+        SetTimer state.lanRepromoteTimerFn, 0
     SetTimer state.breathTimerFn, 0
     state.animSeq += 1
 
@@ -640,6 +742,11 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             return
         if (ev.kind = "auth_ok") {
             SetTimer state.reconnectTimerFn, 0
+            state._lanCycleStartTick := 0
+            if (ev.HasOwnProp("hostUuid") && ev.hostUuid != "" && (!cfg.HasOwnProp("PairedHostUuid") || cfg.PairedHostUuid != ev.hostUuid)) {
+                cfg.PairedHostUuid := ev.hostUuid
+                try cfg.Write("Connection", "PairedHostUuid", ev.hostUuid)
+            }
             state.obsConnected := true
             state.usingBridge := true
             state._sawAuthChallenge := false
@@ -681,7 +788,11 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             }
             state.NotifyTrayStatus()
             TrayTip("Host Bridge authentication failed (" (ev.reason != "" ? ev.reason : "Invalid code/token") "). Re-pair in Change OBS Connection.", "PresenterSync Remote", 3)
-        } else if (ev.kind = "mute_state") {
+        } else if (ev.kind = "mute_state" || ev.kind = "sync_resync") {
+            if (ev.HasOwnProp("hostUuid") && ev.hostUuid != "" && (!cfg.HasOwnProp("PairedHostUuid") || cfg.PairedHostUuid != ev.hostUuid)) {
+                cfg.PairedHostUuid := ev.hostUuid
+                try cfg.Write("Connection", "PairedHostUuid", ev.hostUuid)
+            }
             if (!state.obsConnected || state.connStatus != "connected") {
                 state.obsConnected := true
                 state.usingBridge := true
@@ -1942,6 +2053,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     Theme.RegisterControl(dlg, btnPairCode, "Button")
     dlg._pairedToken := cfg.SessionToken
     dlg._pairedCode := cfg.SessionPairingCode
+    dlg._pairedHostUuid := cfg.HasOwnProp("PairedHostUuid") ? cfg.PairedHostUuid : ""
 
     dlg.SetFont("s9 w600", Theme.UiFont)
     lblPair := dlg.Add("Text", "xm w360 y+10", "Internet Pairing Code (Optional Fallback / WAN):")
@@ -1954,8 +2066,10 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     lblHost := dlg.Add("Text", "xm w360 y+8", "LAN Host Address (e.g. STUDIO-PC.local, 192.168.1.50):")
     Theme.RegisterControl(dlg, lblHost, "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editHost := dlg.Add("Edit", "xm w360", cfg.HostAddress)
+    editHost := dlg.Add("Edit", "xm w270", cfg.HostAddress)
     Theme.RegisterControl(dlg, editHost, "Edit")
+    btnScanLan := dlg.Add("Button", "x+8 yp w82 h24", "Scan LAN")
+    Theme.RegisterControl(dlg, btnScanLan, "Button")
 
     lblPort := dlg.Add("Text", "xm w360 y+8", "OBS WebSocket Port:")
     Theme.RegisterControl(dlg, lblPort, "Text")
@@ -1980,6 +2094,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         editPair.Enabled := true
         lblHost.Enabled := !isInternet
         editHost.Enabled := !isInternet
+        btnScanLan.Enabled := !isInternet
         lblPort.Enabled := !isInternet
         editPort.Enabled := !isInternet
     }
@@ -2004,7 +2119,42 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         editSession.Value := pairRes.sessionCode
         dlg._pairedToken := pairRes.sessionToken
         dlg._pairedCode := pairRes.sessionCode
+        if (pairRes.HasOwnProp("hostUuid") && pairRes.hostUuid != "")
+            dlg._pairedHostUuid := pairRes.hostUuid
     }
+
+    ApplyDiscoveredBeacon(b) {
+        editHost.Value := b.senderIp
+        editBridgePort.Value := b.bridgePort
+        editPort.Value := b.obsPort
+        dlg._pairedHostUuid := b.hostUuid
+        ddlNetMode.Choose(1)
+        UpdateModeFields()
+        statusTxt.Value := "✓ Selected " b.deviceName " • :" b.bridgePort " (" b.senderIp ")"
+    }
+
+    ScanClassroomAction(*) {
+        btnScanLan.Enabled := false
+        statusTxt.Value := "Scanning classroom LAN (:4457)..."
+        beacons := DiscoverPublicHostsUdp(4457, 650)
+        btnScanLan.Enabled := true
+        if (beacons.Length == 0) {
+            statusTxt.Value := "No classroom hosts found on LAN (:4457). Enter IP or Pair by Code."
+            return
+        }
+        if (beacons.Length == 1) {
+            ApplyDiscoveredBeacon(beacons[1])
+            return
+        }
+        pickMenu := Menu()
+        for _, b in beacons {
+            picked := b
+            pickMenu.Add(picked.deviceName " • :" picked.bridgePort " (" picked.senderIp ")", ((item, *) => ApplyDiscoveredBeacon(item)).Bind(picked))
+        }
+        pickMenu.Show()
+        statusTxt.Value := "Found " beacons.Length " host(s) on classroom LAN"
+    }
+    btnScanLan.OnEvent("Click", ScanClassroomAction)
 
     PairByCodeAction(*) {
         bpIn := Trim(editBridgePort.Value)
@@ -2116,6 +2266,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         cfg.SessionPairingCode := sessVal
         cfg.BridgePort := String(Integer(bpVal))
         cfg.SessionToken := (sessVal = "") ? "" : ((NormalizePairingCode(sessVal) = NormalizePairingCode(dlg._pairedCode)) ? dlg._pairedToken : "")
+        cfg.PairedHostUuid := dlg._pairedHostUuid
         cfg.InternetPairingCode := pairVal
         cfg.HostAddress := h
         cfg.HostPort := String(Integer(p))

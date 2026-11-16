@@ -135,6 +135,11 @@ fun ConnectionSettingsForm(
 
     var testing by remember { mutableStateOf(false) }
     var pairing by remember { mutableStateOf(false) }
+    var scanningLan by remember { mutableStateOf(false) }
+    var discoveredHosts by remember {
+        mutableStateOf<List<com.saabithjiffry.presentersync.remote.network.DiscoveredPublicHost>>(emptyList())
+    }
+    var selectedHostUuid by remember(initialConfig) { mutableStateOf(initialConfig.pairedHostUuid) }
     var showQrScanner by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("") }
     var validationError by remember { mutableStateOf<String?>(null) }
@@ -184,7 +189,7 @@ fun ConnectionSettingsForm(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
@@ -193,6 +198,31 @@ fun ConnectionSettingsForm(
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f)
                         )
+                        OutlinedButton(
+                            onClick = {
+                                if (scanningLan || pairing || testing) return@OutlinedButton
+                                scanningLan = true
+                                statusText = "Scanning classroom LAN (:4457)..."
+                                scope.launch {
+                                    val found = connectionManager.scanClassroomHosts()
+                                    discoveredHosts = found
+                                    scanningLan = false
+                                    statusText = if (found.isEmpty()) {
+                                        "No classroom hosts responded on UDP :4457."
+                                    } else {
+                                        "Found ${found.size} classroom host(s). Tap one to fill details."
+                                    }
+                                }
+                            },
+                            enabled = !scanningLan && !pairing && !testing,
+                            contentPadding = CompactExplorerButtonPadding
+                        ) {
+                            if (scanningLan) {
+                                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(5.dp))
+                            }
+                            Text(if (formFactor.isTightWidth) "Scan LAN" else "Scan Classroom", maxLines = 1, softWrap = false)
+                        }
                         OutlinedButton(
                             onClick = { showQrScanner = true },
                             enabled = !pairing && !testing,
@@ -205,6 +235,56 @@ fun ConnectionSettingsForm(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text("Scan QR", maxLines = 1, softWrap = false)
+                        }
+                    }
+                    if (discoveredHosts.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            discoveredHosts.forEach { host ->
+                                OutlinedButton(
+                                    onClick = {
+                                        hostAddress = host.hostIp
+                                        bridgePortStr = host.bridgePort.toString()
+                                        hostPortStr = host.obsPort.toString()
+                                        selectedHostUuid = host.hostUuid
+                                        networkMode = NetworkMode.LAN
+                                        statusText = "Selected ${host.displayTitle} (${host.hostIp})."
+                                        val codeNow = sessionCodeInput.trim()
+                                        if (codeNow.isNotEmpty() && !pairing) {
+                                            pairing = true
+                                            statusText = "Pairing with ${host.deviceName}..."
+                                            scope.launch {
+                                                val msg = connectionManager.pairByCode(
+                                                    codeInput = codeNow,
+                                                    fallbackHostInput = host.hostIp,
+                                                    bridgePortInput = host.bridgePort,
+                                                    onProgress = { statusText = it }
+                                                )
+                                                val updated = configStore.current
+                                                networkMode = updated.networkMode
+                                                sessionCodeInput = updated.sessionPairingCode
+                                                pairingCode = updated.internetPairingCode
+                                                hostAddress = updated.hostAddress
+                                                hostPortStr = updated.hostPort.toString()
+                                                bridgePortStr = updated.bridgePort.toString()
+                                                obsPassword = updated.obsPassword
+                                                targetMicName = updated.targetMicName
+                                                selectedHostUuid = updated.pairedHostUuid
+                                                statusText = msg
+                                                pairing = false
+                                            }
+                                        }
+                                    },
+                                    contentPadding = CompactExplorerButtonPadding,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        "${host.displayTitle} (${host.hostIp})",
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
                     Text(
@@ -670,6 +750,7 @@ fun ConnectionSettingsForm(
                         prev.copy(
                             networkMode = networkMode,
                             sessionPairingCode = sessionCodeInput.trim(),
+                            pairedHostUuid = selectedHostUuid.ifBlank { prev.pairedHostUuid },
                             internetPairingCode = pairingCode.trim(),
                             hostAddress = hostAddress.trim(),
                             hostPort = port,
@@ -728,6 +809,7 @@ fun ConnectionSettingsForm(
                     bridgePortStr = updated.bridgePort.toString()
                     obsPassword = updated.obsPassword
                     targetMicName = updated.targetMicName
+                    selectedHostUuid = updated.pairedHostUuid
                     statusText = msg
                     pairing = false
                 }

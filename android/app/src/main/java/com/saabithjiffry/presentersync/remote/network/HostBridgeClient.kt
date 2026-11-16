@@ -17,9 +17,11 @@ data class BridgeTelemetryState(
 
 interface HostBridgeCallbacks {
     fun onBridgeConnected(hostName: String)
+    fun onBridgeHostUuidReceived(hostUuid: String) {}
     fun onBridgeAuthFailed(reason: String)
     fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String)
     fun onTelemetryChanged(telemetry: BridgeTelemetryState) {}
+    fun onSyncResync(reason: String, hostUuid: String) {}
     fun onCloseRemoteSignal()
     fun onBridgeDisconnected(reason: String)
 }
@@ -88,13 +90,18 @@ class HostBridgeClient(
                     "auth_ok" -> {
                         authenticated = true
                         val hostName = obj.optString("hostName", "Primary Host")
+                        val hostUuid = obj.optString("hostUuid", "").trim()
+                        if (hostUuid.isNotEmpty()) {
+                            callbacks.onBridgeHostUuidReceived(hostUuid)
+                        }
                         callbacks.onBridgeConnected(hostName)
                     }
                     "auth_error" -> {
                         val err = obj.optString("error", "Bridge authentication failed")
                         callbacks.onBridgeAuthFailed(err)
                     }
-                    "mute_state" -> {
+                    "mute_state", "sync_resync" -> {
+                        val msgKind = obj.optString("type", "").lowercase()
                         val muted = obj.optBoolean("isMuted", false)
                         val mode = obj.optInt("routingMode", 0)
                         val mic = obj.optString("targetMicName", "")
@@ -106,6 +113,12 @@ class HostBridgeClient(
                         )
                         callbacks.onMuteStateChanged(muted, mode, mic)
                         callbacks.onTelemetryChanged(telemetry)
+                        if (msgKind == "sync_resync") {
+                            callbacks.onSyncResync(
+                                obj.optString("reason", "resync"),
+                                obj.optString("hostUuid", "").trim()
+                            )
+                        }
                     }
                     "close_remote" -> {
                         callbacks.onCloseRemoteSignal()
