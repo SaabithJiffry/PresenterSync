@@ -1,7 +1,7 @@
 package com.saabithjiffry.presentersync.remote.config
 
 object AppConstants {
-    const val APP_VERSION = "6.4.0"
+    const val APP_VERSION = "6.5.0"
 
     // Base HUD dimensions & layout ratios (matching GUI_Config.ahk UIConstants)
     const val BASE_WIDTH_TEXT = 168
@@ -32,6 +32,8 @@ object AppConstants {
     const val PUSH_TO_MUTE_HOLD_MS = 350L
     const val SHORT_TAP_MAX_MS = 400L
     const val SHORT_TAP_MAX_SLOP_DP = 6f
+    const val SECRET_SNAKE_HOLD_MS = 5000L
+    const val SECRET_SNAKE_HINT_DELAY_MS = 800L
     const val DODGE_ALPHA = 45
     const val AUTO_DODGE_RESTORE_MS = 2200L
     const val TOOLTIP_DURATION_MS = 2000L

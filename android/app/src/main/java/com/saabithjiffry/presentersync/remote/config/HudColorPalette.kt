@@ -8,7 +8,11 @@ data class HudColorPalette(
     val mutedIcon: Int,
     val offlineBg: Int,
     val offlineIcon: Int,
-    val authErrBorder: Int
+    val authErrBorder: Int,
+    val recPausedBg: Int = 0xFFD97706.toInt(),
+    val recPausedIcon: Int = 0xFF78350F.toInt(),
+    val chatAlertBg: Int = 0xFF2563EB.toInt(),
+    val chatAlertIcon: Int = 0xFF1E3A8A.toInt()
 )
 
 object HudColorPalettes {
@@ -41,7 +45,11 @@ object HudColorPalettes {
                 mutedIcon = rgb("4A1E00"),
                 offlineBg = rgb("374151"),
                 offlineIcon = rgb("9CA3AF"),
-                authErrBorder = rgb("D55E00")
+                authErrBorder = rgb("D55E00"),
+                recPausedBg = rgb("E69F00"),
+                recPausedIcon = rgb("4A3200"),
+                chatAlertBg = rgb("56B4E9"),
+                chatAlertIcon = rgb("0C3B54")
             )
             "OLED Stealth" -> HudColorPalette(
                 name = "OLED Stealth",
@@ -51,7 +59,11 @@ object HudColorPalettes {
                 mutedIcon = rgb("FB7185"),
                 offlineBg = rgb("141417"),
                 offlineIcon = rgb("71717A"),
-                authErrBorder = rgb("3B0D14")
+                authErrBorder = rgb("3B0D14"),
+                recPausedBg = rgb("2E1F05"),
+                recPausedIcon = rgb("FBBF24"),
+                chatAlertBg = rgb("13233A"),
+                chatAlertIcon = rgb("60A5FA")
             )
             "Broadcast Tally" -> HudColorPalette(
                 name = "Broadcast Tally",
@@ -61,7 +73,11 @@ object HudColorPalettes {
                 mutedIcon = rgb("450A0A"),
                 offlineBg = rgb("1F2937"),
                 offlineIcon = rgb("9CA3AF"),
-                authErrBorder = rgb("DC2626")
+                authErrBorder = rgb("DC2626"),
+                recPausedBg = rgb("EA580C"),
+                recPausedIcon = rgb("431407"),
+                chatAlertBg = rgb("0284C7"),
+                chatAlertIcon = rgb("082F49")
             )
             "Cyber Ocean" -> HudColorPalette(
                 name = "Cyber Ocean",
@@ -71,7 +87,11 @@ object HudColorPalettes {
                 mutedIcon = rgb("500724"),
                 offlineBg = rgb("1E293B"),
                 offlineIcon = rgb("94A3B8"),
-                authErrBorder = rgb("EC4899")
+                authErrBorder = rgb("EC4899"),
+                recPausedBg = rgb("F59E0B"),
+                recPausedIcon = rgb("451A03"),
+                chatAlertBg = rgb("0EA5E9"),
+                chatAlertIcon = rgb("082F49")
             )
             else -> HudColorPalette(
                 name = "Standard",
@@ -81,7 +101,11 @@ object HudColorPalettes {
                 mutedIcon = rgb("540808"),
                 offlineBg = rgb("374151"),
                 offlineIcon = rgb("9CA3AF"),
-                authErrBorder = rgb("EF4444")
+                authErrBorder = rgb("EF4444"),
+                recPausedBg = rgb("D97706"),
+                recPausedIcon = rgb("78350F"),
+                chatAlertBg = rgb("2563EB"),
+                chatAlertIcon = rgb("1E3A8A")
             )
         }
     }

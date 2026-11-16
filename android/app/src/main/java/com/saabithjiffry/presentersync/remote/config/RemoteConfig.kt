@@ -171,7 +171,8 @@ data class RemoteConfig(
     val savedX: Int = -1,
     val savedY: Int = -1,
     val savedXRatio: Float = -1f,
-    val savedYRatio: Float = -1f
+    val savedYRatio: Float = -1f,
+    val snakeHighScore: Int = 0
 ) {
     fun toBubbleGestureConfig(): BubbleGestureConfig = BubbleGestureConfig(
         enabled = enableHudClickActions,
@@ -275,7 +276,8 @@ class RemoteConfigStore(context: Context) {
             savedX = prefs.getInt("savedX", -1),
             savedY = prefs.getInt("savedY", -1),
             savedXRatio = prefs.getFloat("savedXRatio", -1f).let { if (it in 0f..1f) it else -1f },
-            savedYRatio = prefs.getFloat("savedYRatio", -1f).let { if (it in 0f..1f) it else -1f }
+            savedYRatio = prefs.getFloat("savedYRatio", -1f).let { if (it in 0f..1f) it else -1f },
+            snakeHighScore = prefs.getInt("snakeHighScore", 0).coerceAtLeast(0)
         )
     }
 
@@ -289,6 +291,10 @@ class RemoteConfigStore(context: Context) {
 
     fun resetPosition() = update {
         it.copy(savedX = -1, savedY = -1, savedXRatio = -1f, savedYRatio = -1f)
+    }
+
+    fun updateSnakeHighScore(score: Int): RemoteConfig = update { prev ->
+        if (score > prev.snakeHighScore) prev.copy(snakeHighScore = score) else prev
     }
 
     fun setHudWasActive(active: Boolean) {
@@ -509,6 +515,7 @@ class RemoteConfigStore(context: Context) {
             .putInt("savedY", c.savedY)
             .putFloat("savedXRatio", c.savedXRatio)
             .putFloat("savedYRatio", c.savedYRatio)
+            .putInt("snakeHighScore", c.snakeHighScore)
             .apply()
     }
 }

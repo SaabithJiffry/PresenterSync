@@ -56,6 +56,11 @@ class HudSnake {
     static _mmTimerActive := false
     static _tickTimerFn := ""
     static _boundHotkeys := []
+    static _gpLastBtnMask := 0
+    static _gpLastDirKey := ""
+    static _gpDllName := ""
+    static _gpDllChecked := false
+    static _gpBuf := Buffer(16, 0)
     static _cfg := ""
     static _state := ""
     static _headless := false
@@ -169,6 +174,8 @@ class HudSnake {
         this._popups := []
         this._food := ""
         this._crashDir := { x: 0, y: 0 }
+        this._gpLastBtnMask := 0
+        this._gpLastDirKey := ""
 
         if (IsObject(this._cfg) && IsObject(this._state)) {
             try this._RestoreLiveHudsAndTelemetry(this._cfg, this._state)
@@ -349,6 +356,8 @@ class HudSnake {
             return
 
         tickUs := this._NowUs()
+        if (!this._headless)
+            this._PollGamepadInput()
         if (this.Phase = "morph") {
             if ((tickUs - this._morphStartUs) >= (this._morphDurationMs * 1000.0)) {
                 this.Phase := "playing"
@@ -525,17 +534,25 @@ class HudSnake {
         snakePal := this._GetActivePalette()
         seeds := []
 
-        anchorX := state.HasOwnProp("savedX") ? state.savedX : (this._waLeft + this._W - 200)
-        anchorY := state.HasOwnProp("savedY") ? state.savedY : (this._waTop + this._H - 80)
-        pos := ComputeHudLayout(state, anchorX, anchorY)
+        anchorX := (IsObject(state) && state.HasOwnProp("savedX") && IsInteger(state.savedX)) ? state.savedX : (this._waLeft + this._W - 200)
+        anchorY := (IsObject(state) && state.HasOwnProp("savedY") && IsInteger(state.savedY)) ? state.savedY : (this._waTop + this._H - 80)
+        hasFullHostHud := IsSet(ComputeHudLayout) && IsObject(state) && state.HasOwnProp("RecGui") && IsObject(cfg) && cfg.HasOwnProp("ShowExtraHuds")
+        if (hasFullHostHud) {
+            pos := ComputeHudLayout(state, anchorX, anchorY)
+        } else {
+            micW := (IsObject(state) && state.HasOwnProp("baseWidth") && state.baseWidth > 0) ? state.baseWidth : 80
+            micH := (IsObject(state) && state.HasOwnProp("baseHeight") && state.baseHeight > 0) ? state.baseHeight : 40
+            pos := { micX: anchorX, micY: anchorY, micW: micW, micH: micH }
+        }
 
+        isMutedFlag := (IsObject(state) && state.HasOwnProp("isMuted")) ? !!state.isMuted : false
         ; Capture real visible HUD pills so the morph visibly collapses HUD tiles into the matte snake ribbon
-        seeds.Push({ x: pos.micX - this._waLeft, y: pos.micY - this._waTop, w: pos.micW, h: pos.micH, colorHex: (state.isMuted ? snakePal.muted : snakePal.live) })
-        if (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom)) {
+        seeds.Push({ x: pos.micX - this._waLeft, y: pos.micY - this._waTop, w: pos.micW, h: pos.micH, colorHex: (isMutedFlag ? snakePal.muted : snakePal.live) })
+        if (hasFullHostHud && cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom)) {
             seeds.Push({ x: pos.recX - this._waLeft, y: pos.recY - this._waTop, w: pos.recW, h: pos.recH, colorHex: snakePal.recActive })
             seeds.Push({ x: pos.chatX - this._waLeft, y: pos.chatY - this._waTop, w: pos.chatW, h: pos.chatH, colorHex: snakePal.chatAlert })
         }
-        if (cfg.ShowExtraHuds && cfg.EnableWS) {
+        if (hasFullHostHud && cfg.ShowExtraHuds && cfg.EnableWS) {
             seeds.Push({ x: pos.studioX - this._waLeft, y: pos.studioY - this._waTop, w: pos.studioW, h: pos.studioH, colorHex: snakePal.studioOn })
             seeds.Push({ x: pos.sceneX - this._waLeft, y: pos.sceneY - this._waTop, w: pos.sceneW, h: pos.sceneH, colorHex: snakePal.scene })
             if (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud) {
@@ -627,61 +644,220 @@ class HudSnake {
             SetTimer(state.breathTimerFn, 0)
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
-        UpdateVoiceMeterTimer(cfg, state)
-        UpdateAutoDodgeTimer(cfg, state)
+        if (IsSet(UpdateVoiceMeterTimer) && IsObject(cfg) && cfg.HasOwnProp("AlertVoiceWhileMuted"))
+            UpdateVoiceMeterTimer(cfg, state)
+        if (IsSet(UpdateAutoDodgeTimer))
+            UpdateAutoDodgeTimer(cfg, state)
 
         ; Pause synchronous WinHTTP WebSocket reconnects & UIA polling so main AHK thread stays 100% responsive
-        if (state.HasOwnProp("obsTimerFn") && state.obsTimerFn)
-            SetTimer(state.obsTimerFn, 0)
-        if (state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
-            SetTimer(state.relayTimerFn, 0)
-        if (state.HasOwnProp("zoomTimerFn") && state.zoomTimerFn)
-            SetTimer(state.zoomTimerFn, 0)
-        if (state.HasOwnProp("streamTimerFn") && state.streamTimerFn)
-            SetTimer(state.streamTimerFn, 0)
-        if (state.HasOwnProp("recTimerFn") && state.recTimerFn)
-            SetTimer(state.recTimerFn, 0)
+        for propName in ["obsTimerFn", "relayTimerFn", "zoomTimerFn", "streamTimerFn", "recTimerFn", "reconnectTimerFn", "heartbeatTimerFn"] {
+            if (state.HasOwnProp(propName) && state.%propName%)
+                SetTimer(state.%propName%, 0)
+        }
 
-        for g in GetHudGuiList(state)
-            try g.Hide()
+        if (IsSet(GetHudGuiList) && state.HasOwnProp("RecGui")) {
+            for g in GetHudGuiList(state)
+                try g.Hide()
+        } else if (state.HasOwnProp("MicGui") && IsObject(state.MicGui)) {
+            try state.MicGui.Hide()
+        }
     }
 
     static _RestoreLiveHudsAndTelemetry(cfg, state) {
-        if (cfg.ShowIndicator)
-            RefreshHudAppearance(cfg, state)
-        else
-            UpdateHudVisibility(cfg, state)
-        UpdateAutoDodgeTimer(cfg, state)
-        UpdateVoiceMeterTimer(cfg, state)
+        isPrimary := state.HasOwnProp("RecGui")
+        if (isPrimary) {
+            if (cfg.ShowIndicator && IsSet(RefreshHudAppearance))
+                RefreshHudAppearance(cfg, state)
+            else if (IsSet(UpdateHudVisibility))
+                UpdateHudVisibility(cfg, state)
+        } else {
+            if (state.HasOwnProp("refreshHudFn") && IsObject(state.refreshHudFn)) {
+                try state.refreshHudFn.Call()
+            } else if (IsObject(cfg) && cfg.ShowIndicator && state.HasOwnProp("MicGui") && IsObject(state.MicGui)) {
+                try ApplyMicAppearance(cfg, state)
+                try state.MicGui.Show("NoActivate")
+            }
+        }
+        if (IsSet(UpdateAutoDodgeTimer))
+            UpdateAutoDodgeTimer(cfg, state)
+        if (IsSet(UpdateVoiceMeterTimer) && IsObject(cfg) && cfg.HasOwnProp("AlertVoiceWhileMuted"))
+            UpdateVoiceMeterTimer(cfg, state)
 
-        if (cfg.EnableWS && !state.obsConnected && state.HasOwnProp("obsTimerFn") && state.obsTimerFn)
-            SetTimer(state.obsTimerFn, -150)
-        if (cfg.EnableWS && state.obsConnected && state.streamState != 0 && state.HasOwnProp("streamTimerFn") && state.streamTimerFn)
-            SetTimer(state.streamTimerFn, UIConstants.STREAM_POLL_INTERVAL_MS)
-        if (state.recState == 1 && state.HasOwnProp("recTimerFn") && state.recTimerFn)
-            SetTimer(state.recTimerFn, 1000)
-        try UpdateZoomMonitorTimer(cfg, state)
-        try UpdateHostInternetRelay(cfg, state)
+        if (isPrimary) {
+            if (cfg.EnableWS && !state.obsConnected && state.HasOwnProp("obsTimerFn") && state.obsTimerFn)
+                SetTimer(state.obsTimerFn, -150)
+            if (cfg.EnableWS && state.obsConnected && state.streamState != 0 && state.HasOwnProp("streamTimerFn") && state.streamTimerFn)
+                SetTimer(state.streamTimerFn, UIConstants.STREAM_POLL_INTERVAL_MS)
+            if (state.recState == 1 && state.HasOwnProp("recTimerFn") && state.recTimerFn)
+                SetTimer(state.recTimerFn, 1000)
+            if (IsSet(UpdateZoomMonitorTimer))
+                try UpdateZoomMonitorTimer(cfg, state)
+            if (IsSet(UpdateHostInternetRelay))
+                try UpdateHostInternetRelay(cfg, state)
+        } else {
+            if (state.HasOwnProp("obsConnected") && !state.obsConnected && state.HasOwnProp("reconnectTimerFn") && state.reconnectTimerFn)
+                SetTimer(state.reconnectTimerFn, -150)
+            else if (state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("heartbeatTimerFn") && state.heartbeatTimerFn) {
+                hbMs := (IsObject(cfg) && cfg.HasOwnProp("HeartbeatSeconds") && cfg.HeartbeatSeconds >= 10) ? cfg.HeartbeatSeconds * 1000 : 30000
+                SetTimer(state.heartbeatTimerFn, hbMs)
+            }
+        }
+    }
+
+    static DecodeXInputGamepadState(buttons, thumbX, thumbY, deadzone := 12000) {
+        dirX := 0, dirY := 0
+        if (buttons & 0x0001)
+            dirY := -1
+        else if (buttons & 0x0002)
+            dirY := 1
+        else if (buttons & 0x0004)
+            dirX := -1
+        else if (buttons & 0x0008)
+            dirX := 1
+        else if (Abs(thumbX) >= deadzone || Abs(thumbY) >= deadzone) {
+            if (Abs(thumbX) >= Abs(thumbY))
+                dirX := (thumbX > 0) ? 1 : -1
+            else
+                dirY := (thumbY > 0) ? -1 : 1
+        }
+        return {
+            dirX: dirX,
+            dirY: dirY,
+            pausePressed: !!(buttons & 0x1010),
+            edgePressed: !!(buttons & 0xC000),
+            exitPressed: !!(buttons & 0x2020)
+        }
+    }
+
+    static DecodeDirectInputPov(povVal) {
+        if (!IsInteger(povVal) || povVal < 0 || povVal >= 65535)
+            return { x: 0, y: 0 }
+        deg := Integer(povVal)
+        if (deg <= 4500 || deg >= 31500)
+            return { x: 0, y: -1 }
+        if (deg <= 13500)
+            return { x: 1, y: 0 }
+        if (deg <= 22500)
+            return { x: 0, y: 1 }
+        return { x: -1, y: 0 }
+    }
+
+    static _EnsureXInputDll() {
+        if (this._gpDllChecked)
+            return this._gpDllName
+        this._gpDllChecked := true
+        for dllName in ["xinput1_4.dll", "xinput9_1_0.dll", "xinput1_3.dll"] {
+            hMod := DllCall("LoadLibrary", "Str", dllName, "Ptr")
+            if (hMod) {
+                this._gpDllName := dllName
+                return dllName
+            }
+        }
+        return ""
+    }
+
+    static _PollGamepadInput() {
+        if (!this.IsActive)
+            return
+        decoded := ""
+        dllName := this._EnsureXInputDll()
+        if (dllName != "") {
+            Loop 4 {
+                idx := A_Index - 1
+                res := DllCall(dllName "\XInputGetState", "UInt", idx, "Ptr", this._gpBuf.Ptr, "UInt")
+                if (res == 0) {
+                    buttons := NumGet(this._gpBuf, 4, "UShort")
+                    thumbX := NumGet(this._gpBuf, 8, "Short")
+                    thumbY := NumGet(this._gpBuf, 10, "Short")
+                    decoded := this.DecodeXInputGamepadState(buttons, thumbX, thumbY)
+                    break
+                }
+            }
+        }
+        if (!IsObject(decoded)) {
+            try {
+                pov := GetKeyState("1JoyPOV")
+                if (pov != "" && pov >= -1) {
+                    dPov := this.DecodeDirectInputPov(Round(pov))
+                    btnPause := GetKeyState("1Joy1") || GetKeyState("1Joy8")
+                    btnEdge := GetKeyState("1Joy3") || GetKeyState("1Joy4")
+                    btnExit := GetKeyState("1Joy2") || GetKeyState("1Joy7")
+                    decoded := {
+                        dirX: dPov.x,
+                        dirY: dPov.y,
+                        pausePressed: !!btnPause,
+                        edgePressed: !!btnEdge,
+                        exitPressed: !!btnExit
+                    }
+                }
+            }
+        }
+        if (!IsObject(decoded))
+            return
+        this._ApplyGamepadInput(decoded)
+    }
+
+    static _ApplyGamepadInput(decoded) {
+        if (decoded.dirX != 0 || decoded.dirY != 0) {
+            dirKey := decoded.dirX "," decoded.dirY
+            if (dirKey != this._gpLastDirKey) {
+                this._gpLastDirKey := dirKey
+                this.QueueDirection(decoded.dirX, decoded.dirY)
+            }
+        } else {
+            this._gpLastDirKey := ""
+        }
+
+        curMask := (decoded.pausePressed ? 1 : 0) | (decoded.edgePressed ? 2 : 0) | (decoded.exitPressed ? 4 : 0)
+        rising := curMask & ~this._gpLastBtnMask
+        this._gpLastBtnMask := curMask
+
+        if (rising & 1) {
+            if (this.Phase = "gameover")
+                this.Restart()
+            else
+                this.TogglePause()
+        } else if (rising & 2) {
+            this.ToggleEdgeMode()
+        } else if (rising & 4) {
+            this.Stop()
+        }
     }
 
     static _BindGameHotkeys() {
         this._UnbindGameHotkeys()
         HotIf()
         bindings := [
-            ["*Up",    (*) => this.QueueDirection(0, -1)],
-            ["*Down",  (*) => this.QueueDirection(0, 1)],
-            ["*Left",  (*) => this.QueueDirection(-1, 0)],
-            ["*Right", (*) => this.QueueDirection(1, 0)],
-            ["w",      (*) => this.QueueDirection(0, -1)],
-            ["s",      (*) => this.QueueDirection(0, 1)],
-            ["a",      (*) => this.QueueDirection(-1, 0)],
-            ["d",      (*) => this.QueueDirection(1, 0)],
-            ["p",      (*) => this.TogglePause()],
-            ["Space",  (*) => this.TogglePause()],
-            ["e",      (*) => this.ToggleEdgeMode()],
-            ["r",      (*) => (this.Phase = "gameover" ? this.Restart() : 0)],
-            ["Enter",  (*) => (this.Phase = "gameover" ? this.Restart() : 0)],
-            ["Escape", (*) => this.Stop()]
+            ["*Up",          (*) => this.QueueDirection(0, -1)],
+            ["*Down",        (*) => this.QueueDirection(0, 1)],
+            ["*Left",        (*) => this.QueueDirection(-1, 0)],
+            ["*Right",       (*) => this.QueueDirection(1, 0)],
+            ["*NumpadUp",    (*) => this.QueueDirection(0, -1)],
+            ["*NumpadDown",  (*) => this.QueueDirection(0, 1)],
+            ["*NumpadLeft",  (*) => this.QueueDirection(-1, 0)],
+            ["*NumpadRight", (*) => this.QueueDirection(1, 0)],
+            ["*Numpad8",     (*) => this.QueueDirection(0, -1)],
+            ["*Numpad2",     (*) => this.QueueDirection(0, 1)],
+            ["*Numpad4",     (*) => this.QueueDirection(-1, 0)],
+            ["*Numpad6",     (*) => this.QueueDirection(1, 0)],
+            ["w",            (*) => this.QueueDirection(0, -1)],
+            ["+w",           (*) => this.QueueDirection(0, -1)],
+            ["s",            (*) => this.QueueDirection(0, 1)],
+            ["+s",           (*) => this.QueueDirection(0, 1)],
+            ["a",            (*) => this.QueueDirection(-1, 0)],
+            ["+a",           (*) => this.QueueDirection(-1, 0)],
+            ["d",            (*) => this.QueueDirection(1, 0)],
+            ["+d",           (*) => this.QueueDirection(1, 0)],
+            ["p",            (*) => this.TogglePause()],
+            ["+p",           (*) => this.TogglePause()],
+            ["Space",        (*) => this.TogglePause()],
+            ["e",            (*) => this.ToggleEdgeMode()],
+            ["+e",           (*) => this.ToggleEdgeMode()],
+            ["r",            (*) => (this.Phase = "gameover" ? this.Restart() : 0)],
+            ["+r",           (*) => (this.Phase = "gameover" ? this.Restart() : 0)],
+            ["Enter",        (*) => (this.Phase = "gameover" ? this.Restart() : 0)],
+            ["NumpadEnter",  (*) => (this.Phase = "gameover" ? this.Restart() : 0)],
+            ["Escape",       (*) => this.Stop()]
         ]
         for pair in bindings {
             try {

@@ -180,6 +180,12 @@ private val HELP_TOPICS = listOf(
         "Open HUD Style -> Floating Bubble Multi-Gestures. By default Single Tap is None (to avoid accidental board touches), Double Tap opens the Quick Menu, and Long Press (600ms) toggles mute. You can also set Long Press = Mute Only and Very Long Press = Unmute Only, and toggle 'Lock Pill Position' so touches never drag the bubble."
     ),
     HelpTopic(
+        "Floating HUD",
+        "Double-Tap Quick Menu Surprise (Try at Your Own Risk)",
+        "Hidden only inside the Quick Menu — taps intentionally do nothing mid-lecture.",
+        "Open the floating Quick Menu (double-tap pill by default) and notice the quiet 'Try at your own risk' row near the bottom. Tapping it does nothing so Smart Boards stay 100% safe during presentations—but holding it for 5 full seconds reveals something playful on top of Android. Swipe, or steer with keyboard Arrows/WASD or hardware D-Pad."
+    ),
+    HelpTopic(
         "Pointer & Clicker",
         "Play Protect-Safe Smart Board & Phone Control",
         "Zero Accessibility permissions required — install directly with Play Protect enabled.",

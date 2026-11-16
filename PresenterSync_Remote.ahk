@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 6.4.0
+; Version: 6.5.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 6.4.0.0
+;@Ahk2Exe-SetVersion 6.5.0.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -22,6 +22,7 @@ ProcessSetPriority "High"
 #Include <Gdip>
 #Include <OBS_Network>
 #Include <GUI_Config>
+#Include <HudSnakeGame>
 
 g_RemoteCli := ParseRemoteCliArgs(A_Args)
 g_RemoteMutex := AcquireRemoteInstanceMutex(g_RemoteCli.instanceName)
@@ -33,8 +34,8 @@ if (g_RemoteMutex.alreadyExists) {
 
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => (ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => (ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
+RegisterSelfUpdateBeforeRelaunch((*) => (HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => (HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSyncRemote.ico")
@@ -391,6 +392,7 @@ InitRemoteHUD(AppConfig, AppState)
 BuildRemoteTrayMenu(AppConfig, AppState)
 RegisterRemotePointerHotkey(AppConfig, AppState)
 RegisterRemoteAppHotkeys(AppConfig, AppState)
+try Hotkey("!^+s", (*) => HudSnake.Toggle(AppConfig, AppState), "On")
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync_Remote.exe")
 
 ; === FIRST-RUN / CONNECTION PROMPT ===
@@ -935,7 +937,7 @@ RemoveToolTip() {
 }
 
 OnRemoteClickerMute(cfg, state, *) {
-    if (!cfg.EnablePointerMute)
+    if (!cfg.EnablePointerMute || (IsSet(HudSnake) && HudSnake.IsActive))
         return
 
     static lastTick := 0
@@ -967,7 +969,7 @@ OnRemoteClickerMute(cfg, state, *) {
 }
 
 CheckRemotePointerEnable(cfg, ThisHotkey) {
-    return cfg.EnablePointerMute && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
+    return cfg.EnablePointerMute && !(IsSet(HudSnake) && HudSnake.IsActive) && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
 RegisterRemotePointerHotkey(cfg, state) {
