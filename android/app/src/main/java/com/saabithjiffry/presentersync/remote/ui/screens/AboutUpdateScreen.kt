@@ -1,4 +1,4 @@
-﻿package com.saabithjiffry.presentersync.remote.ui.screens
+package com.saabithjiffry.presentersync.remote.ui.screens
 
 import android.content.Intent
 import android.net.Uri
@@ -121,7 +121,7 @@ fun AboutUpdateDialog(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Version ${AppConstants.APP_VERSION} â€¢ Smart Board Companion",
+                                text = "Version ${AppConstants.APP_VERSION} • Smart Board Companion",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Medium
@@ -149,7 +149,7 @@ fun AboutUpdateDialog(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Strict 1-Tier Android Smart Board & Phone Mic Companion with OBS WebSocket v5, Windows Host Bridge (:4456), WAN Relay (PS-XXXX-XXXX), zero-GMS CameraX + ZXing QR pairing, built-in SHA-256 self-updater, and Windows 11 Explorer UI.",
+                                text = "Strict 1-Tier Android Smart Board & Phone Mic Companion featuring Classroom UDP Discovery (:4457), LAN ↔ WAN failover, Wireless OBS Director Deck, Synchronized Presenter Countdown Timer, Silent Stage Nudge, Push-to-Talk Mode, Custom Hex Themes, Guided Onboarding Wizard, CameraX + ZXing QR pairing, and SHA-256 self-updater.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -250,7 +250,7 @@ fun AboutUpdateDialog(
                                             }
                                         } else {
                                             Text(
-                                                text = "âœ“ You are on the latest release (v${res.latestVersion ?: res.currentVersion}).",
+                                                text = "✓ You are on the latest release (v${res.latestVersion ?: res.currentVersion}).",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = Color(0xFF10B981),
                                                 fontWeight = FontWeight.Medium
@@ -400,9 +400,9 @@ internal fun UpdateInstallProgressBody(
         is UpdateInstallState.ReadyToInstall -> {
             Text(
                 text = if (installState.sha256Verified) {
-                    "âœ“ SHA-256 & package verified for v${installState.version}."
+                    "✓ SHA-256 & package verified for v${installState.version}."
                 } else {
-                    "âœ“ Package verified for v${installState.version}."
+                    "✓ Package verified for v${installState.version}."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF10B981),
@@ -423,7 +423,7 @@ internal fun UpdateInstallProgressBody(
         }
         is UpdateInstallState.LaunchedInstaller -> {
             Text(
-                text = "âœ“ Android updater launched for v${installState.version}${if (installState.sha256Verified) " (SHA-256 verified)" else ""}. Confirm Update on the system prompt â€” your active HUD restores automatically afterward.",
+                text = "✓ Android updater launched for v${installState.version}${if (installState.sha256Verified) " (SHA-256 verified)" else ""}. Confirm Update on the system prompt — your active HUD restores automatically afterward.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF10B981),
                 fontWeight = FontWeight.Medium

@@ -29,3 +29,5 @@ PresenterSync_Remote.ini
 tests/*.ini
 tests/*.log
 tests/debug_*.txt
+__pycache__/
+*.pyc

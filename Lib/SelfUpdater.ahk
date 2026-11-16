@@ -1,4 +1,4 @@
-﻿; ==============================================================================
+; ==============================================================================
 ; Module: SelfUpdater.ahk
 ; Description: GitHub release checker, WinINet downloader, SHA-256 verifier & .exe swapper
 ; ==============================================================================
@@ -588,7 +588,7 @@ StartWindowsSelfUpdateDownloadUI(updRes, targetExePath := "") {
     }
 
     if (!closed) {
-        lblStage.Value := (res.shaVerified ? "âœ“ SHA-256 verified! " : "âœ“ PE verified! ") "Replacing executable and restarting..."
+        lblStage.Value := (res.shaVerified ? "✓ SHA-256 verified! " : "✓ PE verified! ") "Replacing executable and restarting..."
         prgBar.Value := 100
     }
     Sleep(250)

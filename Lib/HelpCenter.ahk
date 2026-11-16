@@ -669,6 +669,36 @@ GetHelpKnowledgeBase() {
         "SYSTEM UTILITIES`r`n`r`n• Unified Control Center: Edit every setting across 6 tabs with live validation—invalid hotkeys are flagged cleanly in the status bar without corrupting saved configuration.`r`n• Start with Windows: Strictly OFF by default; adds/removes HKCU Run startup entry when toggled.`r`n• GitHub Update Checker: Safely checks https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest when clicked and compares SemVer.",
         "control center apply save start with windows update checker github semver")
 
+    Add("feat-secondary-mic", "Features", "HUD Customization & Visuals", "Secondary Independent Mic Pill (Primary Host Only)",
+        "Tray > Show Secondary Mic Pill (Mic-Only) / Control Center > HUD & Theme", "Independent Drag & [SecondaryPosition]", "OFF (Primary-Only)",
+        "Toggles a second standalone Mic-only pill with independent drag/snap coordinates while staying synced live to Primary mic state.",
+        "SECONDARY INDEPENDENT MIC PILL (PRIMARY APP ONLY)`r`n`r`n• Dedicated Mic-Only Tier: Displays strictly the LIVE / MUTED Mic pill without duplicating extra telemetry tiers—ideal for placing on a second monitor, teleprompter, or speaker notes corner.`r`n• Independent Drag & Reset: Dragging moves only the secondary pill and saves cleanly under [SecondaryPosition] X/Y; Primary Indicator Position stays untouched.`r`n• Synchronized State: Shares mute state, click-to-mute, breathing pulse, custom hex theme colors, voice meter activity, and independent hover Auto-Dodge.",
+        "secondary mic pill independent primary monitor second display duplicate indicator appearance")
+
+    Add("feat-director", "Features", "Audio Routing & OBS Telemetry", "Director Deck, Standby BRB Curtain, Countdown Timer & Stage Nudge",
+        "Tray > OBS Director & Standby / Remote Companion Deck", "Scene / Split / BRB / Timer / Nudge", "Synced across Host & Remotes",
+        "Switch OBS scenes, split recording chapters, trigger Standby BRB curtain macros, run synced countdown timers, and send silent nudges.",
+        "WIRELESS DIRECTOR DECK, TIMER & STAGE NUDGE`r`n`r`n• OBS Scene Switcher & Recording Controls: Switch Program scenes, Pause/Resume recording, or Split chapters from Primary or any paired Remote.`r`n• Standby / BRB Curtain Macro: Snapshots mic mute + scene, switches cleanly to Standby scene & mutes mic, then restores prior scene & mute state on return.`r`n• Synchronized Presenter Countdown Timer: 5/10/15/45m presets or custom durations with 2:00 checkpoint warning & overtime clock.`r`n• Silent Stage Nudge: Pushes unobtrusive floating cues onto Primary and Android screens without entering OBS display captures.",
+        "director deck standby brb curtain timer countdown stage nudge scene switch split chapter")
+
+    Add("feat-ptt", "Features", "PowerPoint & Hardware Clicker", "Push-to-Talk Mode & Custom Hex HUD Theme Colors",
+        "Tray > Settings > Enable Push-to-Talk / Indicator Appearance > HUD Color Preset > Custom", "Hold-to-Unmute (>= 300ms)", "PTT OFF / Custom Hex Optional",
+        "Keep mic muted by default until clicker or floating pill is held down, and personalize #RRGGBB live/muted colors with WCAG contrast.",
+        "PUSH-TO-TALK & CUSTOM HEX THEME COLORS`r`n`r`n• Push-to-Talk Mode: Mutes mic by default and unmutes strictly while holding down your clicker mute key (Windows) or floating pill (Android), automatically returning to MUTED on release.`r`n• Custom Hex HUD Colors: Configure Custom Live Hex and Custom Muted Hex in Appearance or Control Center -> HUD & Theme with automatic WCAG contrast icon coloring.",
+        "push to talk ptt hold unmute custom hex colors wcag contrast palette")
+
+    Add("feat-timeline", "Features", "Profiles, Updates & Startup", "Session Activity Timeline & Chapter CSV / Markdown / YouTube Export",
+        "Tray > OBS Director & Standby > View & Export Session Timeline...", "Up to 2,000 events", "Auto-recorded in memory",
+        "Records session mic, scene, slide, recording split, Standby, alert, and remote events and exports Video Editor CSV chapters, Markdown, or YouTube timestamps.",
+        "SESSION TIMELINE & VIDEO EDITOR CHAPTER EXPORTER`r`n`r`n• Bounded 2,000-Entry Timeline: Tracks Mic transitions, OBS recording start/pause/split, scene switches, Standby macros, slides, timers, and remote clients cleanly in memory.`r`n• Multi-Format Exports: Save CSV Chapter Markers (Timecode, Seconds, Color, Category, Marker Name, Notes), full Markdown Session Summary (.md), or copy 00:00 YouTube Chapters straight to clipboard.",
+        "session timeline chapter csv markdown youtube export markers recording log")
+
+    Add("feat-setup-wizard", "Features", "Getting Started & Overview", "Guided 4-Step Setup Wizard & Zero-Config Classroom UDP Discovery",
+        "Tray > Settings > Guided Setup Wizard... (First-Run Auto)", "UDP Discovery :4457", "4 Live Hardware/Network Checks",
+        "Interactive setup checklist probing OBS (:4455), CoreAudio routing, floating pill display, and Classroom LAN UDP beacon readiness.",
+        "GUIDED SETUP WIZARD & CLASSROOM UDP DISCOVERY`r`n`r`n• 4-Step Windows Setup Probe: Checks OBS WebSocket :4455 reachability, Audio Routing & CoreAudio meter, active HUD window, and Host Bridge :4456 + Classroom UDP Discovery (:4457).`r`n• One-Click Tools: Flash HUD Pill to locate it, open Pairing QR directly, or jump straight into Control Center.",
+        "guided setup wizard onboarding checklist udp discovery 4457 classroom lan auto find")
+
     Add("feat-easter-snake", "Features", "Profiles, Updates & Startup", "Secret Challenge: Alt+Ctrl+Shift+S (Try at Your Own Risk)",
         "Undocumented Chord Only (No Tray / Control Center Item)", "Alt+Ctrl+Shift+S", "Try at your own risk",
         "Curiosity beckons—press Alt+Ctrl+Shift+S while PresenterSync is active. Try at your own risk!",

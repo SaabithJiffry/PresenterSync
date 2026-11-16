@@ -1,4 +1,4 @@
-﻿; ==============================================================================
+; ==============================================================================
 ; Module: SetupWizard.ahk
 ; Description: Guided Setup Wizards, LAN/WAN pairing dialogs & setup probes
 ; ==============================================================================
@@ -448,7 +448,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     }
     btnCopyPair.OnEvent("Click", (*) => (
         A_Clipboard := cfg.InternetPairingCode,
-        btnCopyPair.Text := "âœ“ Copied!",
+        btnCopyPair.Text := "✓ Copied!",
         SetTimer(ResetCopyPairBtn, -1800),
         TrayTip("Internet Pairing Code copied to clipboard.", "Copied!", 1)
     ))
@@ -498,7 +498,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     }
     btnCopy.OnEvent("Click", (*) => (
         A_Clipboard := universalString,
-        btnCopy.Text := "âœ“ Copied to Clipboard!",
+        btnCopy.Text := "✓ Copied to Clipboard!",
         SetTimer(ResetCopyBtn, -1800),
         TrayTip("Universal connection string copied to clipboard.", "Copied!", 1)
     ))
@@ -555,8 +555,8 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         pairedIds := []
         for idx, d in snap.summary.devices {
             pairedIds.Push(d.deviceId)
-            statusBadge := d.connected ? "â— Online" : "â—‹ Offline"
-            ipPaired := d.ip (d.pairedAt != "" ? (" â€¢ " d.pairedAt) : "")
+            statusBadge := d.connected ? "● Online" : "○ Offline"
+            ipPaired := d.ip (d.pairedAt != "" ? (" • " d.pairedAt) : "")
             rowOpts := (selId != "" && d.deviceId = selId) ? "Select Focus" : ""
             lvDevs.Add(rowOpts, statusBadge, d.deviceName, d.platform, ipPaired)
         }
@@ -714,7 +714,7 @@ RunWindowsSetupProbes(cfg, state := "", overrides := "") {
     s1Ok := (obsConnected || (wsEnabled && obsListening))
     s1Detail := obsConnected
         ? "Connected to OBS Studio (:4455)"
-        : (obsListening ? (wsEnabled ? "OBS WS :4455 listening (connecting...)" : "OBS :4455 reachable â€” enable OBS WebSocket Sync in Tray") : "OBS Studio WebSocket :4455 not listening yet")
+        : (obsListening ? (wsEnabled ? "OBS WS :4455 listening (connecting...)" : "OBS :4455 reachable — enable OBS WebSocket Sync in Tray") : "OBS Studio WebSocket :4455 not listening yet")
 
     rMode := (IsObject(cfg) && cfg.HasOwnProp("AudioRoutingMode")) ? Integer(cfg.AudioRoutingMode) : 0
     micNm := (IsObject(cfg) && cfg.HasOwnProp("targetMicName") && cfg.targetMicName != "") ? cfg.targetMicName : "Mic/Aux"

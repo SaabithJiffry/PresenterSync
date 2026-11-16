@@ -1,4 +1,4 @@
-﻿package com.saabithjiffry.presentersync.remote.ui.screens
+package com.saabithjiffry.presentersync.remote.ui.screens
 
 import android.Manifest
 import android.content.Intent
@@ -206,8 +206,8 @@ internal fun StatusAndActionsCard(
 
             if (conn.connected) {
                 val recText = when (conn.recState) {
-                    1 -> "â— REC ${conn.formattedRecElapsed()}"
-                    2 -> "âšâš PAUSED ${conn.formattedRecElapsed()}"
+                    1 -> "● REC ${conn.formattedRecElapsed()}"
+                    2 -> "❚❚ PAUSED ${conn.formattedRecElapsed()}"
                     else -> "REC: OFF"
                 }
                 val recTint = when (conn.recState) {
@@ -215,7 +215,7 @@ internal fun StatusAndActionsCard(
                     2 -> Color(0xFFD97706)
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
-                val streamText = if (conn.streamDropWarn) "âš  STREAM DROP WARN" else "Stream OK"
+                val streamText = if (conn.streamDropWarn) "⚠ STREAM DROP WARN" else "Stream OK"
                 val streamTint = if (conn.streamDropWarn) Color(0xFFDC2626) else Color(0xFF10B981)
 
                 Surface(
@@ -249,7 +249,7 @@ internal fun StatusAndActionsCard(
                         }
                         if (conn.voiceWhileMuted && conn.isMuted) {
                             Text(
-                                text = "âš  You're on mute â€” mic signal detected on Host",
+                                text = "⚠ You're on mute — mic signal detected on Host",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFFD97706)
@@ -318,7 +318,7 @@ internal fun StatusAndActionsCard(
                         contentPadding = CompactExplorerButtonPadding,
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("â—€ Prev", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                        Text("◀ Prev", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                     OutlinedButton(
                         onClick = onToggleRecord,
@@ -326,7 +326,7 @@ internal fun StatusAndActionsCard(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(
-                            if (conn.recState == 1) "â¹ Stop Rec" else "âº Rec",
+                            if (conn.recState == 1) "⏹ Stop Rec" else "⏺ Rec",
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis
@@ -337,7 +337,7 @@ internal fun StatusAndActionsCard(
                         contentPadding = CompactExplorerButtonPadding,
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Next â–¶", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                        Text("Next ▶", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -590,7 +590,7 @@ internal fun FloatingPillQuickCard(
                 subtitle = if (cfg.savedX < 0 && cfg.savedXRatio < 0f) {
                     "Bottom-Right Default"
                 } else if (cfg.savedXRatio in 0f..1f) {
-                    "Saved (${(cfg.savedXRatio * 100).toInt()}%, ${(cfg.savedYRatio * 100).toInt()}% â€¢ Rotation-safe)"
+                    "Saved (${(cfg.savedXRatio * 100).toInt()}%, ${(cfg.savedYRatio * 100).toInt()}% • Rotation-safe)"
                 } else {
                     "(${cfg.savedX}, ${cfg.savedY})"
                 },

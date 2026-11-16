@@ -175,7 +175,7 @@ class SessionTimeline {
 
     static ExportMarkdownSummary(title := "PresenterSync Session Timeline Summary", categoryFilter := "All") {
         rows := this.GetEntries(categoryFilter)
-        ver := IsSet(UIConstants) ? UIConstants.APP_VERSION : "6.8.0"
+        ver := IsSet(UIConstants) ? UIConstants.APP_VERSION : "7.0.0"
         md := "# " title "`r`n`r`n"
             . "- **App Version:** PresenterSync v" ver "`r`n"
             . "- **Exported (UTC):** " FormatTime(A_NowUTC, "yyyy-MM-dd HH:mm:ss") " UTC`r`n"
