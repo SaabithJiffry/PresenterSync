@@ -988,7 +988,6 @@ class FloatingMicOverlayManager(
         )
 
         val maxHoldSlopPx = max(ViewConfiguration.get(context).scaledTouchSlop.toFloat(), 56f * density)
-        var holdStartMs = 0L
         var holdDownRawX = 0f
         var holdDownRawY = 0f
         var holdTriggered = false
@@ -1006,7 +1005,7 @@ class FloatingMicOverlayManager(
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     cancelSecretHold()
-                    holdStartMs = SystemClock.uptimeMillis()
+                    val holdStartMs = SystemClock.uptimeMillis()
                     holdDownRawX = ev.rawX
                     holdDownRawY = ev.rawY
                     holdTriggered = false

@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 6.9.0
+; Version: 6.9.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 6.9.0.0
+;@Ahk2Exe-SetVersion 6.9.1.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -169,52 +169,12 @@ BuildTrayMenu(cfg, state) {
 
     AppearanceMenu.Add()
 
-    OpacityMenu := Menu()
-    OpacityMenu.Add("Solid (100%)", SetSolid.Bind(cfg, state))
-    OpacityMenu.Add("Frosted (85%)", SetFrosted.Bind(cfg, state))
-    OpacityMenu.Add("Ghost (50%)", SetGhost.Bind(cfg, state))
-    if (cfg.OpacityLevel == UIConstants.OPACITY_SOLID)
-        OpacityMenu.Check("Solid (100%)")
-    else if (cfg.OpacityLevel == UIConstants.OPACITY_FROSTED)
-        OpacityMenu.Check("Frosted (85%)")
-    else if (cfg.OpacityLevel == UIConstants.OPACITY_GHOST)
-        OpacityMenu.Check("Ghost (50%)")
-
-    AppearanceMenu.Add("Transparency Level", OpacityMenu)
-
-    ScaleMenu := Menu()
-    ScaleOptions := [{ label: "Tiny (x0.25)", val: 0.25 }, { label: "Small (x0.5)", val: 0.5 }, { label: "Normal (x1.0)", val: 1.0 }, { label: "Large (x1.5)", val: 1.5 }, { label: "Huge (x2.0)", val: 2.0 }, { label: "Massive (x2.5)", val: 2.5 }, { label: "Colossal (x3.0)", val: 3.0 }, { label: "Gigantic (x5.0)", val: 5.0 }
-    ]
-    for opt in ScaleOptions {
-        ScaleMenu.Add(opt.label, ApplyScaleLive.Bind(cfg, state, opt.val))
-        if (Abs(cfg.IndicatorScale - opt.val) < 0.001)
-            ScaleMenu.Check(opt.label)
-    }
-
-    AppearanceMenu.Add("Indicator Scale", ScaleMenu)
-
-    ThemeMenu := Menu()
-    ThemeMenu.Add("Follow System", ApplyThemeLive.Bind(cfg, state, ThemeMenu, "System"))
-    ThemeMenu.Add("Dark Mode", ApplyThemeLive.Bind(cfg, state, ThemeMenu, "Dark"))
-    ThemeMenu.Add("Light Mode", ApplyThemeLive.Bind(cfg, state, ThemeMenu, "Light"))
-    if (cfg.ThemeMode = "Dark")
-        ThemeMenu.Check("Dark Mode")
-    else if (cfg.ThemeMode = "Light")
-        ThemeMenu.Check("Light Mode")
-    else
-        ThemeMenu.Check("Follow System")
-
-    AppearanceMenu.Add("App Theme", ThemeMenu)
-
-    PresetMenu := Menu()
-    for pName in GetHudColorPresetNames() {
-        PresetMenu.Add(pName, SetHudColorPreset.Bind(cfg, state, pName))
-        if (cfg.HudColorPreset = pName)
-            PresetMenu.Check(pName)
-    }
-    PresetMenu.Add()
-    PresetMenu.Add("Configure Custom Colors...", ConfigureCustomHudColorsUI.Bind(cfg, state))
-    AppearanceMenu.Add("HUD Color Preset", PresetMenu)
+    BuildSharedAppearanceSubmenus(
+        AppearanceMenu, cfg, state,
+        SetPrimaryOpacityLive.Bind(cfg, state),
+        ApplyScaleLive.Bind(cfg, state),
+        ApplyThemeLive.Bind(cfg, state)
+    )
 
     AppearanceMenu.Add()
     AppearanceMenu.Add("Reset Indicator Position", ApplyResetPositionLive.Bind(cfg, state))
@@ -556,61 +516,11 @@ ToggleSecondaryMicLive(cfg, state, *) {
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
-ToggleText(cfg, state, *) {
-    cfg.ShowText := !cfg.ShowText
-    cfg.WriteBool("Settings", "ShowText", cfg.ShowText)
-    RefreshHudAppearance(cfg, state)
-    BuildTrayMenu(cfg, state)
-    NotifyHelpRefresh(state)
-}
-
-ToggleMono(cfg, state, *) {
-    cfg.MonoIcon := !cfg.MonoIcon
-    cfg.WriteBool("Settings", "MonoIcon", cfg.MonoIcon)
-    RefreshHudAppearance(cfg, state)
-    BuildTrayMenu(cfg, state)
-    NotifyHelpRefresh(state)
-}
-
-ToggleCorners(cfg, state, *) {
-    cfg.SleekCorners := !cfg.SleekCorners
-    cfg.WriteBool("Settings", "SleekCorners", cfg.SleekCorners)
-    RefreshHudAppearance(cfg, state)
-    BuildTrayMenu(cfg, state)
-    NotifyHelpRefresh(state)
-}
-
-TogglePulse(cfg, state, *) {
-    cfg.AggressivePulse := !cfg.AggressivePulse
-    cfg.WriteBool("Settings", "AggressivePulse", cfg.AggressivePulse)
-    RefreshHudAppearance(cfg, state)
-    BuildTrayMenu(cfg, state)
-    NotifyHelpRefresh(state)
-}
-
-SetSolid(cfg, state, *) {
-    cfg.OpacityLevel := UIConstants.OPACITY_SOLID
-    cfg.Write("Settings", "OpacityLevel", UIConstants.OPACITY_SOLID)
-    RefreshHudAppearance(cfg, state)
-    BuildTrayMenu(cfg, state)
-    NotifyHelpRefresh(state)
-}
-
-SetFrosted(cfg, state, *) {
-    cfg.OpacityLevel := UIConstants.OPACITY_FROSTED
-    cfg.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
-    RefreshHudAppearance(cfg, state)
-    BuildTrayMenu(cfg, state)
-    NotifyHelpRefresh(state)
-}
-
-SetGhost(cfg, state, *) {
-    cfg.OpacityLevel := UIConstants.OPACITY_GHOST
-    cfg.Write("Settings", "OpacityLevel", UIConstants.OPACITY_GHOST)
-    RefreshHudAppearance(cfg, state)
-    BuildTrayMenu(cfg, state)
-    NotifyHelpRefresh(state)
-}
+ToggleText(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowText", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh)
+ToggleMono(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "MonoIcon", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh)
+ToggleCorners(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "SleekCorners", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh)
+TogglePulse(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "AggressivePulse", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh)
+SetPrimaryOpacityLive(cfg, state, val, *) => SetHudOpacityAndRebuild(cfg, state, val, "Settings", RefreshHudAppearance, BuildTrayMenu, "", NotifyHelpRefresh)
 
 ApplyThemeLive(cfg, state, themeMenu, mode, *) {
     SetThemeMode(cfg, themeMenu, mode)

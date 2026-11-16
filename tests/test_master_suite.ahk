@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v6.9.0", UIConstants.APP_VERSION == "6.9.0")
+Assert("APP_VERSION is active release v6.9.1", UIConstants.APP_VERSION == "6.9.1")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -1897,9 +1897,9 @@ for g in GetHudGuiList(stSnake)
 ; Secret discoverability guard: hotkeys wired in Primary, zero Tray/ControlCenter UI, subtle Help entry only on Primary
 primSrc := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
 remSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
-guiSrc := FileRead(A_ScriptDir "\..\Lib\GUI_Config.ahk", "UTF-8")
+ccSrc := FileRead(A_ScriptDir "\..\Lib\ControlCenter.ahk", "UTF-8")
 trayPart := StrSplit(StrSplit(primSrc, "BuildTrayMenu(cfg, state) {")[2], "NotifyHelpRefresh")[1]
-ccPart := StrSplit(guiSrc, "ShowControlCenterWindow(cfg, state := `"`", *) {")[2]
+ccPart := StrSplit(ccSrc, "ShowControlCenterWindow(cfg, state := `"`", *) {")[2]
 remTrayPart := StrSplit(StrSplit(remSrc, "BuildRemoteTrayMenu(cfg, state) {")[2], "ShowRemoteHelpUI(")[1]
 
 noUiMenuLeak := !InStr(trayPart, "Snake") && !InStr(trayPart, "Easter")
@@ -2971,11 +2971,14 @@ WinGetPos(,, &sTextW, &sTextH, "ahk_id " stSec.SecondaryMicGui.Hwnd)
 Assert("ShowText & Theme changes resize and sync Secondary Mic Pill identically to Primary",
     sTextW == stSec.baseWidth && sTextH == stSec.baseHeight && stSec.baseWidth == UIConstants.BASE_WIDTH_TEXT)
 
+SetTimer(stSec.breathTimerFn, 0)
 stSec.isMuted := true
 stSec.isAutoDodged := false
 stSec.secondaryIsAutoDodged := false
 stSec.breathDir := -UIConstants.PULSE_STEP_NORMAL
 stSec._breathStepAlpha := cfgSec.OpacityLevel
+stSec.currentAlpha := cfgSec.OpacityLevel
+stSec.secondaryCurrentAlpha := cfgSec.OpacityLevel
 beforeBreathSec := stSec.secondaryCurrentAlpha
 BreathingAnimation(cfgSec, stSec)
 Assert("Breathing animation updates Secondary Mic Pill alpha in lockstep with Primary",
