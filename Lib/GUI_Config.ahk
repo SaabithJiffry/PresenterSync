@@ -10,7 +10,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "6.8.0"
+    static APP_VERSION := "6.9.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1212,6 +1212,7 @@ class Config {
 
     ShowIndicator := true
     ShowExtraHuds := true
+    ShowSecondaryMicHud := false
     ThemeMode := "System"
     HudColorPreset := "Standard"
     CustomLiveHex := "107C10"
@@ -1268,6 +1269,8 @@ class Config {
 
     savedX := "Default"
     savedY := "Default"
+    savedSecondaryX := "Default"
+    savedSecondaryY := "Default"
 
     __New(filePath := "") {
         this.ConfigFile := (filePath != "") ? filePath : A_ScriptDir "\MicOverlay_Config.ini"
@@ -1366,6 +1369,7 @@ class Config {
 
         this.ShowIndicator := this.ReadBool("Settings", "ShowIndicator", true)
         this.ShowExtraHuds := this.ReadBool("Settings", "ShowExtraHuds", true)
+        this.ShowSecondaryMicHud := this.ReadBool("Settings", "ShowSecondaryMicHud", false)
         rawTheme := StrLower(Trim(this.Read("Settings", "ThemeMode", "System")))
         this.ThemeMode := (rawTheme = "dark") ? "Dark" : ((rawTheme = "light") ? "Light" : "System")
         Theme.SetMode(this.ThemeMode)
@@ -1448,6 +1452,8 @@ class Config {
 
         this.savedX := this.Read("Position", "X", "Default")
         this.savedY := this.Read("Position", "Y", "Default")
+        this.savedSecondaryX := this.Read("SecondaryPosition", "X", "Default")
+        this.savedSecondaryY := this.Read("SecondaryPosition", "Y", "Default")
     }
 
     ResetAppearance() {
@@ -1503,6 +1509,13 @@ class Config {
         this.Write("Position", "Y", "Default")
     }
 
+    ResetSecondaryPosition() {
+        this.savedSecondaryX := "Default"
+        this.savedSecondaryY := "Default"
+        this.Write("SecondaryPosition", "X", "Default")
+        this.Write("SecondaryPosition", "Y", "Default")
+    }
+
     DeleteFile() {
         if FileExist(this.ConfigFile)
             FileDelete(this.ConfigFile)
@@ -1533,6 +1546,7 @@ class Config {
             { sec: "Settings", key: "EnableZoom", prop: "EnableZoom", kind: "bool" },
             { sec: "Settings", key: "ShowIndicator", prop: "ShowIndicator", kind: "bool" },
             { sec: "Settings", key: "ShowExtraHuds", prop: "ShowExtraHuds", kind: "bool" },
+            { sec: "Settings", key: "ShowSecondaryMicHud", prop: "ShowSecondaryMicHud", kind: "bool" },
             { sec: "Settings", key: "ThemeMode", prop: "ThemeMode", kind: "str" },
             { sec: "Settings", key: "HudColorPreset", prop: "HudColorPreset", kind: "str" },
             { sec: "Settings", key: "CustomLiveHex", prop: "CustomLiveHex", kind: "str" },
@@ -1769,12 +1783,18 @@ class OverlayState {
     _autoProfileRuleProc := ""
 
     MicGui := ""
+    SecondaryMicGui := ""
     RecGui := ""
     ChatGui := ""
     StudioGui := ""
     SceneGui := ""
     StreamGui := ""
     VCamGui := ""
+
+    isDraggingSecondaryHud := false
+    secondaryIsAutoDodged := false
+    secondaryCurrentAlpha := 220
+    _breathStepAlpha := 220
 
     IconFont := ""
 
@@ -1797,6 +1817,8 @@ class OverlayState {
     miniTextSize := 9
     savedX := 0
     savedY := 0
+    savedSecondaryX := 0
+    savedSecondaryY := 0
 
     colors := {
         live: UIConstants.COLOR_LIVE,
@@ -1849,6 +1871,8 @@ class OverlayState {
         this.isMuted := cfg.IsMuted
         this.baseAlpha := cfg.OpacityLevel
         this.currentAlpha := cfg.OpacityLevel
+        this.secondaryCurrentAlpha := cfg.OpacityLevel
+        this._breathStepAlpha := cfg.OpacityLevel
         this.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
 
         osBuild := Integer(StrSplit(A_OSVersion, ".")[3])
@@ -1964,6 +1988,7 @@ class OverlayState {
             this.savedX := Max(vLeft, Min(sx, vRight - maxRowW))
             this.savedY := Max(vTop + extraTopPad, Min(sy, vBottom - this.baseHeight))
         }
+        ComputeSecondaryMicLayout(cfg, this)
     }
 }
 
@@ -3656,16 +3681,63 @@ GetCornerRadius(cfg, h) {
     return cfg.SleekCorners ? (h / 2.0) : Min(UIConstants.CORNER_RADIUS_DEFAULT * cfg.IndicatorScale, h / 2.0)
 }
 
-ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", customH := "", customAlpha := "", overrideMuted := "") {
-    if (!IsObject(state) || !state.HasOwnProp("MicGui") || !IsGuiValid(state.MicGui))
+IsHudSuppressed(cfg) {
+    return !IsObject(cfg) || !cfg.ShowIndicator || (IsSet(HudSnake) && HudSnake.IsActive)
+}
+
+IsSecondaryHudSuppressed(cfg) {
+    return !IsObject(cfg) || !cfg.HasOwnProp("ShowSecondaryMicHud") || !cfg.ShowSecondaryMicHud || (IsSet(HudSnake) && HudSnake.IsActive)
+}
+
+IsAnyMicHudVisible(cfg) {
+    return !IsHudSuppressed(cfg) || !IsSecondaryHudSuppressed(cfg)
+}
+
+ComputeSecondaryMicLayout(cfg, state) {
+    w := (IsObject(state) && state.HasOwnProp("baseWidth") && state.baseWidth > 0) ? state.baseWidth : UIConstants.BASE_WIDTH_ONLY
+    h := (IsObject(state) && state.HasOwnProp("baseHeight") && state.baseHeight > 0) ? state.baseHeight : UIConstants.BASE_HEIGHT
+    rawX := (IsObject(cfg) && cfg.HasOwnProp("savedSecondaryX")) ? cfg.savedSecondaryX : "Default"
+    rawY := (IsObject(cfg) && cfg.HasOwnProp("savedSecondaryY")) ? cfg.savedSecondaryY : "Default"
+
+    vLeft := SysGet(76), vTop := SysGet(77)
+    vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+    if (vRight <= vLeft)
+        vRight := vLeft + 1920
+    if (vBottom <= vTop)
+        vBottom := vTop + 1080
+
+    if (rawX != "Default" && rawY != "Default" && IsInteger(rawX) && IsInteger(rawY)) {
+        sx := Max(vLeft, Min(Integer(rawX), vRight - w))
+        sy := Max(vTop, Min(Integer(rawY), vBottom - h))
+    } else {
+        MonitorGetWorkArea(1, &Left, &Top, &Right, &Bottom)
+        primX := (IsObject(state) && state.HasOwnProp("savedX")) ? Integer(state.savedX) : (Right - w - UIConstants.SCREEN_MARGIN_X)
+        primY := (IsObject(state) && state.HasOwnProp("savedY")) ? Integer(state.savedY) : (Bottom - h - UIConstants.SCREEN_MARGIN_Y)
+        gapX := 18
+        candLeft := primX - w - gapX
+        candRight := primX + w + gapX
+        if (candLeft >= Left + UIConstants.SCREEN_MIN_PAD) {
+            sx := candLeft
+            sy := Max(Top + UIConstants.SCREEN_MIN_PAD, Min(primY, Bottom - h - UIConstants.SCREEN_MIN_PAD))
+        } else if (candRight + w <= Right - UIConstants.SCREEN_MIN_PAD) {
+            sx := candRight
+            sy := Max(Top + UIConstants.SCREEN_MIN_PAD, Min(primY, Bottom - h - UIConstants.SCREEN_MIN_PAD))
+        } else {
+            sx := Left + UIConstants.SCREEN_MIN_PAD
+            sy := Top + UIConstants.SCREEN_MIN_PAD
+        }
+    }
+    if (IsObject(state)) {
+        state.savedSecondaryX := sx
+        state.savedSecondaryY := sy
+    }
+    return { x: sx, y: sy, w: w, h: h }
+}
+
+_RenderMicPillSurface(hwnd, x, y, w, h, cfg, state, alpha, overrideMuted := "") {
+    if (!hwnd || !IsObject(cfg) || !IsObject(state))
         return false
 
-    pos := ComputeHudLayout(state, state.savedX, state.savedY)
-    x := (customX != "") ? customX : pos.micX
-    y := (customY != "") ? customY : pos.micY
-    w := (customW != "") ? customW : pos.micW
-    h := (customH != "") ? customH : pos.micH
-    alpha := (customAlpha != "") ? customAlpha : state.currentAlpha
     mutedState := (overrideMuted != "") ? overrideMuted : state.isMuted
     isRemoteOffline := (overrideMuted == "" && state.HasOwnProp("activeHost") && state.HasOwnProp("obsConnected") && !state.obsConnected)
 
@@ -3702,11 +3774,40 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
     }
 
     meterLevel := (!mutedState && !isRemoteOffline && cfg.HasOwnProp("ShowVoiceMeter") && cfg.ShowVoiceMeter && state.HasOwnProp("voicePeak")) ? state.voicePeak : 0.0
-    return Gdip.RenderPill(state.MicGui.Hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg, meterLevel)
+    return Gdip.RenderPill(hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg, meterLevel)
 }
 
-IsHudSuppressed(cfg) {
-    return !IsObject(cfg) || !cfg.ShowIndicator || (IsSet(HudSnake) && HudSnake.IsActive)
+ApplySecondaryMicAppearance(cfg, state, customX := "", customY := "", customW := "", customH := "", customAlpha := "", overrideMuted := "") {
+    if (!IsObject(state) || !state.HasOwnProp("SecondaryMicGui") || !IsGuiValid(state.SecondaryMicGui))
+        return false
+
+    secPos := ComputeSecondaryMicLayout(cfg, state)
+    sx := (customX != "") ? customX : secPos.x
+    sy := (customY != "") ? customY : secPos.y
+    sw := (customW != "") ? customW : secPos.w
+    sh := (customH != "") ? customH : secPos.h
+    defAlpha := state.HasOwnProp("secondaryCurrentAlpha") ? state.secondaryCurrentAlpha : state.currentAlpha
+    sAlpha := (customAlpha != "") ? customAlpha : defAlpha
+    return _RenderMicPillSurface(state.SecondaryMicGui.Hwnd, sx, sy, sw, sh, cfg, state, sAlpha, overrideMuted)
+}
+
+ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", customH := "", customAlpha := "", overrideMuted := "") {
+    if (!IsObject(state) || !state.HasOwnProp("MicGui") || !IsGuiValid(state.MicGui))
+        return false
+
+    pos := ComputeHudLayout(state, state.savedX, state.savedY)
+    x := (customX != "") ? customX : pos.micX
+    y := (customY != "") ? customY : pos.micY
+    w := (customW != "") ? customW : pos.micW
+    h := (customH != "") ? customH : pos.micH
+    alpha := (customAlpha != "") ? customAlpha : state.currentAlpha
+    ok := _RenderMicPillSurface(state.MicGui.Hwnd, x, y, w, h, cfg, state, alpha, overrideMuted)
+
+    if (customX = "" && customW = "" && !IsSecondaryHudSuppressed(cfg) && state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui)) {
+        secAlpha := (customAlpha != "") ? customAlpha : (state.HasOwnProp("secondaryCurrentAlpha") ? state.secondaryCurrentAlpha : alpha)
+        ApplySecondaryMicAppearance(cfg, state, "", "", "", "", secAlpha, overrideMuted)
+    }
+    return ok
 }
 
 SyncChatState(cfg, state, newCount) {
@@ -4678,7 +4779,9 @@ IsGuiValid(guiObj) {
 UpdateVoiceMeterTimer(cfg, state) {
     if (!IsObject(state) || !state.HasOwnProp("voiceMeterTimerFn") || !state.voiceMeterTimerFn)
         return
-    shouldRun := !IsHudSuppressed(cfg) && (!cfg.HasOwnProp("ShowVoiceMeter") || cfg.ShowVoiceMeter) && !state.isMuted && IsGuiValid(state.MicGui)
+    primValid := !IsHudSuppressed(cfg) && IsGuiValid(state.MicGui)
+    secValid := !IsSecondaryHudSuppressed(cfg) && state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui)
+    shouldRun := (primValid || secValid) && (!cfg.HasOwnProp("ShowVoiceMeter") || cfg.ShowVoiceMeter) && !state.isMuted
     if (shouldRun) {
         SetTimer(state.voiceMeterTimerFn, UIConstants.VOICE_METER_INTERVAL_MS)
     } else {
@@ -4688,19 +4791,24 @@ UpdateVoiceMeterTimer(cfg, state) {
 }
 
 VoiceMeterTick(cfg, state, readerFn := "") {
-    if (!IsGuiValid(state.MicGui) || IsHudSuppressed(cfg) || (cfg.HasOwnProp("ShowVoiceMeter") && !cfg.ShowVoiceMeter) || state.isMuted) {
+    primValid := !IsHudSuppressed(cfg) && IsGuiValid(state.MicGui)
+    secValid := !IsSecondaryHudSuppressed(cfg) && state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui)
+    if ((!primValid && !secValid) || (cfg.HasOwnProp("ShowVoiceMeter") && !cfg.ShowVoiceMeter) || state.isMuted) {
         state.voicePeak := 0.0
         if (state.HasOwnProp("voiceMeterTimerFn") && state.voiceMeterTimerFn)
             SetTimer(state.voiceMeterTimerFn, 0)
         return
     }
-    if (state.isDraggingHud)
+    if (state.isDraggingHud || (state.HasOwnProp("isDraggingSecondaryHud") && state.isDraggingSecondaryHud))
         return
     newPeak := IsObject(readerFn) ? Float(readerFn.Call()) : AudioMeter.GetPeak()
     newPeak := Min(1.0, Max(0.0, newPeak))
     if (Abs(newPeak - state.voicePeak) >= 0.02 || (newPeak == 0.0 && state.voicePeak > 0.0)) {
         state.voicePeak := newPeak
-        ApplyMicAppearance(cfg, state)
+        if (primValid)
+            ApplyMicAppearance(cfg, state)
+        else if (secValid)
+            ApplySecondaryMicAppearance(cfg, state)
     }
 }
 
@@ -4821,12 +4929,14 @@ SyncUIState(cfg, state, obsIsMuted) {
 RefreshHudAppearance(cfg, state) {
     state.animSeq += 1
     state.baseAlpha := cfg.OpacityLevel
-    state.currentAlpha := cfg.OpacityLevel
+    state._breathStepAlpha := cfg.OpacityLevel
+    state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(cfg.OpacityLevel, UIConstants.DODGE_ALPHA) : cfg.OpacityLevel
+    state.secondaryCurrentAlpha := (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged) ? Min(cfg.OpacityLevel, UIConstants.DODGE_ALPHA) : cfg.OpacityLevel
     state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
     state.ComputeDimensions(cfg)
     UpdateHudLayout(state, state.savedX, state.savedY)
     UpdateHudVisibility(cfg, state)
-    if (!IsHudSuppressed(cfg) && state.isMuted)
+    if (IsAnyMicHudVisible(cfg) && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     else
         SetTimer state.breathTimerFn, 0
@@ -4873,12 +4983,35 @@ ResetTrayPosition(cfg, state := "", *) {
         RefreshHudAppearance(cfg, state)
 }
 
+ToggleSecondaryMicHud(cfg, state := "", *) {
+    cfg.ShowSecondaryMicHud := !cfg.ShowSecondaryMicHud
+    cfg.WriteBool("Settings", "ShowSecondaryMicHud", cfg.ShowSecondaryMicHud)
+    if (IsObject(state)) {
+        UpdateHudVisibility(cfg, state)
+        if (state.HasOwnProp("breathTimerFn") && state.breathTimerFn) {
+            if (IsAnyMicHudVisible(cfg) && state.isMuted)
+                SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+            else
+                SetTimer state.breathTimerFn, 0
+        }
+    }
+}
+
+ResetSecondaryTrayPosition(cfg, state := "", *) {
+    cfg.ResetSecondaryPosition()
+    if IsObject(state)
+        RefreshHudAppearance(cfg, state)
+}
+
 ; --- MAGNETIC SNAP, CLICK-THROUGH & AUTO-DODGE ---
-GetHudGuiList(state) {
+GetHudGuiList(state, includeSecondary := true) {
     guis := []
     if (!IsObject(state))
         return guis
-    for prop in ["MicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"] {
+    props := includeSecondary
+        ? ["MicGui", "SecondaryMicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"]
+        : ["MicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"]
+    for prop in props {
         if (state.HasOwnProp(prop) && IsGuiValid(state.%prop%))
             guis.Push(state.%prop%)
     }
@@ -4991,14 +5124,23 @@ ComputeMagneticSnap(rawX, rawY, stackW, baseH, extraTopPad := 0, threshold := 14
 
 ApplyHudClickThroughStyle(cfg, state, forceClickThrough := -1) {
     altHeld := GetKeyState("Alt", "P")
+    clickThruCfg := (cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough)
     wantPassThrough := (forceClickThrough != -1)
         ? !!forceClickThrough
-        : (((cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough) || (state.HasOwnProp("isAutoDodged") && state.isAutoDodged)) && !altHeld)
+        : ((clickThruCfg || (state.HasOwnProp("isAutoDodged") && state.isAutoDodged)) && !altHeld)
     styleFlag := wantPassThrough ? "+0x20" : "-0x20"
+    secPassThrough := (forceClickThrough != -1)
+        ? !!forceClickThrough
+        : ((clickThruCfg || (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged)) && !altHeld)
+    secFlag := secPassThrough ? "+0x20" : "-0x20"
+
     prevDhw := DetectHiddenWindows(true)
     try {
-        for g in GetHudGuiList(state) {
+        for g in GetHudGuiList(state, false) {
             try WinSetExStyle(styleFlag, "ahk_id " g.Hwnd)
+        }
+        if (IsObject(state) && state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui)) {
+            try WinSetExStyle(secFlag, "ahk_id " state.SecondaryMicGui.Hwnd)
         }
     } finally {
         DetectHiddenWindows(prevDhw)
@@ -5009,48 +5151,78 @@ ApplyHudClickThroughStyle(cfg, state, forceClickThrough := -1) {
 UpdateAutoDodgeTimer(cfg, state) {
     if (!IsObject(state) || !state.HasOwnProp("autoDodgeTimerFn") || !state.autoDodgeTimerFn)
         return
-    needPoll := !IsHudSuppressed(cfg) && IsGuiValid(state.MicGui)
+    primActive := !IsHudSuppressed(cfg) && IsGuiValid(state.MicGui)
+    secActive := !IsSecondaryHudSuppressed(cfg) && state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui)
+    needPoll := (primActive || secActive)
         && ((cfg.HasOwnProp("HudAutoDodge") && cfg.HudAutoDodge) || (cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough))
     SetTimer(state.autoDodgeTimerFn, needPoll ? UIConstants.DODGE_POLL_INTERVAL_MS : 0)
-    if (!needPoll && state.HasOwnProp("isAutoDodged") && state.isAutoDodged) {
-        state.isAutoDodged := false
-        state.currentAlpha := state.baseAlpha
-        ApplyHudClickThroughStyle(cfg, state)
-        for g in GetHudGuiList(state)
-            Gdip.SetLayeredAlpha(g.Hwnd, state.currentAlpha)
+    if (!needPoll) {
+        if (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) {
+            state.isAutoDodged := false
+            state.currentAlpha := state.baseAlpha
+            ApplyHudClickThroughStyle(cfg, state)
+            for g in GetHudGuiList(state, false)
+                Gdip.SetLayeredAlpha(g.Hwnd, state.currentAlpha)
+        }
+        if (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged) {
+            state.secondaryIsAutoDodged := false
+            state.secondaryCurrentAlpha := state.baseAlpha
+            ApplyHudClickThroughStyle(cfg, state)
+            if (state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui))
+                Gdip.SetLayeredAlpha(state.SecondaryMicGui.Hwnd, state.secondaryCurrentAlpha)
+        }
     }
 }
 
 AutoDodgeTick(cfg, state, cursorPos := "", altHeldOverride := -1) {
-    if (!IsObject(state) || !IsGuiValid(state.MicGui) || IsHudSuppressed(cfg) || state.isDraggingHud)
+    if (!IsObject(state) || !IsAnyMicHudVisible(cfg))
         return
     altHeld := (altHeldOverride != -1) ? !!altHeldOverride : GetKeyState("Alt", "P")
     dodgeEnabled := (cfg.HasOwnProp("HudAutoDodge") && cfg.HudAutoDodge)
     clickThroughEnabled := (cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough)
 
+    mx := 0, my := 0, haveCursor := false
     if (dodgeEnabled) {
         if (IsObject(cursorPos)) {
-            mx := cursorPos.x, my := cursorPos.y
+            mx := cursorPos.x, my := cursorPos.y, haveCursor := true
         } else {
             pt := Buffer(8, 0)
-            if !DllCall("GetCursorPos", "Ptr", pt, "Int")
-                return
-            mx := NumGet(pt, 0, "Int"), my := NumGet(pt, 4, "Int")
+            if DllCall("GetCursorPos", "Ptr", pt, "Int")
+                mx := NumGet(pt, 0, "Int"), my := NumGet(pt, 4, "Int"), haveCursor := true
         }
+    }
+
+    primChanged := false
+    if (dodgeEnabled && haveCursor && IsGuiValid(state.MicGui) && !IsHudSuppressed(cfg) && !state.isDraggingHud) {
         bounds := GetHudStackBounds(cfg, state)
         inside := (mx >= bounds.left && mx <= bounds.right && my >= bounds.top && my <= bounds.bottom)
         wantDodged := inside && !altHeld
         if (wantDodged != state.isAutoDodged) {
             state.isAutoDodged := wantDodged
-            state.currentAlpha := wantDodged ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
-            ApplyHudClickThroughStyle(cfg, state, wantDodged ? true : (clickThroughEnabled && !altHeld))
-            for g in GetHudGuiList(state)
+            baseLvl := state.HasOwnProp("_breathStepAlpha") ? state._breathStepAlpha : state.baseAlpha
+            state.currentAlpha := wantDodged ? Min(baseLvl, UIConstants.DODGE_ALPHA) : baseLvl
+            for g in GetHudGuiList(state, false)
                 Gdip.SetLayeredAlpha(g.Hwnd, state.currentAlpha)
-            return
+            primChanged := true
         }
     }
-    if (clickThroughEnabled && !state.isAutoDodged)
-        ApplyHudClickThroughStyle(cfg, state, !altHeld)
+
+    secChanged := false
+    if (dodgeEnabled && haveCursor && state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui) && !IsSecondaryHudSuppressed(cfg) && !state.isDraggingSecondaryHud) {
+        secPos := ComputeSecondaryMicLayout(cfg, state)
+        secInside := (mx >= secPos.x && mx <= (secPos.x + secPos.w) && my >= secPos.y && my <= (secPos.y + secPos.h))
+        wantSecDodged := secInside && !altHeld
+        if (wantSecDodged != state.secondaryIsAutoDodged) {
+            state.secondaryIsAutoDodged := wantSecDodged
+            baseLvl := state.HasOwnProp("_breathStepAlpha") ? state._breathStepAlpha : state.baseAlpha
+            state.secondaryCurrentAlpha := wantSecDodged ? Min(baseLvl, UIConstants.DODGE_ALPHA) : baseLvl
+            Gdip.SetLayeredAlpha(state.SecondaryMicGui.Hwnd, state.secondaryCurrentAlpha)
+            secChanged := true
+        }
+    }
+
+    if (primChanged || secChanged || clickThroughEnabled)
+        ApplyHudClickThroughStyle(cfg, state)
 }
 
 ToggleMagneticSnap(cfg, state := "", *) {
@@ -5086,8 +5258,9 @@ InitHUD(cfg, state, showWindows := true) {
     Gdip.Startup()
     state.ComputeDimensions(cfg)
 
-    ; Create 7 GDI+ WS_EX_LAYERED (+E0x80000) HUD windows
+    ; Create 7 Primary GDI+ WS_EX_LAYERED (+E0x80000) HUD windows + 1 Independent Secondary Mic Pill
     state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+    state.SecondaryMicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.RecGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.ChatGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.StudioGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
@@ -5099,7 +5272,7 @@ InitHUD(cfg, state, showWindows := true) {
 
     if (showWindows) {
         UpdateHudVisibility(cfg, state)
-        if (cfg.ShowIndicator && state.isMuted)
+        if (IsAnyMicHudVisible(cfg) && state.isMuted)
             SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     }
     ApplyHudClickThroughStyle(cfg, state)
@@ -5110,6 +5283,7 @@ InitHUD(cfg, state, showWindows := true) {
     OnMessage(0x0201, WM_LBUTTONDOWN.Bind(cfg, state))
     OnMessage(0x0205, WM_RBUTTONUP.Bind(state))
     OnMessage(0x02E0, WM_DPICHANGED.Bind(state))
+    OnMessage(0x007E, WM_DISPLAYCHANGE.Bind(cfg, state))
 }
 
 ComputeHudLayout(state, anchorX, anchorY) {
@@ -5183,12 +5357,26 @@ UpdateHudLayout(state, anchorX := "", anchorY := "", skipHwnd := 0) {
         state.VCamGui.Move(pos.vcamX, pos.vcamY, pos.vcamW, pos.vcamH)
 }
 
+_SyncSecondaryHudVisibility(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("SecondaryMicGui") || !IsGuiValid(state.SecondaryMicGui))
+        return
+    if (IsSecondaryHudSuppressed(cfg)) {
+        try state.SecondaryMicGui.Hide()
+        return
+    }
+    state.secondaryCurrentAlpha := (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged)
+        ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA)
+        : state.baseAlpha
+    secPos := ComputeSecondaryMicLayout(cfg, state)
+    ApplySecondaryMicAppearance(cfg, state)
+    state.SecondaryMicGui.Show(Format("NoActivate x{} y{} w{} h{}", secPos.x, secPos.y, secPos.w, secPos.h))
+}
+
 UpdateHudVisibility(cfg, state) {
     state.animSeq += 1
     if (IsHudSuppressed(cfg)) {
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
-        UpdateVoiceMeterTimer(cfg, state)
         if IsObject(state.MicGui)
             state.MicGui.Hide()
         if IsObject(state.RecGui)
@@ -5203,7 +5391,11 @@ UpdateHudVisibility(cfg, state) {
             state.StreamGui.Hide()
         if IsObject(state.VCamGui)
             state.VCamGui.Hide()
+        _SyncSecondaryHudVisibility(cfg, state)
+        ApplyHudClickThroughStyle(cfg, state)
+        UpdateVoiceMeterTimer(cfg, state)
         UpdateAutoDodgeTimer(cfg, state)
+        UpdateMutedVoiceMonitorTimer(cfg, state)
         return
     }
 
@@ -5213,6 +5405,7 @@ UpdateHudVisibility(cfg, state) {
         ApplyMicAppearance(cfg, state)
         state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
     }
+    _SyncSecondaryHudVisibility(cfg, state)
     UpdateVoiceMeterTimer(cfg, state)
 
     if (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom)) {
@@ -5260,67 +5453,95 @@ UpdateHudVisibility(cfg, state) {
 
 ; --- HUD ANIMATIONS ---
 PlayMuteAnimation(cfg, state) {
-    if (!IsObject(state) || !state.HasOwnProp("MicGui") || !IsGuiValid(state.MicGui))
+    if (!IsObject(state))
         return
+    hasPrimGui := state.HasOwnProp("MicGui") && IsGuiValid(state.MicGui)
+    hasSecGui := state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui)
+    if (!hasPrimGui && !hasSecGui)
+        return
+
+    primVis := hasPrimGui && !IsHudSuppressed(cfg)
+    secVis := hasSecGui && !IsSecondaryHudSuppressed(cfg)
+    if (!primVis && !secVis) {
+        if (state.HasOwnProp("breathTimerFn") && state.breathTimerFn)
+            SetTimer state.breathTimerFn, 0
+        state._breathStepAlpha := state.baseAlpha
+        state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
+        state.secondaryCurrentAlpha := (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
+        if (hasPrimGui)
+            ApplyMicAppearance(cfg, state)
+        return
+    }
 
     state.animSeq += 1
     mySeq := state.animSeq
 
-    if (IsHudSuppressed(cfg)) {
+    if (state.HasOwnProp("breathTimerFn") && state.breathTimerFn)
         SetTimer state.breathTimerFn, 0
-        state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
-        ApplyMicAppearance(cfg, state)
-        return
-    }
-
-    SetTimer state.breathTimerFn, 0
     baseX := state.savedX
     baseY := state.savedY
+    secPos := ComputeSecondaryMicLayout(cfg, state)
+    secBaseX := secPos.x
+    secBaseY := secPos.y
 
     fadeStep := Round(state.baseAlpha / UIConstants.FADE_STEPS)
     widthIncrement := (cfg.ShowText ? UIConstants.POP_WIDTH_INC_TEXT : UIConstants.POP_WIDTH_INC_ICON) * cfg.IndicatorScale
     heightIncrement := UIConstants.POP_HEIGHT_INC * cfg.IndicatorScale
     prevMuted := !state.isMuted
+    stepAlpha := state.HasOwnProp("_breathStepAlpha") ? state._breathStepAlpha : state.currentAlpha
 
     Loop UIConstants.FADE_STEPS {
-        if (state.animSeq != mySeq || state.isDraggingHud || IsHudSuppressed(cfg))
+        if (state.animSeq != mySeq || state.isDraggingHud || (state.HasOwnProp("isDraggingSecondaryHud") && state.isDraggingSecondaryHud) || !IsAnyMicHudVisible(cfg))
             return
-        state.currentAlpha -= fadeStep
-        if (state.currentAlpha < 0)
-            state.currentAlpha := 0
+        stepAlpha := Max(0, stepAlpha - fadeStep)
+        state._breathStepAlpha := stepAlpha
+        state.currentAlpha := stepAlpha
+        state.secondaryCurrentAlpha := stepAlpha
 
         popWidth := Round(state.baseWidth + (A_Index * widthIncrement))
         popHeight := Round(state.baseHeight + (A_Index * heightIncrement))
         offsetX := Round((popWidth - state.baseWidth) / 2)
         offsetY := Round((popHeight - state.baseHeight) / 2)
 
-        ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, state.currentAlpha, prevMuted)
+        if (primVis)
+            ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, stepAlpha, prevMuted)
+        if (secVis)
+            ApplySecondaryMicAppearance(cfg, state, secBaseX - offsetX, secBaseY - offsetY, popWidth, popHeight, stepAlpha, prevMuted)
         Sleep UIConstants.FADE_SLEEP_MS
     }
 
     Loop UIConstants.FADE_STEPS {
-        if (state.animSeq != mySeq || state.isDraggingHud || IsHudSuppressed(cfg))
+        if (state.animSeq != mySeq || state.isDraggingHud || (state.HasOwnProp("isDraggingSecondaryHud") && state.isDraggingSecondaryHud) || !IsAnyMicHudVisible(cfg))
             return
-        state.currentAlpha += fadeStep
-        if (state.currentAlpha > state.baseAlpha)
-            state.currentAlpha := state.baseAlpha
+        stepAlpha := Min(state.baseAlpha, stepAlpha + fadeStep)
+        state._breathStepAlpha := stepAlpha
+        state.currentAlpha := stepAlpha
+        state.secondaryCurrentAlpha := stepAlpha
 
         popWidth := Round((state.baseWidth + (UIConstants.FADE_STEPS * widthIncrement)) - (A_Index * widthIncrement))
         popHeight := Round((state.baseHeight + (UIConstants.FADE_STEPS * heightIncrement)) - (A_Index * heightIncrement))
         offsetX := Round((popWidth - state.baseWidth) / 2)
         offsetY := Round((popHeight - state.baseHeight) / 2)
 
-        ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, state.currentAlpha, state.isMuted)
+        if (primVis)
+            ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, stepAlpha, state.isMuted)
+        if (secVis)
+            ApplySecondaryMicAppearance(cfg, state, secBaseX - offsetX, secBaseY - offsetY, popWidth, popHeight, stepAlpha, state.isMuted)
         Sleep UIConstants.FADE_SLEEP_MS
     }
 
-    if (state.animSeq != mySeq || IsHudSuppressed(cfg))
+    if (state.animSeq != mySeq || !IsAnyMicHudVisible(cfg))
         return
 
+    state._breathStepAlpha := state.baseAlpha
     state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
-    ApplyMicAppearance(cfg, state, state.savedX, state.savedY, state.baseWidth, state.baseHeight, state.currentAlpha)
+    state.secondaryCurrentAlpha := (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
+    if (primVis)
+        ApplyMicAppearance(cfg, state, state.savedX, state.savedY, state.baseWidth, state.baseHeight, state.currentAlpha)
+    else if (secVis)
+        ApplySecondaryMicAppearance(cfg, state, secPos.x, secPos.y, state.baseWidth, state.baseHeight, state.secondaryCurrentAlpha)
 
-    if (state.isMuted && !IsHudSuppressed(cfg) && (!state.HasOwnProp("activeHost") || state.obsConnected)) {
+    if (state.isMuted && IsAnyMicHudVisible(cfg) && (!state.HasOwnProp("activeHost") || state.obsConnected)) {
         state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     } else {
@@ -5329,28 +5550,41 @@ PlayMuteAnimation(cfg, state) {
 }
 
 BreathingAnimation(cfg, state) {
-    if (IsHudSuppressed(cfg)) {
+    if (!IsAnyMicHudVisible(cfg)) {
         if (IsObject(state) && state.HasOwnProp("breathTimerFn") && state.breathTimerFn)
             SetTimer state.breathTimerFn, 0
         return
     }
-    if (!IsObject(state.MicGui) || state.isDraggingHud)
+    primOk := IsObject(state.MicGui) && !IsHudSuppressed(cfg) && !state.isDraggingHud
+    secOk := state.HasOwnProp("SecondaryMicGui") && IsObject(state.SecondaryMicGui) && !IsSecondaryHudSuppressed(cfg) && (!state.HasOwnProp("isDraggingSecondaryHud") || !state.isDraggingSecondaryHud)
+    if (!primOk && !secOk)
         return
 
     minRatio := cfg.AggressivePulse ? UIConstants.PULSE_MIN_RATIO_AGGRESSIVE : UIConstants.PULSE_MIN_RATIO_NORMAL
     lowerBound := Round(state.baseAlpha * minRatio)
     stepAmount := cfg.AggressivePulse ? UIConstants.PULSE_STEP_AGGRESSIVE : UIConstants.PULSE_STEP_NORMAL
 
-    state.currentAlpha += state.breathDir
-    if (state.currentAlpha <= lowerBound) {
-        state.currentAlpha := lowerBound
+    stepAlpha := state.HasOwnProp("_breathStepAlpha") ? state._breathStepAlpha : state.currentAlpha
+    stepAlpha += state.breathDir
+    if (stepAlpha <= lowerBound) {
+        stepAlpha := lowerBound
         state.breathDir := stepAmount
-    } else if (state.currentAlpha >= state.baseAlpha) {
-        state.currentAlpha := state.baseAlpha
+    } else if (stepAlpha >= state.baseAlpha) {
+        stepAlpha := state.baseAlpha
         state.breathDir := -stepAmount
     }
-    if (!Gdip.SetLayeredAlpha(state.MicGui.Hwnd, state.currentAlpha))
-        ApplyMicAppearance(cfg, state)
+    state._breathStepAlpha := stepAlpha
+    state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(stepAlpha, UIConstants.DODGE_ALPHA) : stepAlpha
+    state.secondaryCurrentAlpha := (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged) ? Min(stepAlpha, UIConstants.DODGE_ALPHA) : stepAlpha
+
+    if (primOk) {
+        if (!Gdip.SetLayeredAlpha(state.MicGui.Hwnd, state.currentAlpha))
+            ApplyMicAppearance(cfg, state)
+    }
+    if (secOk) {
+        if (!Gdip.SetLayeredAlpha(state.SecondaryMicGui.Hwnd, state.secondaryCurrentAlpha))
+            ApplySecondaryMicAppearance(cfg, state)
+    }
 }
 
 ; --- HUD DRAG & DPI HANDLERS ---
@@ -5358,6 +5592,7 @@ IsHudHwnd(state, hwnd) {
     if (!IsObject(state) || !hwnd)
         return false
     return (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
+        || (state.HasOwnProp("SecondaryMicGui") && IsObject(state.SecondaryMicGui) && hwnd == state.SecondaryMicGui.Hwnd)
         || (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd)
         || (IsObject(state.ChatGui) && hwnd == state.ChatGui.Hwnd)
         || (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd)
@@ -5446,7 +5681,9 @@ HandleHudPillClick(cfg, state, hwnd) {
     if (cfg.HasOwnProp("EnableHudClickActions") && !cfg.EnableHudClickActions)
         return false
 
-    if (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd) {
+    isPrimMic := (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
+    isSecMic := (state.HasOwnProp("SecondaryMicGui") && IsObject(state.SecondaryMicGui) && hwnd == state.SecondaryMicGui.Hwnd)
+    if (isPrimMic || isSecMic) {
         if (state.HasOwnProp("triggerMuteFn") && IsObject(state.triggerMuteFn)) {
             state.triggerMuteFn.Call()
         } else {
@@ -5454,7 +5691,7 @@ HandleHudPillClick(cfg, state, hwnd) {
             if (!cfg.EnableWS || !state.obsConnected)
                 SyncUIState(cfg, state, !state.isMuted)
         }
-        return "mic"
+        return isSecMic ? "secondary_mic" : "mic"
     }
     if (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd) {
         ExecuteHostToggleRecord(cfg, state)
@@ -5499,17 +5736,70 @@ HandleHudPillClick(cfg, state, hwnd) {
     return false
 }
 
+ApplyDraggedSecondaryPosition(cfg, state, rawX, rawY) {
+    secX := Integer(rawX)
+    secY := Integer(rawY)
+    if (!cfg.HasOwnProp("EnableMagneticSnap") || cfg.EnableMagneticSnap) {
+        snap := ComputeMagneticSnap(secX, secY, state.baseWidth, state.baseHeight, 0, UIConstants.SNAP_THRESHOLD_PX, GetCandidateSnapWindowRects(state))
+        secX := snap.x, secY := snap.y
+    }
+    cfg.savedSecondaryX := secX
+    cfg.savedSecondaryY := secY
+    pos := ComputeSecondaryMicLayout(cfg, state)
+    cfg.savedSecondaryX := pos.x
+    cfg.savedSecondaryY := pos.y
+    cfg.Write("SecondaryPosition", "X", pos.x)
+    cfg.Write("SecondaryPosition", "Y", pos.y)
+    return pos
+}
+
 WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     if (!IsHudHwnd(state, hwnd))
         return
 
-    prevX := state.savedX
-    prevY := state.savedY
+    isSecondary := (state.HasOwnProp("SecondaryMicGui") && IsObject(state.SecondaryMicGui) && hwnd == state.SecondaryMicGui.Hwnd)
     prevMouseMode := A_CoordModeMouse
     CoordMode("Mouse", "Screen")
     MouseGetPos(&startMX, &startMY)
     downTick := A_TickCount
 
+    if (isSecondary) {
+        secPos := ComputeSecondaryMicLayout(cfg, state)
+        prevSX := secPos.x
+        prevSY := secPos.y
+        state.animSeq += 1
+        SetTimer state.breathTimerFn, 0
+        state.isDraggingSecondaryHud := true
+        PostMessage(0xA1, 2,,, "ahk_id " hwnd)
+        KeyWait "LButton"
+        state.isDraggingSecondaryHud := false
+
+        MouseGetPos(&endMX, &endMY)
+        CoordMode("Mouse", prevMouseMode)
+        isShortClick := (Abs(endMX - startMX) <= 3 && Abs(endMY - startMY) <= 3 && (A_TickCount - downTick) < 400)
+
+        if (isShortClick) {
+            state.savedSecondaryX := prevSX
+            state.savedSecondaryY := prevSY
+            state.SecondaryMicGui.Move(prevSX, prevSY, state.baseWidth, state.baseHeight)
+        } else {
+            WinGetPos(&X, &Y,,, "ahk_id " hwnd)
+            pos := ApplyDraggedSecondaryPosition(cfg, state, X, Y)
+            state.SecondaryMicGui.Move(pos.x, pos.y, pos.w, pos.h)
+        }
+        baseLvl := state.HasOwnProp("_breathStepAlpha") ? state._breathStepAlpha : state.baseAlpha
+        state.secondaryCurrentAlpha := (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged) ? Min(baseLvl, UIConstants.DODGE_ALPHA) : baseLvl
+        ApplySecondaryMicAppearance(cfg, state)
+        ApplyHudClickThroughStyle(cfg, state)
+        if (IsAnyMicHudVisible(cfg) && state.isMuted)
+            SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+        if (isShortClick)
+            HandleHudPillClick(cfg, state, hwnd)
+        return
+    }
+
+    prevX := state.savedX
+    prevY := state.savedY
     state.animSeq += 1
     SetTimer state.breathTimerFn, 0
     state.activeDragHwnd := hwnd
@@ -5551,7 +5841,7 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
             ApplyStreamAppearance(cfg, state)
     }
     ApplyHudClickThroughStyle(cfg, state)
-    if (!IsHudSuppressed(cfg) && state.isMuted)
+    if (IsAnyMicHudVisible(cfg) && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 
     if (isShortClick)
@@ -5569,6 +5859,11 @@ WM_DPICHANGED(state, wParam, lParam, msg, hwnd) {
     newLeft := NumGet(lParam, 0, "Int")
     newTop := NumGet(lParam, 4, "Int")
     UpdateHudLayout(state, newLeft, newTop)
+}
+
+WM_DISPLAYCHANGE(cfg, state, *) {
+    if (IsObject(state) && IsObject(cfg))
+        RefreshHudAppearance(cfg, state)
 }
 
 ResetAutoProfileTracking(state) {
@@ -7115,7 +7410,7 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.Write("Settings", "ThemeMode", tm)
             Theme.SetMode(tm)
         }
-        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough"] {
+        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowSecondaryMicHud", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough"] {
             if vals.HasOwnProp(bProp) {
                 cfg.%bProp% := !!vals.%bProp%
                 cfg.WriteBool("Settings", bProp, cfg.%bProp%)
@@ -7435,6 +7730,12 @@ ShowControlCenterWindow(cfg, state := "", *) {
     edCustomMuted := ccGui.Add("Edit", "x495 y384 w185 h26", "#" cfg.CustomMutedHex)
     Theme.RegisterControl(ccGui, edCustomMuted, "Edit")
 
+    chkSecondaryMic := ccGui.Add("Checkbox", "x32 y424 w310 h24" (cfg.ShowSecondaryMicHud ? " Checked" : ""), "Secondary Independent Mic Pill (Mic-Only)")
+    Theme.RegisterControl(ccGui, chkSecondaryMic, "Checkbox", "tabText")
+    btnResetSecPos := ccGui.Add("Button", "x360 y421 w320 h30", "Reset Secondary Pill Position")
+    Theme.RegisterControl(ccGui, btnResetSecPos, "Button", "tabButton")
+    btnResetSecPos.OnEvent("Click", (*) => ResetSecondaryTrayPosition(cfg, state))
+
     ; ==========================================================================
     ; TAB 5: REMOTE COMPANION
     ; ==========================================================================
@@ -7614,6 +7915,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
         ddlTheme.Choose((cfg.ThemeMode = "Dark") ? 2 : ((cfg.ThemeMode = "Light") ? 3 : 1))
         chkShowInd.Value := cfg.ShowIndicator ? 1 : 0
         chkShowExtra.Value := cfg.ShowExtraHuds ? 1 : 0
+        chkSecondaryMic.Value := cfg.ShowSecondaryMicHud ? 1 : 0
         chkShowText.Value := cfg.ShowText ? 1 : 0
         chkMonoIcon.Value := cfg.MonoIcon ? 1 : 0
         chkSleek.Value := cfg.SleekCorners ? 1 : 0
@@ -7703,6 +8005,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ThemeMode: ddlTheme.Text,
             ShowIndicator: chkShowInd.Value,
             ShowExtraHuds: chkShowExtra.Value,
+            ShowSecondaryMicHud: chkSecondaryMic.Value,
             ShowText: chkShowText.Value,
             MonoIcon: chkMonoIcon.Value,
             SleekCorners: chkSleek.Value,

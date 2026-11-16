@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 6.8.0
+; Version: 6.9.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 6.8.0.0
+;@Ahk2Exe-SetVersion 6.9.0.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -105,6 +105,10 @@ BuildTrayMenu(cfg, state) {
     A_TrayMenu.Add("Show Extra HUDs", ToggleExtraHuds.Bind(cfg, state))
     if (cfg.ShowExtraHuds)
         A_TrayMenu.Check("Show Extra HUDs")
+
+    A_TrayMenu.Add("Show Secondary Mic Pill (Mic-Only)", ToggleSecondaryMicLive.Bind(cfg, state))
+    if (cfg.ShowSecondaryMicHud)
+        A_TrayMenu.Check("Show Secondary Mic Pill (Mic-Only)")
 
     AppearanceMenu := Menu()
     AppearanceMenu.Add("Show Text Label", ToggleText.Bind(cfg, state))
@@ -214,6 +218,7 @@ BuildTrayMenu(cfg, state) {
 
     AppearanceMenu.Add()
     AppearanceMenu.Add("Reset Indicator Position", ApplyResetPositionLive.Bind(cfg, state))
+    AppearanceMenu.Add("Reset Secondary Pill Position", ApplyResetSecondaryPositionLive.Bind(cfg, state))
     AppearanceMenu.Add("Restore Default Appearance", ApplyResetAppearanceLive.Bind(cfg, state))
 
     A_TrayMenu.Add("Indicator Appearance", AppearanceMenu)
@@ -523,9 +528,9 @@ ToggleIndicator(cfg, state, *) {
 
     SetTrayCheck("Show Mute Indicator", cfg.ShowIndicator)
     UpdateHudVisibility(cfg, state)
-    if (cfg.ShowIndicator && state.isMuted)
+    if (IsAnyMicHudVisible(cfg) && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
-    else if (!cfg.ShowIndicator)
+    else
         SetTimer state.breathTimerFn, 0
     NotifyHelpRefresh(state)
 }
@@ -539,6 +544,15 @@ ToggleExtraHuds(cfg, state, *) {
     RefreshHudAppearance(cfg, state)
     NotifyHelpRefresh(state)
     ToolTip(cfg.ShowExtraHuds ? "Extra HUDs: ON" : "Extra HUDs: OFF")
+    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
+}
+
+ToggleSecondaryMicLive(cfg, state, *) {
+    ToolTip()
+    ToggleSecondaryMicHud(cfg, state)
+    SetTrayCheck("Show Secondary Mic Pill (Mic-Only)", cfg.ShowSecondaryMicHud)
+    NotifyHelpRefresh(state)
+    ToolTip(cfg.ShowSecondaryMicHud ? "Secondary Mic Pill: ON" : "Secondary Mic Pill: OFF")
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
@@ -612,6 +626,11 @@ ApplyScaleLive(cfg, state, val, *) {
 
 ApplyResetPositionLive(cfg, state, *) {
     ResetTrayPosition(cfg, state)
+    NotifyHelpRefresh(state)
+}
+
+ApplyResetSecondaryPositionLive(cfg, state, *) {
+    ResetSecondaryTrayPosition(cfg, state)
     NotifyHelpRefresh(state)
 }
 

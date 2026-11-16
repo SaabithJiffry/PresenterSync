@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v6.8.0", UIConstants.APP_VERSION == "6.8.0")
+Assert("APP_VERSION is active release v6.9.0", UIConstants.APP_VERSION == "6.9.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -1497,8 +1497,8 @@ ccAuditLight := ShowControlCenterWindow(cfgAudit, stAudit)
 PostMessage(0x0010, 0, 0, ccAuditLight.Hwnd)
 Sleep(50)
 Theme.SetMode("System")
-Assert("Control Center registers all 27 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
-    ccChkTabCount == 27 && ccUiOk && Theme.SuspendLockCount == 0)
+Assert("Control Center registers all 28 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
+    ccChkTabCount == 28 && ccUiOk && Theme.SuspendLockCount == 0)
 
 ; 21.6 Scope Guard: PresenterSync_Remote remains strictly 1-tier Mic HUD (no multi-tier GUIs)
 remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
@@ -2897,11 +2897,125 @@ primM8Src := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
 remM8Src := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
 obsNetSrc := FileRead(A_ScriptDir "\..\Lib\OBS_Network.ahk", "UTF-8")
 bridgeM8Src := FileRead(A_ScriptDir "\..\Lib\HostBridge.ahk", "UTF-8")
-Assert("Windows v6.8.0 source files declare 6.8.0 & wire Timeline + Guided Setup Wizard",
-    InStr(primM8Src, "6.8.0") && InStr(remM8Src, "6.8.0")
+Assert("Windows source files declare active version & wire Timeline + Guided Setup Wizard",
+    InStr(primM8Src, UIConstants.APP_VERSION) && InStr(remM8Src, UIConstants.APP_VERSION)
     && InStr(primM8Src, "ShowGuidedSetupWizard") && InStr(primM8Src, "ShowTimelineWindow")
     && InStr(obsNetSrc, "SessionTimeline.Record") && InStr(bridgeM8Src, "SessionTimeline.Record"))
 SessionTimeline.Clear()
+
+; ==============================================================================
+; SECTION 28: v6.9.0 PRIMARY-ONLY SECONDARY INDEPENDENT MIC PILL INDICATOR
+; ==============================================================================
+secIni := A_Temp "\ps_sec_mic_test_" A_TickCount ".ini"
+if FileExist(secIni)
+    FileDelete(secIni)
+cfgSec := Config(secIni)
+Assert("Secondary Mic Pill defaults OFF with Independent SecondaryPosition='Default'",
+    !cfgSec.ShowSecondaryMicHud && cfgSec.savedSecondaryX == "Default" && cfgSec.savedSecondaryY == "Default")
+
+cfgSec.ShowIndicator := true
+cfgSec.ShowExtraHuds := true
+cfgSec.EnableWS := true
+cfgSec.ShowText := false
+cfgSec.EnableMagneticSnap := false
+stSec := OverlayState(cfgSec)
+InitHUD(cfgSec, stSec, true)
+Sleep(40)
+
+Assert("InitHUD creates valid SecondaryMicGui strictly 1-tier (8 total primary HUD windows) and hides when OFF",
+    IsGuiValid(stSec.SecondaryMicGui)
+    && stSec.SecondaryMicGui.Hwnd != stSec.MicGui.Hwnd
+    && GetHudGuiList(stSec, true).Length == 8
+    && !DllCall("IsWindowVisible", "Ptr", stSec.SecondaryMicGui.Hwnd))
+
+ToggleSecondaryMicHud(cfgSec, stSec)
+Sleep(40)
+secDefaultVisible := DllCall("IsWindowVisible", "Ptr", stSec.SecondaryMicGui.Hwnd) != 0
+secPos := ComputeSecondaryMicLayout(cfgSec, stSec)
+noPrimOverlap := (secPos.x + secPos.w <= stSec.savedX) || (secPos.x >= stSec.savedX + stSec.baseWidth)
+    || (secPos.y + secPos.h <= stSec.savedY) || (secPos.y >= stSec.savedY + stSec.baseHeight)
+Assert("Toggling Secondary Mic Pill ON shows Mic-Only window non-overlapping with Primary pill",
+    cfgSec.ShowSecondaryMicHud && secDefaultVisible && noPrimOverlap && IsHudHwnd(stSec, stSec.SecondaryMicGui.Hwnd))
+
+; Move Primary pill independently and verify Secondary pill does NOT move with it
+oldSecX := stSec.savedSecondaryX, oldSecY := stSec.savedSecondaryY
+cfgSec.savedX := 240, cfgSec.savedY := 320
+cfgSec.Write("Position", "X", 240), cfgSec.Write("Position", "Y", 320)
+UpdateHudLayout(stSec, 240, 320)
+WinGetPos(&pWinX, &pWinY,,, "ahk_id " stSec.MicGui.Hwnd)
+WinGetPos(&sWinX, &sWinY,,, "ahk_id " stSec.SecondaryMicGui.Hwnd)
+Assert("Moving Primary HUD leaves Secondary Mic Pill at its independent coordinates",
+    pWinX == 240 && pWinY == 320 && sWinX == oldSecX && sWinY == oldSecY)
+
+; Drag Secondary pill cleanly & verify [SecondaryPosition] persistence + Primary [Position] untouched
+draggedSec := ApplyDraggedSecondaryPosition(cfgSec, stSec, 999999, 999999)
+stSec.SecondaryMicGui.Move(draggedSec.x, draggedSec.y, draggedSec.w, draggedSec.h)
+iniSecX := IniRead(secIni, "SecondaryPosition", "X", "")
+iniPrimX := IniRead(secIni, "Position", "X", "")
+Assert("Dragging Secondary pill clamps to virtual screen bounds & persists ONLY [SecondaryPosition]",
+    Integer(iniSecX) == draggedSec.x && draggedSec.x < 999999 && Integer(iniPrimX) == 240 && cfgSec.savedX == 240)
+
+; Verify click-to-mute, theme/scale sync, breathing sync, and auto-dodge isolation
+secTrigCb := { cnt: 0 }
+stSec.triggerMuteFn := (*) => (secTrigCb.cnt += 1, SyncUIState(cfgSec, stSec, !stSec.isMuted))
+clickRet := HandleHudPillClick(cfgSec, stSec, stSec.SecondaryMicGui.Hwnd)
+Assert("Clicking Secondary Mic Pill syncs mute state with Primary Mic Pill",
+    clickRet == "secondary_mic" && secTrigCb.cnt == 1 && stSec.isMuted)
+
+cfgSec.ShowText := true
+cfgSec.HudColorPreset := "Custom"
+cfgSec.CustomLiveHex := "0EA5E9"
+SyncTelemetryBackendsFromConfig(cfgSec, stSec)
+Sleep(30)
+WinGetPos(,, &sTextW, &sTextH, "ahk_id " stSec.SecondaryMicGui.Hwnd)
+Assert("ShowText & Theme changes resize and sync Secondary Mic Pill identically to Primary",
+    sTextW == stSec.baseWidth && sTextH == stSec.baseHeight && stSec.baseWidth == UIConstants.BASE_WIDTH_TEXT)
+
+stSec.isMuted := true
+stSec.isAutoDodged := false
+stSec.secondaryIsAutoDodged := false
+stSec.breathDir := -UIConstants.PULSE_STEP_NORMAL
+stSec._breathStepAlpha := cfgSec.OpacityLevel
+beforeBreathSec := stSec.secondaryCurrentAlpha
+BreathingAnimation(cfgSec, stSec)
+Assert("Breathing animation updates Secondary Mic Pill alpha in lockstep with Primary",
+    stSec.secondaryCurrentAlpha < beforeBreathSec && stSec.secondaryCurrentAlpha == stSec.currentAlpha)
+
+cfgSec.HudAutoDodge := true
+AutoDodgeTick(cfgSec, stSec, { x: draggedSec.x + 10, y: draggedSec.y + 10 }, 0)
+Assert("Auto-Dodge hovering Secondary pill dims ONLY Secondary pill without dimming Primary stack",
+    stSec.secondaryIsAutoDodged && !stSec.isAutoDodged && stSec.secondaryCurrentAlpha <= UIConstants.DODGE_ALPHA)
+
+; Profile save/switch persistence for ShowSecondaryMicHud
+cfgSec.SaveProfile("RoomSecondary")
+cfgSec.ShowSecondaryMicHud := false
+cfgSec.ApplyProfile("RoomSecondary", stSec)
+Assert("App Profiles preserve ShowSecondaryMicHud toggle",
+    cfgSec.ShowSecondaryMicHud == true)
+
+; Reset Secondary Position does not touch Primary [Position]
+ResetSecondaryTrayPosition(cfgSec, stSec)
+Assert("ResetSecondaryPosition clears [SecondaryPosition] without altering Primary [Position]",
+    cfgSec.savedSecondaryX == "Default" && cfgSec.savedSecondaryY == "Default" && cfgSec.savedX == 240 && cfgSec.savedY == 320)
+
+; Clean up Secondary HUD test timers & windows
+for propNm in ["voiceMeterTimerFn", "mutedVoiceTimerFn", "autoDodgeTimerFn", "breathTimerFn", "dragTimerFn", "recTimerFn", "presenterTimerFn"] {
+    if (stSec.HasOwnProp(propNm) && stSec.%propNm%)
+        SetTimer(stSec.%propNm%, 0)
+}
+for gObj in GetHudGuiList(stSec, true) {
+    try gObj.Destroy()
+}
+if FileExist(secIni)
+    FileDelete(secIni)
+
+; Scope Guard: STRICTLY Primary PresenterSync.ahk ONLY (zero references in PresenterSync_Remote.ahk)
+primM9Src := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
+remM9Src := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
+Assert("Scope guard: Secondary Independent Mic Pill lives strictly in Primary App (excluded from Remote)",
+    InStr(primM9Src, UIConstants.APP_VERSION) && InStr(primM9Src, "Show Secondary Mic Pill") && InStr(primM9Src, "ToggleSecondaryMicLive")
+    && InStr(remM9Src, UIConstants.APP_VERSION)
+    && !RegExMatch(remM9Src, "SecondaryMicGui|ShowSecondaryMicHud|SecondaryPosition|ToggleSecondaryMic"))
 
 ; Cleanup test ini
 if FileExist(testIni)
