@@ -11,9 +11,10 @@
 #Include "..\Lib\RemoteBridgeClient.ahk"
 #Include "..\Lib\Gdip.ahk"
 #Include "..\Lib\GUI_Config.ahk"
+#Include "..\Lib\HudSnakeGame.ahk"
 
 Gdip.Startup()
-OnExit((*) => (Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => (HudSnake.Stop(), Theme.Shutdown(), Gdip.Shutdown()))
 
 results := []
 PassCount := 0
@@ -141,6 +142,44 @@ if (lnkRes.ok && FileExist(lnkRes.lnkPath)) {
 try DirDelete(lnkDir, true)
 Assert("CreateRemoteInstanceDesktopShortcut builds valid .lnk with -Instance and -Config flags",
     lnkRes.ok && InStr(lnkTarget, ".exe") && InStr(lnkArgs, '-Instance "SmartBoard-101"') && InStr(lnkArgs, '-Config "'))
+
+; --- TEST 8: Remote Single-Tier Non-Headless HUD Snake Lifecycle ---
+remSnkCfg := Config(testIni)
+remSnkCfg.ShowIndicator := true
+remSnkGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+remSnkGui.Show("NoActivate x120 y120 w80 h40")
+remSnkSpy := { refreshed: 0 }
+remSnkState := {
+    savedX: 120,
+    savedY: 120,
+    baseWidth: 80,
+    baseHeight: 40,
+    isMuted: false,
+    obsConnected: true,
+    MicGui: remSnkGui,
+    refreshHudFn: (*) => (remSnkSpy.refreshed += 1, remSnkGui.Show("NoActivate x120 y120 w80 h40")),
+    heartbeatTimerFn: (*) => 0
+}
+hProcRemSnk := DllCall("GetCurrentProcess", "Ptr")
+gdiRemBefore := DllCall("GetGuiResources", "Ptr", hProcRemSnk, "Int", 0, "UInt")
+okRemLiveStart := HudSnake.Start(remSnkCfg, remSnkState, false)
+Sleep(80)
+remSnkHwnd := IsObject(HudSnake._gui) ? HudSnake._gui.Hwnd : 0
+remSnkVis := remSnkHwnd ? DllCall("IsWindowVisible", "Ptr", remSnkHwnd, "Int") : 0
+remMicHidden := !DllCall("IsWindowVisible", "Ptr", remSnkGui.Hwnd, "Int")
+Sleep(400)
+HudSnake._FrameTick()
+remPhasePlay := HudSnake.Phase
+HudSnake.Stop()
+Sleep(150)
+try SetTimer(remSnkState.heartbeatTimerFn, 0)
+remMicRestored := DllCall("IsWindowVisible", "Ptr", remSnkGui.Hwnd, "Int")
+gdiRemAfter := DllCall("GetGuiResources", "Ptr", hProcRemSnk, "Int", 0, "UInt")
+try remSnkGui.Destroy()
+Assert("Remote 1-tier HUD Snake morphs live canvas, hides Mic pill, enters playing, & restores pill cleanly",
+    okRemLiveStart && remSnkHwnd != 0 && remSnkVis == 1 && remMicHidden && remPhasePlay == "playing"
+    && remMicRestored == 1 && remSnkSpy.refreshed >= 1 && (gdiRemAfter - gdiRemBefore) == 0,
+    Format("start={} vis={} hid={} play={} rest={} gdiDelta={}", okRemLiveStart, remSnkVis, remMicHidden, remPhasePlay, remMicRestored, gdiRemAfter - gdiRemBefore))
 
 ; --- CLEANUP & REPORT ---
 if FileExist(testIni)

@@ -576,6 +576,12 @@ GetHelpKnowledgeBase() {
         "EYES-FREE MUTE CONFIRMATION (REMOTE)`r`n`r`n• Mute Audio Cue (Beep): Plays a distinct 2-tone rising chime when LIVE and a soft falling chime when MUTED—non-blocking on the Remote device.`r`n• Mute Status Toast: Displays a crisp 1.5-second cursor tooltip ('MIC MUTED' / 'MIC LIVE') whenever state flips.`r`n• Both default to OFF and live under Remote Tray -> Indicator Appearance.",
         "remote audio cue beep toast eyes free chime tooltip confirmation")
 
+    Add("rfeat-easter-snake", "Features", "Remote Clicker & Ergonomics", "Secret Challenge: Try at Your Own Risk (Remote)",
+        "Undocumented Chord / Quick Menu Hold (No Main UI Button)", "Alt+Ctrl+Shift+S / 5s Quick Menu Hold", "Try at your own risk",
+        "On Windows Remote press Alt+Ctrl+Shift+S; on Android double-tap the pill -> hold 'Try at your own risk' for 5 seconds.",
+        "TRY AT YOUR OWN RISK (REMOTE COMPANION)`r`n`r`n• WINDOWS REMOTE: Press Alt + Ctrl + Shift + S (hidden from Tray & Settings). Use Arrow Keys, WASD, Numpad, or a connected USB/Bluetooth Gamepad D-Pad to steer, P/Space/Start to pause, E/X to toggle WALLS vs WRAP, and Esc/B to restore your live Mic pill.`r`n• ANDROID REMOTE (SMART BOARD & PHONE): Double-tap the floating pill to open Quick Menu, then press and hold 'Try at your own risk' at the bottom for 5 full seconds (short taps intentionally do nothing!). Control via Touch Swipe, USB/Bluetooth Keyboard, or D-Pad/Gamepad.",
+        "remote secret easter egg snake alt ctrl shift s try at your own risk quick menu 5s hold dpad swipe")
+
     Add("rsc-remote", "Shortcuts", "Remote Companion Shortcuts", "PresenterSync Remote Hotkeys & Clicker Mute Key",
         "Remote Tray > Change App Shortcuts... / Pointer Controls", "Ctrl+F12 / Alt+Shift+F12", "Editable to custom key or 'None'",
         "Reference for all hotkeys inside PresenterSync Remote plus Secondary Clicker Mute & Cough Hold bindings.",

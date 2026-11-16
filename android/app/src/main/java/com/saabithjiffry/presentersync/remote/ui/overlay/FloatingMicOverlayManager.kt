@@ -1,6 +1,7 @@
 package com.saabithjiffry.presentersync.remote.ui.overlay
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import android.view.HapticFeedbackConstants
 import android.widget.ScrollView
 import android.widget.Toast
@@ -12,10 +13,12 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
@@ -23,6 +26,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.saabithjiffry.presentersync.remote.config.AppConstants
@@ -33,13 +37,15 @@ import com.saabithjiffry.presentersync.remote.network.ConnectionManager
 import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
 import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 class FloatingMicOverlayManager(
     private val context: Context,
     private val configStore: RemoteConfigStore,
-    private val connectionManager: ConnectionManager
+    private val connectionManager: ConnectionManager,
+    private val onLaunchEasterSnake: () -> Unit = {}
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val handler = Handler(Looper.getMainLooper())
@@ -48,6 +54,9 @@ class FloatingMicOverlayManager(
     private var layoutParams: WindowManager.LayoutParams? = null
     private var quickMenuView: View? = null
     private var attached = false
+    private var hiddenForEasterEgg = false
+    private var easterHoldRunnable: Runnable? = null
+    private var easterProgressRunnable: Runnable? = null
     private var isDragging = false
     private var isAutoDodged = false
     private var isIdleDimmed = false
@@ -147,6 +156,28 @@ class FloatingMicOverlayManager(
         return pos to h
     }
 
+    fun currentPillRectPx(): Rect {
+        val (anchor, h) = currentAnchorForToast()
+        val w = pillView?.computeTargetWidthPx() ?: layoutParams?.width ?: 200
+        return Rect(anchor.x, anchor.y, anchor.x + w, anchor.y + h)
+    }
+
+    fun setHiddenForEasterEgg(hidden: Boolean) {
+        if (hiddenForEasterEgg == hidden) return
+        hiddenForEasterEgg = hidden
+        if (hidden) {
+            dismissQuickMenu()
+            stopBreathing()
+            pillView?.visibility = View.INVISIBLE
+        } else {
+            pillView?.visibility = View.VISIBLE
+            resetIdleDimTimer(wakeNow = true)
+            if (attached && currentConfig.showIndicator) {
+                showOrUpdate(currentConfig, currentConn)
+            }
+        }
+    }
+
     fun showOrUpdate(cfg: RemoteConfig, conn: ConnectionUiState) {
         currentConfig = cfg
         currentConn = conn
@@ -166,6 +197,11 @@ class FloatingMicOverlayManager(
             attachView()
         } else {
             updateDimensionsAndPosition()
+        }
+        if (hiddenForEasterEgg) {
+            pillView?.visibility = View.INVISIBLE
+            stopBreathing()
+            return
         }
 
         val wakeKey = "${conn.connected}|${conn.isMuted}|${conn.connStatus}|${conn.streamDropWarn}|${conn.voiceWhileMuted}|${cfg.idleDimAfterSec}|${cfg.showIndicator}"
@@ -843,6 +879,126 @@ class FloatingMicOverlayManager(
             openSettingsActivity()
         }
 
+        // Hidden-in-plain-sight Easter Egg trigger: single tap is intentionally a strict NO-OP
+        // so Smart Boards remain 100% protected mid-lecture; requires a sustained 5-second hold.
+        val easterDivider = View(context).apply { setBackgroundColor(dividerColor) }
+        container.addView(easterDivider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
+
+        val easterWrap = FrameLayout(context).apply {
+            tag = "quick_menu_easter_row"
+            contentDescription = "Try at your own risk"
+            minimumHeight = (44 * density).roundToInt()
+            isClickable = true
+            isFocusable = false
+        }
+        val easterLabel = TextView(context).apply {
+            text = "Try at your own risk"
+            setTextColor(if (isDark) Color.parseColor("#94A3B8") else Color.parseColor("#64748B"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTypeface(typeface, Typeface.ITALIC)
+            val hp = (12 * density).roundToInt()
+            val vp = (11 * density).roundToInt()
+            setPadding(hp, vp, hp, vp)
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        easterWrap.addView(
+            easterLabel,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER_VERTICAL
+            )
+        )
+        val easterHairline = View(context).apply {
+            setBackgroundColor(accentColor)
+            visibility = View.INVISIBLE
+            scaleX = 0f
+            pivotX = 0f
+        }
+        easterWrap.addView(
+            easterHairline,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                (2 * density).roundToInt().coerceAtLeast(2),
+                Gravity.BOTTOM
+            )
+        )
+
+        val maxHoldSlopPx = max(ViewConfiguration.get(context).scaledTouchSlop.toFloat(), 56f * density)
+        var holdStartMs = 0L
+        var holdDownRawX = 0f
+        var holdDownRawY = 0f
+        var holdTriggered = false
+
+        fun cancelSecretHold() {
+            easterHoldRunnable?.let { handler.removeCallbacks(it) }
+            easterHoldRunnable = null
+            easterProgressRunnable?.let { handler.removeCallbacks(it) }
+            easterProgressRunnable = null
+            easterHairline.visibility = View.INVISIBLE
+            easterHairline.scaleX = 0f
+        }
+
+        easterWrap.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    cancelSecretHold()
+                    holdStartMs = SystemClock.uptimeMillis()
+                    holdDownRawX = ev.rawX
+                    holdDownRawY = ev.rawY
+                    holdTriggered = false
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+
+                    val triggerRun = Runnable {
+                        holdTriggered = true
+                        cancelSecretHold()
+                        v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        dismissQuickMenu()
+                        onLaunchEasterSnake()
+                    }
+                    val progressRun = object : Runnable {
+                        override fun run() {
+                            if (holdTriggered || quickMenuView == null) return
+                            val elapsed = SystemClock.uptimeMillis() - holdStartMs
+                            if (elapsed >= AppConstants.SECRET_SNAKE_HINT_DELAY_MS) {
+                                val span = (AppConstants.SECRET_SNAKE_HOLD_MS - AppConstants.SECRET_SNAKE_HINT_DELAY_MS)
+                                    .coerceAtLeast(1L).toFloat()
+                                val frac = ((elapsed - AppConstants.SECRET_SNAKE_HINT_DELAY_MS) / span).coerceIn(0f, 1f)
+                                easterHairline.visibility = View.VISIBLE
+                                easterHairline.scaleX = frac
+                            }
+                            if (elapsed < AppConstants.SECRET_SNAKE_HOLD_MS) {
+                                handler.postDelayed(this, 33L)
+                            }
+                        }
+                    }
+                    easterHoldRunnable = triggerRun
+                    easterProgressRunnable = progressRun
+                    handler.postDelayed(triggerRun, AppConstants.SECRET_SNAKE_HOLD_MS)
+                    handler.postDelayed(progressRun, AppConstants.SECRET_SNAKE_HINT_DELAY_MS)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!holdTriggered &&
+                        (abs(ev.rawX - holdDownRawX) > maxHoldSlopPx || abs(ev.rawY - holdDownRawY) > maxHoldSlopPx)
+                    ) {
+                        cancelSecretHold()
+                        v.parent?.requestDisallowInterceptTouchEvent(false)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!holdTriggered) {
+                        cancelSecretHold()
+                    }
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                    true
+                }
+                else -> false
+            }
+        }
+        container.addView(easterWrap, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
         val maxMenuW = (bounds.width - (16 * density).roundToInt()).coerceAtLeast((180 * density).roundToInt())
         val menuW = (248 * density).roundToInt().coerceAtMost(maxMenuW)
@@ -904,6 +1060,10 @@ class FloatingMicOverlayManager(
     }
 
     private fun dismissQuickMenu() {
+        easterHoldRunnable?.let { handler.removeCallbacks(it) }
+        easterHoldRunnable = null
+        easterProgressRunnable?.let { handler.removeCallbacks(it) }
+        easterProgressRunnable = null
         val mv = quickMenuView ?: return
         quickMenuView = null
         runCatching { windowManager.removeViewImmediate(mv) }
@@ -934,4 +1094,22 @@ class FloatingMicOverlayManager(
     private fun stopBreathing() {
         handler.removeCallbacks(breathRunnable)
     }
+
+    @VisibleForTesting
+    internal fun openQuickMenuForTesting(): View? {
+        dismissQuickMenu()
+        showQuickMenu()
+        return quickMenuView
+    }
+
+    @VisibleForTesting
+    internal fun dismissQuickMenuForTesting() {
+        dismissQuickMenu()
+    }
+
+    @VisibleForTesting
+    internal fun isHiddenForEasterEggForTesting(): Boolean = hiddenForEasterEgg
+
+    @VisibleForTesting
+    internal fun isPillAttachedForTesting(): Boolean = pillView != null
 }

@@ -26,6 +26,7 @@ import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
 import com.saabithjiffry.presentersync.remote.network.RemoteEvent
 import com.saabithjiffry.presentersync.remote.ui.overlay.FloatingMicOverlayManager
 import com.saabithjiffry.presentersync.remote.ui.overlay.FloatingToastBannerManager
+import com.saabithjiffry.presentersync.remote.ui.overlay.HudSnakeOverlayManager
 import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -33,6 +34,7 @@ import kotlinx.coroutines.launch
 class FloatingHudForegroundService : LifecycleService() {
     private lateinit var app: PresenterSyncRemoteApp
     private lateinit var overlayManager: FloatingMicOverlayManager
+    private lateinit var hudSnakeOverlayManager: HudSnakeOverlayManager
     private lateinit var toastBannerManager: FloatingToastBannerManager
     private lateinit var audioCuePlayer: AudioCuePlayer
     private var wifiLock: WifiManager.WifiLock? = null
@@ -41,6 +43,9 @@ class FloatingHudForegroundService : LifecycleService() {
     private val wakeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             overlayManager.onDisplayConfigurationChanged()
+            if (::hudSnakeOverlayManager.isInitialized) {
+                hudSnakeOverlayManager.onDisplayConfigurationChanged()
+            }
             app.connectionManager.verifyOrReconnect()
         }
     }
@@ -48,7 +53,27 @@ class FloatingHudForegroundService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         app = application as PresenterSyncRemoteApp
-        overlayManager = FloatingMicOverlayManager(this, app.configStore, app.connectionManager)
+        hudSnakeOverlayManager = HudSnakeOverlayManager(this, app.configStore) { active ->
+            if (::overlayManager.isInitialized) {
+                overlayManager.setHiddenForEasterEgg(active)
+            }
+        }
+        overlayManager = FloatingMicOverlayManager(
+            context = this,
+            configStore = app.configStore,
+            connectionManager = app.connectionManager,
+            onLaunchEasterSnake = {
+                val rect = overlayManager.currentPillRectPx()
+                hudSnakeOverlayManager.start(
+                    cfg = app.configStore.current,
+                    isMuted = app.connectionManager.uiState.value.isMuted,
+                    pillLeftScreenPx = rect.left,
+                    pillTopScreenPx = rect.top,
+                    pillWidthPx = rect.width(),
+                    pillHeightPx = rect.height()
+                )
+            }
+        )
         toastBannerManager = FloatingToastBannerManager(this)
         audioCuePlayer = AudioCuePlayer()
         acquireWifiLock()
@@ -63,6 +88,7 @@ class FloatingHudForegroundService : LifecycleService() {
                 cfg to conn
             }.collect { (cfg, conn) ->
                 overlayManager.showOrUpdate(cfg, conn)
+                hudSnakeOverlayManager.updateConfig(cfg)
                 updateNotification(cfg, conn)
                 QuickToggleTileService.requestRefresh(this@FloatingHudForegroundService)
             }
@@ -124,6 +150,9 @@ class FloatingHudForegroundService : LifecycleService() {
 
     private fun stopRemoteCleanly() {
         app.configStore.setHudWasActive(false)
+        if (::hudSnakeOverlayManager.isInitialized) {
+            hudSnakeOverlayManager.stop()
+        }
         toastBannerManager.hide()
         overlayManager.hide()
         audioCuePlayer.release()
@@ -139,10 +168,16 @@ class FloatingHudForegroundService : LifecycleService() {
         if (::overlayManager.isInitialized) {
             overlayManager.onDisplayConfigurationChanged()
         }
+        if (::hudSnakeOverlayManager.isInitialized) {
+            hudSnakeOverlayManager.onDisplayConfigurationChanged()
+        }
     }
 
     override fun onDestroy() {
         unregisterWakeReceiver()
+        if (::hudSnakeOverlayManager.isInitialized) {
+            hudSnakeOverlayManager.stop()
+        }
         toastBannerManager.hide()
         overlayManager.hide()
         audioCuePlayer.release()

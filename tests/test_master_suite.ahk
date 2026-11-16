@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v6.4.0", UIConstants.APP_VERSION == "6.4.0")
+Assert("APP_VERSION is active release v6.5.0", UIConstants.APP_VERSION == "6.5.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -1900,16 +1900,18 @@ remSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
 guiSrc := FileRead(A_ScriptDir "\..\Lib\GUI_Config.ahk", "UTF-8")
 trayPart := StrSplit(StrSplit(primSrc, "BuildTrayMenu(cfg, state) {")[2], "NotifyHelpRefresh")[1]
 ccPart := StrSplit(guiSrc, "ShowControlCenterWindow(cfg, state := `"`", *) {")[2]
-remTrayPart := StrSplit(StrSplit(remSrc, "BuildRemoteTrayMenu(")[2], "ShowRemoteHelpUI(")[1]
+remTrayPart := StrSplit(StrSplit(remSrc, "BuildRemoteTrayMenu(cfg, state) {")[2], "ShowRemoteHelpUI(")[1]
 
 noUiMenuLeak := !InStr(trayPart, "Snake") && !InStr(trayPart, "Easter")
     && !InStr(ccPart, "Snake") && !InStr(ccPart, "Easter")
-    && !InStr(remTrayPart, "Snake") && !InStr(remSrc, "HudSnake")
+    && !InStr(remTrayPart, "Snake") && !InStr(remTrayPart, "Easter") && !InStr(remTrayPart, "Try at your own risk")
 secretHkWired := InStr(primSrc, "`"!^+s`"") && InStr(primSrc, "HudSnake.Toggle") && InStr(primSrc, "!HudSnake.IsActive")
+    && InStr(remSrc, "`"!^+s`"") && InStr(remSrc, "HudSnake.Toggle") && InStr(remSrc, "HudSnake.IsActive")
 helpPrimHits := SearchHelpEntries("snake", "All", false)
 helpRemHits := SearchHelpEntries("snake", "All", true)
-Assert("v4.0.1 Snake remains secret in Tray/CC/Remote, bound to !^+s in Primary & subtle in Primary Help",
-    noUiMenuLeak && secretHkWired && helpPrimHits.Length == 1 && helpPrimHits[1].id == "feat-easter-snake" && helpRemHits.Length == 0,
+Assert("v4.0.1/v6.5.0 Snake remains secret in Tray/CC Menus, bound to !^+s in Primary+Remote & subtle in Help",
+    noUiMenuLeak && secretHkWired && helpPrimHits.Length == 1 && helpPrimHits[1].id == "feat-easter-snake"
+    && helpRemHits.Length == 1 && helpRemHits[1].id == "rfeat-easter-snake",
     Format("noLeak={} hkWired={} primHits={} remHits={}", noUiMenuLeak, secretHkWired, helpPrimHits.Length, helpRemHits.Length))
 
 ; ==============================================================================
@@ -2550,6 +2552,79 @@ Assert("ExportSanitizedDiagnostics redacts ObsPassword, PairingCodes, SessionTok
     && !InStr(diagText, "tok_paired_device_999")
     && InStr(diagText, "[REDACTED]")
     && InStr(diagText, "Smart%20Board"))
+
+; ==============================================================================
+; SECTION 24: v6.5.0 CROSS-PLATFORM HUD SNAKE (XINPUT / POV & REMOTE SINGLE-TIER)
+; ==============================================================================
+padUp := HudSnake.DecodeXInputGamepadState(0x0001, 0, 0)
+padRight := HudSnake.DecodeXInputGamepadState(0x0008, 0, 0)
+stickUp := HudSnake.DecodeXInputGamepadState(0, 0, 22000)
+stickDead := HudSnake.DecodeXInputGamepadState(0, 3000, -4000)
+padBtns := HudSnake.DecodeXInputGamepadState(0x1000 | 0x4000, 0, 0)
+padExit := HudSnake.DecodeXInputGamepadState(0x0020, 0, 0)
+Assert("DecodeXInputGamepadState maps D-Pad, Thumbstick Y+->Up, Deadzone & Face Buttons accurately",
+    padUp.dirX == 0 && padUp.dirY == -1
+    && padRight.dirX == 1 && padRight.dirY == 0
+    && stickUp.dirX == 0 && stickUp.dirY == -1
+    && stickDead.dirX == 0 && stickDead.dirY == 0
+    && padBtns.pausePressed && padBtns.edgePressed && !padBtns.exitPressed
+    && padExit.exitPressed)
+
+povN := HudSnake.DecodeDirectInputPov(0)
+povE := HudSnake.DecodeDirectInputPov(9000)
+povS := HudSnake.DecodeDirectInputPov(18000)
+povW := HudSnake.DecodeDirectInputPov(27000)
+povC := HudSnake.DecodeDirectInputPov(65535)
+Assert("DecodeDirectInputPov decodes cardinal POV angles & centered state cleanly",
+    povN.y == -1 && povE.x == 1 && povS.y == 1 && povW.x == -1 && povC.x == 0 && povC.y == 0)
+
+remCfg := Config(testIni)
+remCfg.ShowIndicator := true
+remSpy := { refreshed: 0, reconnected: 0 }
+remSpyRefr := (*) => (remSpy.refreshed += 1)
+remSpyReconn := (*) => (remSpy.reconnected += 1)
+remState := {
+    savedX: 200,
+    savedY: 200,
+    baseWidth: 80,
+    baseHeight: 40,
+    isMuted: true,
+    obsConnected: false,
+    MicGui: Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale"),
+    refreshHudFn: remSpyRefr,
+    reconnectTimerFn: remSpyReconn
+}
+okRemStart := HudSnake.Start(remCfg, remState, true)
+remSeedsLen := HudSnake._morphSeeds.Length
+remSnakeLen := HudSnake._snake.Length
+HudSnake._dir := { x: 1, y: 0 }
+HudSnake._dirQueue := []
+HudSnake.QueueDirection(0, -1)
+edgeBefore := HudSnake._edgeWrap
+HudSnake.ToggleEdgeMode()
+remWrapFlipped := (HudSnake._edgeWrap == !edgeBefore)
+HudSnake.ToggleEdgeMode()
+HudSnake.TogglePause()
+remPaused := (HudSnake.Phase = "paused")
+HudSnake.TogglePause()
+remResumed := (HudSnake.Phase = "playing")
+HudSnake.Stop()
+try SetTimer(remSpyReconn, 0)
+try remState.MicGui.Destroy()
+Assert("HudSnake supports 1-tier Remote state without RecGui & restores Remote callbacks on Stop",
+    okRemStart && remSeedsLen >= 5 && remSnakeLen >= 5 && remWrapFlipped && remPaused && remResumed
+    && !HudSnake.IsActive && remSpy.refreshed >= 1,
+    Format("ok={} seeds={} snake={} flip={} p={} r={} active={} refr={}", okRemStart, remSeedsLen, remSnakeLen, remWrapFlipped, remPaused, remResumed, HudSnake.IsActive, remSpy.refreshed))
+
+helpRemSnake := SearchHelpEntries("", "All", true)
+helpPriSnake := SearchHelpEntries("rfeat-easter-snake", "All", false)
+hasRemSnakeHint := false
+for hEntry in helpRemSnake {
+    if (hEntry.id = "rfeat-easter-snake" && InStr(hEntry.body, "Alt + Ctrl + Shift + S") && InStr(hEntry.body, "Try at your own risk"))
+        hasRemSnakeHint := true
+}
+Assert("HelpCenter Remote catalog includes rfeat-easter-snake without leaking to Primary or Tray buttons",
+    hasRemSnakeHint && !InStr(remoteSrc, 'TrayMenu.Add("Try at your own risk') && !InStr(remoteSrc, "Play Snake"))
 
 ; Cleanup test ini
 if FileExist(testIni)
