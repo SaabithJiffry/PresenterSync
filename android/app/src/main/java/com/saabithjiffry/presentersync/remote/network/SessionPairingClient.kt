@@ -30,6 +30,7 @@ data class DiscoveredHost(
 
 data class PairedHostBundle(
     val pairedIp: String,
+    val hostUuid: String,
     val hostName: String,
     val version: String,
     val bridgePort: Int,
@@ -117,6 +118,7 @@ object SessionPairingClient {
             return PairingResult.Success(
                 PairedHostBundle(
                     pairedIp = pairedIp,
+                    hostUuid = obj.optString("hostUuid", "").trim(),
                     hostName = obj.optString("hostName", pairedIp),
                     version = obj.optString("version", ""),
                     bridgePort = obj.optInt("bridgePort", AppConstants.DEFAULT_BRIDGE_PORT),

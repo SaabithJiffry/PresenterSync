@@ -294,6 +294,8 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
         extract_ahk_block(remote_src, "class RemoteState"),
         extract_ahk_block(remote_src, "GetRemoteEffectiveAlpha("),
         extract_ahk_block(remote_src, "ConnectToRemoteOBS("),
+        extract_ahk_block(remote_src, "ShouldStopLanFailoverForWan("),
+        extract_ahk_block(remote_src, "TryPromoteRemoteWanToLan("),
         extract_ahk_block(remote_src, "FailoverToNextCandidate("),
         extract_ahk_block(remote_src, "HandleRemoteObsClose("),
         extract_ahk_block(remote_src, "HandleRemoteObsMessage("),

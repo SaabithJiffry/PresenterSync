@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v6.5.0", UIConstants.APP_VERSION == "6.5.0")
+Assert("APP_VERSION is active release v6.6.0", UIConstants.APP_VERSION == "6.6.0")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -2625,6 +2625,71 @@ for hEntry in helpRemSnake {
 }
 Assert("HelpCenter Remote catalog includes rfeat-easter-snake without leaking to Primary or Tray buttons",
     hasRemSnakeHint && !InStr(remoteSrc, 'TrayMenu.Add("Try at your own risk') && !InStr(remoteSrc, "Play Snake"))
+
+; ==============================================================================
+; SECTION 25: v6.6.0 ZERO-CONFIG UDP DISCOVERY, FAILOVER & SLEEP/WAKE AUTO-HEAL
+; ==============================================================================
+if FileExist(testIni)
+    FileDelete(testIni)
+cfgM6 := Config(testIni)
+uuid1 := cfgM6.HostUuid
+cfgM6b := Config(testIni)
+Assert("Config auto-generates & persists stable HostUuid across reloads",
+    RegExMatch(uuid1, "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$") > 0
+    && cfgM6b.HostUuid == uuid1, uuid1)
+
+cfgM6.obsPassword := "SuperSecretPw_M6!"
+cfgM6.SessionPairingCode := "K7M-9P2"
+cfgM6.InternetPairingCode := "PS-M6-SECRET"
+beaconJson := BuildPublicDiscoveryBeaconJson(cfgM6, 4456, 4455)
+Assert("BuildPublicDiscoveryBeaconJson exposes PS_DISCOVER_V1 metadata with zero secrets",
+    InStr(beaconJson, '"proto":"PS_DISCOVER_V1"')
+    && InStr(beaconJson, '"hostUuid":"' uuid1 '"')
+    && !InStr(beaconJson, "SuperSecretPw_M6!")
+    && !InStr(beaconJson, "K7M-9P2")
+    && !InStr(beaconJson, "PS-M6-SECRET")
+    && !InStr(beaconJson, "obsPassword")
+    && !InStr(beaconJson, "sessionToken"))
+
+stM6 := {
+    isMuted: true,
+    recState: 1,
+    recElapsedSec: 12,
+    streamState: 0,
+    voiceWhileMuted: false,
+    obsConnected: false,
+    EnableWS: false,
+    obsTimerFn: ""
+}
+brM6 := StartHostCompanionBridge(cfgM6, stM6, 0, 0, 0)
+Assert("HostCompanionBridge starts public UDP discovery port alongside TCP/Pair ports",
+    IsObject(brM6) && brM6.running && brM6.boundDiscoverPort > 0 && brM6.boundTcpPort > 0)
+
+suspRes := HandleHostPowerEvent(cfgM6, stM6, 4)
+wakeRes := HandleHostPowerEvent(cfgM6, stM6, 7)
+autoWakeRes := HandleHostPowerEvent(cfgM6, stM6, 18)
+Assert("HandleHostPowerEvent handles sleep(0x4) & wake(0x7/0x12) with listener refresh",
+    suspRes == "suspend" && wakeRes == "resume" && autoWakeRes == "resume"
+    && !stM6.isSystemSuspending && stM6.lastWakeReason == "power_resume_auto"
+    && brM6.running && brM6.boundDiscoverPort > 0)
+
+uriWithUuid := BuildHostPairingUri(cfgM6, ["192.168.10.50"])
+Assert("BuildHostPairingUri includes hostUuid query parameter",
+    InStr(uriWithUuid, "&uuid=" uuid1))
+
+StopHostCompanionBridge()
+
+; Verify PresenterSync_Remote wires PairedHostUuid, PS_DISCOVER_V1 & WAN re-promotion safely
+remM6Src := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
+rbcSrc := FileRead(A_ScriptDir "\..\Lib\RemoteBridgeClient.ahk", "UTF-8")
+primM6Src := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
+Assert("Remote & Primary wire v6.6.0 WM_POWERBROADCAST(0x218), PS_DISCOVER_V1 & WAN->LAN re-promotion",
+    InStr(primM6Src, "OnMessage(0x0218")
+    && InStr(remM6Src, "PairedHostUuid")
+    && InStr(remM6Src, "TryPromoteRemoteWanToLan")
+    && InStr(rbcSrc, "DiscoverPublicHostsUdp")
+    && InStr(rbcSrc, "FollowPairedHostIpShift")
+    && InStr(rbcSrc, "ProbeHostBridgeHealth"))
 
 ; Cleanup test ini
 if FileExist(testIni)

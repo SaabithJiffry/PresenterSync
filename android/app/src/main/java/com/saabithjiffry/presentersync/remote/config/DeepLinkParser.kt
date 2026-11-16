@@ -12,7 +12,8 @@ data class ParsedConnectionPayload(
     val sessionCode: String = "",
     val targetMicName: String = AppConstants.DEFAULT_MIC_NAME,
     val networkMode: NetworkMode = NetworkMode.LAN,
-    val internetPairingCode: String = ""
+    val internetPairingCode: String = "",
+    val hostUuid: String = ""
 )
 
 object DeepLinkParser {
@@ -70,7 +71,8 @@ object DeepLinkParser {
             sessionCode = sessionCode,
             targetMicName = mic,
             networkMode = mode,
-            internetPairingCode = internetCode
+            internetPairingCode = internetCode,
+            hostUuid = queryParams["uuid"].orEmpty().trim()
         )
     }
 
@@ -100,7 +102,8 @@ object DeepLinkParser {
                 sessionCode = code,
                 targetMicName = mic,
                 networkMode = mode,
-                internetPairingCode = rc
+                internetPairingCode = rc,
+                hostUuid = json.optString("uuid", json.optString("hostUuid", "")).trim()
             )
         }.getOrNull()
     }

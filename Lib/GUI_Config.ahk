@@ -10,7 +10,7 @@
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 
 class UIConstants {
-    static APP_VERSION := "6.5.0"
+    static APP_VERSION := "6.6.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1118,6 +1118,27 @@ StaticFluentSubclassProc(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
     return res
 }
 
+GenerateHostUuid() {
+    b := Buffer(16, 0)
+    ok := false
+    try {
+        if (DllCall("bcrypt\BCryptGenRandom", "Ptr", 0, "Ptr", b.Ptr, "UInt", 16, "UInt", 2, "Int") == 0)
+            ok := true
+    } catch {
+        ok := false
+    }
+    if (!ok) {
+        Loop 16
+            NumPut("UChar", Random(0, 255), b, A_Index - 1)
+    }
+    NumPut("UChar", (NumGet(b, 6, "UChar") & 0x0F) | 0x40, b, 6)
+    NumPut("UChar", (NumGet(b, 8, "UChar") & 0x3F) | 0x80, b, 8)
+    hex := ""
+    Loop 16
+        hex .= Format("{:02x}", NumGet(b, A_Index - 1, "UChar"))
+    return SubStr(hex, 1, 8) "-" SubStr(hex, 9, 4) "-" SubStr(hex, 13, 4) "-" SubStr(hex, 17, 4) "-" SubStr(hex, 21, 12)
+}
+
 class Config {
     ConfigFile := ""
     AudioRoutingMode := 0
@@ -1180,6 +1201,7 @@ class Config {
     RemoteNetworkMode := "LAN"
     InternetPairingCode := ""
     SessionPairingCode := ""
+    HostUuid := ""
     BridgePort := 4456
     ActiveProfile := "Default"
     EnableAutoProfileSwitch := false
@@ -1344,6 +1366,11 @@ class Config {
         if (this.SessionPairingCode = "") {
             this.SessionPairingCode := GenerateSessionPairingCode()
             this.Write("Settings", "SessionPairingCode", this.SessionPairingCode)
+        }
+        this.HostUuid := Trim(this.Read("Settings", "HostUuid", ""))
+        if (this.HostUuid = "") {
+            this.HostUuid := GenerateHostUuid()
+            this.Write("Settings", "HostUuid", this.HostUuid)
         }
         profName := this.NormalizeProfileName(this.Read("Settings", "ActiveProfile", "Default"))
         this.ActiveProfile := (profName != "") ? profName : "Default"

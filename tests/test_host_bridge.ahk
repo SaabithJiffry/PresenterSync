@@ -102,7 +102,7 @@ if (serveMode) {
     }
     if FileExist(readyPath)
         FileDelete(readyPath)
-    infoJson := '{"ok":true,"tcpPort":' bridge.boundTcpPort ',"udpPort":' bridge.boundUdpPort ',"sessionCode":"' cfg.SessionPairingCode '"}'
+    infoJson := '{"ok":true,"tcpPort":' bridge.boundTcpPort ',"udpPort":' bridge.boundUdpPort ',"discoverPort":' bridge.boundDiscoverPort ',"hostUuid":"' EnsureHostUuid(cfg) '","sessionCode":"' cfg.SessionPairingCode '"}'
     FileAppend(infoJson, readyPath, "UTF-8")
 
     ; Poll trigger command file if Python wants to test Host-initiated CloseRemote or Mode 1 OBS toggle
@@ -140,6 +140,13 @@ if (serveMode) {
             st.streamState := 2
             st.voiceWhileMuted := true
             HostBridgeBroadcastMuteState(cfg, st)
+        } else if (cmd = "POWER_SUSPEND") {
+            HandleHostPowerEvent(cfg, st, 4)
+            FileAppend("suspended", readyPath ".power", "UTF-8")
+        } else if (cmd = "POWER_RESUME") {
+            try FileDelete(readyPath ".power")
+            HandleHostPowerEvent(cfg, st, 7)
+            FileAppend("resumed:" bridge.boundTcpPort ":" bridge.boundDiscoverPort, readyPath ".power", "UTF-8")
         } else if (cmd = "DUMP_EVENTS") {
             hasRec := false
             for pkt in mockObsSent {
@@ -172,13 +179,18 @@ Assert("NormalizePairingCode strips spaces/dashes and uppercases", NormalizePair
 Assert("SHA256 hex length is 64 chars", StrLen(HashSHA256_Hex("abc")) == 64)
 
 ; 3. HostCompanionBridge ephemeral port start/stop & ShowRemoteCompanionInfo geometry
-b := StartHostCompanionBridge(cfg, st, 0, 0)
-Assert("HostCompanionBridge starts on ephemeral TCP & UDP ports",
-    IsObject(b) && b.running && b.boundTcpPort > 0 && b.boundUdpPort > 0,
-    "TCP=" b.boundTcpPort " UDP=" b.boundUdpPort)
+b := StartHostCompanionBridge(cfg, st, 0, 0, 0)
+Assert("HostCompanionBridge starts on ephemeral TCP, UDP & PS_DISCOVER_V1 ports",
+    IsObject(b) && b.running && b.boundTcpPort > 0 && b.boundUdpPort > 0 && b.boundDiscoverPort > 0,
+    "TCP=" b.boundTcpPort " UDP=" b.boundUdpPort " DISC=" b.boundDiscoverPort)
 
 sum := GetHostBridgeStatusSummary()
-Assert("GetHostBridgeStatusSummary reports running state", sum.running && sum.tcpPort == b.boundTcpPort)
+Assert("GetHostBridgeStatusSummary reports running state, discoverPort & hostUuid",
+    sum.running && sum.tcpPort == b.boundTcpPort && sum.discoverPort == b.boundDiscoverPort && StrLen(sum.hostUuid) == 36)
+
+refOk := b.RefreshNetworkListeners("wake_test")
+Assert("RefreshNetworkListeners rebinds TCP/UDP/Discovery sockets cleanly",
+    refOk && b.boundTcpPort > 0 && b.boundUdpPort > 0 && b.boundDiscoverPort > 0 && b.lastWakeRefreshTick > 0)
 
 serDev := _HB_SerializePairedDevice({ deviceId: "and-1", deviceName: "Hall, Main|Board", customName: true, platform: "Android", token: "tok_abc123", ip: "10.0.0.5", transport: "WS", pairedAt: "1700000" })
 parDev := _HB_ParsePairedDevice("and-1", serDev)
