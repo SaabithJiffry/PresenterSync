@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.2.0
+; Version: 7.2.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.2.0.0
+;@Ahk2Exe-SetVersion 7.2.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -301,6 +301,7 @@ class RemoteState {
     recSeconds := 0
     streamDropWarn := false
     voiceWhileMuted := false
+    osMicMutedDrift := false
     studioModeActive := false
     activeScene := "Scene"
     previewScene := ""
@@ -1001,6 +1002,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     recSeconds: state.recSeconds,
                     streamDropWarn: state.streamDropWarn,
                     voiceWhileMuted: state.voiceWhileMuted,
+                    osMicMutedDrift: state.osMicMutedDrift,
                     isStandby: (dParts[1] = "1" || dParts[1] = "true"),
                     timerState: dParts[3],
                     timerRemainingSec: IsInteger(dParts[4]) ? Integer(dParts[4]) : state.timerRemainingSec,
@@ -1466,6 +1468,11 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
     prevRec := state.recState
     prevWarn := state.streamDropWarn
     prevVoiceWarn := state.voiceWhileMuted
+    prevOsDrift := state.HasOwnProp("osMicMutedDrift") ? !!state.osMicMutedDrift : false
+    state.osMicMutedDrift := ev.HasOwnProp("osMicMutedDrift") ? !!ev.osMicMutedDrift : false
+    if (state.osMicMutedDrift && !prevOsDrift) {
+        try TrayTip("OS Mic Muted - Windows hardware/privacy switch is muting the host mic while LIVE", "PresenterSync Remote", 0x2)
+    }
     prevStandby := state.HasOwnProp("isStandby") ? !!state.isStandby : false
     prevTimerSt := state.HasOwnProp("timerState") ? state.timerState : "stopped"
     prevTimerRem := state.HasOwnProp("timerRemainingSec") ? state.timerRemainingSec : 600
@@ -1505,7 +1512,7 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
         }
     }
 
-    changed := (prevRec != state.recState || prevWarn != state.streamDropWarn || prevVoiceWarn != state.voiceWhileMuted
+    changed := (prevRec != state.recState || prevOsDrift != state.osMicMutedDrift || prevWarn != state.streamDropWarn || prevVoiceWarn != state.voiceWhileMuted
         || prevStandby != state.isStandby || prevTimerSt != state.timerState || prevTimerRem != state.timerRemainingSec
         || prevScene != state.activeScene || state.recState > 0)
     if (changed) {
@@ -1888,6 +1895,8 @@ GetRemoteTrayStatusText(state) {
             txt .= " | " (state.timerState = "overtime" ? "OT " : "TMR ") FormatCountdownClock(state.timerRemainingSec)
         if (state.streamDropWarn)
             txt .= " | ⚠ STREAM WARN"
+        if (state.osMicMutedDrift)
+            txt .= " | OS MIC MUTED"
         if (state.voiceWhileMuted && state.isMuted)
             txt .= " | ⚠ MIC SIGNAL"
         return txt

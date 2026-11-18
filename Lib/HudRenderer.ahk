@@ -1147,6 +1147,70 @@ MutedVoiceMonitorTick(cfg, state, readerFn := "") {
         HostBridgeBroadcastMuteState(cfg, state)
 }
 
+EvaluateOsMicDrift(cfg, state, osMuted, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (nowTick = "")
+        nowTick := A_TickCount
+    if (!state.HasOwnProp("osMicMutedDrift"))
+        state.osMicMutedDrift := false
+    if (!state.HasOwnProp("lastOsDriftWarnTick"))
+        state.lastOsDriftWarnTick := 0
+
+    watchdogEnabled := (!cfg.HasOwnProp("EnableOsMuteDriftWatchdog") || cfg.EnableOsMuteDriftWatchdog)
+    appMuted := (state.HasOwnProp("isMuted") && state.isMuted)
+    wasDrift := !!state.osMicMutedDrift
+
+    if (!watchdogEnabled || appMuted || osMuted != true) {
+        state.osMicMutedDrift := false
+        if (wasDrift && IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, state)
+        return false
+    }
+
+    state.osMicMutedDrift := true
+    nudgeTriggered := false
+    if (state.lastOsDriftWarnTick = 0 || (nowTick - state.lastOsDriftWarnTick) >= 60000) {
+        state.lastOsDriftWarnTick := nowTick
+        nudgeTriggered := true
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Audio", "OsMicDriftDetected", "Windows OS capture mic muted while LIVE")
+        if (IsSet(SessionTimeline) && (cfg is Config))
+            try SessionTimeline.Record("Alert", "OS Mic Hardware/Privacy Mute Drift", state)
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("OS Mic Muted — Windows hardware/privacy switch is muting your mic while LIVE", "F59E0B", 5500, "Mic Guard")
+    }
+    if ((!wasDrift || nudgeTriggered) && IsSet(HostBridgeBroadcastMuteState))
+        try HostBridgeBroadcastMuteState(cfg, state)
+    return true
+}
+
+CoreAudioWatchdogTick(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (cfg.HasOwnProp("EnableOsMuteDriftWatchdog") && !cfg.EnableOsMuteDriftWatchdog) {
+        if (state.HasOwnProp("osMicMutedDrift") && state.osMicMutedDrift)
+            EvaluateOsMicDrift(cfg, state, false)
+        return false
+    }
+    osMuted := IsSet(AudioMeter) ? AudioMeter.GetOsMicMute() : -1
+    return EvaluateOsMicDrift(cfg, state, osMuted)
+}
+
+UpdateCoreAudioWatchdogTimer(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("coreAudioWatchdogFn") || !state.coreAudioWatchdogFn)
+        return false
+    enabled := IsObject(cfg) && (!cfg.HasOwnProp("EnableOsMuteDriftWatchdog") || cfg.EnableOsMuteDriftWatchdog)
+    if (enabled) {
+        SetTimer(state.coreAudioWatchdogFn, 1000)
+        return true
+    }
+    SetTimer(state.coreAudioWatchdogFn, 0)
+    if (state.HasOwnProp("osMicMutedDrift") && state.osMicMutedDrift)
+        EvaluateOsMicDrift(cfg, state, false)
+    return false
+}
+
 SyncUIState(cfg, state, obsIsMuted) {
     if (state.isMuted != obsIsMuted) {
         state.isMuted := obsIsMuted
@@ -1156,6 +1220,8 @@ SyncUIState(cfg, state, obsIsMuted) {
             state.voiceWhileMuted := false
             state.mutedVoiceAboveSince := 0
             state.mutedVoiceQuietSince := 0
+        } else if (state.HasOwnProp("osMicMutedDrift") && state.osMicMutedDrift) {
+            state.osMicMutedDrift := false
         }
         PlayMuteAnimation(cfg, state)
         UpdateVoiceMeterTimer(cfg, state)

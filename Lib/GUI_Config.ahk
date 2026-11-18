@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.2.0"
+    static APP_VERSION := "7.2.1"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -343,46 +343,130 @@ NormalizeHudColorPreset(name) {
 }
 
 class AudioMeter {
+    static IID_IAudioEndpointVolume := "{5CDF2C82-841E-4546-9722-0CF74078229A}"
     static _enum := ""
     static _meter := ""
     static _nextRetryTick := 0
+    static _epVol := ""
+    static _nextEpRetryTick := 0
+    static _mockOsMute := ""
+    static _mockSetOsMuteFn := ""
 
     static NormalizePeak(rawPeak) {
         p := Min(1.0, Max(0.0, Float(rawPeak)))
         return (p > 0.005) ? Min(1.0, Sqrt(p)) : 0.0
     }
 
-    static Reset() {
+    static Shutdown() {
         this._meter := ""
+        this._epVol := ""
         this._enum := ""
         this._nextRetryTick := 0
+        this._nextEpRetryTick := 0
+    }
+
+    static Reset() {
+        this.Shutdown()
+    }
+
+    static _ActivateCaptureInterface(iidStr, retryProp := "_nextEpRetryTick") {
+        if (A_TickCount < this.%retryProp%)
+            return ""
+        try {
+            if (!IsObject(this._enum))
+                this._enum := ComObject("{BCDE0395-E52F-467C-8E3D-C4579291692E}", "{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+            pDev := 0
+            try ComCall(4, this._enum, "Int", 1, "Int", 2, "Ptr*", &pDev)
+            if (!pDev)
+                try ComCall(4, this._enum, "Int", 1, "Int", 0, "Ptr*", &pDev)
+            if (!pDev) {
+                this.%retryProp% := A_TickCount + 5000
+                return ""
+            }
+            dev := ComValue(13, pDev)
+            iidBuf := Buffer(16, 0)
+            hrGuid := DllCall("ole32\CLSIDFromString", "WStr", iidStr, "Ptr", iidBuf, "Int")
+            if (hrGuid != 0) {
+                this.%retryProp% := A_TickCount + 5000
+                return ""
+            }
+            pIface := 0
+            ComCall(3, dev, "Ptr", iidBuf, "UInt", 23, "Ptr", 0, "Ptr*", &pIface)
+            if (!pIface) {
+                this.%retryProp% := A_TickCount + 5000
+                return ""
+            }
+            return ComValue(13, pIface)
+        } catch {
+            this._enum := ""
+            this.%retryProp% := A_TickCount + 3000
+            return ""
+        }
+    }
+
+    static _EnsureEndpointVolume() {
+        if (IsObject(this._epVol))
+            return this._epVol
+        epVol := this._ActivateCaptureInterface(this.IID_IAudioEndpointVolume, "_nextEpRetryTick")
+        if (IsObject(epVol))
+            this._epVol := epVol
+        return this._epVol
+    }
+
+    static GetOsMicMute() {
+        if (Type(this._mockOsMute) != "String" || this._mockOsMute != "") {
+            m := this._mockOsMute
+            if (m == -1 || m = "-1")
+                return -1
+            if (m = "0" || (Type(m) = "String" && StrLower(Trim(m)) = "false"))
+                return false
+            return !!m
+        }
+        epVol := this._EnsureEndpointVolume()
+        if (!IsObject(epVol))
+            return -1
+        try {
+            isMuted := 0
+            hr := ComCall(15, epVol, "Int*", &isMuted)
+            if (hr != 0)
+                return -1
+            return !!isMuted
+        } catch {
+            this._epVol := ""
+            this._enum := ""
+            this._nextEpRetryTick := A_TickCount + 3000
+            return -1
+        }
+    }
+
+    static SetOsMicMute(muted) {
+        target := !!muted
+        if (IsObject(this._mockSetOsMuteFn)) {
+            try return !!this._mockSetOsMuteFn.Call(target)
+            catch
+                return false
+        }
+        epVol := this._EnsureEndpointVolume()
+        if (!IsObject(epVol))
+            return false
+        try {
+            hr := ComCall(14, epVol, "Int", target ? 1 : 0, "Ptr", 0)
+            return (hr == 0)
+        } catch {
+            this._epVol := ""
+            this._enum := ""
+            this._nextEpRetryTick := A_TickCount + 3000
+            return false
+        }
     }
 
     static GetPeak() {
         try {
             if (!IsObject(this._meter)) {
-                if (A_TickCount < this._nextRetryTick)
+                meter := this._ActivateCaptureInterface("{C02216F6-8C67-4B5B-9D00-D008E73E0064}", "_nextRetryTick")
+                if (!IsObject(meter))
                     return 0.0
-                if (!IsObject(this._enum))
-                    this._enum := ComObject("{BCDE0395-E52F-467C-8E3D-C4579291692E}", "{A95664D2-9614-4F35-A746-DE8DB63617E6}")
-                pDev := 0
-                try ComCall(4, this._enum, "Int", 1, "Int", 2, "Ptr*", &pDev)
-                if (!pDev)
-                    try ComCall(4, this._enum, "Int", 1, "Int", 0, "Ptr*", &pDev)
-                if (!pDev) {
-                    this._nextRetryTick := A_TickCount + 5000
-                    return 0.0
-                }
-                dev := ComValue(13, pDev)
-                iidBuf := Buffer(16, 0)
-                DllCall("ole32\CLSIDFromString", "WStr", "{C02216F6-8C67-4B5B-9D00-D008E73E0064}", "Ptr", iidBuf)
-                pMeter := 0
-                ComCall(3, dev, "Ptr", iidBuf, "UInt", 23, "Ptr", 0, "Ptr*", &pMeter)
-                if (!pMeter) {
-                    this._nextRetryTick := A_TickCount + 5000
-                    return 0.0
-                }
-                this._meter := ComValue(13, pMeter)
+                this._meter := meter
             }
             peak := 0.0
             ComCall(3, this._meter, "Float*", &peak)
@@ -1233,6 +1317,8 @@ class Config {
     EnableAudioCue := false
     EnableMuteToast := false
     EnableVoiceWhileMutedAlert := true
+    EnableCoreAudioFallback := true
+    EnableOsMuteDriftWatchdog := true
     ShowVoiceMeter := true
     ShowRecTimer := true
     ShowStreamHud := true
@@ -1407,6 +1493,8 @@ class Config {
         this.EnableAudioCue := this.ReadBool("Settings", "EnableAudioCue", false)
         this.EnableMuteToast := this.ReadBool("Settings", "EnableMuteToast", false)
         this.EnableVoiceWhileMutedAlert := this.ReadBool("Settings", "EnableVoiceWhileMutedAlert", true)
+        this.EnableCoreAudioFallback := this.ReadBool("Settings", "EnableCoreAudioFallback", true)
+        this.EnableOsMuteDriftWatchdog := this.ReadBool("Settings", "EnableOsMuteDriftWatchdog", true)
         this.ShowVoiceMeter := this.ReadBool("Settings", "ShowVoiceMeter", true)
         this.ShowRecTimer := this.ReadBool("Settings", "ShowRecTimer", true)
         this.ShowStreamHud := this.ReadBool("Settings", "ShowStreamHud", true)
@@ -1604,6 +1692,8 @@ class Config {
             { sec: "Settings", key: "EnableAudioCue", prop: "EnableAudioCue", kind: "bool" },
             { sec: "Settings", key: "EnableMuteToast", prop: "EnableMuteToast", kind: "bool" },
             { sec: "Settings", key: "EnableVoiceWhileMutedAlert", prop: "EnableVoiceWhileMutedAlert", kind: "bool" },
+            { sec: "Settings", key: "EnableCoreAudioFallback", prop: "EnableCoreAudioFallback", kind: "bool" },
+            { sec: "Settings", key: "EnableOsMuteDriftWatchdog", prop: "EnableOsMuteDriftWatchdog", kind: "bool" },
             { sec: "Settings", key: "ShowVoiceMeter", prop: "ShowVoiceMeter", kind: "bool" },
             { sec: "Settings", key: "ShowRecTimer", prop: "ShowRecTimer", kind: "bool" },
             { sec: "Settings", key: "ShowStreamHud", prop: "ShowStreamHud", kind: "bool" },
@@ -1823,6 +1913,9 @@ class OverlayState {
     voiceWhileMuted := false
     mutedVoiceAboveSince := 0
     mutedVoiceQuietSince := 0
+    osMicMutedDrift := false
+    lastOsDriftWarnTick := 0
+    coreAudioWatchdogFn := ""
     pptNextFn := ""
     pptPrevFn := ""
     streamTimerFn := ""
@@ -1942,6 +2035,7 @@ class OverlayState {
         this.breathTimerFn := BreathingAnimation.Bind(cfg, this)
         this.voiceMeterTimerFn := VoiceMeterTick.Bind(cfg, this)
         this.mutedVoiceTimerFn := MutedVoiceMonitorTick.Bind(cfg, this)
+        this.coreAudioWatchdogFn := CoreAudioWatchdogTick.Bind(cfg, this)
         this.recTimerFn := RecTimerTick.Bind(cfg, this)
         this.presenterTimerFn := PresenterTimerTick.Bind(cfg, this)
         this.streamTimerFn := PollStreamStatus.Bind(cfg, this)
