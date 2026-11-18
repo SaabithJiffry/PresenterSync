@@ -9,6 +9,8 @@
 
 class RemoteBridgeConstants {
     static BRIDGE_CONNECT_TIMEOUT_MS := 1800
+    static BRIDGE_REPROMOTE_INTERVAL_MS := 8000
+    static HEALTH_PROBE_TIMEOUT_MS := 500
     static PONG_TIMEOUT_MS := 2500
     static WAKE_STALENESS_MS := 25000
 }

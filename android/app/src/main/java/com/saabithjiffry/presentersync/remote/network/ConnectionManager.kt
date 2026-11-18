@@ -188,7 +188,7 @@ class ConnectionManager(
     internal var bridgeConnectTimeoutMs: Long = BRIDGE_CONNECT_TIMEOUT_MS
     internal var discoverPortOverride: Int = AppConstants.DEFAULT_DISCOVERY_PORT
     internal var failoverBudgetMs: Long = AppConstants.LAN_FAILOVER_DEADLINE_MS
-    internal var repromoteIntervalMs: Long = AppConstants.LAN_REPROMOTE_INTERVAL_MS
+    internal var repromoteIntervalMs: Long = BRIDGE_REPROMOTE_INTERVAL_MS
 
     internal data class LocalStandbySnapshot(
         val previousScene: String,
@@ -1053,7 +1053,7 @@ class ConnectionManager(
     internal suspend fun checkAndPromoteLanIfHealthy(gen: Int): Boolean {
         if (gen != generation.get()) return false
         var cfg = configStore.current
-        if (!FailoverPolicy.canRepromoteToLan(cfg, _uiState.value.usingRelayFallback || cfg.networkMode == NetworkMode.LAN)) {
+        if (!FailoverPolicy.canRepromoteToLan(cfg, _uiState.value.usingRelayFallback || _uiState.value.usingDirectObsFallback || cfg.networkMode == NetworkMode.LAN)) {
             return false
         }
         if (cfg.pairedHostUuid.isNotBlank()) {
@@ -1090,7 +1090,8 @@ class ConnectionManager(
                 expectedHostUuid = cfg.pairedHostUuid
             )
             if (healthy && gen == generation.get()) {
-                logInfo("LAN Host Bridge recovered ($host:${cfg.bridgePort}); promoting back from WAN Relay")
+                DiagnosticLogger.recordBreadcrumb("Bridge", "RepromoteHealthy", "host=$host:${cfg.bridgePort}")
+                logInfo("LAN Host Bridge recovered ($host:${cfg.bridgePort}); promoting back to HOST_BRIDGE")
                 reconnectNow()
                 return true
             }
@@ -1817,6 +1818,8 @@ class ConnectionManager(
 
     companion object {
         const val BRIDGE_CONNECT_TIMEOUT_MS = 1800L
+        const val BRIDGE_REPROMOTE_INTERVAL_MS = 8000L
+        const val HEALTH_PROBE_TIMEOUT_MS = 500L
         const val PONG_TIMEOUT_MS = 2500L
         const val WAKE_STALENESS_MS = 25_000L
     }
