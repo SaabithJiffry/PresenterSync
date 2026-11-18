@@ -266,6 +266,14 @@ internal fun StatusAndActionsCard(
                                 color = streamTint
                             )
                         }
+                        if (conn.osMicMutedDrift) {
+                            Text(
+                                text = "OS Mic Muted - Windows hardware/privacy switch is muting the Host mic while LIVE",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFDC2626)
+                            )
+                        }
                         if (conn.voiceWhileMuted && conn.isMuted) {
                             Text(
                                 text = "⚠ You're on mute — mic signal detected on Host",

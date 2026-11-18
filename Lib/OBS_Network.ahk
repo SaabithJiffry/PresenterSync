@@ -178,6 +178,25 @@ ShouldOptimisticallyFlipMute(cfg, state) {
     return !obsMonActive
 }
 
+TryCoreAudioFallbackMute(cfg, state, targetMuted, source := "CoreAudioFallback") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (cfg.HasOwnProp("EnableCoreAudioFallback") && !cfg.EnableCoreAudioFallback)
+        return false
+    wantMuted := !!targetMuted
+    if (!IsSet(AudioMeter) || !AudioMeter.SetOsMicMute(wantMuted))
+        return false
+    if (IsSet(DiagnosticLogger))
+        try DiagnosticLogger.RecordBreadcrumb("Audio", "CoreAudioFallbackMute", "muted=" (wantMuted ? "1" : "0") " source=" String(source))
+    if (IsSet(SyncUIState))
+        SyncUIState(cfg, state, wantMuted)
+    else {
+        state.isMuted := wantMuted
+        BroadcastHostRelayMuteState(cfg, state)
+    }
+    return true
+}
+
 DispatchHostMuteToggle(cfg, state) {
     obsOpen := WinExist("ahk_exe obs64.exe")
     appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
@@ -189,6 +208,8 @@ DispatchHostMuteToggle(cfg, state) {
         if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
             return true
         if (!obsOpen || cfg.ObsMuteHotkey = "None" || cfg.ObsMuteHotkey = "") {
+            if (TryCoreAudioFallbackMute(cfg, state, !state.isMuted, "HostToggleMode1"))
+                return true
             SoundPlay "*16"
             return false
         }
@@ -196,7 +217,9 @@ DispatchHostMuteToggle(cfg, state) {
         try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
         SetKeyDelay 50, 50
     } else if (cfg.AudioRoutingMode == 2) {
-        if (!zoomOpen) {
+        if (!zoomOpen || confHk = "" || confHk = "None") {
+            if (TryCoreAudioFallbackMute(cfg, state, !state.isMuted, "HostToggleMode2"))
+                return true
             SoundPlay "*16"
             return false
         }
@@ -206,7 +229,11 @@ DispatchHostMuteToggle(cfg, state) {
     } else if (cfg.AudioRoutingMode == 3) {
         if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
             return true
-        if (!obsOpen && !zoomOpen) {
+        obsCanSend := (obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
+        confCanSend := (zoomOpen && confHk != "" && confHk != "None")
+        if (!obsCanSend && !confCanSend) {
+            if (TryCoreAudioFallbackMute(cfg, state, !state.isMuted, "HostToggleMode3"))
+                return true
             SoundPlay "*16"
             return false
         }
@@ -214,12 +241,17 @@ DispatchHostMuteToggle(cfg, state) {
         if (state.HasOwnProp("syncSource"))
             state.syncSource := "manual"
         SetKeyDelay -1, 30
-        if (obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
+        if (obsCanSend)
             try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
-        if (zoomOpen && confHk != "" && confHk != "None")
+        if (confCanSend)
             try ControlSend FormatSendKey(confHk), , confSpec
         SetKeyDelay 50, 50
         SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
+    } else {
+        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+            return true
+        if (TryCoreAudioFallbackMute(cfg, state, !state.isMuted, "HostToggleMode0"))
+            return true
     }
 
     if (ShouldOptimisticallyFlipMute(cfg, state))
@@ -1028,23 +1060,35 @@ _DispatchHostRemoteControlSend(cfg, state, nextMuted) {
     confSpec := GetConferencingWindowSpec(appType)
     confHk := GetActiveConferencingMuteHotkey(cfg)
     zoomOpen := WinExist(confSpec)
-    if (cfg.AudioRoutingMode == 3 && (obsOpen || zoomOpen)) {
+    obsCanSend := ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
+    confCanSend := ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && zoomOpen && confHk != "" && confHk != "None")
+    sentObs := false
+    sentConf := false
+    if (cfg.AudioRoutingMode == 3 && (obsCanSend || confCanSend)) {
         state.IsSyncing := true
         if (state.HasOwnProp("syncSource"))
             state.syncSource := "manual"
         if (state.HasOwnProp("releaseSyncTimerFn") && state.releaseSyncTimerFn)
             SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
     }
-    if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "") {
+    if (obsCanSend) {
         SetKeyDelay -1, 30
-        try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
+        try {
+            ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
+            sentObs := true
+        }
         SetKeyDelay 50, 50
     }
-    if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3) && zoomOpen && confHk != "" && confHk != "None") {
+    if (confCanSend) {
         SetKeyDelay -1, 30
-        try ControlSend FormatSendKey(confHk), , confSpec
+        try {
+            ControlSend FormatSendKey(confHk), , confSpec
+            sentConf := true
+        }
         SetKeyDelay 50, 50
     }
+    if (!sentObs && !sentConf && TryCoreAudioFallbackMute(cfg, state, nextMuted, "HostRemoteControlSend"))
+        return true
     if (ShouldOptimisticallyFlipMute(cfg, state))
         SyncUIState(cfg, state, nextMuted)
     else

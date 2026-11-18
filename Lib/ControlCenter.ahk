@@ -1568,6 +1568,9 @@ SyncTelemetryBackendsFromConfig(cfg, state) {
     if (state.HasOwnProp("baseAlpha"))
         state.baseAlpha := cfg.OpacityLevel
 
+    if (IsSet(UpdateCoreAudioWatchdogTimer))
+        UpdateCoreAudioWatchdogTimer(cfg, state)
+
     hadObsSession := (state.HasOwnProp("obsConnected") && state.obsConnected) || (state.HasOwnProp("obsWs") && IsObject(state.obsWs))
     if (state.HasOwnProp("obsTimerFn") && state.obsTimerFn)
         SetTimer(state.obsTimerFn, cfg.EnableWS ? -50 : 0)
@@ -1678,6 +1681,12 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
         if vals.HasOwnProp("EnableMuteToast") {
             cfg.EnableMuteToast := !!vals.EnableMuteToast
             cfg.WriteBool("Settings", "EnableMuteToast", cfg.EnableMuteToast)
+        }
+        for cProp in ["EnableCoreAudioFallback", "EnableOsMuteDriftWatchdog"] {
+            if vals.HasOwnProp(cProp) {
+                cfg.%cProp% := !!vals.%cProp%
+                cfg.WriteBool("Settings", cProp, cfg.%cProp%)
+            }
         }
 
         ; Tab 2: OBS & Stream
@@ -1929,6 +1938,10 @@ ShowControlCenterWindow(cfg, state := "", *) {
     chkVoiceMeter := ccGui.Add("Checkbox", "x32 y314 w310 h24" (cfg.ShowVoiceMeter ? " Checked" : ""), "Show Live CoreAudio Voice Activity Bar on LIVE Pill")
     chkAudioCue := ccGui.Add("Checkbox", "x360 y314 w320 h24" (cfg.EnableAudioCue ? " Checked" : ""), "Play Two-Tone Acoustic Chime on Mute / Unmute")
     chkMuteToast := ccGui.Add("Checkbox", "x32 y346 w310 h24" (cfg.EnableMuteToast ? " Checked" : ""), "Show Brief Cursor Tooltip Toast on Mute Change")
+    chkCoreAudioFallback := ccGui.Add("Checkbox", "x32 y378 w310 h24" (cfg.EnableCoreAudioFallback ? " Checked" : ""), "CoreAudio OS-Level Endpoint Mute Fallback")
+    chkOsMuteDrift := ccGui.Add("Checkbox", "x360 y378 w330 h24" (cfg.EnableOsMuteDriftWatchdog ? " Checked" : ""), "Detect Hardware / OS Mic Mute Drift while LIVE")
+    Theme.RegisterControl(ccGui, chkCoreAudioFallback, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkOsMuteDrift, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkVoiceMeter, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkAudioCue, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkMuteToast, "Checkbox", "tabText")
@@ -2289,6 +2302,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
         chkVoiceMeter.Value := cfg.ShowVoiceMeter ? 1 : 0
         chkAudioCue.Value := cfg.EnableAudioCue ? 1 : 0
         chkMuteToast.Value := cfg.EnableMuteToast ? 1 : 0
+        chkCoreAudioFallback.Value := cfg.EnableCoreAudioFallback ? 1 : 0
+        chkOsMuteDrift.Value := cfg.EnableOsMuteDriftWatchdog ? 1 : 0
         chkEnableWS.Value := cfg.EnableWS ? 1 : 0
         chkEnableZoom.Value := cfg.EnableZoom ? 1 : 0
         edObsPass.Value := cfg.obsPassword
@@ -2394,6 +2409,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ShowVoiceMeter: chkVoiceMeter.Value,
             EnableAudioCue: chkAudioCue.Value,
             EnableMuteToast: chkMuteToast.Value,
+            EnableCoreAudioFallback: chkCoreAudioFallback.Value,
+            EnableOsMuteDriftWatchdog: chkOsMuteDrift.Value,
             EnableWS: chkEnableWS.Value,
             EnableZoom: chkEnableZoom.Value,
             obsPassword: edObsPass.Value,
