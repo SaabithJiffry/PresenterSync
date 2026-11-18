@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.0.2"
+    static APP_VERSION := "7.0.3"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -75,7 +75,7 @@ class UIConstants {
     static DRAG_SYNC_INTERVAL_MS := 16
     static PPT_DEBOUNCE_MS := 150
     static PUSH_TO_MUTE_HOLD_MS := 350
-    static VOICE_METER_INTERVAL_MS := 65
+    static VOICE_METER_INTERVAL_MS := 25
     static MUTED_VOICE_THRESHOLD := 0.12
     static MUTED_VOICE_TRIGGER_MS := 1500
     static MUTED_VOICE_CLEAR_MS := 1500
@@ -1217,6 +1217,8 @@ class Config {
 
     ShowIndicator := true
     ShowExtraHuds := true
+    ShowRow2RecChatHud := true
+    ShowRow3StudioSceneHud := true
     ShowSecondaryMicHud := false
     ThemeMode := "System"
     HudColorPreset := "Standard"
@@ -1387,6 +1389,8 @@ class Config {
 
         this.ShowIndicator := this.ReadBool("Settings", "ShowIndicator", true)
         this.ShowExtraHuds := this.ReadBool("Settings", "ShowExtraHuds", true)
+        this.ShowRow2RecChatHud := this.ReadBool("Settings", "ShowRow2RecChatHud", true)
+        this.ShowRow3StudioSceneHud := this.ReadBool("Settings", "ShowRow3StudioSceneHud", true)
         this.ShowSecondaryMicHud := this.ReadBool("Settings", "ShowSecondaryMicHud", false)
         rawTheme := StrLower(Trim(this.Read("Settings", "ThemeMode", "System")))
         this.ThemeMode := (rawTheme = "dark") ? "Dark" : ((rawTheme = "light") ? "Light" : "System")
@@ -1481,6 +1485,8 @@ class Config {
 
     ResetAppearance() {
         this.ShowExtraHuds := true
+        this.ShowRow2RecChatHud := true
+        this.ShowRow3StudioSceneHud := true
         this.ThemeMode := "System"
         this.HudColorPreset := "Standard"
         this.CustomLiveHex := "107C10"
@@ -1502,6 +1508,8 @@ class Config {
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
+        this.Write("Settings", "ShowRow2RecChatHud", 1)
+        this.Write("Settings", "ShowRow3StudioSceneHud", 1)
         this.Write("Settings", "ThemeMode", "System")
         this.Write("Settings", "HudColorPreset", "Standard")
         this.Write("Settings", "CustomLiveHex", "107C10")
@@ -1571,6 +1579,8 @@ class Config {
             { sec: "Settings", key: "EnableZoom", prop: "EnableZoom", kind: "bool" },
             { sec: "Settings", key: "ShowIndicator", prop: "ShowIndicator", kind: "bool" },
             { sec: "Settings", key: "ShowExtraHuds", prop: "ShowExtraHuds", kind: "bool" },
+            { sec: "Settings", key: "ShowRow2RecChatHud", prop: "ShowRow2RecChatHud", kind: "bool" },
+            { sec: "Settings", key: "ShowRow3StudioSceneHud", prop: "ShowRow3StudioSceneHud", kind: "bool" },
             { sec: "Settings", key: "ShowSecondaryMicHud", prop: "ShowSecondaryMicHud", kind: "bool" },
             { sec: "Settings", key: "ThemeMode", prop: "ThemeMode", kind: "str" },
             { sec: "Settings", key: "HudColorPreset", prop: "HudColorPreset", kind: "str" },
@@ -1765,6 +1775,7 @@ class OverlayState {
     sceneMarqueeTicks := 0
     sceneMarqueeMaxOffset := 0
     sceneMarqueeTextW := 0
+    sceneMarqueeSpan := 0
     sceneMarqueeFontPt := 9.0
     sceneMarqueeTimerFn := ""
 
@@ -1897,6 +1908,7 @@ class OverlayState {
     }
 
     __New(cfg) {
+        this.hudCfg := cfg
         this.isMuted := cfg.IsMuted
         this.baseAlpha := cfg.OpacityLevel
         this.currentAlpha := cfg.OpacityLevel
@@ -1993,6 +2005,10 @@ class OverlayState {
         extraRow2 := (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom))
         extraRow3 := (cfg.ShowExtraHuds && cfg.EnableWS)
         extraRow4 := (extraRow3 && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud))
+        if (IsSet(GetHudTierFlags)) {
+            tierFlags := GetHudTierFlags(cfg)
+            extraRow2 := tierFlags.row2, extraRow3 := tierFlags.row3, extraRow4 := tierFlags.row4
+        }
         maxRowW := this.baseWidth
         if (extraRow2)
             maxRowW := Max(maxRowW, this.recW + this.hudGap + this.chatW)

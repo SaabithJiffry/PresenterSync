@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.0.2
+; Version: 7.0.3
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.0.2.0
+;@Ahk2Exe-SetVersion 7.0.3.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -160,6 +160,14 @@ BuildTrayMenu(cfg, state) {
     AppearanceMenu.Add("Show Stream && VCam HUD", ToggleStreamHud.Bind(cfg, state))
     if (cfg.ShowStreamHud)
         AppearanceMenu.Check("Show Stream && VCam HUD")
+
+    AppearanceMenu.Add("Show Recording && Chat HUD (Row 2)", (*) => ToggleHudOptionAndRebuild(cfg, state, "ShowRow2RecChatHud", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh))
+    if (cfg.ShowRow2RecChatHud)
+        AppearanceMenu.Check("Show Recording && Chat HUD (Row 2)")
+
+    AppearanceMenu.Add("Show Studio && Scene HUD (Row 3)", (*) => ToggleHudOptionAndRebuild(cfg, state, "ShowRow3StudioSceneHud", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh))
+    if (cfg.ShowRow3StudioSceneHud)
+        AppearanceMenu.Check("Show Studio && Scene HUD (Row 3)")
 
     AppearanceMenu.Add("Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"))
     if (cfg.EnableHudClickActions)
