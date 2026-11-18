@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.1.2
+; Version: 7.1.3
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.1.2.0
+;@Ahk2Exe-SetVersion 7.1.3.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -336,7 +336,7 @@ class RemoteState {
     _lastWakeReconnectTick := 0
     isSystemSuspending := false
     lanFailoverBudgetMs := 5500
-    lanRepromoteIntervalMs := 12000
+    lanRepromoteIntervalMs := 8000
     discoverPort := 4457
     _lanCycleStartTick := 0
     _didUdpShiftFollow := false
@@ -670,7 +670,7 @@ TryPromoteRemoteWanToLan(cfg, state) {
     bPort := (cfg.HasOwnProp("BridgePort") && IsInteger(cfg.BridgePort)) ? String(Integer(cfg.BridgePort)) : "4456"
     expectedUuid := cfg.HasOwnProp("PairedHostUuid") ? Trim(cfg.PairedHostUuid) : ""
     for _, ep in ParseCandidateEndpoints(cfg.HostAddress, cfg.HostPort) {
-        probe := ProbeHostBridgeHealth(ep.host, bPort, expectedUuid, 550)
+        probe := ProbeHostBridgeHealth(ep.host, bPort, expectedUuid, RemoteBridgeConstants.HEALTH_PROBE_TIMEOUT_MS)
         if (IsObject(probe) && probe.ok) {
             if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
                 SetTimer state.lanRepromoteTimerFn, 0
