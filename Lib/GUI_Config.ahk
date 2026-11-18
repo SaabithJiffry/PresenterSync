@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.0.1"
+    static APP_VERSION := "7.0.2"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1197,6 +1197,7 @@ class Config {
     ConfigFile := ""
     AudioRoutingMode := 0
     ObsMuteHotkey := "None"
+    ObsTransitionHotkey := "None"
     ObsRecHotkey := "^F9"
     ObsPauseHotkey := "^F10"
     ZoomMuteHotkey := "!a"
@@ -1210,6 +1211,7 @@ class Config {
 
     EnablePPT := false
     EnableMicOnly := false
+    EnablePointerTransition := false
     EnableWS := false
     EnableZoom := false
 
@@ -1256,6 +1258,7 @@ class Config {
     ExitHotkey := "!+F12"
     SuspendHotkey := "^!+F12"
     HwMuteHotkey := "b"
+    HwTransitionHotkey := "None"
 
     RemoteNetworkMode := "LAN"
     InternetPairingCode := ""
@@ -1325,6 +1328,11 @@ class Config {
         if (this.AudioRoutingMode < 0 || this.AudioRoutingMode > 3)
             this.AudioRoutingMode := 0
         this.ObsMuteHotkey := this.Read("Settings", "ObsHotkey", "None")
+        this.ObsTransitionHotkey := Trim(this.Read("Settings", "ObsTransitionHotkey", ""))
+        if (this.ObsTransitionHotkey = "") {
+            this.ObsTransitionHotkey := "None"
+            this.Write("Settings", "ObsTransitionHotkey", this.ObsTransitionHotkey)
+        }
         this.ObsRecHotkey := this.Read("Settings", "ObsRecHotkey", "")
         if (this.ObsRecHotkey = "") {
             this.ObsRecHotkey := "^F9"
@@ -1358,6 +1366,13 @@ class Config {
 
         this.EnablePPT := this.ReadBool("Settings", "EnablePPT")
         this.EnableMicOnly := this.ReadBool("Settings", "EnableMicOnly")
+        rawPtrTrans := Trim(this.Read("Settings", "EnablePointerTransition", ""))
+        if (rawPtrTrans = "") {
+            this.EnablePointerTransition := false
+            this.WriteBool("Settings", "EnablePointerTransition", false)
+        } else {
+            this.EnablePointerTransition := this.ReadBool("Settings", "EnablePointerTransition", false)
+        }
         if (this.EnablePPT && this.EnableMicOnly) {
             this.EnableMicOnly := false
             this.WriteBool("Settings", "EnableMicOnly", false)
@@ -1422,6 +1437,11 @@ class Config {
         this.ExitHotkey := this.Read("Settings", "ExitHotkey", "!+F12")
         this.SuspendHotkey := this.Read("Settings", "SuspendHotkey", "^!+F12")
         this.HwMuteHotkey := this.Read("Settings", "HwMuteHotkey", "b")
+        this.HwTransitionHotkey := Trim(this.Read("Settings", "HwTransitionHotkey", ""))
+        if (this.HwTransitionHotkey = "") {
+            this.HwTransitionHotkey := "None"
+            this.Write("Settings", "HwTransitionHotkey", this.HwTransitionHotkey)
+        }
 
         rawNetMode := StrLower(Trim(this.Read("Settings", "RemoteNetworkMode", "LAN")))
         this.RemoteNetworkMode := (rawNetMode = "internet") ? "Internet" : "LAN"
@@ -1534,6 +1554,7 @@ class Config {
         return [
             { sec: "Settings", key: "AudioRoutingMode", prop: "AudioRoutingMode", kind: "int" },
             { sec: "Settings", key: "ObsHotkey", prop: "ObsMuteHotkey", kind: "str" },
+            { sec: "Settings", key: "ObsTransitionHotkey", prop: "ObsTransitionHotkey", kind: "str" },
             { sec: "Settings", key: "ObsRecHotkey", prop: "ObsRecHotkey", kind: "str" },
             { sec: "Settings", key: "ObsPauseHotkey", prop: "ObsPauseHotkey", kind: "str" },
             { sec: "Settings", key: "ZoomMuteHotkey", prop: "ZoomMuteHotkey", kind: "str" },
@@ -1545,6 +1566,7 @@ class Config {
             { sec: "Settings", key: "TargetMicName", prop: "targetMicName", kind: "str" },
             { sec: "Settings", key: "EnablePPT", prop: "EnablePPT", kind: "bool" },
             { sec: "Settings", key: "EnableMicOnly", prop: "EnableMicOnly", kind: "bool" },
+            { sec: "Settings", key: "EnablePointerTransition", prop: "EnablePointerTransition", kind: "bool" },
             { sec: "Settings", key: "EnableWS", prop: "EnableWS", kind: "bool" },
             { sec: "Settings", key: "EnableZoom", prop: "EnableZoom", kind: "bool" },
             { sec: "Settings", key: "ShowIndicator", prop: "ShowIndicator", kind: "bool" },
@@ -1573,6 +1595,7 @@ class Config {
             { sec: "Settings", key: "IndicatorScale", prop: "IndicatorScale", kind: "float" },
             { sec: "Settings", key: "RemoteNetworkMode", prop: "RemoteNetworkMode", kind: "str" },
             { sec: "Settings", key: "HwMuteHotkey", prop: "HwMuteHotkey", kind: "str" },
+            { sec: "Settings", key: "HwTransitionHotkey", prop: "HwTransitionHotkey", kind: "str" },
             { sec: "Pointer", key: "CatchArrows", prop: "CatchArrows", kind: "bool" },
             { sec: "Pointer", key: "CatchPg", prop: "CatchPg", kind: "bool" },
             { sec: "Pointer", key: "CatchSpace", prop: "CatchSpace", kind: "bool" },
@@ -1726,6 +1749,8 @@ class OverlayState {
     recElapsedSec := 0
     studioModeActive := false
     currentSceneName := "Scene"
+    previewSceneName := ""
+    previousProgramScene := ""
     sceneList := []
     unreadChatCount := 0
     streamState := 0
@@ -1780,6 +1805,7 @@ class OverlayState {
     refreshHudFn := ""
     rebindHotkeysFn := ""
     triggerMuteFn := ""
+    triggerTransitionFn := ""
     autoProfileTimerFn := ""
     _autoProfileBase := ""
     _autoProfileMatched := ""
