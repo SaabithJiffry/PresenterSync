@@ -1,5 +1,6 @@
 package com.saabithjiffry.presentersync.remote.ui.overlay
 
+import android.animation.ArgbEvaluator
 import android.content.Context
 import android.graphics.PathMeasure
 import com.saabithjiffry.presentersync.remote.input.BubbleHoldStage
@@ -11,6 +12,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.View
 import com.saabithjiffry.presentersync.remote.config.AppConstants
+import com.saabithjiffry.presentersync.remote.config.HudColorPalette
 import com.saabithjiffry.presentersync.remote.config.HudColorPalettes
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.network.ConnStatus
@@ -40,8 +42,24 @@ class MicPillCanvasView(context: Context) : View(context) {
     private var connState: ConnectionUiState = ConnectionUiState()
     private var currentAlpha: Int = AppConstants.OPACITY_FROSTED
     private var overrideMuted: Boolean? = null
+    private var transitionFromMuted: Boolean? = null
+    private var transitionToMuted: Boolean? = null
+    private var transitionFraction: Float = 1f
+    private val colorEvaluator = ArgbEvaluator()
 
     private var maxContainerWidthPx: Int = 0
+
+    fun setMuteTransition(fromMuted: Boolean, toMuted: Boolean, fraction: Float) {
+        transitionFromMuted = fromMuted
+        transitionToMuted = toMuted
+        transitionFraction = fraction.coerceIn(0f, 1f)
+    }
+
+    fun clearMuteTransition() {
+        transitionFromMuted = null
+        transitionToMuted = null
+        transitionFraction = 1f
+    }
 
     fun updateRenderState(
         cfg: RemoteConfig,
@@ -96,6 +114,8 @@ class MicPillCanvasView(context: Context) : View(context) {
         val palette = HudColorPalettes.get(config.hudColorPreset, config.customLiveHex, config.customMutedHex)
         val isOffline = overrideMuted == null && !connState.connected
         val muted = overrideMuted ?: connState.isMuted
+        val tFrom = transitionFromMuted
+        val tTo = transitionToMuted
 
         val bgColor: Int
         val borderColor: Int
@@ -106,20 +126,25 @@ class MicPillCanvasView(context: Context) : View(context) {
         if (isOffline) {
             val isAuthErr = connState.connStatus == ConnStatus.AUTH_FAILED
             bgColor = palette.offlineBg
-            borderColor = if (isAuthErr) palette.authErrBorder else palette.offlineBg
+            borderColor = adjustBorderColor(if (isAuthErr) palette.authErrBorder else palette.offlineBg, isAuthErr)
             iconHexColor = if (config.monoIcon) palette.offlineIcon else Color.parseColor("#E5E7EB")
             showSlash = true
             label = if (isAuthErr) "AUTH ERR" else "OFFLINE"
+        } else if (tFrom != null && tTo != null) {
+            val (fromBg, fromBorder, fromIcon) = resolveColorsForMuted(palette, tFrom)
+            val (toBg, toBorder, toIcon) = resolveColorsForMuted(palette, tTo)
+            val f = transitionFraction.coerceIn(0f, 1f)
+            bgColor = colorEvaluator.evaluate(f, fromBg, toBg) as Int
+            borderColor = colorEvaluator.evaluate(f, fromBorder, toBorder) as Int
+            iconHexColor = colorEvaluator.evaluate(f, fromIcon, toIcon) as Int
+            val displayMuted = if (f < 0.5f) tFrom else tTo
+            showSlash = displayMuted
+            label = if (displayMuted) "MUTED" else "LIVE"
         } else {
-            bgColor = if (muted) palette.mutedBg else palette.liveBg
-            borderColor = bgColor
-            iconHexColor = if (config.monoIcon) {
-                if (muted) palette.mutedIcon else palette.liveIcon
-            } else if (palette.name == "Custom") {
-                HudColorPalettes.pickReadableIconRgb(bgColor)
-            } else {
-                Color.WHITE
-            }
+            val resolved = resolveColorsForMuted(palette, muted)
+            bgColor = resolved.first
+            borderColor = resolved.second
+            iconHexColor = resolved.third
             showSlash = muted
             label = if (muted) "MUTED" else "LIVE"
         }
@@ -142,7 +167,7 @@ class MicPillCanvasView(context: Context) : View(context) {
         canvas.drawRoundRect(pillRect, cornerRadius, cornerRadius, bgPaint)
 
         borderPaint.strokeWidth = strokeW
-        borderPaint.color = adjustBorderColor(borderColor, isOffline && connState.connStatus == ConnStatus.AUTH_FAILED)
+        borderPaint.color = borderColor
         borderPaint.alpha = (255 * alphaScale).roundToInt().coerceIn(0, 255)
         canvas.drawRoundRect(pillRect, cornerRadius, cornerRadius, borderPaint)
 
@@ -209,6 +234,19 @@ class MicPillCanvasView(context: Context) : View(context) {
         holdSegmentPath.reset()
         holdMeasure.getSegment(0f, total * holdProgress.coerceIn(0.02f, 1f), holdSegmentPath, true)
         canvas.drawPath(holdSegmentPath, holdPaint)
+    }
+
+    private fun resolveColorsForMuted(palette: HudColorPalette, muted: Boolean): Triple<Int, Int, Int> {
+        val bg = if (muted) palette.mutedBg else palette.liveBg
+        val border = adjustBorderColor(bg, false)
+        val icon = if (config.monoIcon) {
+            if (muted) palette.mutedIcon else palette.liveIcon
+        } else if (palette.name == "Custom") {
+            HudColorPalettes.pickReadableIconRgb(bg)
+        } else {
+            Color.WHITE
+        }
+        return Triple(bg, border, icon)
     }
 
     private fun adjustBorderColor(baseColor: Int, isAuthErr: Boolean): Int {

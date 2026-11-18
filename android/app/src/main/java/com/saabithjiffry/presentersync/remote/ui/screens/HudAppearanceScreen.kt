@@ -419,13 +419,15 @@ fun HudAppearanceScreen(
                 )
                 ExplorerSettingToggleRow(
                     title = "Push-to-Talk Mode (Hold Pill to Unmute)",
-                    subtitle = "Press and hold floating pill to unmute; releasing immediately mutes mic again",
+                    subtitle = "Press and hold floating pill to unmute; releasing immediately mutes mic again. Enabling Push-to-Talk disables Long-Press, Very-Long-Press, and Push-to-Mute (and vice versa).",
                     checked = cfg.enablePushToTalk,
                     onCheckedChange = { v ->
                         app.configStore.update {
                             it.copy(
                                 enablePushToTalk = v,
-                                enablePushToMute = if (v) false else it.enablePushToMute
+                                enablePushToMute = if (v) false else it.enablePushToMute,
+                                longPressAction = if (v) BubbleGestureAction.NONE else it.longPressAction,
+                                veryLongPressAction = if (v) BubbleGestureAction.NONE else it.veryLongPressAction
                             )
                         }
                     }
@@ -490,20 +492,34 @@ fun HudAppearanceScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 BubbleGestureSlotRow(
                     title = "Long Press (${cfg.longPressDurationMs} ms)",
-                    subtitle = "Hold until amber arc completes & buzzes; lift before Very Long threshold",
+                    subtitle = "Hold until amber arc completes & buzzes; lift before Very Long threshold (selecting an action disables Push-to-Talk)",
                     currentAction = cfg.longPressAction,
                     enabled = cfg.enableHudClickActions,
                     isTightWidth = formFactor.isTightWidth,
-                    onSelect = { act -> app.configStore.update { it.copy(longPressAction = act) } }
+                    onSelect = { act ->
+                        app.configStore.update {
+                            it.copy(
+                                longPressAction = act,
+                                enablePushToTalk = if (act != BubbleGestureAction.NONE) false else it.enablePushToTalk
+                            )
+                        }
+                    }
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 BubbleGestureSlotRow(
                     title = "Very Long Press (${cfg.veryLongPressDurationMs} ms)",
-                    subtitle = "Keep holding past amber buzz until blue arc completes & triggers immediately",
+                    subtitle = "Keep holding past amber buzz until blue arc completes & triggers immediately (selecting an action disables Push-to-Talk)",
                     currentAction = cfg.veryLongPressAction,
                     enabled = cfg.enableHudClickActions,
                     isTightWidth = formFactor.isTightWidth,
-                    onSelect = { act -> app.configStore.update { it.copy(veryLongPressAction = act) } }
+                    onSelect = { act ->
+                        app.configStore.update {
+                            it.copy(
+                                veryLongPressAction = act,
+                                enablePushToTalk = if (act != BubbleGestureAction.NONE) false else it.enablePushToTalk
+                            )
+                        }
+                    }
                 )
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.0.5
+; Version: 7.0.6
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.0.5.0
+;@Ahk2Exe-SetVersion 7.0.6.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -1382,10 +1382,11 @@ RemoveToolTip() {
     ToolTip()
 }
 
-OnRemoteClickerMute(cfg, state, *) {
+OnRemoteClickerMute(cfg, state, thisHotkeyOrFromHud := "", *) {
     if (!cfg.EnablePointerMute || (IsSet(HudSnake) && HudSnake.IsActive))
         return
 
+    fromHudClick := (thisHotkeyOrFromHud == true)
     static lastTick := 0
     static inHold := false
     if (inHold)
@@ -1403,11 +1404,11 @@ OnRemoteClickerMute(cfg, state, *) {
 
     inHold := true
     try {
-        if (cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk) {
+        if (!fromHudClick && cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk) {
             ExecutePushToTalkHoldCycle(cfg, state, (m) => DispatchRemoteSetMute(cfg, state, m), cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")
             lastTick := A_TickCount
         } else if (DispatchRemoteMuteToggle(cfg, state)) {
-            if (WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
+            if (!fromHudClick && WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
                 DispatchRemoteMuteToggle(cfg, state)
                 lastTick := A_TickCount
             }
@@ -1571,7 +1572,7 @@ HandleRemoteHudClick(cfg, state) {
         SetTimer(() => ToolTip(), -1500)
         return false
     }
-    OnRemoteClickerMute(cfg, state)
+    OnRemoteClickerMute(cfg, state, true)
     return true
 }
 

@@ -1,7 +1,11 @@
 package com.saabithjiffry.presentersync.remote.ui.overlay
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.Context
 import androidx.annotation.VisibleForTesting
+import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import android.view.HapticFeedbackConstants
 import android.widget.ScrollView
 import android.widget.Toast
@@ -40,6 +44,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 class FloatingMicOverlayManager(
     private val context: Context,
@@ -68,6 +73,7 @@ class FloatingMicOverlayManager(
     private var currentAlpha: Int = currentConfig.opacityLevel
     private var breathDir: Int = -AppConstants.PULSE_STEP_NORMAL
     private var animSeq = 0
+    private var muteTransitionAnimator: ValueAnimator? = null
 
     private val idleDimRunnable = Runnable {
         if (attached && currentConfig.showIndicator && currentConfig.idleDimAfterSec > 0 && !isDragging) {
@@ -218,11 +224,15 @@ class FloatingMicOverlayManager(
 
         if (!isDragging) {
             if (isAutoDodged) {
+                muteTransitionAnimator?.cancel()
                 stopBreathing()
                 currentAlpha = min(cfg.opacityLevel, AppConstants.DODGE_ALPHA)
                 pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
             } else if (isIdleDimmed) {
                 stopBreathing()
+                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
+            } else if (muteTransitionAnimator?.isRunning == true) {
+                currentAlpha = cfg.opacityLevel
                 pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
             } else if (!conn.connected || !conn.isMuted) {
                 stopBreathing()
@@ -238,56 +248,67 @@ class FloatingMicOverlayManager(
     fun playMuteTransition(newMuted: Boolean) {
         if (!attached || !currentConfig.showIndicator || isAutoDodged) return
         stopBreathing()
+        muteTransitionAnimator?.cancel()
         val seq = ++animSeq
         val baseAlpha = currentConfig.opacityLevel
-        val prevMuted = !newMuted
-        val steps = AppConstants.FADE_STEPS
-        val fadeStep = (baseAlpha.toFloat() / steps).coerceAtLeast(1f)
+        val fromMuted = !newMuted
+        val toMuted = newMuted
+        currentAlpha = baseAlpha
 
-        var tick = 0
-        val animRunnable = object : Runnable {
-            override fun run() {
+        val view = pillView ?: return
+        view.setMuteTransition(fromMuted, toMuted, 0f)
+        view.updateRenderState(currentConfig, currentConn, baseAlpha)
+
+        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = MUTE_TRANSITION_DURATION_MS
+            interpolator = FastOutSlowInInterpolator()
+            addUpdateListener { anim ->
                 if (!attached || isDragging || isAutoDodged || animSeq != seq || !currentConfig.showIndicator) {
-                    pillView?.scaleX = 1f
-                    pillView?.scaleY = 1f
-                    return
+                    anim.cancel()
+                    return@addUpdateListener
                 }
-                tick++
-                if (tick <= steps) {
-                    val frac = tick.toFloat() / steps
-                    val s = 1f - 0.08f * frac
-                    val a = (baseAlpha - tick * fadeStep).roundToInt().coerceIn(0, baseAlpha)
-                    currentAlpha = a
-                    pillView?.scaleX = s
-                    pillView?.scaleY = s
-                    pillView?.updateRenderState(currentConfig, currentConn, a, prevMuted)
-                    handler.postDelayed(this, AppConstants.FADE_SLEEP_MS)
-                } else if (tick <= steps * 2) {
-                    val step2 = tick - steps
-                    val frac = step2.toFloat() / steps
-                    val s = 0.92f + 0.08f * frac
-                    val a = (step2 * fadeStep).roundToInt().coerceIn(0, baseAlpha)
-                    currentAlpha = a
-                    pillView?.scaleX = s
-                    pillView?.scaleY = s
-                    pillView?.updateRenderState(currentConfig, currentConn, a, newMuted)
-                    handler.postDelayed(this, AppConstants.FADE_SLEEP_MS)
-                } else {
-                    pillView?.scaleX = 1f
-                    pillView?.scaleY = 1f
-                    currentAlpha = baseAlpha
-                    pillView?.updateRenderState(currentConfig, currentConn, baseAlpha)
-                    if (currentConn.connected && currentConn.isMuted) {
-                        startBreathing()
+                val frac = (anim.animatedValue as Float).coerceIn(0f, 1f)
+                val pulseScale = computeMuteTransitionPulseScale(frac)
+                view.scaleX = pulseScale
+                view.scaleY = pulseScale
+                view.setMuteTransition(fromMuted, toMuted, frac)
+                view.updateRenderState(currentConfig, currentConn, baseAlpha)
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    if (muteTransitionAnimator === animation) {
+                        muteTransitionAnimator = null
+                    }
+                    view.scaleX = 1f
+                    view.scaleY = 1f
+                    view.clearMuteTransition()
+                    if (attached && !isDragging && !isAutoDodged && animSeq == seq && currentConfig.showIndicator) {
+                        currentAlpha = baseAlpha
+                        view.updateRenderState(currentConfig, currentConn, baseAlpha)
+                        if (currentConn.connected && currentConn.isMuted) {
+                            startBreathing()
+                        }
                     }
                 }
-            }
+
+                override fun onAnimationCancel(animation: Animator) {
+                    if (muteTransitionAnimator === animation) {
+                        muteTransitionAnimator = null
+                    }
+                    view.scaleX = 1f
+                    view.scaleY = 1f
+                    view.clearMuteTransition()
+                }
+            })
         }
-        handler.post(animRunnable)
+        muteTransitionAnimator = animator
+        animator.start()
     }
 
     fun hide() {
         stopBreathing()
+        muteTransitionAnimator?.cancel()
+        muteTransitionAnimator = null
         handler.removeCallbacks(restoreDodgeRunnable)
         handler.removeCallbacks(idleDimRunnable)
         isAutoDodged = false
@@ -487,7 +508,7 @@ class FloatingMicOverlayManager(
         }
     }
 
-    private var activeGestureRecognizer: BubbleGestureRecognizer? = null
+    private var activeTouchController: FloatingPillTouchController? = null
 
     private fun setupTouchHandling(view: MicPillCanvasView, params: WindowManager.LayoutParams) {
         val density = context.resources.displayMetrics.density
@@ -501,7 +522,6 @@ class FloatingMicOverlayManager(
         var startParamY = 0
         var movedPastSlop = false
         var lastStage = BubbleHoldStage.IDLE
-        var pttPillActive = false
 
         val scheduler = object : GestureScheduler {
             override fun schedule(delayMs: Long, task: () -> Unit): Any {
@@ -522,44 +542,53 @@ class FloatingMicOverlayManager(
             view.setGestureFeedback(BubbleHoldStage.IDLE, 0f)
         }
 
-        val recognizer = BubbleGestureRecognizer(
+        val touchController = FloatingPillTouchController(
             scheduler = scheduler,
             clockMs = { System.currentTimeMillis() },
-            listener = object : BubbleGestureRecognizer.Listener {
-                override fun onActionTriggered(gestureLabel: String, action: BubbleGestureAction) {
-                    if (action != BubbleGestureAction.NONE) {
-                        runCatching { view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP) }
-                    }
-                    executeBubbleAction(action)
+            onGestureAction = { _, action ->
+                if (action != BubbleGestureAction.NONE) {
+                    runCatching { view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP) }
                 }
-
-                override fun onHoldStageChanged(stage: BubbleHoldStage, progressFraction: Float) {
-                    if (stage != lastStage) {
-                        when (stage) {
-                            BubbleHoldStage.REACHED_LONG -> {
-                                runCatching { view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
-                            }
-                            BubbleHoldStage.REACHED_VERY_LONG -> {
-                                runCatching { view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) }
-                            }
-                            else -> Unit
+                executeBubbleAction(action)
+            },
+            onHoldStageUpdate = { stage, progressFraction ->
+                if (stage != lastStage) {
+                    when (stage) {
+                        BubbleHoldStage.REACHED_LONG -> {
+                            runCatching { view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
                         }
-                        lastStage = stage
+                        BubbleHoldStage.REACHED_VERY_LONG -> {
+                            runCatching { view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) }
+                        }
+                        else -> Unit
                     }
-                    view.setGestureFeedback(stage, progressFraction)
-                    if (stage == BubbleHoldStage.IDLE) {
-                        stopHoldVisualTick()
-                    }
+                    lastStage = stage
                 }
+                view.setGestureFeedback(stage, progressFraction)
+                if (stage == BubbleHoldStage.IDLE) {
+                    stopHoldVisualTick()
+                }
+            },
+            onPttActivated = {
+                stopHoldVisualTick()
+                runCatching { view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                connectionManager.setMuteFromHud(false)
+            },
+            onPttReleased = {
+                connectionManager.setMuteFromHud(true)
             }
         )
-        activeGestureRecognizer = recognizer
+        activeTouchController = touchController
 
         fun startHoldVisualTick() {
             stopHoldVisualTick()
             val ticker = object : Runnable {
                 override fun run() {
-                    val (stage, frac) = recognizer.currentVisualHoldState()
+                    if (touchController.isPttActive) {
+                        stopHoldVisualTick()
+                        return
+                    }
+                    val (stage, frac) = touchController.recognizer.currentVisualHoldState()
                     if (stage != lastStage) {
                         when (stage) {
                             BubbleHoldStage.REACHED_LONG -> {
@@ -593,20 +622,13 @@ class FloatingMicOverlayManager(
                     startParamY = params.y
                     movedPastSlop = false
                     lastStage = BubbleHoldStage.IDLE
-                    if (currentConfig.enablePushToTalk && currentConfig.enableHudClickActions) {
-                        pttPillActive = true
-                        runCatching { view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
-                        connectionManager.setMuteFromHud(false)
-                    } else {
-                        pttPillActive = false
-                        val gestureCfg = currentConfig.toBubbleGestureConfig()
-                        recognizer.onDown(gestureCfg)
-                        if (gestureCfg.enabled &&
-                            (gestureCfg.longPressAction != BubbleGestureAction.NONE ||
-                                gestureCfg.veryLongPressAction != BubbleGestureAction.NONE)
-                        ) {
-                            startHoldVisualTick()
-                        }
+                    val gestureCfg = currentConfig.toBubbleGestureConfig()
+                    touchController.onDown(currentConfig, currentConn.isMuted)
+                    if (gestureCfg.enabled &&
+                        (gestureCfg.longPressAction != BubbleGestureAction.NONE ||
+                            gestureCfg.veryLongPressAction != BubbleGestureAction.NONE)
+                    ) {
+                        startHoldVisualTick()
                     }
                     true
                 }
@@ -617,7 +639,7 @@ class FloatingMicOverlayManager(
                         if (!movedPastSlop && (abs(dx) > lockCancelSlopPx || abs(dy) > lockCancelSlopPx)) {
                             movedPastSlop = true
                             stopHoldVisualTick()
-                            recognizer.onDragCancelledGesture()
+                            touchController.onDragCancelled()
                         }
                         return@setOnTouchListener true
                     }
@@ -625,11 +647,7 @@ class FloatingMicOverlayManager(
                         movedPastSlop = true
                         isDragging = true
                         stopHoldVisualTick()
-                        recognizer.onDragCancelledGesture()
-                        if (pttPillActive) {
-                            pttPillActive = false
-                            connectionManager.setMuteFromHud(true)
-                        }
+                        touchController.onDragCancelled()
                         stopBreathing()
                     }
                     if (movedPastSlop) {
@@ -683,30 +701,18 @@ class FloatingMicOverlayManager(
                                 savedYRatio = ry
                             )
                         }
-                        if (pttPillActive) {
-                            pttPillActive = false
-                            connectionManager.setMuteFromHud(true)
-                        } else {
-                            recognizer.onUp()
-                        }
+                        touchController.onUp()
                         if (currentConn.connected && currentConn.isMuted) {
                             startBreathing()
                         }
-                    } else if (pttPillActive) {
-                        pttPillActive = false
-                        connectionManager.setMuteFromHud(true)
                     } else {
-                        recognizer.onUp()
+                        touchController.onUp()
                     }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     stopHoldVisualTick()
-                    if (pttPillActive) {
-                        pttPillActive = false
-                        connectionManager.setMuteFromHud(true)
-                    }
-                    recognizer.onCancel()
+                    touchController.onCancel()
                     isDragging = false
                     if (currentConn.connected && currentConn.isMuted) {
                         startBreathing()
@@ -1177,4 +1183,97 @@ class FloatingMicOverlayManager(
 
     @VisibleForTesting
     internal fun currentPillViewForTesting(): MicPillCanvasView? = pillView
+
+    companion object {
+        const val PTT_HOLD_THRESHOLD_MS = 300L
+        const val MUTE_TRANSITION_DURATION_MS = 160L
+
+        fun computeMuteTransitionPulseScale(fraction: Float): Float {
+            return 1f + 0.05f * sin(Math.PI * fraction.coerceIn(0f, 1f)).toFloat()
+        }
+    }
+}
+
+internal class FloatingPillTouchController(
+    private val scheduler: GestureScheduler,
+    private val clockMs: () -> Long,
+    private val onGestureAction: (String, BubbleGestureAction) -> Unit,
+    private val onHoldStageUpdate: (BubbleHoldStage, Float) -> Unit,
+    private val onPttActivated: () -> Unit,
+    private val onPttReleased: () -> Unit
+) {
+    private var isTouchDown = false
+    private var movedPastSlop = false
+    private var pttPendingToken: Any? = null
+    var isPttActive: Boolean = false
+        private set
+
+    val recognizer = BubbleGestureRecognizer(
+        scheduler = scheduler,
+        clockMs = clockMs,
+        listener = object : BubbleGestureRecognizer.Listener {
+            override fun onActionTriggered(gestureLabel: String, action: BubbleGestureAction) {
+                onGestureAction.invoke(gestureLabel, action)
+            }
+
+            override fun onHoldStageChanged(stage: BubbleHoldStage, progressFraction: Float) {
+                onHoldStageUpdate.invoke(stage, progressFraction)
+            }
+        }
+    )
+
+    fun onDown(cfg: RemoteConfig, isMuted: Boolean) {
+        cancelPendingPtt()
+        isTouchDown = true
+        movedPastSlop = false
+        isPttActive = false
+
+        val canArmPtt = cfg.enablePushToTalk && cfg.enableHudClickActions && isMuted
+        if (canArmPtt) {
+            pttPendingToken = scheduler.schedule(FloatingMicOverlayManager.PTT_HOLD_THRESHOLD_MS) {
+                pttPendingToken = null
+                if (!isTouchDown || movedPastSlop || isPttActive) return@schedule
+                isPttActive = true
+                recognizer.onCancel()
+                onPttActivated()
+            }
+        }
+        recognizer.onDown(cfg.toBubbleGestureConfig())
+    }
+
+    fun onDragCancelled() {
+        cancelPendingPtt()
+        movedPastSlop = true
+        if (isPttActive) {
+            isPttActive = false
+            onPttReleased()
+        }
+        recognizer.onDragCancelledGesture()
+    }
+
+    fun onUp() {
+        cancelPendingPtt()
+        isTouchDown = false
+        if (isPttActive) {
+            isPttActive = false
+            onPttReleased()
+        } else {
+            recognizer.onUp()
+        }
+    }
+
+    fun onCancel() {
+        cancelPendingPtt()
+        isTouchDown = false
+        if (isPttActive) {
+            isPttActive = false
+            onPttReleased()
+        }
+        recognizer.onCancel()
+    }
+
+    private fun cancelPendingPtt() {
+        pttPendingToken?.let { scheduler.cancel(it) }
+        pttPendingToken = null
+    }
 }

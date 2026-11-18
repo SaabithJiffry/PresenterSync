@@ -133,4 +133,39 @@ class ClickerMuteControllerTest {
         assertTrue(ClickerMuteController.matchesShortcut("^!F12", "KEYCODE_F12", isCtrl = true, isAlt = true, isShift = false))
         assertFalse(ClickerMuteController.matchesShortcut("^!F12", "KEYCODE_F12", isCtrl = true, isAlt = false, isShift = false))
     }
+
+    @Test
+    fun pushToTalkOnlyActivatesWhenMutedAndNeverMutesLiveMicOnRelease() {
+        var now = 4000L
+        val controller = ClickerMuteController { now }
+        val cfg = RemoteConfig(
+            hwMuteHotkey = "KEYCODE_B",
+            enablePointerMute = true,
+            enablePushToTalk = true,
+            enablePushToMute = false
+        )
+
+        // Mic is already LIVE (isMuted = false): PTT press and release must both be NOOP
+        assertEquals(
+            ClickerDecision.CONSUME_NOOP,
+            controller.onKeyEvent("KEYCODE_B", KeyAction.DOWN, false, false, false, 0, cfg, isMuted = false)
+        )
+        now += 400L
+        assertEquals(
+            ClickerDecision.CONSUME_NOOP,
+            controller.onKeyEvent("KEYCODE_B", KeyAction.UP, false, false, false, 0, cfg, isMuted = false)
+        )
+
+        // Mic is MUTED (isMuted = true): PTT unmutes on press and re-mutes on release
+        now += 200L
+        assertEquals(
+            ClickerDecision.CONSUME_PTT_HOLD_UNMUTE,
+            controller.onKeyEvent("KEYCODE_B", KeyAction.DOWN, false, false, false, 0, cfg, isMuted = true)
+        )
+        now += 450L
+        assertEquals(
+            ClickerDecision.CONSUME_PTT_RELEASE_MUTE,
+            controller.onKeyEvent("KEYCODE_B", KeyAction.UP, false, false, false, 0, cfg, isMuted = true)
+        )
+    }
 }
