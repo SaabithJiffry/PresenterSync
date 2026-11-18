@@ -476,6 +476,10 @@ RecTimerTick(cfg, state) {
         return
     }
     state.recElapsedSec += 1
+    if (state.HasOwnProp("obsRecState") && state.obsRecState == 1)
+        state.obsRecElapsedSec += 1
+    if (state.HasOwnProp("confRecState") && state.confRecState == 1)
+        state.confRecElapsedSec += 1
     if (Mod(state.recElapsedSec, 5) == 0)
         HostBridgeBroadcastMuteState(cfg, state)
     if (cfg.ShowIndicator && cfg.ShowExtraHuds && (!cfg.HasOwnProp("ShowRecTimer") || cfg.ShowRecTimer) && !state.isDraggingHud && IsGuiValid(state.RecGui)) {
@@ -497,19 +501,72 @@ ToggleRecTimer(cfg, state := "", *) {
         try state.refreshHudFn.Call()
 }
 
-SyncRecState(cfg, state, newState, initialDurationMs := -1) {
+GetRecLabelPrefix(cfg, state) {
+    ; "OBS " / "ZM " / "BOTH " when OBS and conferencing tracking are both enabled and ShowText is on.
+    if (!IsObject(cfg) || !IsObject(state) || !state.HasOwnProp("recSourceTag") || state.recSourceTag = "")
+        return ""
+    if (!cfg.HasOwnProp("ShowText") || !cfg.ShowText)
+        return ""
+    if (!(cfg.HasOwnProp("EnableWS") && cfg.EnableWS && cfg.HasOwnProp("EnableZoom") && cfg.EnableZoom))
+        return ""
+    return state.recSourceTag " "
+}
+
+GetRecBreakdownText(state) {
+    static names := Map(0, "idle", 1, "REC", 2, "PAUSED")
+    if (!IsObject(state) || !state.HasOwnProp("obsRecState"))
+        return ""
+    return Format("Recording: OBS {} {} | Conferencing {} {}"
+        , names[state.obsRecState], FormatElapsedShort(state.obsRecElapsedSec)
+        , names[state.confRecState], FormatElapsedShort(state.confRecElapsedSec))
+}
+
+SyncRecState(cfg, state, newState, initialDurationMs := -1, source := "obs") {
+    ; source: "obs" (OBS WebSocket recording) or "conf" (Zoom/Teams UIA recording).
+    ; state.recState is the unified state: Recording if any source records, else Paused if any paused.
+    isConf := (source = "conf")
     prevState := state.recState
-    stateChanged := (prevState != newState)
+    prevTag := state.recSourceTag
+    prevSrcState := isConf ? state.confRecState : state.obsRecState
     durProvided := (initialDurationMs >= 0)
 
-    if (durProvided) {
-        state.recElapsedSec := Max(0, Integer(initialDurationMs // 1000))
-    } else if (newState == 0) {
-        state.recElapsedSec := 0
-    } else if (prevState == 0 && newState == 1) {
-        state.recElapsedSec := 0
+    srcElapsed := isConf ? state.confRecElapsedSec : state.obsRecElapsedSec
+    if (durProvided)
+        srcElapsed := Max(0, Integer(initialDurationMs // 1000))
+    else if (newState == 0)
+        srcElapsed := 0
+    else if (prevSrcState == 0 && newState == 1)
+        srcElapsed := 0
+    if (isConf) {
+        state.confRecState := newState
+        state.confRecElapsedSec := srcElapsed
+    } else {
+        state.obsRecState := newState
+        state.obsRecElapsedSec := srcElapsed
     }
 
+    obsSt := state.obsRecState, confSt := state.confRecState
+    unified := (obsSt == 1 || confSt == 1) ? 1 : ((obsSt == 2 || confSt == 2) ? 2 : 0)
+    state.recSourceTag := (obsSt > 0 && confSt > 0) ? "BOTH" : (obsSt > 0 ? "OBS" : (confSt > 0 ? "ZM" : ""))
+
+    activeMax := 0
+    if (obsSt == unified)
+        activeMax := Max(activeMax, state.obsRecElapsedSec)
+    if (confSt == unified)
+        activeMax := Max(activeMax, state.confRecElapsedSec)
+    otherSrcState := isConf ? obsSt : confSt
+    stateChanged := (prevState != unified)
+    tagChanged := (prevTag != state.recSourceTag)
+    if (unified == 0) {
+        state.recElapsedSec := 0
+    } else if (durProvided) {
+        state.recElapsedSec := activeMax
+    } else if (prevState == 0 && unified == 1) {
+        state.recElapsedSec := 0
+    } else if (newState == 0 && otherSrcState > 0) {
+        state.recElapsedSec := activeMax
+    }
+    newState := unified
     state.recState := newState
     if (state.HasOwnProp("recTimerFn") && state.recTimerFn) {
         if (newState == 1)
@@ -518,7 +575,7 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1) {
             SetTimer(state.recTimerFn, 0)
     }
 
-    if (stateChanged || durProvided) {
+    if (stateChanged || durProvided || tagChanged) {
         if (stateChanged && IsSet(SessionTimeline) && (cfg is Config)) {
             recEvt := (newState == 1) ? ((prevState == 2) ? "Recording Resumed" : "Recording Started")
                 : ((newState == 2) ? "Recording Paused" : "Recording Stopped")
@@ -547,11 +604,13 @@ ApplyRecAppearance(cfg, state) {
     if (state.recState == 1) {
         bg := state.colors.recActive, brd := state.colors.recBorderActive, ic := cfg.MonoIcon ? state.colors.recIconActive : "FFFFFF"
         glyph := Chr(0xE7C8)
-        lbl := showTimer ? ("REC " FormatElapsedShort(state.recElapsedSec)) : "REC"
+        recPfx := GetRecLabelPrefix(cfg, state)
+        lbl := showTimer ? (recPfx "REC " FormatElapsedShort(state.recElapsedSec)) : (recPfx "REC")
     } else if (state.recState == 2) {
         bg := state.colors.recPaused, brd := state.colors.recBorderPaused, ic := cfg.MonoIcon ? state.colors.recIconPaused : "FFFFFF"
         glyph := Chr(0xE769)
-        lbl := showTimer ? ("PAUSED " FormatElapsedShort(state.recElapsedSec)) : "PAUSED"
+        recPfx := GetRecLabelPrefix(cfg, state)
+        lbl := showTimer ? (recPfx "PAUSED " FormatElapsedShort(state.recElapsedSec)) : (recPfx "PAUSED")
     } else {
         bg := state.colors.recOff, brd := state.colors.recBorderOff, ic := cfg.MonoIcon ? state.colors.recIconOff : "D1D5DB"
         glyph := Chr(0xE71A), lbl := "NOT REC"
@@ -1876,8 +1935,19 @@ BuildSceneSwitcherMenu(cfg, state, onSelectFn := "") {
     return { menu: sceneMenu, scenes: scenes }
 }
 
+SelectObsSceneFromPopup(cfg, state, sceneName, *) {
+    ; Studio Mode ON -> set Preview (then transition on left-click); OFF -> set Program directly.
+    if (sceneName = "")
+        return false
+    if (state.studioModeActive && cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+        esc := EscapeJsonStr(sceneName)
+        return SendObsRequest(state.obsWs, "SetCurrentPreviewScene", "ClickSetPreviewScene", '{"sceneName":"' esc '"}')
+    }
+    return SwitchObsScene(cfg, state, sceneName)
+}
+
 ShowSceneSwitcherPopup(cfg, state) {
-    built := BuildSceneSwitcherMenu(cfg, state)
+    built := BuildSceneSwitcherMenu(cfg, state, SelectObsSceneFromPopup)
     built.menu.Show()
     return built.scenes
 }
@@ -1902,6 +1972,10 @@ HandleHudPillClick(cfg, state, hwnd) {
     }
     if (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd) {
         ExecuteHostToggleRecord(cfg, state)
+        if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && cfg.HasOwnProp("EnableZoom") && cfg.EnableZoom) {
+            ToolTip(GetRecBreakdownText(state))
+            SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+        }
         return "rec"
     }
     if (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd) {
@@ -1913,7 +1987,9 @@ HandleHudPillClick(cfg, state, hwnd) {
         return "studio"
     }
     if (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd) {
-        ShowSceneSwitcherPopup(cfg, state)
+        ; Left-click: native Preview<->Program transition. Scene list lives on right-click.
+        if (IsSet(TriggerObsSceneTransition))
+            TriggerObsSceneTransition(cfg, state, true)
         return "scene"
     }
     if (IsObject(state.VCamGui) && hwnd == state.VCamGui.Hwnd) {
@@ -1960,6 +2036,22 @@ ApplyDraggedSecondaryPosition(cfg, state, rawX, rawY) {
     return pos
 }
 
+WaitStudioLongPress(startMX, startMY, downTick) {
+    ; Returns "drag" (cursor moved > 4px), "toggle" (held still >= STUDIO_LONG_PRESS_MS; release consumed),
+    ; or "tap" (released early without moving). Expects Mouse CoordMode "Screen".
+    while (GetKeyState("LButton", "P")) {
+        MouseGetPos(&mx, &my)
+        if (Abs(mx - startMX) > 4 || Abs(my - startMY) > 4)
+            return "drag"
+        if ((A_TickCount - downTick) >= UIConstants.STUDIO_LONG_PRESS_MS) {
+            KeyWait "LButton"
+            return "toggle"
+        }
+        Sleep(10)
+    }
+    return "tap"
+}
+
 WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     if (!IsHudHwnd(state, hwnd))
         return
@@ -2003,6 +2095,24 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         if (isShortClick)
             HandleHudPillClick(cfg, state, hwnd)
         return
+    }
+
+    if (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd) {
+        verdict := WaitStudioLongPress(startMX, startMY, downTick)
+        if (verdict != "drag") {
+            CoordMode("Mouse", prevMouseMode)
+            if (verdict = "toggle") {
+                nextStudio := !state.studioModeActive
+                if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+                    SendObsRequest(state.obsWs, "SetStudioModeEnabled", "ClickToggleStudio", '{"studioModeEnabled":' (nextStudio ? "true" : "false") '}')
+                else
+                    SyncStudioState(cfg, state, nextStudio)
+            } else {
+                ToolTip("Hold Studio pill (0.6s) to toggle Studio Mode")
+                SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+            }
+            return
+        }
     }
 
     prevX := state.savedX
@@ -2056,8 +2166,14 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
 }
 
 WM_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
-    if (IsHudHwnd(state, hwnd))
-        A_TrayMenu.Show()
+    if (!IsHudHwnd(state, hwnd))
+        return
+    if (state.HasOwnProp("SceneGui") && IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd
+        && state.HasOwnProp("hudCfg") && IsObject(state.hudCfg)) {
+        ShowSceneSwitcherPopup(state.hudCfg, state)
+        return
+    }
+    A_TrayMenu.Show()
 }
 
 WM_DPICHANGED(state, wParam, lParam, msg, hwnd) {

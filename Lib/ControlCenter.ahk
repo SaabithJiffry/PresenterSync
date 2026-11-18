@@ -1591,11 +1591,11 @@ SyncTelemetryBackendsFromConfig(cfg, state) {
             SyncStudioState(cfg, state, false)
         state.currentSceneName := "Scene"
         state.sceneList := []
-        if (state.HasOwnProp("recState") && (hadObsSession || !cfg.EnableZoom))
-            SyncRecState(cfg, state, 0)
+        if (state.HasOwnProp("recState") && hadObsSession)
+            SyncRecState(cfg, state, 0, -1, "obs")
     }
 
-    if (!cfg.EnableZoom || cfg.EnableWS) {
+    if (!cfg.EnableZoom) {
         if (state.HasOwnProp("zoomConnected"))
             state.zoomConnected := false
         if (state.HasOwnProp("zoomLastMuted"))
@@ -1604,12 +1604,10 @@ SyncTelemetryBackendsFromConfig(cfg, state) {
             state.zoomRecGraceUntil := 0
         if (state.HasOwnProp("zoomSawRecControl"))
             state.zoomSawRecControl := false
-        if (!cfg.EnableWS && !cfg.EnableZoom) {
-            if (state.HasOwnProp("unreadChatCount"))
-                SyncChatState(cfg, state, 0)
-            if (state.HasOwnProp("recState"))
-                SyncRecState(cfg, state, 0)
-        }
+        if (state.HasOwnProp("unreadChatCount"))
+            SyncChatState(cfg, state, 0)
+        if (state.HasOwnProp("recState"))
+            SyncRecState(cfg, state, 0, -1, "conf")
     }
 
     if (state.HasOwnProp("zoomTimerFn") && state.zoomTimerFn)
@@ -1676,7 +1674,7 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.WriteBool("Settings", "EnableWS", cfg.EnableWS)
         }
         if vals.HasOwnProp("EnableZoom") {
-            cfg.EnableZoom := cfg.EnableWS ? false : !!vals.EnableZoom
+            cfg.EnableZoom := !!vals.EnableZoom
             cfg.WriteBool("Settings", "EnableZoom", cfg.EnableZoom)
         }
         if vals.HasOwnProp("obsPassword") {
@@ -1930,8 +1928,6 @@ ShowControlCenterWindow(cfg, state := "", *) {
     chkEnableZoom := ccGui.Add("Checkbox", "x360 y98 w320 h24" (cfg.EnableZoom ? " Checked" : ""), "Enable Conferencing UIA Background Monitoring")
     Theme.RegisterControl(ccGui, chkEnableWS, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkEnableZoom, "Checkbox", "tabText")
-    chkEnableWS.OnEvent("Click", (*) => (chkEnableWS.Value ? (chkEnableZoom.Value := 0) : 0))
-    chkEnableZoom.OnEvent("Click", (*) => (chkEnableZoom.Value ? (chkEnableWS.Value := 0) : 0))
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y140 w210", "OBS WebSocket Password:"), "Text", "tabText")

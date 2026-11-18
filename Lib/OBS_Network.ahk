@@ -1568,15 +1568,15 @@ ZoomStateMonitor(cfg, state) {
         state.zoomLastMuted := -1
         state.zoomRecGraceUntil := 0
         state.zoomSawRecControl := false
-        if (cfg.EnableZoom && !cfg.EnableWS)
-            SyncRecState(cfg, state, 0)
+        if (cfg.EnableZoom)
+            SyncRecState(cfg, state, 0, -1, "conf")
         if (wasConn && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
             try state.refreshHelpFn.Call()
         return
     }
 
     wasConn := state.zoomConnected
-    state.zoomConnected := (cfg.EnableZoom && !cfg.EnableWS)
+    state.zoomConnected := (cfg.EnableZoom && zoomInfo.hasMic)
     if (state.zoomConnected != wasConn && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
         try state.refreshHelpFn.Call()
 
@@ -1600,15 +1600,17 @@ ZoomStateMonitor(cfg, state) {
         }
     }
 
-    if (cfg.EnableZoom && !cfg.EnableWS) {
-        SyncUIState(cfg, state, zoomInfo.muted)
+    if (cfg.EnableZoom) {
+        ; Mic mute follows Zoom only when OBS is not the mute authority; recording is tracked simultaneously.
+        if (!cfg.EnableWS)
+            SyncUIState(cfg, state, zoomInfo.muted)
         if (zoomInfo.hasRec) {
             state.zoomSawRecControl := true
             if (A_TickCount >= state.zoomRecGraceUntil)
-                SyncRecState(cfg, state, zoomInfo.recState)
+                SyncRecState(cfg, state, zoomInfo.recState, -1, "conf")
         } else if (state.zoomSawRecControl && A_TickCount >= state.zoomRecGraceUntil) {
             state.zoomSawRecControl := false
-            SyncRecState(cfg, state, 0)
+            SyncRecState(cfg, state, 0, -1, "conf")
         }
     }
     state.zoomLastMuted := zoomInfo.muted
