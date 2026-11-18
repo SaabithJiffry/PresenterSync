@@ -26,6 +26,8 @@ data class BridgeTelemetryState(
 interface HostBridgeCallbacks {
     fun onBridgeConnected(hostName: String)
     fun onBridgeHostUuidReceived(hostUuid: String) {}
+    fun onBridgeSessionTokenRefreshed(sessionToken: String) {}
+    fun onBridgeFrameReceived() {}
     fun onBridgeAuthFailed(reason: String)
     fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String)
     fun onTelemetryChanged(telemetry: BridgeTelemetryState) {}
@@ -88,8 +90,14 @@ class HostBridgeClient(
                 }
             }
 
+            override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
+                if (closedByCaller || mySeq != connSeq.get()) return
+                callbacks.onBridgeFrameReceived()
+            }
+
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (closedByCaller || mySeq != connSeq.get()) return
+                callbacks.onBridgeFrameReceived()
                 val obj = try {
                     JSONObject(text)
                 } catch (_: Exception) {
@@ -102,6 +110,10 @@ class HostBridgeClient(
                         val hostUuid = obj.optString("hostUuid", "").trim()
                         if (hostUuid.isNotEmpty()) {
                             callbacks.onBridgeHostUuidReceived(hostUuid)
+                        }
+                        val refreshedToken = obj.optString("sessionToken", "").trim()
+                        if (refreshedToken.isNotEmpty()) {
+                            callbacks.onBridgeSessionTokenRefreshed(refreshedToken)
                         }
                         callbacks.onBridgeConnected(hostName)
                     }
@@ -272,7 +284,22 @@ class HostBridgeClient(
     fun sendPing(): Boolean {
         if (!authenticated) return false
         val ws = webSocket ?: return false
-        return ws.send("""{"type":"ping"}""")
+        return try {
+            ws.send("""{"type":"ping"}""")
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun closeDead() {
+        closedByCaller = true
+        authenticated = false
+        val ws = webSocket
+        webSocket = null
+        try {
+            ws?.cancel()
+        } catch (_: Exception) {
+        }
     }
 
     fun close() {

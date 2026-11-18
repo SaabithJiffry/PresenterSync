@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.os.SystemClock
 import android.util.Log
 import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.HudColorPalettes
@@ -36,6 +37,7 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 enum class ConnStatus {
     SEARCHING,
@@ -105,7 +107,8 @@ sealed interface RemoteEvent {
 
 class ConnectionManager(
     private val context: Context,
-    private val configStore: RemoteConfigStore
+    private val configStore: RemoteConfigStore,
+    private val clockMs: () -> Long = { SystemClock.elapsedRealtime() }
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mdnsResolver = MdnsResolver(context)
@@ -133,17 +136,42 @@ class ConnectionManager(
     private var relayClient: RelayClient? = null
     private var connectLoopJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var pongWatchdogJob: Job? = null
     private var recTickerJob: Job? = null
     private var presenterTimerJob: Job? = null
     private var networkDebounceJob: Job? = null
     private var lanRepromoteJob: Job? = null
     private var networkCallbackRegistered = false
+    @Volatile
+    internal var lastRxAtMs: Long = -1L
+        private set
+    private val rxSeq = AtomicLong(0L)
+    @Volatile
+    private var lastWakeReconnectAtMs: Long = Long.MIN_VALUE
+    internal var pongTimeoutMs: Long = PONG_TIMEOUT_MS
+    internal var wakeStalenessMs: Long = WAKE_STALENESS_MS
     internal var discoverPortOverride: Int = AppConstants.DEFAULT_DISCOVERY_PORT
     internal var failoverBudgetMs: Long = AppConstants.LAN_FAILOVER_DEADLINE_MS
     internal var repromoteIntervalMs: Long = AppConstants.LAN_REPROMOTE_INTERVAL_MS
 
-    private val connectivityManager =
+    private val connectivityManager = runCatching {
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    }.getOrNull()
+
+    private fun logInfo(msg: String) {
+        runCatching { Log.i("PresenterSync", msg) }
+    }
+
+    private fun logWarn(msg: String) {
+        runCatching { Log.w("PresenterSync", msg) }
+    }
+
+    internal fun markRxActivity() {
+        lastRxAtMs = clockMs()
+        rxSeq.incrementAndGet()
+        pongWatchdogJob?.cancel()
+        pongWatchdogJob = null
+    }
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -168,11 +196,11 @@ class ConnectionManager(
         networkDebounceJob?.cancel()
         networkDebounceJob = scope.launch {
             delay(350L)
-            verifyOrReconnect()
+            onScreenWakeOrNetworkChanged()
         }
     }
 
-    fun verifyOrReconnect() {
+    fun onScreenWakeOrNetworkChanged() {
         val st = _uiState.value
         if (!st.serviceRunning || st.connStatus == ConnStatus.AUTH_FAILED) return
         if (st.usingRelayFallback) {
@@ -180,15 +208,30 @@ class ConnectionManager(
             scope.launch { checkAndPromoteLanIfHealthy(activeGen) }
             return
         }
+        val nowMs = clockMs()
         if (!st.connected) {
-            reconnectNow()
-        } else {
-            // Probe live socket immediately; dead sockets fail fast instead of stalling until heartbeat
-            val ok = bridgeClient?.sendPing() == true || obsClient?.sendHeartbeat() == true || relayClient != null
-            if (!ok) {
+            val recentWakeReconnect = connectLoopJob?.isActive == true &&
+                lastWakeReconnectAtMs != Long.MIN_VALUE &&
+                (nowMs - lastWakeReconnectAtMs) in 0L until 800L
+            if (!recentWakeReconnect) {
+                lastWakeReconnectAtMs = nowMs
                 reconnectNow()
             }
+            return
         }
+        val lastRx = lastRxAtMs
+        if (lastRx >= 0L && (nowMs - lastRx) > wakeStalenessMs) {
+            logInfo("Screen wake / network change detected stale connection (idle=${nowMs - lastRx}ms > ${wakeStalenessMs}ms); forcing reconnectNow()")
+            lastWakeReconnectAtMs = nowMs
+            markSocketDeadAndClose()
+            reconnectNow()
+            return
+        }
+        sendPingWithPongWatchdog(generation.get())
+    }
+
+    fun verifyOrReconnect() {
+        onScreenWakeOrNetworkChanged()
     }
 
     suspend fun scanClassroomHosts(timeoutMs: Long = 900L): List<DiscoveredPublicHost> {
@@ -213,9 +256,12 @@ class ConnectionManager(
         networkDebounceJob?.cancel()
         connectLoopJob?.cancel()
         heartbeatJob?.cancel()
+        pongWatchdogJob?.cancel()
+        pongWatchdogJob = null
         recTickerJob?.cancel()
         presenterTimerJob?.cancel()
         lanRepromoteJob?.cancel()
+        lastRxAtMs = -1L
         closeActiveClients()
         unregisterNetworkCallback()
         _uiState.value = _uiState.value.copy(
@@ -238,8 +284,11 @@ class ConnectionManager(
         val gen = generation.incrementAndGet()
         connectLoopJob?.cancel()
         heartbeatJob?.cancel()
+        pongWatchdogJob?.cancel()
+        pongWatchdogJob = null
         recTickerJob?.cancel()
         lanRepromoteJob?.cancel()
+        lastRxAtMs = -1L
         closeActiveClients()
         _uiState.value = _uiState.value.copy(
             connected = false,
@@ -263,6 +312,77 @@ class ConnectionManager(
         obsClient = null
         relayClient?.close()
         relayClient = null
+    }
+
+    private fun markSocketDeadAndClose() {
+        pongWatchdogJob?.cancel()
+        pongWatchdogJob = null
+        bridgeClient?.closeDead()
+        bridgeClient = null
+        obsClient?.closeDead()
+        obsClient = null
+        relayClient?.closeDead()
+        relayClient = null
+    }
+
+    internal fun sendPingWithPongWatchdog(expectedGen: Int = generation.get()): Boolean {
+        val st = _uiState.value
+        if (!st.serviceRunning || !st.connected || expectedGen != generation.get()) return false
+
+        val bridge = bridgeClient
+        if (bridge != null) {
+            val rxSeqBefore = rxSeq.get()
+            val rxAtBefore = lastRxAtMs
+            val ok = bridge.sendPing()
+            if (!ok) {
+                logWarn("Host Bridge ping send failed; closing dead socket and reconnecting")
+                markSocketDeadAndClose()
+                reconnectNow()
+                return false
+            }
+            schedulePongWatchdog(expectedGen, rxSeqBefore, rxAtBefore)
+            return true
+        }
+
+        val obs = obsClient
+        if (obs != null) {
+            val rxSeqBefore = rxSeq.get()
+            val rxAtBefore = lastRxAtMs
+            val ok = obs.sendHeartbeat()
+            if (!ok) {
+                logWarn("OBS WebSocket heartbeat send failed; closing dead socket and reconnecting")
+                markSocketDeadAndClose()
+                reconnectNow()
+                return false
+            }
+            schedulePongWatchdog(expectedGen, rxSeqBefore, rxAtBefore)
+            return true
+        }
+
+        val relay = relayClient
+        if (relay != null) {
+            relay.sendSyncRequest()
+            return true
+        }
+
+        reconnectNow()
+        return false
+    }
+
+    private fun schedulePongWatchdog(expectedGen: Int, rxSeqBefore: Long, rxAtBefore: Long) {
+        if (rxSeq.get() > rxSeqBefore || lastRxAtMs > rxAtBefore) return
+        pongWatchdogJob?.cancel()
+        pongWatchdogJob = scope.launch {
+            delay(pongTimeoutMs)
+            if (expectedGen != generation.get()) return@launch
+            val cur = _uiState.value
+            if (!cur.serviceRunning || !cur.connected) return@launch
+            if (rxSeq.get() <= rxSeqBefore && lastRxAtMs <= rxAtBefore) {
+                logWarn("Pong watchdog expired after ${pongTimeoutMs}ms without frame/pong; marking socket dead and reconnecting")
+                markSocketDeadAndClose()
+                reconnectNow()
+            }
+        }
     }
 
     private suspend fun runConnectLoop(gen: Int) {
@@ -299,7 +419,7 @@ class ConnectionManager(
                         prev.copy(hostAddress = shift.first, bridgePort = shift.second)
                     }
                     effectiveCfg = configStore.current
-                    Log.i("PresenterSync", "Auto-followed HostUuid DHCP shift -> ${shift.first}:${shift.second}")
+                    logInfo("Auto-followed HostUuid DHCP shift -> ${shift.first}:${shift.second}")
                 }
             }
 
@@ -313,7 +433,7 @@ class ConnectionManager(
                 if (gen != generation.get()) return
                 val elapsedMs = System.currentTimeMillis() - lanCycleStartMs
                 if (hasWanFallback && FailoverPolicy.shouldFallbackToWan(effectiveCfg, elapsedMs, failoverBudgetMs)) {
-                    Log.i("PresenterSync", "LAN probe budget (${elapsedMs}ms) reached; switching to WAN Relay")
+                    logInfo("LAN probe budget (${elapsedMs}ms) reached; switching to WAN Relay")
                     break
                 }
 
@@ -330,8 +450,18 @@ class ConnectionManager(
                 var bridgeAuthRejected = false
                 if (effectiveCfg.sessionToken.isNotBlank() || effectiveCfg.sessionPairingCode.isNotBlank()) {
                     val bridgeUrl = "ws://$resolvedHost:${effectiveCfg.bridgePort}/ws"
-                    Log.i("PresenterSync", "Attempting Host Bridge WebSocket: $bridgeUrl (hasToken=${effectiveCfg.sessionToken.isNotBlank()})")
-                    when (attemptBridgeSession(gen, effectiveCfg, "${cand.host}:${effectiveCfg.bridgePort}", bridgeUrl)) {
+                    logInfo("Attempting Host Bridge WebSocket: $bridgeUrl (hasToken=${effectiveCfg.sessionToken.isNotBlank()})")
+                    var bridgeAttempt = attemptBridgeSession(gen, effectiveCfg, "${cand.host}:${effectiveCfg.bridgePort}", bridgeUrl)
+                    if (bridgeAttempt.outcome == SessionOutcome.AUTH_FAILED &&
+                        gen == generation.get() &&
+                        shouldRetryBridgeAuthWithPairingCode(effectiveCfg, bridgeAttempt.authErrorReason)
+                    ) {
+                        logInfo("Host Bridge rejected stale sessionToken (${bridgeAttempt.authErrorReason}); retrying auth with saved sessionPairingCode")
+                        configStore.update { prev -> prev.copy(sessionToken = "") }
+                        effectiveCfg = configStore.current
+                        bridgeAttempt = attemptBridgeSession(gen, effectiveCfg, "${cand.host}:${effectiveCfg.bridgePort}", bridgeUrl)
+                    }
+                    when (bridgeAttempt.outcome) {
                         SessionOutcome.CANCELLED -> {
                             succeededOrStopped = true
                             break
@@ -393,13 +523,29 @@ class ConnectionManager(
 
     private enum class SessionOutcome { DISCONNECTED, AUTH_FAILED, CANCELLED }
 
+    private data class BridgeAttemptResult(
+        val outcome: SessionOutcome,
+        val authErrorReason: String = ""
+    )
+
+    internal fun isExplicitBridgeRevocation(reason: String): Boolean {
+        val low = reason.lowercase()
+        return low.contains("unpaired") || low.contains("revoked")
+    }
+
+    internal fun shouldRetryBridgeAuthWithPairingCode(cfg: RemoteConfig, reason: String): Boolean {
+        return cfg.sessionToken.isNotBlank() &&
+            cfg.sessionPairingCode.isNotBlank() &&
+            !isExplicitBridgeRevocation(reason)
+    }
+
     private suspend fun attemptBridgeSession(
         gen: Int,
         cfg: RemoteConfig,
         displayRaw: String,
         wsUrl: String
-    ): SessionOutcome {
-        val done = kotlinx.coroutines.CompletableDeferred<SessionOutcome>()
+    ): BridgeAttemptResult {
+        val done = kotlinx.coroutines.CompletableDeferred<BridgeAttemptResult>()
         val devId = SessionPairingClient.getOrCreateDeviceId(context)
         val devName = android.os.Build.MODEL.orEmpty().trim().ifEmpty { "Smart Board" }
         val client = HostBridgeClient(
@@ -412,6 +558,7 @@ class ConnectionManager(
             callbacks = object : HostBridgeCallbacks {
                 override fun onBridgeConnected(hostName: String) {
                     if (gen != generation.get()) return
+                    markRxActivity()
                     _uiState.value = _uiState.value.copy(
                         connected = true,
                         connStatus = ConnStatus.CONNECTED,
@@ -420,6 +567,19 @@ class ConnectionManager(
                         usingBridge = true
                     )
                     startHeartbeat(gen, cfg.heartbeatSeconds)
+                }
+
+                override fun onBridgeFrameReceived() {
+                    if (gen == generation.get()) {
+                        markRxActivity()
+                    }
+                }
+
+                override fun onBridgeSessionTokenRefreshed(sessionToken: String) {
+                    if (gen != generation.get() || sessionToken.isBlank()) return
+                    if (configStore.current.sessionToken != sessionToken) {
+                        configStore.update { it.copy(sessionToken = sessionToken) }
+                    }
                 }
 
                 override fun onBridgeHostUuidReceived(hostUuid: String) {
@@ -434,14 +594,14 @@ class ConnectionManager(
                     if (hostUuid.isNotBlank() && !configStore.current.pairedHostUuid.equals(hostUuid, ignoreCase = true)) {
                         configStore.update { it.copy(pairedHostUuid = hostUuid) }
                     }
-                    Log.i("PresenterSync", "Received host sync_resync ($reason)")
+                    logInfo("Received host sync_resync ($reason)")
                 }
 
                 override fun onBridgeAuthFailed(reason: String) {
-                    if (gen == generation.get()) {
+                    if (gen == generation.get() && !shouldRetryBridgeAuthWithPairingCode(cfg, reason)) {
                         _events.tryEmit(RemoteEvent.ToastMessage("Host Bridge auth failed: $reason"))
                     }
-                    done.complete(SessionOutcome.AUTH_FAILED)
+                    done.complete(BridgeAttemptResult(SessionOutcome.AUTH_FAILED, reason))
                 }
 
                 override fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String) {
@@ -465,7 +625,8 @@ class ConnectionManager(
                 }
 
                 override fun onBridgeDisconnected(reason: String) {
-                    Log.w("PresenterSync", "Host Bridge disconnected ($wsUrl): $reason")
+                    logWarn("Host Bridge disconnected ($wsUrl): $reason")
+                    pongWatchdogJob?.cancel()
                     heartbeatJob?.cancel()
                     recTickerJob?.cancel()
                     presenterTimerJob?.cancel()
@@ -484,7 +645,7 @@ class ConnectionManager(
                             scenes = emptyList()
                         )
                     }
-                    done.complete(SessionOutcome.DISCONNECTED)
+                    done.complete(BridgeAttemptResult(SessionOutcome.DISCONNECTED))
                 }
             }
         )
@@ -494,6 +655,7 @@ class ConnectionManager(
         return try {
             done.await()
         } finally {
+            pongWatchdogJob?.cancel()
             heartbeatJob?.cancel()
             client.close()
             if (bridgeClient === client) bridgeClient = null
@@ -515,6 +677,7 @@ class ConnectionManager(
             callbacks = object : ObsSessionCallbacks {
                 override fun onIdentified() {
                     if (gen != generation.get()) return
+                    markRxActivity()
                     _uiState.value = _uiState.value.copy(
                         connected = true,
                         connStatus = ConnStatus.CONNECTED,
@@ -522,6 +685,12 @@ class ConnectionManager(
                         usingRelayFallback = false
                     )
                     startHeartbeat(gen, cfg.heartbeatSeconds)
+                }
+
+                override fun onFrameReceived() {
+                    if (gen == generation.get()) {
+                        markRxActivity()
+                    }
                 }
 
                 override fun onAuthFailed() {
@@ -563,6 +732,7 @@ class ConnectionManager(
                 }
 
                 override fun onDisconnected(reason: String) {
+                    pongWatchdogJob?.cancel()
                     heartbeatJob?.cancel()
                     if (gen == generation.get()) {
                         val st = _uiState.value
@@ -588,6 +758,7 @@ class ConnectionManager(
         return try {
             done.await()
         } finally {
+            pongWatchdogJob?.cancel()
             heartbeatJob?.cancel()
             client.close()
             if (obsClient === client) obsClient = null
@@ -609,6 +780,7 @@ class ConnectionManager(
             callbacks = object : RelaySessionCallbacks {
                 override fun onRelayConnected() {
                     if (gen != generation.get()) return
+                    markRxActivity()
                     _uiState.value = _uiState.value.copy(
                         connected = true,
                         connStatus = ConnStatus.CONNECTED,
@@ -618,6 +790,12 @@ class ConnectionManager(
                     startHeartbeat(gen, cfg.heartbeatSeconds)
                     if (FailoverPolicy.canRepromoteToLan(cfg, isFallback)) {
                         startLanRepromotionMonitor(gen)
+                    }
+                }
+
+                override fun onFrameReceived() {
+                    if (gen == generation.get()) {
+                        markRxActivity()
                     }
                 }
 
@@ -685,6 +863,7 @@ class ConnectionManager(
                 }
 
                 override fun onRelayDisconnected(reason: String) {
+                    pongWatchdogJob?.cancel()
                     heartbeatJob?.cancel()
                     presenterTimerJob?.cancel()
                     if (gen == generation.get() && _uiState.value.connStatus != ConnStatus.AUTH_FAILED) {
@@ -712,6 +891,7 @@ class ConnectionManager(
         return try {
             done.await()
         } finally {
+            pongWatchdogJob?.cancel()
             heartbeatJob?.cancel()
             lanRepromoteJob?.cancel()
             client.close()
@@ -770,7 +950,7 @@ class ConnectionManager(
                 expectedHostUuid = cfg.pairedHostUuid
             )
             if (healthy && gen == generation.get()) {
-                Log.i("PresenterSync", "LAN Host Bridge recovered ($host:${cfg.bridgePort}); promoting back from WAN Relay")
+                logInfo("LAN Host Bridge recovered ($host:${cfg.bridgePort}); promoting back from WAN Relay")
                 reconnectNow()
                 return true
             }
@@ -778,16 +958,20 @@ class ConnectionManager(
         return false
     }
 
+    internal var heartbeatIntervalOverrideMs: Long = 0L
+
     private fun startHeartbeat(gen: Int, heartbeatSeconds: Int) {
         heartbeatJob?.cancel()
-        val intervalMs = (heartbeatSeconds.coerceIn(10, 3600) * 1000L)
+        val intervalMs = if (heartbeatIntervalOverrideMs > 0L) {
+            heartbeatIntervalOverrideMs
+        } else {
+            (heartbeatSeconds.coerceIn(10, 3600) * 1000L)
+        }
         heartbeatJob = scope.launch {
             while (gen == generation.get()) {
                 delay(intervalMs)
                 if (gen != generation.get()) break
-                bridgeClient?.sendPing()
-                obsClient?.sendHeartbeat()
-                relayClient?.sendSyncRequest()
+                sendPingWithPongWatchdog(gen)
             }
         }
     }
@@ -1051,7 +1235,7 @@ class ConnectionManager(
     fun applyDeepLinkAsync(payload: ParsedConnectionPayload) {
         scope.launch {
             val msg = applyDeepLinkPayload(payload)
-            Log.i("PresenterSync", "Deep link applied: $msg")
+            logInfo("Deep link applied: $msg")
             _events.tryEmit(RemoteEvent.ToastMessage(msg))
         }
     }
@@ -1268,5 +1452,10 @@ class ConnectionManager(
         } catch (_: Exception) {
         }
         networkCallbackRegistered = false
+    }
+
+    companion object {
+        const val PONG_TIMEOUT_MS = 2500L
+        const val WAKE_STALENESS_MS = 25_000L
     }
 }

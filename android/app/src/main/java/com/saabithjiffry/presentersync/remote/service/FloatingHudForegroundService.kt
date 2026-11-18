@@ -46,7 +46,7 @@ class FloatingHudForegroundService : LifecycleService() {
             if (::hudSnakeOverlayManager.isInitialized) {
                 hudSnakeOverlayManager.onDisplayConfigurationChanged()
             }
-            app.connectionManager.verifyOrReconnect()
+            app.connectionManager.onScreenWakeOrNetworkChanged()
         }
     }
 

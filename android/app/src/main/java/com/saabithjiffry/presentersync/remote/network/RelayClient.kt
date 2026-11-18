@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 interface RelaySessionCallbacks {
     fun onRelayConnected()
+    fun onFrameReceived() {}
     fun onRelayAuthFailed()
     fun onRelayMuteState(muted: Boolean)
     fun onRelayDirectorState(
@@ -60,6 +61,7 @@ class RelayClient(
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (closed.get()) return
+                callbacks.onFrameReceived()
                 handleRawMessage(text)
             }
 
@@ -189,6 +191,15 @@ class RelayClient(
         } catch (_: Exception) {
             false
         }
+    }
+
+    fun closeDead() {
+        if (closed.getAndSet(true)) return
+        try {
+            webSocket?.cancel()
+        } catch (_: Exception) {
+        }
+        webSocket = null
     }
 
     fun close() {

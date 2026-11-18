@@ -1614,6 +1614,18 @@ SyncTelemetryBackendsFromConfig(cfg, state) {
         UpdateZoomMonitorTimer(cfg, state)
     if (state.HasOwnProp("relayTimerFn"))
         UpdateHostInternetRelay(cfg, state)
+    if (cfg.HasOwnProp("EnableRemoteConnections")) {
+        if (!cfg.EnableRemoteConnections) {
+            StopHostCompanionBridge()
+            if (state.HasOwnProp("relayWs") && IsObject(state.relayWs)) {
+                try state.relayWs.shutdown()
+                state.relayWs := ""
+            }
+            state.relayConnected := false
+        } else if (IsSet(StartHostCompanionBridge) && (!IsSet(g_HostCompanionBridge) || !IsObject(g_HostCompanionBridge) || !g_HostCompanionBridge.running)) {
+            StartHostCompanionBridge(cfg, state, cfg.HasOwnProp("BridgePort") ? cfg.BridgePort : 4456)
+        }
+    }
     if (state.HasOwnProp("MicGui") && IsObject(state.MicGui)) {
         RefreshHudAppearance(cfg, state)
         UpdateHudVisibility(cfg, state)
@@ -1781,6 +1793,10 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.RemoteNetworkMode := rMode
             cfg.Write("Settings", "RemoteNetworkMode", rMode)
         }
+        if vals.HasOwnProp("EnableRemoteConnections") {
+            cfg.EnableRemoteConnections := !!vals.EnableRemoteConnections
+            cfg.WriteBool("Settings", "EnableRemoteConnections", cfg.EnableRemoteConnections)
+        }
 
         ; Uniform hotkey validation & persistence (Tabs 1, 2, 3, 6)
         for hkSpec in [
@@ -1800,7 +1816,8 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             { prop: "ZoomHotkey", key: "ZoomHotkey", label: "Toggle Conf Monitor" },
             { prop: "IndHotkey", key: "IndHotkey", label: "Show / Hide HUD" },
             { prop: "SuspendHotkey", key: "SuspendHotkey", label: "Suspend All Hotkeys" },
-            { prop: "ExitHotkey", key: "ExitHotkey", label: "Exit Application" }
+            { prop: "ExitHotkey", key: "ExitHotkey", label: "Exit Application" },
+            { prop: "RemoteInfoHotkey", key: "RemoteInfoHotkey", label: "Remote Setup & QR Info" }
         ] {
             if vals.HasOwnProp(hkSpec.prop) {
                 rawHk := Trim(String(vals.%hkSpec.prop%))
@@ -2176,6 +2193,9 @@ ShowControlCenterWindow(cfg, state := "", *) {
     btnRemDetails.OnEvent("Click", (*) => ShowRemoteCompanionInfo(cfg, state))
     btnCloseRem.OnEvent("Click", (*) => PromptCloseRemoteCompanion(cfg, state))
 
+    chkEnableRemoteConn := ccGui.Add("Checkbox", "x32 y316 w648 h24" (cfg.EnableRemoteConnections ? " Checked" : ""), "Allow Remote Companion Connections (Uncheck for Standalone Cutoff Mode)")
+    Theme.RegisterControl(ccGui, chkEnableRemoteConn, "Checkbox", "tabText")
+
     ; ==========================================================================
     ; TAB 6: PROFILES, SHORTCUTS & SYSTEM
     ; ==========================================================================
@@ -2208,6 +2228,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y174 w160", "Show / Hide HUD:"), "Text", "tabText")
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y210 w180", "Suspend All Hotkeys:"), "Text", "tabText")
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y210 w160", "Exit Application:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y246 w180", "Remote Setup / QR:"), "Text", "tabText")
 
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
     edHkPpt := ccGui.Add("Edit", "x214 y134 w134 h26", cfg.PptHotkey)
@@ -2216,20 +2237,21 @@ ShowControlCenterWindow(cfg, state := "", *) {
     edHkInd := ccGui.Add("Edit", "x534 y170 w146 h26", cfg.IndHotkey)
     edHkSusp := ccGui.Add("Edit", "x214 y206 w134 h26", cfg.SuspendHotkey)
     edHkExit := ccGui.Add("Edit", "x534 y206 w146 h26", cfg.ExitHotkey)
-    for hkEd in [edHkPpt, edHkWs, edHkZoom, edHkInd, edHkSusp, edHkExit]
+    edHkRemoteInfo := ccGui.Add("Edit", "x214 y242 w134 h26", cfg.RemoteInfoHotkey)
+    for hkEd in [edHkPpt, edHkWs, edHkZoom, edHkInd, edHkSusp, edHkExit, edHkRemoteInfo]
         Theme.RegisterControl(ccGui, hkEd, "Edit")
 
-    chkStartup := ccGui.Add("Checkbox", "x32 y256 w380 h24" (cfg.StartWithWindows ? " Checked" : ""), "Start PresenterSync Automatically with Windows (Default: OFF)")
+    chkStartup := ccGui.Add("Checkbox", "x32 y286 w380 h24" (cfg.StartWithWindows ? " Checked" : ""), "Start PresenterSync Automatically with Windows (Default: OFF)")
     Theme.RegisterControl(ccGui, chkStartup, "Checkbox", "tabText")
 
-    chkAutoUpd := ccGui.Add("Checkbox", "x32 y288 w380 h24" (cfg.AutoCheckUpdates ? " Checked" : ""), "Auto-check GitHub updates daily on startup")
+    chkAutoUpd := ccGui.Add("Checkbox", "x32 y318 w380 h24" (cfg.AutoCheckUpdates ? " Checked" : ""), "Auto-check GitHub updates daily on startup")
     Theme.RegisterControl(ccGui, chkAutoUpd, "Checkbox", "tabText")
 
-    btnCheckUpd := ccGui.Add("Button", "x430 y252 w250 h30", "Check for GitHub Updates...")
+    btnCheckUpd := ccGui.Add("Button", "x430 y282 w250 h30", "Check for GitHub Updates...")
     Theme.RegisterControl(ccGui, btnCheckUpd, "Button", "tabButton")
     btnCheckUpd.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))
 
-    btnExportDiagCC := ccGui.Add("Button", "x430 y288 w250 h30", "Export Sanitized Diagnostics...")
+    btnExportDiagCC := ccGui.Add("Button", "x430 y318 w250 h30", "Export Sanitized Diagnostics...")
     Theme.RegisterControl(ccGui, btnExportDiagCC, "Button", "tabButton")
     btnExportDiagCC.OnEvent("Click", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
 
@@ -2312,12 +2334,14 @@ ShowControlCenterWindow(cfg, state := "", *) {
         chkClickThru.Value := cfg.HudClickThrough ? 1 : 0
         ddlRemoteNet.Choose((cfg.RemoteNetworkMode = "Internet") ? 2 : 1)
         edPairCode.Value := cfg.InternetPairingCode
+        chkEnableRemoteConn.Value := cfg.EnableRemoteConnections ? 1 : 0
         edHkPpt.Value := cfg.PptHotkey
         edHkWs.Value := cfg.WsHotkey
         edHkZoom.Value := cfg.ZoomHotkey
         edHkInd.Value := cfg.IndHotkey
         edHkSusp.Value := cfg.SuspendHotkey
         edHkExit.Value := cfg.ExitHotkey
+        edHkRemoteInfo.Value := cfg.RemoteInfoHotkey
         chkStartup.Value := cfg.StartWithWindows ? 1 : 0
         chkAutoUpd.Value := cfg.AutoCheckUpdates ? 1 : 0
         profList := cfg.GetProfileNames()
@@ -2406,12 +2430,14 @@ ShowControlCenterWindow(cfg, state := "", *) {
             HudAutoDodge: chkAutoDodge.Value,
             HudClickThrough: chkClickThru.Value,
             RemoteNetworkMode: (ddlRemoteNet.Value == 2) ? "Internet" : "LAN",
+            EnableRemoteConnections: chkEnableRemoteConn.Value,
             PptHotkey: edHkPpt.Value,
             WsHotkey: edHkWs.Value,
             ZoomHotkey: edHkZoom.Value,
             IndHotkey: edHkInd.Value,
             SuspendHotkey: edHkSusp.Value,
             ExitHotkey: edHkExit.Value,
+            RemoteInfoHotkey: edHkRemoteInfo.Value,
             StartWithWindows: chkStartup.Value,
             AutoCheckUpdates: chkAutoUpd.Value
         }

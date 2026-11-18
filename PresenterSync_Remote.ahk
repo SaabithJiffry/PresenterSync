@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.0.4
+; Version: 7.0.5
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.0.4.0
+;@Ahk2Exe-SetVersion 7.0.5.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -318,6 +318,12 @@ class RemoteState {
     reconnectTimerFn := ""
     heartbeatTimerFn := ""
     lanRepromoteTimerFn := ""
+    _pongWatchdogTimerFn := ""
+    lastRxTick := -1
+    rxSeq := 0
+    connGen := 0
+    _lastWakeReconnectTick := 0
+    isSystemSuspending := false
     lanFailoverBudgetMs := 5500
     lanRepromoteIntervalMs := 12000
     discoverPort := 4457
@@ -430,6 +436,7 @@ InitRemoteHUD(AppConfig, AppState)
 BuildRemoteTrayMenu(AppConfig, AppState)
 RegisterRemotePointerHotkey(AppConfig, AppState)
 RegisterRemoteAppHotkeys(AppConfig, AppState)
+OnMessage(0x0218, OnRemotePowerBroadcast.Bind(AppConfig, AppState))
 try Hotkey("!^+s", (*) => HudSnake.Toggle(AppConfig, AppState), "On")
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync_Remote.exe")
 
@@ -494,6 +501,7 @@ GetRemoteEffectiveAlpha(state) {
 ConnectToRemoteOBS(cfg, state) {
     SetTimer state.reconnectTimerFn, 0
     SetTimer state.heartbeatTimerFn, 0
+    CancelRemotePongWatchdog(state)
     if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
         SetTimer state.lanRepromoteTimerFn, 0
 
@@ -505,14 +513,17 @@ ConnectToRemoteOBS(cfg, state) {
         return
     }
 
+    state.connGen += 1
     state.connStatus := "searching"
     state._sawAuthChallenge := false
     state.activeHost := ""
     state.usingBridge := false
 
     if IsObject(state.obsWs) {
-        try state.obsWs.shutdown()
+        oldWs := state.obsWs
         state.obsWs := ""
+        oldWs._psClosed := true
+        try oldWs.shutdown()
     }
 
     if (IsRemoteUsingInternetChannel(cfg, state)) {
@@ -540,6 +551,7 @@ ConnectToRemoteOBS(cfg, state) {
             state.obsConnected := true
             state.connStatus := "connected"
             state.activeHost := candidate.raw
+            MarkRemoteRxActivity(state)
             keepAliveMs := Max(10000, cfg.HeartbeatSeconds * 1000)
             SetTimer state.heartbeatTimerFn, keepAliveMs
             if (state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback
@@ -648,8 +660,10 @@ TryPromoteRemoteWanToLan(cfg, state) {
             state.candidates := BuildRemoteLanCandidateQueue(cfg)
             state.candidateIndex := 1
             if IsObject(state.obsWs) {
-                try state.obsWs.shutdown()
+                oldWs := state.obsWs
                 state.obsWs := ""
+                oldWs._psClosed := true
+                try oldWs.shutdown()
             }
             state.obsConnected := false
             state.NotifyTrayStatus()
@@ -727,6 +741,8 @@ FailoverToNextCandidate(cfg, state) {
 }
 
 HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
+    if (IsObject(ws) && ws.HasOwnProp("_psClosed") && ws._psClosed)
+        return
     if IsObject(ws)
         try ws.shutdown()
     if (IsObject(ws) && IsObject(state.obsWs) && state.obsWs != ws)
@@ -734,6 +750,8 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     if (state.obsWs == ws)
         state.obsWs := ""
 
+    CancelRemotePongWatchdog(state)
+    state.connGen += 1
     wasConnected := state.obsConnected
     state.obsConnected := false
     state.usingBridge := false
@@ -780,8 +798,12 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
 }
 
 HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
+    if (IsObject(ws) && ws.HasOwnProp("_psClosed") && ws._psClosed)
+        return
     if (IsObject(ws) && IsObject(state.obsWs) && ws != state.obsWs)
         return
+    MarkRemoteRxActivity(state)
+    CancelRemotePongWatchdog(state)
     msg := (Type(rawMsg) == "Buffer") ? StrGet(rawMsg, "UTF-8") : String(rawMsg)
 
     if (IsObject(candidate) && candidate.HasOwnProp("isBridge") && candidate.isBridge) {
@@ -794,6 +816,10 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             if (ev.HasOwnProp("hostUuid") && ev.hostUuid != "" && (!cfg.HasOwnProp("PairedHostUuid") || cfg.PairedHostUuid != ev.hostUuid)) {
                 cfg.PairedHostUuid := ev.hostUuid
                 try cfg.Write("Connection", "PairedHostUuid", ev.hostUuid)
+            }
+            if (ev.HasOwnProp("sessionToken") && ev.sessionToken != "" && cfg.SessionToken != ev.sessionToken) {
+                cfg.SessionToken := ev.sessionToken
+                try cfg.Write("Connection", "SessionToken", ev.sessionToken)
             }
             state.obsConnected := true
             state.usingBridge := true
@@ -818,7 +844,27 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             }
             state.NotifyTrayStatus()
         } else if (ev.kind = "auth_error") {
-            isMissingPw := (cfg.ObsPassword = "" && InStr(StrLower(ev.reason), "password"))
+            reasonLow := StrLower(ev.reason)
+            isExplicitRevoke := (InStr(reasonLow, "unpaired") || InStr(reasonLow, "revoked"))
+            if (!isExplicitRevoke && cfg.SessionToken != "" && cfg.SessionPairingCode != "") {
+                cfg.SessionToken := ""
+                try cfg.Write("Connection", "SessionToken", "")
+                if (IsSet(DiagnosticLogger))
+                    try DiagnosticLogger.RecordBreadcrumb("Remote", "BridgeStaleTokenFallback", "Retrying auth with saved SessionPairingCode")
+                state._sawAuthChallenge := false
+                state.obsConnected := false
+                state.usingBridge := false
+                SetTimer state.heartbeatTimerFn, 0
+                if IsObject(ws) {
+                    ws._psClosed := true
+                    SafeCloseWebSocketDeferred(ws)
+                }
+                if (state.obsWs == ws)
+                    state.obsWs := ""
+                SetTimer state.reconnectTimerFn, -100
+                return
+            }
+            isMissingPw := (cfg.ObsPassword = "" && InStr(reasonLow, "password"))
             state.connStatus := isMissingPw ? "pw_required" : "auth_failed"
             state._sawAuthChallenge := false
             state.obsConnected := false
@@ -826,8 +872,10 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             SetTimer state.reconnectTimerFn, 0
             SetTimer state.heartbeatTimerFn, 0
             SetTimer state.breathTimerFn, 0
-            if IsObject(ws)
+            if IsObject(ws) {
+                ws._psClosed := true
                 SafeCloseWebSocketDeferred(ws)
+            }
             if (state.obsWs == ws)
                 state.obsWs := ""
             if (IsObject(state.MicGui)) {
@@ -1047,11 +1095,134 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
     }
 }
 
+CancelRemotePongWatchdog(state) {
+    if (IsObject(state) && state.HasOwnProp("_pongWatchdogTimerFn") && IsObject(state._pongWatchdogTimerFn)) {
+        try SetTimer(state._pongWatchdogTimerFn, 0)
+        state._pongWatchdogTimerFn := ""
+    }
+}
+
+ForceRemoteReconnectNow(cfg, state, reason := "wake") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return
+    if (IsSet(DiagnosticLogger))
+        try DiagnosticLogger.RecordBreadcrumb("Remote", "ForceReconnectNow", "reason=" reason)
+    SetTimer state.reconnectTimerFn, 0
+    SetTimer state.heartbeatTimerFn, 0
+    CancelRemotePongWatchdog(state)
+    if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
+        SetTimer state.lanRepromoteTimerFn, 0
+    if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
+        SetTimer state.presenterTickFn, 0
+    SetTimer state.breathTimerFn, 0
+    state.animSeq += 1
+    state.connGen += 1
+    state._lastWakeReconnectTick := A_TickCount
+
+    if IsObject(state.obsWs) {
+        oldWs := state.obsWs
+        state.obsWs := ""
+        oldWs._psClosed := true
+        try oldWs.shutdown()
+    }
+    state.obsConnected := false
+    state.usingBridge := false
+    state.usingRelayFallback := false
+    state.activeHost := ""
+    state.connStatus := "searching"
+    state.candidateIndex := 1
+    state._lanCycleStartTick := 0
+    if (IsObject(state.MicGui)) {
+        state.currentAlpha := GetRemoteEffectiveAlpha(state)
+        ApplyMicAppearance(cfg, state)
+    }
+    state.NotifyTrayStatus()
+    SetTimer state.reconnectTimerFn, -30
+}
+
+OnRemotePongWatchdogTimeout(cfg, state, expectedGen, pingRxSeq, pingRxTick) {
+    if (!IsObject(state))
+        return
+    state._pongWatchdogTimerFn := ""
+    if (!state.obsConnected || state.connGen != expectedGen)
+        return
+    if (IsPongWatchdogExpired(state, pingRxSeq, pingRxTick)) {
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Remote", "PongWatchdogTimeout", "idle=" (A_TickCount - state.lastRxTick) "ms")
+        ForceRemoteReconnectNow(cfg, state, "pong_timeout")
+    }
+}
+
+SendRemotePingWithWatchdog(cfg, state, channelKind := "bridge") {
+    if (!state.obsConnected || !IsObject(state.obsWs))
+        return false
+    expectedGen := state.connGen
+    pingRxSeq := state.rxSeq
+    pingRxTick := state.lastRxTick
+    ok := (channelKind = "bridge")
+        ? TrySendWsText(state.obsWs, BuildRemoteBridgePingJson())
+        : SendObsRequest(state.obsWs, "GetVersion", "KeepAlive")
+    if (!ok) {
+        ForceRemoteReconnectNow(cfg, state, "ping_send_failed")
+        return false
+    }
+    CancelRemotePongWatchdog(state)
+    state._pongWatchdogTimerFn := OnRemotePongWatchdogTimeout.Bind(cfg, state, expectedGen, pingRxSeq, pingRxTick)
+    SetTimer state._pongWatchdogTimerFn, -RemoteBridgeConstants.PONG_TIMEOUT_MS
+    return true
+}
+
+VerifyOrReconnectRemote(cfg, state, reason := "wake") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return
+    if (state.connStatus = "auth_failed" || state.connStatus = "pw_required")
+        return
+    if (!state.obsConnected || !IsObject(state.obsWs)) {
+        if ((A_TickCount - state._lastWakeReconnectTick) >= 800)
+            ForceRemoteReconnectNow(cfg, state, reason)
+        return
+    }
+    if (ShouldForceWakeReconnect(state)) {
+        ForceRemoteReconnectNow(cfg, state, reason "_stale")
+        return
+    }
+    if (IsRemoteUsingBridgeChannel(cfg, state)) {
+        SendRemotePingWithWatchdog(cfg, state, "bridge")
+    } else if (IsRemoteUsingInternetChannel(cfg, state)) {
+        topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+        mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+        PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
+    } else {
+        SendRemotePingWithWatchdog(cfg, state, "obs")
+    }
+}
+
+HandleRemotePowerEvent(cfg, state, wParam, lParam := 0) {
+    wp := Integer(wParam)
+    if (wp == 4) { ; PBT_APMSUSPEND
+        if (IsObject(state))
+            state.isSystemSuspending := true
+        return "suspend"
+    }
+    if (wp == 7 || wp == 18) { ; PBT_APMRESUMESUSPEND / PBT_APMRESUMEAUTOMATIC
+        if (IsObject(state))
+            state.isSystemSuspending := false
+        VerifyOrReconnectRemote(cfg, state, wp == 18 ? "power_resume_auto" : "power_resume")
+        return "resume"
+    }
+    return ""
+}
+
+OnRemotePowerBroadcast(cfg, state, wParam, lParam, msg, hwnd) {
+    HandleRemotePowerEvent(cfg, state, wParam, lParam)
+}
+
 RemoteHeartbeatTick(cfg, state) {
     if (!state.obsConnected || !IsObject(state.obsWs))
         return
     if (IsRemoteUsingBridgeChannel(cfg, state)) {
-        TrySendWsText(state.obsWs, BuildRemoteBridgePingJson())
+        SendRemotePingWithWatchdog(cfg, state, "bridge")
         return
     }
     if (IsRemoteUsingInternetChannel(cfg, state)) {
@@ -1061,8 +1232,8 @@ RemoteHeartbeatTick(cfg, state) {
         PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
         return
     }
-    ; Lightweight request to keep TCP session alive
-    SendObsRequest(state.obsWs, "GetVersion", "KeepAlive")
+    ; Lightweight request to keep TCP session alive + verify response within 2500ms
+    SendRemotePingWithWatchdog(cfg, state, "obs")
 }
 
 SyncRemoteMuteState(cfg, state, newMuted) {
@@ -2396,11 +2567,15 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         ; Disconnect existing and trigger fresh failover connection
         SetTimer state.reconnectTimerFn, 0
         SetTimer state.heartbeatTimerFn, 0
+        CancelRemotePongWatchdog(state)
         SetTimer state.breathTimerFn, 0
         state.animSeq += 1
+        state.connGen += 1
         if IsObject(state.obsWs) {
-            try state.obsWs.shutdown()
+            oldWs := state.obsWs
             state.obsWs := ""
+            oldWs._psClosed := true
+            try oldWs.shutdown()
         }
         state.obsConnected := false
         state.usingBridge := false

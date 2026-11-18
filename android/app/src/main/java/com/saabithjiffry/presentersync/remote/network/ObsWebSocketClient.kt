@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 interface ObsSessionCallbacks {
     fun onIdentified()
+    fun onFrameReceived() {}
     fun onAuthFailed()
     fun onMuteStateChanged(muted: Boolean)
     fun onMicError()
@@ -34,6 +35,7 @@ class ObsWebSocketClient(
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (closed.get()) return
+                callbacks.onFrameReceived()
                 handleRawMessage(webSocket, text)
             }
 
@@ -182,6 +184,15 @@ class ObsWebSocketClient(
         } catch (_: Exception) {
             false
         }
+    }
+
+    fun closeDead() {
+        if (closed.getAndSet(true)) return
+        try {
+            webSocket?.cancel()
+        } catch (_: Exception) {
+        }
+        webSocket = null
     }
 
     fun close() {

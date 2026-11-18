@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.0.4"
+    static APP_VERSION := "7.0.5"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1260,6 +1260,8 @@ class Config {
     IndHotkey := "^+F12"
     ExitHotkey := "!+F12"
     SuspendHotkey := "^!+F12"
+    RemoteInfoHotkey := "None"
+    EnableRemoteConnections := true
     HwMuteHotkey := "b"
     HwTransitionHotkey := "None"
 
@@ -1437,6 +1439,8 @@ class Config {
         this.ZoomHotkey := this.Read("Settings", "ZoomHotkey", "^!F12")
         this.IndHotkey := this.Read("Settings", "IndHotkey", "^+F12")
         this.ExitHotkey := this.Read("Settings", "ExitHotkey", "!+F12")
+        this.RemoteInfoHotkey := this.Read("Settings", "RemoteInfoHotkey", "None")
+        this.EnableRemoteConnections := this.ReadBool("Settings", "EnableRemoteConnections", true)
         this.SuspendHotkey := this.Read("Settings", "SuspendHotkey", "^!+F12")
         this.HwMuteHotkey := this.Read("Settings", "HwMuteHotkey", "b")
         this.HwTransitionHotkey := Trim(this.Read("Settings", "HwTransitionHotkey", ""))
@@ -1602,6 +1606,8 @@ class Config {
             { sec: "Settings", key: "OpacityLevel", prop: "OpacityLevel", kind: "int" },
             { sec: "Settings", key: "IndicatorScale", prop: "IndicatorScale", kind: "float" },
             { sec: "Settings", key: "RemoteNetworkMode", prop: "RemoteNetworkMode", kind: "str" },
+            { sec: "Settings", key: "EnableRemoteConnections", prop: "EnableRemoteConnections", kind: "bool" },
+            { sec: "Settings", key: "RemoteInfoHotkey", prop: "RemoteInfoHotkey", kind: "str" },
             { sec: "Settings", key: "HwMuteHotkey", prop: "HwMuteHotkey", kind: "str" },
             { sec: "Settings", key: "HwTransitionHotkey", prop: "HwTransitionHotkey", kind: "str" },
             { sec: "Pointer", key: "CatchArrows", prop: "CatchArrows", kind: "bool" },
