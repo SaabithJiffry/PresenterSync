@@ -550,14 +550,17 @@ class HudSnake {
         isMutedFlag := (IsObject(state) && state.HasOwnProp("isMuted")) ? !!state.isMuted : false
         ; Capture real visible HUD pills so the morph visibly collapses HUD tiles into the matte snake ribbon
         seeds.Push({ x: pos.micX - this._waLeft, y: pos.micY - this._waTop, w: pos.micW, h: pos.micH, colorHex: (isMutedFlag ? snakePal.muted : snakePal.live) })
-        if (hasFullHostHud && cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom)) {
-            seeds.Push({ x: pos.recX - this._waLeft, y: pos.recY - this._waTop, w: pos.recW, h: pos.recH, colorHex: snakePal.recActive })
-            seeds.Push({ x: pos.chatX - this._waLeft, y: pos.chatY - this._waTop, w: pos.chatW, h: pos.chatH, colorHex: snakePal.chatAlert })
-        }
-        if (hasFullHostHud && cfg.ShowExtraHuds && cfg.EnableWS) {
-            seeds.Push({ x: pos.studioX - this._waLeft, y: pos.studioY - this._waTop, w: pos.studioW, h: pos.studioH, colorHex: snakePal.studioOn })
-            seeds.Push({ x: pos.sceneX - this._waLeft, y: pos.sceneY - this._waTop, w: pos.sceneW, h: pos.sceneH, colorHex: snakePal.scene })
-            if (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud) {
+        if (hasFullHostHud) {
+            tierFlags := GetHudTierFlags(cfg)
+            if (tierFlags.row2) {
+                seeds.Push({ x: pos.recX - this._waLeft, y: pos.recY - this._waTop, w: pos.recW, h: pos.recH, colorHex: snakePal.recActive })
+                seeds.Push({ x: pos.chatX - this._waLeft, y: pos.chatY - this._waTop, w: pos.chatW, h: pos.chatH, colorHex: snakePal.chatAlert })
+            }
+            if (tierFlags.row3) {
+                seeds.Push({ x: pos.studioX - this._waLeft, y: pos.studioY - this._waTop, w: pos.studioW, h: pos.studioH, colorHex: snakePal.studioOn })
+                seeds.Push({ x: pos.sceneX - this._waLeft, y: pos.sceneY - this._waTop, w: pos.sceneW, h: pos.sceneH, colorHex: snakePal.scene })
+            }
+            if (tierFlags.row4) {
                 seeds.Push({ x: pos.streamX - this._waLeft, y: pos.streamY - this._waTop, w: pos.streamW, h: pos.streamH, colorHex: snakePal.streamLive })
             }
         }

@@ -100,7 +100,8 @@ _RenderMicPillSurface(hwnd, x, y, w, h, cfg, state, alpha, overrideMuted := "") 
     }
 
     meterLevel := (!mutedState && !isRemoteOffline && cfg.HasOwnProp("ShowVoiceMeter") && cfg.ShowVoiceMeter && state.HasOwnProp("voicePeak")) ? state.voicePeak : 0.0
-    return Gdip.RenderPill(hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg, meterLevel)
+    meterArgb := cfg.MonoIcon ? Gdip.HexToArgb(icHex, 216) : 0xD8FFFFFF
+    return Gdip.RenderPill(hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg, meterLevel, meterArgb)
 }
 
 ApplySecondaryMicAppearance(cfg, state, customX := "", customY := "", customW := "", customH := "", customAlpha := "", overrideMuted := "") {
@@ -407,21 +408,25 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
         state.sceneMarqueeFontPt := marqueeFontPt
         state.sceneMarqueeTextW := textW
         state.sceneMarqueeMaxOffset := Max(0, textW - availW)
+        ; Seamless loop: "<name>   •   <name>"; one span = name + separator.
+        marqueeSep := "   " Chr(0x2022) "   "
+        singleSpan := Gdip.MeasureTextWidth(state.currentSceneName . marqueeSep, "Segoe UI", marqueeFontPt, 1)
+        state.sceneMarqueeSpan := singleSpan
         if (!fromMarqueeTick) {
             state.sceneMarqueeOffset := 0
             state.sceneMarqueePhase := "pause_start"
             state.sceneMarqueeTicks := 0
             if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && cfg.EnableWS && state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
-                SetTimer(state.sceneMarqueeTimerFn, 40)
+                SetTimer(state.sceneMarqueeTimerFn, 30)
         }
         drawX := scPad - Round(state.sceneMarqueeOffset)
         labelCfg := {
-            text: state.currentSceneName,
+            text: state.currentSceneName . marqueeSep . state.currentSceneName,
             size: marqueeFontPt,
             bold: true,
             color: sceneTextArgb,
             x: drawX,
-            w: textW + 12,
+            w: singleSpan + textW + 12,
             align: 0,
             autoFit: false,
             clipX: scPad,
@@ -441,31 +446,16 @@ SceneMarqueeTick(cfg, state) {
         return
 
     stepPx := Max(1.0, 1.2 * cfg.IndicatorScale)
+    ; Initial ~1.0s pause (33 x 30ms) after a scene change, then continuous seamless loop.
     if (state.sceneMarqueePhase = "pause_start") {
         state.sceneMarqueeTicks += 1
-        if (state.sceneMarqueeTicks >= 30) {
-            state.sceneMarqueeTicks := 0
-            state.sceneMarqueePhase := "scroll_left"
-        } else {
+        if (state.sceneMarqueeTicks < 33)
             return
-        }
-    } else if (state.sceneMarqueePhase = "scroll_left") {
-        state.sceneMarqueeOffset += stepPx
-        if (state.sceneMarqueeOffset >= state.sceneMarqueeMaxOffset) {
-            state.sceneMarqueeOffset := state.sceneMarqueeMaxOffset
-            state.sceneMarqueePhase := "pause_end"
-            state.sceneMarqueeTicks := 0
-        }
-    } else if (state.sceneMarqueePhase = "pause_end") {
-        state.sceneMarqueeTicks += 1
-        if (state.sceneMarqueeTicks >= 30) {
-            state.sceneMarqueeTicks := 0
-            state.sceneMarqueeOffset := 0
-            state.sceneMarqueePhase := "pause_start"
-        } else {
-            return
-        }
+        state.sceneMarqueeTicks := 0
+        state.sceneMarqueePhase := "scroll_left"
     }
+    singleSpan := (state.HasOwnProp("sceneMarqueeSpan") && state.sceneMarqueeSpan > 0) ? state.sceneMarqueeSpan : Max(1.0, state.sceneMarqueeTextW)
+    state.sceneMarqueeOffset := Mod(state.sceneMarqueeOffset + stepPx, singleSpan)
     ApplySceneAppearance(cfg, state, true)
 }
 
@@ -984,9 +974,21 @@ VoiceMeterTick(cfg, state, readerFn := "") {
     }
     if (state.isDraggingHud || (state.HasOwnProp("isDraggingSecondaryHud") && state.isDraggingSecondaryHud))
         return
-    newPeak := IsObject(readerFn) ? Float(readerFn.Call()) : AudioMeter.GetPeak()
+    rawPeak := IsObject(readerFn) ? Float(readerFn.Call()) : AudioMeter.GetPeak()
+    rawPeak := Min(1.0, Max(0.0, rawPeak))
+    ; Asymmetric exponential ballistics: fast attack, slow release.
+    alphaAttack := 0.55, alphaRelease := 0.18
+    cur := state.voicePeak
+    if (rawPeak > cur)
+        newPeak := cur + alphaAttack * (rawPeak - cur)
+    else if (rawPeak < cur)
+        newPeak := cur + alphaRelease * (rawPeak - cur)
+    else
+        newPeak := cur
+    if (newPeak < 0.008)
+        newPeak := 0.0
     newPeak := Min(1.0, Max(0.0, newPeak))
-    if (Abs(newPeak - state.voicePeak) >= 0.02 || (newPeak == 0.0 && state.voicePeak > 0.0)) {
+    if (Abs(newPeak - state.voicePeak) >= 0.004 || (newPeak == 0.0 && state.voicePeak > 0.0)) {
         state.voicePeak := newPeak
         if (primValid)
             ApplyMicAppearance(cfg, state)
@@ -1201,13 +1203,29 @@ GetHudGuiList(state, includeSecondary := true) {
     return guis
 }
 
+GetHudTierFlags(cfg) {
+    ; Which extra HUD tiers (Row2 REC/CHAT, Row3 STUDIO/SCENE, Row4 STREAM/VCAM) are enabled.
+    ; Without a cfg object every tier is assumed enabled (legacy layout).
+    if (!IsObject(cfg))
+        return { row2: true, row3: true, row4: true }
+    showExtra := cfg.HasOwnProp("ShowExtraHuds") ? !!cfg.ShowExtraHuds : true
+    r2Flag := (!cfg.HasOwnProp("ShowRow2RecChatHud") || cfg.ShowRow2RecChatHud)
+    r3Flag := (!cfg.HasOwnProp("ShowRow3StudioSceneHud") || cfg.ShowRow3StudioSceneHud)
+    strmFlag := (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud)
+    enableWS := cfg.HasOwnProp("EnableWS") ? !!cfg.EnableWS : true
+    enableZoom := cfg.HasOwnProp("EnableZoom") ? !!cfg.EnableZoom : false
+    return {
+        row2: !!(showExtra && (enableWS || enableZoom) && r2Flag),
+        row3: !!(showExtra && enableWS && r3Flag),
+        row4: !!(showExtra && enableWS && strmFlag)
+    }
+}
+
 GetHudStackBounds(cfg, state) {
     extraTopPad := 0
     if (IsObject(cfg) && (cfg is Config)) {
-        extraRow2 := (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom))
-        extraRow3 := (cfg.ShowExtraHuds && cfg.EnableWS)
-        extraRow4 := (extraRow3 && (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud))
-        extraTopPad := (extraRow2 ? (state.recHeight + state.hudGap) : 0) + (extraRow3 ? (state.row3Height + state.hudGap) : 0) + (extraRow4 ? (state.row4Height + state.hudGap) : 0)
+        t := GetHudTierFlags(cfg)
+        extraTopPad := (t.row2 ? (state.recHeight + state.hudGap) : 0) + (t.row3 ? (state.row3Height + state.hudGap) : 0) + (t.row4 ? (state.row4Height + state.hudGap) : 0)
     }
     return {
         left: state.savedX,
@@ -1469,7 +1487,10 @@ InitHUD(cfg, state, showWindows := true) {
     OnMessage(0x007E, WM_DISPLAYCHANGE.Bind(cfg, state))
 }
 
-ComputeHudLayout(state, anchorX, anchorY) {
+ComputeHudLayout(state, anchorX, anchorY, cfg := "") {
+    if (!IsObject(cfg) && state.HasProp("hudCfg") && IsObject(state.hudCfg))
+        cfg := state.hudCfg
+    tiers := GetHudTierFlags(cfg)
     recH := state.HasProp("recHeight") ? state.recHeight : 34
     gap := state.HasProp("hudGap") ? state.hudGap : 6
     r3H := state.HasProp("row3Height") ? state.row3Height : 30
@@ -1480,9 +1501,15 @@ ComputeHudLayout(state, anchorX, anchorY) {
     scnW := state.HasProp("sceneW") ? state.sceneW : 46
     strmW := state.HasProp("streamW") ? state.streamW : 40
     vcW := state.HasProp("vcamW") ? state.vcamW : 34
-    recY := anchorY - recH - gap
-    row3Y := recY - r3H - gap
-    row4Y := row3Y - r4H - gap
+    ; Gapless stacking: only enabled tiers consume vertical space above Tier 1 (MicGui).
+    cursorY := anchorY
+    recY := cursorY - recH - gap
+    if (tiers.row2)
+        cursorY := recY
+    row3Y := cursorY - r3H - gap
+    if (tiers.row3)
+        cursorY := row3Y
+    row4Y := cursorY - r4H - gap
     return {
         micX: anchorX,
         micY: anchorY,
@@ -1591,7 +1618,8 @@ UpdateHudVisibility(cfg, state) {
     _SyncSecondaryHudVisibility(cfg, state)
     UpdateVoiceMeterTimer(cfg, state)
 
-    if (cfg.ShowExtraHuds && (cfg.EnableWS || cfg.EnableZoom)) {
+    tiers := GetHudTierFlags(cfg)
+    if (tiers.row2) {
         ApplyRecAppearance(cfg, state)
         state.RecGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.recX, pos.recY, pos.recW, pos.recH))
         ApplyChatAppearance(cfg, state)
@@ -1601,35 +1629,31 @@ UpdateHudVisibility(cfg, state) {
         state.ChatGui.Hide()
     }
 
-    if (cfg.ShowExtraHuds && cfg.EnableWS) {
+    if (tiers.row3) {
         ApplyStudioAppearance(cfg, state)
         state.StudioGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.studioX, pos.studioY, pos.studioW, pos.studioH))
         ApplySceneAppearance(cfg, state)
         state.SceneGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH))
-        if (!cfg.HasOwnProp("ShowStreamHud") || cfg.ShowStreamHud) {
-            ApplyStreamAppearance(cfg, state)
-            if IsObject(state.StreamGui)
-                state.StreamGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.streamX, pos.streamY, pos.streamW, pos.streamH))
-            ApplyVCamAppearance(cfg, state)
-            if IsObject(state.VCamGui)
-                state.VCamGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.vcamX, pos.vcamY, pos.vcamW, pos.vcamH))
-        } else {
-            if IsObject(state.StreamGui)
-                state.StreamGui.Hide()
-            if IsObject(state.VCamGui)
-                state.VCamGui.Hide()
-        }
     } else {
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
         state.StudioGui.Hide()
         state.SceneGui.Hide()
+    }
+
+    if (tiers.row4) {
+        ApplyStreamAppearance(cfg, state)
+        if IsObject(state.StreamGui)
+            state.StreamGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.streamX, pos.streamY, pos.streamW, pos.streamH))
+        ApplyVCamAppearance(cfg, state)
+        if IsObject(state.VCamGui)
+            state.VCamGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.vcamX, pos.vcamY, pos.vcamW, pos.vcamH))
+    } else {
         if IsObject(state.StreamGui)
             state.StreamGui.Hide()
         if IsObject(state.VCamGui)
             state.VCamGui.Hide()
-    }
-    ApplyHudClickThroughStyle(cfg, state)
+    }    ApplyHudClickThroughStyle(cfg, state)
     UpdateAutoDodgeTimer(cfg, state)
     UpdateMutedVoiceMonitorTimer(cfg, state)
 }

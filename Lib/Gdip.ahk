@@ -221,7 +221,7 @@ class Gdip {
         return DllCall("UpdateLayeredWindow", "Ptr", hwnd, "Ptr", 0, "Ptr", 0, "Ptr", 0, "Ptr", 0, "Ptr", 0, "UInt", 0, "Ptr", this._blend, "UInt", 2, "Int")
     }
 
-    static RenderPill(hwnd, x, y, w, h, bgArgb, borderArgb, alpha, radius, iconCfg := "", labelCfg := "", meterLevel := 0.0) {
+    static RenderPill(hwnd, x, y, w, h, bgArgb, borderArgb, alpha, radius, iconCfg := "", labelCfg := "", meterLevel := 0.0, meterArgb := 0) {
         if (!this._token)
             this.Startup()
         if (!hwnd || w <= 0 || h <= 0)
@@ -269,7 +269,7 @@ class Gdip {
                     barW := Max(2.0, (Float(w) - 2.0 * pad) * lvl)
                     DllCall("gdiplus\GdipSetClipPath", "Ptr", pGraphics, "Ptr", pPath, "Int", 0)
                     pMeterBrush := 0
-                    DllCall("gdiplus\GdipCreateSolidFill", "UInt", 0xD8FFFFFF, "Ptr*", &pMeterBrush)
+                    DllCall("gdiplus\GdipCreateSolidFill", "UInt", (meterArgb ? meterArgb : 0xD8FFFFFF), "Ptr*", &pMeterBrush)
                     if (pMeterBrush) {
                         DllCall("gdiplus\GdipFillRectangle", "Ptr", pGraphics, "Ptr", pMeterBrush, "Float", Float(pad), "Float", barY, "Float", barW, "Float", barH)
                         DllCall("gdiplus\GdipDeleteBrush", "Ptr", pMeterBrush)

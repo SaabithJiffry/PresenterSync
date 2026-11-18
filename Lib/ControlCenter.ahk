@@ -1770,7 +1770,7 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.Write("Settings", "ThemeMode", tm)
             Theme.SetMode(tm)
         }
-        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowSecondaryMicHud", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough"] {
+        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowRow2RecChatHud", "ShowRow3StudioSceneHud", "ShowSecondaryMicHud", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough"] {
             if vals.HasOwnProp(bProp) {
                 cfg.%bProp% := !!vals.%bProp%
                 cfg.WriteBool("Settings", bProp, cfg.%bProp%)
@@ -2116,6 +2116,11 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, btnResetSecPos, "Button", "tabButton")
     btnResetSecPos.OnEvent("Click", (*) => ResetSecondaryTrayPosition(cfg, state))
 
+    chkShowRow2 := ccGui.Add("Checkbox", "x32 y456 w310 h24" (cfg.ShowRow2RecChatHud ? " Checked" : ""), "Show Recording && Chat HUD (Row 2)")
+    chkShowRow3 := ccGui.Add("Checkbox", "x360 y456 w320 h24" (cfg.ShowRow3StudioSceneHud ? " Checked" : ""), "Show Studio && Scene HUD (Row 3)")
+    Theme.RegisterControl(ccGui, chkShowRow2, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkShowRow3, "Checkbox", "tabText")
+
     ; ==========================================================================
     ; TAB 5: REMOTE COMPANION
     ; ==========================================================================
@@ -2298,6 +2303,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
         ddlTheme.Choose((cfg.ThemeMode = "Dark") ? 2 : ((cfg.ThemeMode = "Light") ? 3 : 1))
         chkShowInd.Value := cfg.ShowIndicator ? 1 : 0
         chkShowExtra.Value := cfg.ShowExtraHuds ? 1 : 0
+        chkShowRow2.Value := cfg.ShowRow2RecChatHud ? 1 : 0
+        chkShowRow3.Value := cfg.ShowRow3StudioSceneHud ? 1 : 0
         chkSecondaryMic.Value := cfg.ShowSecondaryMicHud ? 1 : 0
         chkShowText.Value := cfg.ShowText ? 1 : 0
         chkMonoIcon.Value := cfg.MonoIcon ? 1 : 0
@@ -2391,6 +2398,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ThemeMode: ddlTheme.Text,
             ShowIndicator: chkShowInd.Value,
             ShowExtraHuds: chkShowExtra.Value,
+            ShowRow2RecChatHud: chkShowRow2.Value,
+            ShowRow3StudioSceneHud: chkShowRow3.Value,
             ShowSecondaryMicHud: chkSecondaryMic.Value,
             ShowText: chkShowText.Value,
             MonoIcon: chkMonoIcon.Value,
