@@ -901,6 +901,8 @@ class HudSnake {
     static _InitCanvas() {
         this._DestroyCanvas()
         this._gui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 +E0x20 -DPIScale", "PresenterSync HUD Snake")
+        if (IsSet(ApplyWindowCaptureAffinity))
+            ApplyWindowCaptureAffinity(this._gui.Hwnd, true)
         this._gui.Show(Format("NoActivate x{} y{} w{} h{}", this._waLeft, this._waTop, this._W, this._H))
 
         bi := Buffer(40, 0)
