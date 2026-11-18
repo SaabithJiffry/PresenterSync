@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.0.4
+; Version: 7.0.5
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.0.4.0
+;@Ahk2Exe-SetVersion 7.0.5.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -70,9 +70,11 @@ if (AppConfig.EnableWS)
     SetTimer AppState.obsTimerFn, -UIConstants.OBS_INIT_DELAY_MS
 
 UpdateZoomMonitorTimer(AppConfig, AppState)
-UpdateHostInternetRelay(AppConfig, AppState)
+if (AppConfig.EnableRemoteConnections)
+    UpdateHostInternetRelay(AppConfig, AppState)
 UpdateAutoProfileTimer(AppConfig, AppState)
-StartHostCompanionBridge(AppConfig, AppState, AppConfig.BridgePort)
+if (AppConfig.EnableRemoteConnections)
+    StartHostCompanionBridge(AppConfig, AppState, AppConfig.BridgePort)
 OnMessage(0x0218, OnHostPowerBroadcast.Bind(AppConfig, AppState))
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync.exe")
 
@@ -223,6 +225,7 @@ BuildTrayMenu(cfg, state) {
     DirectorMenu.Add("Presenter Countdown Timer", BuildSharedPresenterTimerSubmenu(state, (sec, *) => StartHostPresenterTimer(cfg, state, sec), (*) => PauseHostPresenterTimer(cfg, state), (sec, *) => ResetHostPresenterTimer(cfg, state, sec)))
     DirectorMenu.Add("Send Stage Nudge...", (*) => PromptSendStageNudgeUI((msg) => BroadcastHostStageNudge(cfg, state, msg, "Primary Host")))
     DirectorMenu.Add("View && Export Session Timeline...", (*) => SessionTimeline.ShowTimelineWindow(cfg, state))
+    DirectorMenu.Add("Remote Companion Setup && QR Info...", (*) => ShowRemoteCompanionInfo(cfg, state))
     A_TrayMenu.Add("OBS Director && Standby", DirectorMenu)
 
     A_TrayMenu.Add()
@@ -312,6 +315,10 @@ BuildTrayMenu(cfg, state) {
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
     if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
         A_TrayMenu.Check("Suspend All Hotkeys")
+    A_TrayMenu.Add("Remote Companion Setup && QR Info...", (*) => ShowRemoteCompanionInfo(cfg, state))
+    A_TrayMenu.Add("Cut Off All Remote Connections (Standalone Mode)", ToggleRemoteConnectionsCutoff.Bind(cfg, state))
+    if (!cfg.EnableRemoteConnections)
+        A_TrayMenu.Check("Cut Off All Remote Connections (Standalone Mode)")
     A_TrayMenu.Add("Close Remote Companion...", PromptCloseRemoteCompanion.Bind(cfg, state))
     A_TrayMenu.Add("Exit PresenterSync", ExitTrayApp)
 }
@@ -319,6 +326,34 @@ BuildTrayMenu(cfg, state) {
 NotifyHelpRefresh(state) {
     if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
         try state.refreshHelpFn.Call()
+}
+
+ToggleRemoteConnectionsCutoff(cfg, state := "", *) {
+    ToolTip()
+    cfg.EnableRemoteConnections := !cfg.EnableRemoteConnections
+    cfg.WriteBool("Settings", "EnableRemoteConnections", cfg.EnableRemoteConnections)
+    if (!cfg.EnableRemoteConnections) {
+        StopHostCompanionBridge()
+        if (IsObject(state)) {
+            UpdateHostInternetRelay(cfg, state)
+            if (state.HasOwnProp("relayWs") && IsObject(state.relayWs)) {
+                try state.relayWs.shutdown()
+                state.relayWs := ""
+            }
+            state.relayConnected := false
+        }
+        SetTrayCheck("Cut Off All Remote Connections (Standalone Mode)", true)
+        ToolTip("Standalone Mode: All Remote Connections Cut Off")
+    } else {
+        if (IsObject(state)) {
+            StartHostCompanionBridge(cfg, state, cfg.BridgePort)
+            UpdateHostInternetRelay(cfg, state)
+        }
+        SetTrayCheck("Cut Off All Remote Connections (Standalone Mode)", false)
+        ToolTip("Remote Companion Connections: Enabled")
+    }
+    NotifyHelpRefresh(state)
+    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 ToggleSuspend(*) {
@@ -592,6 +627,10 @@ BindSystemHotkeys(cfg, state) {
     if (cfg.ExitHotkey != "" && cfg.ExitHotkey != "None") {
         try Hotkey(cfg.ExitHotkey, (*) => ExitTrayApp(), "On")
         BoundSystemHotkeys.Push(cfg.ExitHotkey)
+    }
+    if (cfg.RemoteInfoHotkey != "" && cfg.RemoteInfoHotkey != "None") {
+        try Hotkey(cfg.RemoteInfoHotkey, (*) => ShowRemoteCompanionInfo(cfg, state), "On")
+        BoundSystemHotkeys.Push(cfg.RemoteInfoHotkey)
     }
     ; Secret Easter Egg hotkey (intentionally undocumented in Tray / Control Center)
     try {

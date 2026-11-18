@@ -98,6 +98,61 @@ class HostBridgeClientTest {
     }
 
     @Test
+    fun emitsFrameReceivedAndRefreshedSessionTokenCallbacks() {
+        val connectedLatch = CountDownLatch(1)
+        val refreshedTok = java.util.concurrent.atomic.AtomicReference<String>("")
+        val frameCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val pongLatch = CountDownLatch(1)
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send("""{"type":"auth_ok","hostName":"HALL-PC","sessionToken":"fresh-tok-777"}""")
+                webSocket.send("""{"type":"mute_state","isMuted":false,"routingMode":2,"targetMicName":"Mic/Aux"}""")
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (JSONObject(text).optString("type") == "ping") {
+                    webSocket.send("""{"type":"pong","isMuted":false}""")
+                }
+            }
+        }))
+
+        val client = HostBridgeClient(
+            httpClient = httpClient,
+            wsBaseUrl = "ws://127.0.0.1:${server.port}/ws",
+            sessionToken = "",
+            sessionCode = "K7M-9P2",
+            deviceId = "dev-wake-1",
+            deviceName = "Board 75",
+            callbacks = object : HostBridgeCallbacks {
+                override fun onBridgeConnected(hostName: String) {
+                    connectedLatch.countDown()
+                }
+                override fun onBridgeSessionTokenRefreshed(sessionToken: String) {
+                    refreshedTok.set(sessionToken)
+                }
+                override fun onBridgeFrameReceived() {
+                    if (frameCount.incrementAndGet() >= 3) {
+                        pongLatch.countDown()
+                    }
+                }
+                override fun onBridgeAuthFailed(reason: String) = Unit
+                override fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String) = Unit
+                override fun onCloseRemoteSignal() = Unit
+                override fun onBridgeDisconnected(reason: String) = Unit
+            }
+        )
+
+        client.connect()
+        assertTrue(connectedLatch.await(3, TimeUnit.SECONDS))
+        assertEquals("fresh-tok-777", refreshedTok.get())
+        assertTrue(client.sendPing())
+        assertTrue(pongLatch.await(3, TimeUnit.SECONDS))
+        assertTrue(frameCount.get() >= 3)
+        client.closeDead()
+    }
+
+    @Test
     fun reportsAuthFailureWhenBridgeRejectsToken() {
         val authFailLatch = CountDownLatch(1)
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {

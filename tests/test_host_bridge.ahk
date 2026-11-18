@@ -22,13 +22,16 @@ OnExit((*) => (StopHostCompanionBridge(), Theme.Shutdown(), UIA.Shutdown(), Gdip
 results := []
 PassCount := 0
 FailCount := 0
+logFile := A_ScriptDir "\host_bridge_results.log"
+if FileExist(logFile)
+    try FileDelete(logFile)
 
 BridgeTestFailFast(exc, mode) {
-    global results, FailCount
+    global results, FailCount, logFile
     FailCount += 1
     msg := Format("[FAIL] Unhandled exception ({}) in {} ({}:{}): {}", mode, exc.What, exc.File, exc.Line, exc.Message)
     results.Push(msg)
-    try FileAppend(msg "`n", A_ScriptDir "\host_bridge_results.log")
+    try FileAppend(msg "`n", logFile, "UTF-8")
     ExitApp(1)
 }
 OnError(BridgeTestFailFast)
@@ -219,6 +222,179 @@ dlg := ShowRemoteCompanionInfo(cfg, st)
 dlg.GetClientPos(, , &cw, &ch)
 Assert("ShowRemoteCompanionInfo renders Session Code & Bridge status cleanly", cw >= 360 && ch >= 320, cw "x" ch)
 WinClose("ahk_id " dlg.Hwnd)
+
+; 4. v7.0.5 (#11): Dead client timeout, _OnMaintenanceTick reaping, duplicate deviceId eviction, and post-restart re-bind
+Assert("HostBridgeConstants.DEAD_CLIENT_TIMEOUT_MS is 55000ms", HostBridgeConstants.DEAD_CLIENT_TIMEOUT_MS == 55000)
+
+PumpUntil(predFn, timeoutMs := 2500) {
+    deadline := A_TickCount + timeoutMs
+    while (A_TickCount < deadline) {
+        if (predFn())
+            return true
+        Sleep(15)
+    }
+    return predFn()
+}
+
+_TestWsOpen(port, path) {
+    sock := DllCall("ws2_32\socket", "Int", 2, "Int", 1, "Int", 6, "Ptr")
+    if (sock = -1)
+        throw Error("socket failed")
+    nonBlk := Buffer(4, 0)
+    NumPut("UInt", 1, nonBlk, 0)
+    DllCall("ws2_32\ioctlsocket", "Ptr", sock, "UInt", 0x8004667E, "Ptr", nonBlk.Ptr, "Int")
+
+    addr := Buffer(16, 0)
+    NumPut("UShort", 2, addr, 0)
+    NumPut("UShort", ((port & 0xFF) << 8) | ((port >> 8) & 0xFF), addr, 2)
+    NumPut("UInt", DllCall("ws2_32\inet_addr", "AStr", "127.0.0.1", "UInt"), addr, 4)
+    DllCall("ws2_32\connect", "Ptr", sock, "Ptr", addr.Ptr, "Int", 16, "Int")
+
+    req := "GET " path " HTTP/1.1`r`nHost: 127.0.0.1:" port "`r`nUpgrade: websocket`r`nConnection: Upgrade`r`nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==`r`nSec-WebSocket-Version: 13`r`n`r`n"
+    reqLen := StrPut(req, "UTF-8") - 1
+    reqBuf := Buffer(reqLen + 1, 0)
+    StrPut(req, reqBuf, "UTF-8")
+    sentOk := false
+    deadline := A_TickCount + 2000
+    while (A_TickCount < deadline) {
+        rc := DllCall("ws2_32\send", "Ptr", sock, "Ptr", reqBuf.Ptr, "Int", reqLen, "Int", 0, "Int")
+        if (rc == reqLen) {
+            sentOk := true
+            break
+        }
+        Sleep(15)
+    }
+    if (!sentOk) {
+        DllCall("ws2_32\closesocket", "Ptr", sock)
+        throw Error("WS upgrade send failed")
+    }
+
+    rx := Buffer(8192, 0)
+    acc := Buffer(16384, 0)
+    accLen := 0
+    decodedFrames := ""
+    hdrEnd := 0
+    pos := 0
+    deadline := A_TickCount + 2000
+    while (A_TickCount < deadline) {
+        n := DllCall("ws2_32\recv", "Ptr", sock, "Ptr", rx.Ptr, "Int", 8192, "Int", 0, "Int")
+        if (n > 0) {
+            if (accLen + n > acc.Size)
+                acc.Size := accLen + n + 4096
+            DllCall("ntdll\RtlMoveMemory", "Ptr", acc.Ptr + accLen, "Ptr", rx.Ptr, "UPtr", n)
+            accLen += n
+
+            if (!hdrEnd && accLen >= 4) {
+                Loop (accLen - 3) {
+                    i := A_Index - 1
+                    if (NumGet(acc, i, "UChar") = 13 && NumGet(acc, i + 1, "UChar") = 10
+                        && NumGet(acc, i + 2, "UChar") = 13 && NumGet(acc, i + 3, "UChar") = 10) {
+                        hdrEnd := i + 4
+                        pos := hdrEnd
+                        break
+                    }
+                }
+            }
+            if (hdrEnd) {
+                while (pos + 2 <= accLen) {
+                    b1 := NumGet(acc, pos + 1, "UChar") & 0x7F
+                    off := 2
+                    pLen := b1
+                    if (b1 = 126) {
+                        if (pos + 4 > accLen)
+                            break
+                        pLen := (NumGet(acc, pos + 2, "UChar") << 8) | NumGet(acc, pos + 3, "UChar")
+                        off := 4
+                    }
+                    if (pos + off + pLen > accLen)
+                        break
+                    if (pLen > 0)
+                        decodedFrames .= StrGet(acc.Ptr + pos + off, pLen, "UTF-8") "`n"
+                    pos += off + pLen
+                }
+                if (InStr(decodedFrames, '"type":"auth_ok"'))
+                    break
+            }
+        }
+        Sleep(15)
+    }
+    return { sock: sock, raw: decodedFrames }
+}
+
+_TestWsClose(wsObj) {
+    if (IsObject(wsObj) && wsObj.sock != -1) {
+        try DllCall("ws2_32\closesocket", "Ptr", wsObj.sock)
+        wsObj.sock := -1
+    }
+}
+
+ws1 := _TestWsOpen(b.boundTcpPort, "/ws?code=" cfg.SessionPairingCode "&deviceId=sb-sleep-test&deviceName=Board75&platform=Android")
+PumpUntil(() => b.clients.Count >= 1 && InStr(ws1.raw, '"type":"auth_ok"'))
+
+sleepCliKey := ""
+sleepCli := ""
+for k, cli in b.clients {
+    if (cli.deviceId = "sb-sleep-test") {
+        sleepCliKey := k
+        sleepCli := cli
+        break
+    }
+}
+Assert("Authenticated Bridge WS client registered for dead-client reap test", IsObject(sleepCli) && sleepCli.authenticated && InStr(ws1.raw, '"type":"auth_ok"'))
+
+prevBcCount := DiagnosticLogger.Breadcrumbs.Length
+sleepCli.lastRxTick := A_TickCount - (HostBridgeConstants.DEAD_CLIENT_TIMEOUT_MS + 1500)
+b._OnMaintenanceTick()
+hasReapBc := false
+if (DiagnosticLogger.Breadcrumbs.Length > prevBcCount) {
+    Loop (DiagnosticLogger.Breadcrumbs.Length - prevBcCount) {
+        bc := DiagnosticLogger.Breadcrumbs[prevBcCount + A_Index]
+        if (bc.category = "Bridge" && bc.action = "ReapDeadClient") {
+            hasReapBc := true
+            break
+        }
+    }
+}
+Assert("_OnMaintenanceTick reaps silent client > 55s, marks disconnected, and records ReapDeadClient breadcrumb",
+    !b.clients.Has(sleepCliKey) && b.pairedDevices.Has("sb-sleep-test") && !b.pairedDevices["sb-sleep-test"].connected && hasReapBc)
+_TestWsClose(ws1)
+
+; Duplicate socket eviction on _TryAuthenticateWsClient
+wsOld := _TestWsOpen(b.boundTcpPort, "/ws?code=" cfg.SessionPairingCode "&deviceId=sb-evict-1&deviceName=BoardEvict&platform=Android")
+PumpUntil(() => InStr(wsOld.raw, '"type":"auth_ok"') && b.pairedDevices.Has("sb-evict-1"))
+oldSockKey := ""
+for k, cli in b.clients {
+    if (cli.deviceId = "sb-evict-1") {
+        oldSockKey := k
+        break
+    }
+}
+savedEvictTok := b.pairedDevices["sb-evict-1"].token
+Assert("First socket for sb-evict-1 issued persisted sessionToken", oldSockKey != "" && savedEvictTok != "")
+
+wsNew := _TestWsOpen(b.boundTcpPort, "/ws?token=" savedEvictTok "&deviceId=sb-evict-1&deviceName=BoardEvict&platform=Android")
+PumpUntil(() => InStr(wsNew.raw, '"type":"auth_ok"') && !b.clients.Has(oldSockKey))
+Assert("_TryAuthenticateWsClient evicts older socket for same deviceId while keeping new socket live",
+    oldSockKey != "" && !b.clients.Has(oldSockKey) && b.GetConnectedClientCount() == 1 && b.pairedDevices["sb-evict-1"].connected)
+_TestWsClose(wsOld)
+_TestWsClose(wsNew)
+
+; Restart HostCompanionBridge -> verify re-bind via persisted token AND via saved sessionPairingCode (with stale token)
+StopHostCompanionBridge()
+cfgRestart := Config(testIni)
+bRestart := StartHostCompanionBridge(cfgRestart, st, 0, 0, 0)
+Assert("Restarted HostCompanionBridge loads persisted sessionToken from [HostBridgePairedDevices]",
+    bRestart.validTokens.Has(savedEvictTok) && bRestart.pairedDevices.Has("sb-evict-1"))
+
+wsTok := _TestWsOpen(bRestart.boundTcpPort, "/ws?token=" savedEvictTok "&deviceId=sb-evict-1")
+Assert("Re-bind after Host restart succeeds with persisted sessionToken",
+    InStr(wsTok.raw, '"type":"auth_ok"'))
+_TestWsClose(wsTok)
+
+wsCode := _TestWsOpen(bRestart.boundTcpPort, "/ws?token=stale_token_xyz&code=" cfgRestart.SessionPairingCode "&deviceId=sb-rebind-code&deviceName=BoardCodeWake")
+Assert("Re-bind after Host restart accepts saved sessionPairingCode when token is stale",
+    InStr(wsCode.raw, '"type":"auth_ok"') && bRestart.pairedDevices.Has("sb-rebind-code") && bRestart.pairedDevices["sb-rebind-code"].token != "")
+_TestWsClose(wsCode)
 
 StopHostCompanionBridge()
 Assert("StopHostCompanionBridge shuts down cleanly", !IsObject(g_HostCompanionBridge) && !GetHostBridgeStatusSummary().running)

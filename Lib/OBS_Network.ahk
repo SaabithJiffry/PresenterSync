@@ -228,6 +228,8 @@ DispatchHostMuteToggle(cfg, state) {
 ShouldEnableHostInternetRelay(cfg) {
     if (!IsObject(cfg))
         return false
+    if (cfg.HasOwnProp("EnableRemoteConnections") && !cfg.EnableRemoteConnections)
+        return false
     pairCode := cfg.HasOwnProp("InternetPairingCode") ? Trim(cfg.InternetPairingCode) : ""
     if (pairCode = "")
         return false

@@ -7,6 +7,40 @@
 
 #DllLoad ws2_32.dll
 
+class RemoteBridgeConstants {
+    static PONG_TIMEOUT_MS := 2500
+    static WAKE_STALENESS_MS := 25000
+}
+
+MarkRemoteRxActivity(state, nowTick := "") {
+    if (!IsObject(state))
+        return -1
+    t := (nowTick != "") ? Integer(nowTick) : A_TickCount
+    state.lastRxTick := t
+    state.rxSeq := state.HasOwnProp("rxSeq") ? (Integer(state.rxSeq) + 1) : 1
+    return state.lastRxTick
+}
+
+ShouldForceWakeReconnect(state, nowTick := "", staleMs := "") {
+    if (!IsObject(state))
+        return false
+    if (!state.HasOwnProp("obsConnected") || !state.obsConnected)
+        return true
+    if (!state.HasOwnProp("lastRxTick") || state.lastRxTick = "" || Integer(state.lastRxTick) < 0)
+        return false
+    t := (nowTick != "") ? Integer(nowTick) : A_TickCount
+    limit := (staleMs != "") ? Integer(staleMs) : RemoteBridgeConstants.WAKE_STALENESS_MS
+    return (t - Integer(state.lastRxTick)) > limit
+}
+
+IsPongWatchdogExpired(state, pingRxSeq, pingRxTick) {
+    if (!IsObject(state) || !state.HasOwnProp("obsConnected") || !state.obsConnected)
+        return false
+    curSeq := state.HasOwnProp("rxSeq") ? Integer(state.rxSeq) : 0
+    curRx := (state.HasOwnProp("lastRxTick") && state.lastRxTick != "") ? Integer(state.lastRxTick) : -1
+    return (curSeq <= Integer(pingRxSeq) && curRx <= Integer(pingRxTick))
+}
+
 ParseRemoteCliArgs(args) {
     out := { configPath: "", instanceName: "", pairingUri: "", cleanupOldExe: "" }
     if (!IsObject(args))
@@ -748,6 +782,9 @@ ParseHostBridgeWsEvent(rawText) {
     t := _RBC_JsonGetStr(rawText, "type")
     if (t = "")
         return ""
+    reasonStr := _RBC_JsonGetStr(rawText, "reason")
+    if (reasonStr = "")
+        reasonStr := _RBC_JsonGetStr(rawText, "error")
     return {
         kind: t,
         hasMuted: _RBC_JsonHasKey(rawText, "isMuted"),
@@ -770,7 +807,8 @@ ParseHostBridgeWsEvent(rawText) {
         accentHex: _RBC_JsonGetStr(rawText, "accentHex"),
         hostUuid: _RBC_JsonGetStr(rawText, "hostUuid"),
         hostName: _RBC_JsonGetStr(rawText, "hostName"),
-        reason: _RBC_JsonGetStr(rawText, "reason"),
+        sessionToken: _RBC_JsonGetStr(rawText, "sessionToken"),
+        reason: reasonStr,
         action: _RBC_JsonGetStr(rawText, "action"),
         ok: _RBC_JsonGetBool(rawText, "ok", false)
     }

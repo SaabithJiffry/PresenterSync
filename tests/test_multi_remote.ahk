@@ -241,6 +241,34 @@ StopHostCompanionBridge()
 if FileExist(persistIni)
     FileDelete(persistIni)
 
+; --- 7. v7.0.5 (#11): Remote Wake Staleness, Pong Watchdog & Auth Error/Token Parsing ---
+Assert("RemoteBridgeConstants match 2500ms Pong timeout and 25000ms wake staleness",
+    RemoteBridgeConstants.PONG_TIMEOUT_MS == 2500 && RemoteBridgeConstants.WAKE_STALENESS_MS == 25000)
+
+wakeSt := { obsConnected: true, lastRxTick: 1000, rxSeq: 1 }
+MarkRemoteRxActivity(wakeSt, 5000)
+Assert("MarkRemoteRxActivity updates lastRxTick and advances rxSeq",
+    wakeSt.lastRxTick == 5000 && wakeSt.rxSeq == 2)
+Assert("ShouldForceWakeReconnect stays false <= 25000ms and triggers > 25000ms or when disconnected",
+    !ShouldForceWakeReconnect(wakeSt, 15000)
+    && !ShouldForceWakeReconnect(wakeSt, 30000)
+    && ShouldForceWakeReconnect(wakeSt, 30001)
+    && ShouldForceWakeReconnect({ obsConnected: false, lastRxTick: 5000 }, 5100))
+
+pingSeq := wakeSt.rxSeq
+pingTick := wakeSt.lastRxTick
+Assert("IsPongWatchdogExpired detects missing pong/frame when rxSeq and lastRxTick unchanged",
+    IsPongWatchdogExpired(wakeSt, pingSeq, pingTick))
+MarkRemoteRxActivity(wakeSt, 5000) ; same-ms pong response still advances rxSeq
+Assert("IsPongWatchdogExpired clears when pong/frame arrives (even at identical tick ms)",
+    !IsPongWatchdogExpired(wakeSt, pingSeq, pingTick))
+
+evAuthErrFallback := ParseHostBridgeWsEvent('{"type":"auth_error","error":"Unauthorized"}')
+evAuthOkTok := ParseHostBridgeWsEvent('{"type":"auth_ok","hostUuid":"u-1","sessionToken":"tok_refreshed_77"}')
+Assert("ParseHostBridgeWsEvent extracts error->reason and auth_ok sessionToken",
+    IsObject(evAuthErrFallback) && evAuthErrFallback.reason == "Unauthorized"
+    && IsObject(evAuthOkTok) && evAuthOkTok.sessionToken == "tok_refreshed_77")
+
 report := "=== PRESENTER SYNC MULTI-REMOTE TEST REPORT ===`n"
 report .= "Passed: " PassCount "  Failed: " FailCount "`n`n"
 for item in results

@@ -19,6 +19,11 @@ class HostBridgeConstants {
     static MAX_BUFFER_BYTES := 65536
     static AUTH_TIMEOUT_MS := 3000
     static KEEP_ALIVE_MS := 20000
+    ; v7.0.5 (#11): an authenticated WS client that has sent nothing (not even a
+    ; pong to our 20s keep-alive ping) for 55s is a half-open zombie left behind
+    ; by a sleeping Smart Board / dropped Wi-Fi. Reap it so the slot and the
+    ; device's "connected" state are freed for the reconnecting socket.
+    static DEAD_CLIENT_TIMEOUT_MS := 55000
     static PAIR_MAX_FAILS := 5
     static PAIR_LOCKOUT_MS := 30000
     static UDP_COOLDOWN_MS := 200
@@ -686,13 +691,16 @@ class HostCompanionBridge {
             return
         now := A_TickCount
         toClose := []
+        toReap := []
         for k, cli in this.clients {
             if (cli.kind = "pending" && (now - cli.createdTick) > HostBridgeConstants.AUTH_TIMEOUT_MS) {
                 toClose.Push(cli)
             } else if (cli.kind = "ws" && !cli.authenticated && (now - cli.createdTick) > HostBridgeConstants.AUTH_TIMEOUT_MS) {
                 toClose.Push(cli)
             } else if (cli.kind = "ws" && cli.authenticated) {
-                if ((now - cli.lastPingTick) >= HostBridgeConstants.KEEP_ALIVE_MS) {
+                if ((now - cli.lastRxTick) > HostBridgeConstants.DEAD_CLIENT_TIMEOUT_MS) {
+                    toReap.Push(cli)
+                } else if ((now - cli.lastPingTick) >= HostBridgeConstants.KEEP_ALIVE_MS) {
                     cli.lastPingTick := now
                     this._QueueWsFrame(cli, 0x9, "")
                 }
@@ -700,6 +708,8 @@ class HostCompanionBridge {
         }
         for cli in toClose
             this._CloseClient(cli)
+        for cli in toReap
+            this._ReapDeadClient(cli, now)
         if ((now - this.lastAdapterCheckTick) >= 5000) {
             this.lastAdapterCheckTick := now
             latestEps := GetLocalNetworkEndpoints(false)
@@ -714,6 +724,62 @@ class HostCompanionBridge {
                 this.cachedEndpointsTick := now
             }
         }
+    }
+
+    ; v7.0.5 (#11): close a silent authenticated socket (no frame for > DEAD_CLIENT_TIMEOUT_MS).
+    _ReapDeadClient(c, now := 0) {
+        if (!this.clients.Has(c.key))
+            return false
+        if (!now)
+            now := A_TickCount
+        idleMs := now - c.lastRxTick
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Bridge", "ReapDeadClient"
+                , "device=" (c.deviceName != "" ? c.deviceName : c.deviceId) " ip=" c.ip " idle=" idleMs "ms")
+        ; Best-effort RFC6455 close frame; the peer is most likely gone, so don't wait on it.
+        try this._QueueWsFrame(c, 0x8, "")
+        this._CloseClient(c)
+        return true
+    }
+
+    ; v7.0.5 (#11): when a device re-authenticates on a fresh socket, the old socket
+    ; (half-open after sleep/Wi-Fi drop) must not linger as a duplicate "connected" client.
+    _EvictStaleDeviceSockets(c, devId) {
+        if (devId = "")
+            return 0
+        stale := []
+        for _, cOld in this.clients {
+            if (cOld.key != c.key && cOld.deviceId = devId)
+                stale.Push(cOld)
+        }
+        for cOld in stale {
+            if (IsSet(DiagnosticLogger))
+                try DiagnosticLogger.RecordBreadcrumb("Bridge", "EvictStaleDeviceSocket", "device=" devId " oldIp=" cOld.ip " newIp=" c.ip)
+            ; Clear identity first so _CloseClient doesn't flip the device to "disconnected"
+            ; or log a spurious "Remote Disconnected" timeline event for the replaced socket.
+            cOld.deviceId := ""
+            cOld.authenticated := false
+            if (cOld.kind = "ws")
+                try this._QueueWsFrame(cOld, 0x8, "")
+            this._CloseClient(cOld)
+        }
+        return stale.Length
+    }
+
+    _IssueSessionToken(devId) {
+        hostCode := (IsObject(this.cfg) && this.cfg.HasOwnProp("SessionPairingCode")) ? NormalizePairingCode(this.cfg.SessionPairingCode) : ""
+        rnd := GenerateRandomBytes(16)
+        rndHex := ""
+        Loop 16
+            rndHex .= Format("{:02x}", NumGet(rnd, A_Index - 1, "UChar"))
+        return HashSHA256_Hex(hostCode ":" devId ":" rndHex ":" A_TickCount)
+    }
+
+    _BuildAuthOkJson(c) {
+        tokField := (IsObject(c) && c.HasOwnProp("sessionToken") && c.sessionToken != "")
+            ? ',"sessionToken":"' _HB_JsonEscape(c.sessionToken) '"'
+            : ""
+        return '{"type":"auth_ok","hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"' tokField '}'
     }
 
     _OnUdpMessage(wParam, lParam, msg, hwnd) {
@@ -1121,11 +1187,7 @@ class HostCompanionBridge {
                 devName := this.pairedDevices[devId].deviceName
         }
         hadCustom := this.pairedDevices.Has(devId) && this.pairedDevices[devId].HasOwnProp("customName") && this.pairedDevices[devId].customName
-        rnd := GenerateRandomBytes(16)
-        rndHex := ""
-        Loop 16
-            rndHex .= Format("{:02x}", NumGet(rnd, A_Index - 1, "UChar"))
-        sessionToken := HashSHA256_Hex(hostCode ":" devId ":" rndHex ":" A_TickCount)
+        sessionToken := this._IssueSessionToken(devId)
 
         this.validTokens[sessionToken] := devId
         this.pairedDevices[devId] := {
@@ -1210,7 +1272,7 @@ class HostCompanionBridge {
                 this._FlushSendQueue(c)
                 return
             }
-            this._QueueWsFrame(c, 0x1, '{"type":"auth_ok","hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"}')
+            this._QueueWsFrame(c, 0x1, this._BuildAuthOkJson(c))
             this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
         }
 
@@ -1223,11 +1285,13 @@ class HostCompanionBridge {
             return false
 
         matched := false
+        matchedByToken := false
         matchedDevId := ""
         if (token != "" && this.validTokens.Has(token)) {
             matched := true
+            matchedByToken := true
             matchedDevId := this.validTokens[token]
-        } else if (code != "") {
+        } else if (code != "" && IsObject(this.cfg) && this.cfg.HasOwnProp("SessionPairingCode") && this.cfg.SessionPairingCode != "") {
             if (NormalizePairingCode(code) == NormalizePairingCode(this.cfg.SessionPairingCode)) {
                 matched := true
                 this._ResetPairingFailures(c.ip)
@@ -1243,12 +1307,22 @@ class HostCompanionBridge {
         finalName := (hadCustom && this.pairedDevices[finalDevId].deviceName != "") ? this.pairedDevices[finalDevId].deviceName : ((devName != "") ? devName : (this.pairedDevices.Has(finalDevId) ? this.pairedDevices[finalDevId].deviceName : "Smart Board"))
         finalPlat := (plat != "") ? plat : (this.pairedDevices.Has(finalDevId) ? this.pairedDevices[finalDevId].platform : "Remote")
 
+        if (matchedByToken) {
+            tokToKeep := token
+        } else if (this.pairedDevices.Has(finalDevId) && this.pairedDevices[finalDevId].HasOwnProp("token") && this.pairedDevices[finalDevId].token != "") {
+            tokToKeep := this.pairedDevices[finalDevId].token
+        } else {
+            tokToKeep := this._IssueSessionToken(finalDevId)
+        }
+
         c.authenticated := true
         c.deviceId := finalDevId
         c.deviceName := finalName
         c.platform := finalPlat
+        c.sessionToken := tokToKeep
+        c.lastRxTick := A_TickCount
+        this._EvictStaleDeviceSockets(c, finalDevId)
 
-        tokToKeep := (token != "") ? token : (this.pairedDevices.Has(finalDevId) ? this.pairedDevices[finalDevId].token : "")
         this.pairedDevices[finalDevId] := {
             deviceId: finalDevId,
             deviceName: finalName,
@@ -1329,6 +1403,7 @@ class HostCompanionBridge {
             }
             NumPut("UChar", 0, payloadBuf, payloadLen)
             c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, totalLen)
+            c.lastRxTick := A_TickCount ; any complete frame (ping/pong/text) proves liveness
 
             if (opcode = 0x8) { ; Close
                 this._QueueWsFrame(c, 0x8, "")
@@ -1397,7 +1472,7 @@ class HostCompanionBridge {
                 this._FlushSendQueue(c)
                 return
             }
-            this._QueueWsFrame(c, 0x1, '{"type":"auth_ok","hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"}')
+            this._QueueWsFrame(c, 0x1, this._BuildAuthOkJson(c))
             this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             if (IsSet(SessionTimeline))
                 SessionTimeline.Record("Remote", "Remote Joined: " (c.deviceName != "" ? c.deviceName : c.deviceId), this.state, c.platform)
