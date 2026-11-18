@@ -1473,6 +1473,8 @@ BuildSanitizedDiagnosticsReport(cfg, state := "", iniTextOverride := "") {
         . StrReplace(summarySec, "`n", "`r`n") "`r`n`r`n"
         . "--- SANITIZED CONFIGURATION (.INI) ---`r`n"
         . (safeIni != "" ? safeIni : "(no configuration file found)") "`r`n"
+        . "`r`n--- PERSISTENT ERROR & DIAGNOSTIC LOG TAIL ---`r`n"
+        . DiagnosticLogger.GetRecentLogTail(12000) . "`r`n"
 
     for _, secVal in secrets {
         s := Trim(String(secVal))

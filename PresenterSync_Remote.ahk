@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.0.0
+; Version: 7.0.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.0.0.0
+;@Ahk2Exe-SetVersion 7.0.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -32,10 +32,13 @@ if (g_RemoteMutex.alreadyExists) {
     ExitApp(0)
 }
 
+global AppState := ""
+DiagnosticLogger.Init("PresenterSync_Remote")
+
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => ((AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn) ? SetTimer(AppState.presenterTickFn, 0) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => ((AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn) ? SetTimer(AppState.presenterTickFn, 0) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
+RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState) && AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn) ? SetTimer(AppState.presenterTickFn, 0) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => ((IsSet(AppState) && IsObject(AppState) && AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn) ? SetTimer(AppState.presenterTickFn, 0) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSyncRemote.ico")
@@ -417,6 +420,7 @@ class RemoteState {
 AppConfig := RemoteConfig()
 Theme.Init(AppConfig.ThemeMode)
 AppState := RemoteState(AppConfig)
+DiagnosticLogger.BindContext(AppConfig, AppState)
 AppState.rebuildTrayFn := BuildRemoteTrayMenu.Bind(AppConfig, AppState)
 AppState.syncTrayStatusFn := SyncRemoteTrayStatus.Bind(AppConfig, AppState)
 AppState.refreshHudFn := RefreshRemoteHudAppearance.Bind(AppConfig, AppState)
@@ -1636,6 +1640,7 @@ BuildRemoteTrayMenu(cfg, state) {
 
     ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
+    A_TrayMenu.Add("View Error && Diagnostic Log...", (*) => DiagnosticLogger.ShowLogViewerWindow(cfg, state))
     A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI(cfg, state))
     A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync_Remote.exe", cfg))
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
