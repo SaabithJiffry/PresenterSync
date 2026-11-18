@@ -47,8 +47,8 @@ android {
         applicationId = "com.saabithjiffry.presentersync.remote"
         minSdk = 26
         targetSdk = 34
-        versionCode = 70003
-        versionName = "7.0.3"
+        versionCode = 70004
+        versionName = "7.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

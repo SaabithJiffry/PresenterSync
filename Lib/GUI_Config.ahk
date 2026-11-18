@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.0.3"
+    static APP_VERSION := "7.0.4"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -90,6 +90,7 @@ class UIConstants {
     static OBS_RECONNECT_MS := 5000
     static OBS_INIT_DELAY_MS := 100
     static TOOLTIP_DURATION_MS := 2000
+    static STUDIO_LONG_PRESS_MS := 600
 
     ; --- Opacity Presets & Corner Constants ---
     static OPACITY_SOLID := 255
@@ -1382,10 +1383,7 @@ class Config {
         this.EnableWS := this.ReadBool("Settings", "EnableWS")
         this.EnableZoom := this.ReadBool("Settings", "EnableZoom")
 
-        if (this.EnableWS && this.EnableZoom) {
-            this.EnableZoom := false
-            this.WriteBool("Settings", "EnableZoom", false)
-        }
+        ; OBS WebSocket and Conferencing (Zoom/Teams) tracking may now run simultaneously.
 
         this.ShowIndicator := this.ReadBool("Settings", "ShowIndicator", true)
         this.ShowExtraHuds := this.ReadBool("Settings", "ShowExtraHuds", true)
@@ -1757,6 +1755,11 @@ class OverlayState {
     isMuted := false
     recState := 0
     recElapsedSec := 0
+    obsRecState := 0
+    obsRecElapsedSec := 0
+    confRecState := 0
+    confRecElapsedSec := 0
+    recSourceTag := ""
     studioModeActive := false
     currentSceneName := "Scene"
     previewSceneName := ""
@@ -1959,7 +1962,7 @@ class OverlayState {
             rIconW := Round(UIConstants.REC_ICON_W * cfg.IndicatorScale)
             rIconX := Round(UIConstants.REC_ICON_X * cfg.IndicatorScale)
             rGap := Round(UIConstants.LABEL_GAP_X * cfg.IndicatorScale)
-            rSampleTxt := ((this.recState == 2) ? "PAUSED " : "REC ") FormatElapsedShort(this.recElapsedSec)
+            rSampleTxt := GetRecLabelPrefix(cfg, this) ((this.recState == 2) ? "PAUSED " : "REC ") FormatElapsedShort(this.recElapsedSec)
             reqRecW := rIconX + rIconW + rGap + Gdip.MeasureTextWidth(rSampleTxt, "Segoe UI", this.subTextSize, 1) + rIconX
             cIconW := Round(UIConstants.CHAT_ICON_W * cfg.IndicatorScale)
             cIconX := Round(UIConstants.CHAT_ICON_X * cfg.IndicatorScale)

@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.0.3
+; Version: 7.0.4
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.0.3.0
+;@Ahk2Exe-SetVersion 7.0.4.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -426,16 +426,6 @@ ToggleWS(cfg, state, *) {
     cfg.EnableWS := !cfg.EnableWS
 
     if (cfg.EnableWS) {
-        if (cfg.EnableZoom) {
-            cfg.EnableZoom := false
-            state.zoomConnected := false
-            state.zoomLastMuted := -1
-            state.zoomRecGraceUntil := 0
-            state.zoomSawRecControl := false
-            cfg.WriteBool("Settings", "EnableZoom", false)
-            SetTrayCheck("Enable Zoom Monitoring", false)
-        }
-
         cfg.WriteBool("Settings", "EnableWS", true)
         SetTrayCheck("Enable OBS WebSocket Sync", true)
         ToolTip "WebSocket Sync: ON"
@@ -446,16 +436,11 @@ ToggleWS(cfg, state, *) {
         ToolTip "WebSocket Sync: OFF"
         SetTimer state.obsTimerFn, 0
         state.obsConnected := false
-        state.zoomConnected := false
-        state.zoomLastMuted := -1
-        state.zoomRecGraceUntil := 0
-        state.zoomSawRecControl := false
         if IsObject(state.obsWs) {
             try state.obsWs.shutdown()
             state.obsWs := ""
         }
-        SyncRecState(cfg, state, 0)
-        SyncChatState(cfg, state, 0)
+        SyncRecState(cfg, state, 0, -1, "obs")
         SyncStudioState(cfg, state, false)
         SyncSceneState(cfg, state, "Scene")
         SyncStreamState(cfg, state, 0)
@@ -474,23 +459,6 @@ ToggleZoom(cfg, state, *) {
     cfg.EnableZoom := !cfg.EnableZoom
 
     if (cfg.EnableZoom) {
-        if (cfg.EnableWS) {
-            cfg.EnableWS := false
-            cfg.WriteBool("Settings", "EnableWS", false)
-            SetTrayCheck("Enable OBS WebSocket Sync", false)
-            SetTimer state.obsTimerFn, 0
-            state.obsConnected := false
-            if IsObject(state.obsWs) {
-                try state.obsWs.shutdown()
-                state.obsWs := ""
-            }
-            SyncRecState(cfg, state, 0)
-            SyncStudioState(cfg, state, false)
-            SyncSceneState(cfg, state, "Scene")
-            SyncStreamState(cfg, state, 0)
-            SyncVCamState(cfg, state, false)
-        }
-
         state.zoomRecGraceUntil := 0
         state.zoomSawRecControl := false
         cfg.WriteBool("Settings", "EnableZoom", true)
@@ -503,7 +471,7 @@ ToggleZoom(cfg, state, *) {
         state.zoomLastMuted := -1
         state.zoomRecGraceUntil := 0
         state.zoomSawRecControl := false
-        SyncRecState(cfg, state, 0)
+        SyncRecState(cfg, state, 0, -1, "conf")
         SyncChatState(cfg, state, 0)
         ToolTip "Zoom Monitoring: OFF"
     }
@@ -870,16 +838,18 @@ LaptopObsPauseToggle(cfg, state, ThisHotkey) {
 }
 
 LaptopZoomRecToggle(cfg, state, ThisHotkey) {
-    if (cfg.EnableZoom && !cfg.EnableWS) {
+    if (cfg.EnableZoom) {
         state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
-        SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
+        curConf := state.HasOwnProp("confRecState") ? state.confRecState : state.recState
+        SyncRecState(cfg, state, curConf == 0 ? 1 : 0, -1, "conf")
     }
 }
 
 LaptopZoomPauseToggle(cfg, state, ThisHotkey) {
-    if (cfg.EnableZoom && !cfg.EnableWS && state.recState != 0) {
+    curConf := state.HasOwnProp("confRecState") ? state.confRecState : state.recState
+    if (cfg.EnableZoom && curConf != 0) {
         state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
-        SyncRecState(cfg, state, state.recState == 1 ? 2 : 1)
+        SyncRecState(cfg, state, curConf == 1 ? 2 : 1, -1, "conf")
     }
 }
 
