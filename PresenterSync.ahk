@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.0.0
+; Version: 7.0.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.0.0.0
+;@Ahk2Exe-SetVersion 7.0.1.0
 ProcessSetPriority "High"
 SetKeyDelay 50, 50
 
@@ -23,10 +23,13 @@ SetKeyDelay 50, 50
 #Include <GUI_Config>
 #Include <HudSnakeGame>
 
+global AppState := ""
+DiagnosticLogger.Init("PresenterSync")
+
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => (UpdateAutoProfileTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0, StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => (UpdateAutoProfileTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0, StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0) : 0, StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0) : 0, StopHostCompanionBridge(), HudSnake.Stop(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSync.ico")
@@ -45,6 +48,7 @@ if (AppConfig.AudioRoutingMode == 0
 
 ; 2. Initialize State, HUD, Tray Menu & Background Services
 AppState := OverlayState(AppConfig)
+DiagnosticLogger.BindContext(AppConfig, AppState)
 AppState.rebuildTrayFn := BuildTrayMenu.Bind(AppConfig, AppState)
 AppState.rebindHotkeysFn := (*) => RebindAllHostHotkeys(AppConfig, AppState)
 AppState.triggerMuteFn := (*) => TriggerMute(AppConfig, AppState, true)
@@ -285,6 +289,7 @@ BuildTrayMenu(cfg, state) {
     ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Guided Setup Wizard...", (*) => ShowGuidedSetupWizard(cfg, state))
     A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg, state))
+    A_TrayMenu.Add("View Error && Diagnostic Log...", (*) => DiagnosticLogger.ShowLogViewerWindow(cfg, state))
     A_TrayMenu.Add("Export Sanitized Diagnostics...", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
     A_TrayMenu.Add("About PresenterSync", ShowAboutWindow.Bind(cfg, state))
     A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))

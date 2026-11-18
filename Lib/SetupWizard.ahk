@@ -148,17 +148,7 @@ PromptForSetup(cfg, isInitialBoot := false) {
     }
 
     SaveSetup(values, ctrls, dlg) {
-        sel := values["mode"]
-        if (!cfg.EnableWS && (sel == 1 || sel == 3) && values["obsHotkey"] = "") {
-            dlg.Opt("+OwnDialogs")
-            MsgBox("Please enter your OBS Mute shortcut.", "Setup", "Icon!")
-            return
-        }
-        if ((sel == 2 || sel == 3) && values["zoomHotkey"] = "") {
-            dlg.Opt("+OwnDialogs")
-            MsgBox("Please enter your Zoom Mute shortcut.", "Setup", "Icon!")
-            return
-        }
+        sel := (values["mode"] >= 1 && values["mode"] <= 3) ? values["mode"] : 1
 
         cfg.AudioRoutingMode := sel
         cfg.Write("Settings", "AudioRoutingMode", cfg.AudioRoutingMode)
@@ -168,7 +158,7 @@ PromptForSetup(cfg, isInitialBoot := false) {
             cfg.Write("Settings", "ObsHotkey", cfg.ObsMuteHotkey)
         }
         if (sel == 2 || sel == 3) {
-            cfg.ZoomMuteHotkey := values["zoomHotkey"]
+            cfg.ZoomMuteHotkey := (values["zoomHotkey"] != "") ? values["zoomHotkey"] : "!a"
             cfg.Write("Settings", "ZoomMuteHotkey", cfg.ZoomMuteHotkey)
         }
 
@@ -223,9 +213,38 @@ PromptForPassword(promptText := "Enter your OBS WebSocket Password:") {
     return savedPw
 }
 
-GetLocalNetworkEndpoints() {
+GetLocalNetworkEndpoints(includeAdapterNames := true) {
+    static cachedFull := "", cachedFullTick := 0
+    static cachedFast := "", cachedFastTick := 0
+    now := A_TickCount
+
+    if (includeAdapterNames) {
+        if (IsObject(cachedFull) && (now - cachedFullTick) < 10000)
+            return cachedFull
+    } else {
+        if (IsObject(cachedFast) && (now - cachedFastTick) < 10000)
+            return cachedFast
+    }
+
     res := {ips: [], details: []}
     seen := Map()
+
+    if (!includeAdapterNames) {
+        try {
+            for idx, ipVal in SysGetIPAddresses() {
+                ipStr := Trim(String(ipVal))
+                if (InStr(ipStr, ".") && !seen.Has(ipStr) && ipStr != "127.0.0.1" && ipStr != "0.0.0.0" && !RegExMatch(ipStr, "^169\.254\.")) {
+                    seen[ipStr] := true
+                    res.ips.Push(ipStr)
+                    res.details.Push({name: "Adapter " idx, ip: ipStr, isVirtual: false})
+                }
+            }
+        }
+        cachedFast := res
+        cachedFastTick := now
+        return res
+    }
+
     try {
         wmi := ComObjGet("winmgmts:")
         adapters := wmi.ExecQuery("SELECT Description, IPAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = True")
@@ -251,15 +270,19 @@ GetLocalNetworkEndpoints() {
         }
     }
     if (res.ips.Length == 0) {
-        Loop 4 {
-            ipVal := A_IPAddress%A_Index%
-            if (ipVal != "" && ipVal != "127.0.0.1" && ipVal != "0.0.0.0" && !seen.Has(ipVal)) {
-                seen[ipVal] := true
-                res.ips.Push(ipVal)
-                res.details.Push({name: "Adapter " A_Index, ip: ipVal, isVirtual: false})
+        try {
+            for idx, ipVal in SysGetIPAddresses() {
+                ipStr := Trim(String(ipVal))
+                if (InStr(ipStr, ".") && !seen.Has(ipStr) && ipStr != "127.0.0.1" && ipStr != "0.0.0.0" && !RegExMatch(ipStr, "^169\.254\.")) {
+                    seen[ipStr] := true
+                    res.ips.Push(ipStr)
+                    res.details.Push({name: "Adapter " idx, ip: ipStr, isVirtual: false})
+                }
             }
         }
     }
+    cachedFull := res
+    cachedFullTick := now
     return res
 }
 

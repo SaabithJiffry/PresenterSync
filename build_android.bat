@@ -32,8 +32,9 @@ pushd "%ANDROID_DIR%" || exit /b 1
 echo.
 echo [1/2] Running JVM Unit Tests + Release APK Build...
 call gradlew.bat testDebugUnitTest assembleRelease --no-daemon --stacktrace -PrequireReleaseSigning=true
-if %errorlevel% neq 0 (
-    echo [ERROR] Android Gradle build/test failed with exit code %errorlevel%.
+set "BUILD_EXIT=%errorlevel%"
+if not "%BUILD_EXIT%"=="0" (
+    echo [ERROR] Android Gradle build/test failed with exit code %BUILD_EXIT%.
     popd
     goto :done
 )

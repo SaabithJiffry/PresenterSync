@@ -3,14 +3,17 @@
 ; Description: UIConstants, Config & OverlayState classes, Settings GUIs, HUD layout & animations
 ; ==============================================================================
 
+global g_IsTestMode := false
+
 #Include "%A_LineFile%\..\Crypto.ahk"
 #Include "%A_LineFile%\..\Gdip.ahk"
 #Include "%A_LineFile%\..\QrCode.ahk"
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 #Include "%A_LineFile%\..\HelpCenter.ahk"
+#Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.0.0"
+    static APP_VERSION := "7.0.1"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168

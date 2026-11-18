@@ -11,13 +11,13 @@ set "DIST_DIR=%~dp0dist"
 if not exist "%AHK2EXE%" (
     echo [ERROR] Ahk2Exe compiler not found at: %AHK2EXE%
     echo Please install AutoHotkey v2 with compiler components.
-    pause
+    if /i not "%~1"=="--nopause" pause
     exit /b 1
 )
 
 if not exist "%BASE%" (
     echo [ERROR] AutoHotkey64 base binary not found at: %BASE%
-    pause
+    if /i not "%~1"=="--nopause" pause
     exit /b 1
 )
 
@@ -28,6 +28,7 @@ echo =======================================================
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 
 echo [1/2] Compiling dist\PresenterSync.exe (Primary Streaming Host)...
+taskkill /F /IM PresenterSync.exe >nul 2>&1
 if exist "%DIST_DIR%\PresenterSync.exe" del /f /q "%DIST_DIR%\PresenterSync.exe"
 "%AHK2EXE%" /in "%~dp0PresenterSync.ahk" /out "%DIST_DIR%\PresenterSync.exe" /icon "%~dp0%ICON%" /base "%BASE%" /silent verbose
 if %errorlevel% neq 0 (
@@ -39,6 +40,7 @@ echo [OK] dist\PresenterSync.exe built successfully.
 
 echo.
 echo [2/2] Compiling dist\PresenterSync_Remote.exe (Smart Board Companion)...
+taskkill /F /IM PresenterSync_Remote.exe >nul 2>&1
 if exist "%DIST_DIR%\PresenterSync_Remote.exe" del /f /q "%DIST_DIR%\PresenterSync_Remote.exe"
 "%AHK2EXE%" /in "%~dp0PresenterSync_Remote.ahk" /out "%DIST_DIR%\PresenterSync_Remote.exe" /icon "%~dp0%REMOTE_ICON%" /base "%BASE%" /silent verbose
 if %errorlevel% neq 0 (

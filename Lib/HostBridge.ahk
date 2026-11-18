@@ -702,7 +702,7 @@ class HostCompanionBridge {
             this._CloseClient(cli)
         if ((now - this.lastAdapterCheckTick) >= 5000) {
             this.lastAdapterCheckTick := now
-            latestEps := GetLocalNetworkEndpoints()
+            latestEps := GetLocalNetworkEndpoints(false)
             latestSig := _HB_GetEndpointsSignature(latestEps)
             if (latestSig != "" && this.lastEndpointsSig != "" && latestSig != this.lastEndpointsSig) {
                 this.cachedEndpoints := latestEps
