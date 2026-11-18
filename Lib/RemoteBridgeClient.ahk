@@ -8,6 +8,7 @@
 #DllLoad ws2_32.dll
 
 class RemoteBridgeConstants {
+    static BRIDGE_CONNECT_TIMEOUT_MS := 1800
     static PONG_TIMEOUT_MS := 2500
     static WAKE_STALENESS_MS := 25000
 }
@@ -937,5 +938,203 @@ CreateRemoteInstanceDesktopShortcut(cfg, instanceName := "", targetDir := "", sh
         instanceName: inst,
         error: (FileExist(outPath) != "") ? "" : "Shortcut file was not created."
     }
+}
+
+UpdateRemoteLocalRecTimer(state) {
+    if (!IsObject(state))
+        return
+    if (state.HasOwnProp("recTickFn") && IsObject(state.recTickFn)) {
+        if (state.HasOwnProp("recState") && state.recState == 1)
+            SetTimer state.recTickFn, 1000
+        else
+            SetTimer state.recTickFn, 0
+    }
+}
+
+RemoteLocalRecTick(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("recState") || state.recState != 1) {
+        if (IsObject(state) && state.HasOwnProp("recTickFn") && IsObject(state.recTickFn))
+            SetTimer state.recTickFn, 0
+        return false
+    }
+    state.recSeconds := (state.HasOwnProp("recSeconds") ? Integer(state.recSeconds) : 0) + 1
+    if (state.HasMethod("NotifyTrayStatus"))
+        state.NotifyTrayStatus()
+    return true
+}
+
+RemoteTimerTick(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("timerState") || (state.timerState != "running" && state.timerState != "overtime")) {
+        if (IsObject(state) && state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
+            SetTimer state.presenterTickFn, 0
+        return false
+    }
+    prevRem := state.HasOwnProp("timerRemainingSec") ? Integer(state.timerRemainingSec) : 0
+    state.timerRemainingSec := prevRem - 1
+    if (state.timerRemainingSec <= 0 && state.timerState = "running") {
+        state.timerState := "overtime"
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("Time Up — Overtime (" FormatCountdownClock(state.timerRemainingSec) ")", "EF4444", 4500, "Timer")
+    } else if (prevRem == 121 && state.timerRemainingSec == 120) {
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("2:00 Remaining", "F59E0B", 4500, "Timer")
+    }
+    if (state.HasMethod("NotifyTrayStatus"))
+        state.NotifyTrayStatus()
+    return true
+}
+
+ExecuteRemoteLocalTimerCommand(cfg, state, action, durationSec := 0) {
+    if (!IsObject(state))
+        return false
+    actLow := StrLower(Trim(String(action)))
+    if (actLow = "timer_start") {
+        if (Integer(durationSec) > 0) {
+            state.timerPresetSec := Integer(durationSec)
+            state.timerRemainingSec := Integer(durationSec)
+        } else if (!state.HasOwnProp("timerState") || state.timerState = "stopped") {
+            preset := (state.HasOwnProp("timerPresetSec") && Integer(state.timerPresetSec) > 0) ? Integer(state.timerPresetSec) : 600
+            state.timerPresetSec := preset
+            state.timerRemainingSec := preset
+        }
+        state.timerState := (state.timerRemainingSec <= 0) ? "overtime" : "running"
+        if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
+            SetTimer state.presenterTickFn, 1000
+    } else if (actLow = "timer_pause") {
+        cur := state.HasOwnProp("timerState") ? state.timerState : "stopped"
+        if (cur = "stopped")
+            return ExecuteRemoteLocalTimerCommand(cfg, state, "timer_start", 0)
+        if (cur = "running" || cur = "overtime") {
+            state.timerState := "paused"
+            if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
+                SetTimer state.presenterTickFn, 0
+        } else if (cur = "paused") {
+            state.timerState := (state.timerRemainingSec <= 0) ? "overtime" : "running"
+            if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
+                SetTimer state.presenterTickFn, 1000
+        }
+    } else if (actLow = "timer_reset") {
+        if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
+            SetTimer state.presenterTickFn, 0
+        preset := (Integer(durationSec) > 0) ? Integer(durationSec) : ((state.HasOwnProp("timerPresetSec") && Integer(state.timerPresetSec) > 0) ? Integer(state.timerPresetSec) : 600)
+        state.timerPresetSec := preset
+        state.timerRemainingSec := preset
+        state.timerState := "stopped"
+    } else {
+        return false
+    }
+    if (IsSet(DiagnosticLogger))
+        try DiagnosticLogger.RecordBreadcrumb("Timer", "RemoteLocalTimer", actLow " | rem=" state.timerRemainingSec)
+    if (state.HasOwnProp("rebuildTrayFn") && IsObject(state.rebuildTrayFn)) {
+        try state.rebuildTrayFn.Call()
+    } else if (state.HasMethod("NotifyTrayStatus")) {
+        state.NotifyTrayStatus()
+    }
+    return true
+}
+
+ExecuteRemoteLocalStandbyToggle(cfg, state, enterStandby := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    curStandby := state.HasOwnProp("isStandby") ? !!state.isStandby : false
+    wantStandby := (enterStandby == "") ? !curStandby : !!enterStandby
+    if (wantStandby == curStandby)
+        return true
+
+    brbScene := (state.HasOwnProp("standbyScene") && Trim(state.standbyScene) != "") ? Trim(state.standbyScene) : "BRB"
+    micName := (cfg.HasOwnProp("TargetMicName") && Trim(cfg.TargetMicName) != "") ? Trim(cfg.TargetMicName)
+        : ((cfg.HasOwnProp("targetMicName") && Trim(cfg.targetMicName) != "") ? Trim(cfg.targetMicName) : "Mic/Aux")
+
+    if (wantStandby) {
+        prevSc := state.HasOwnProp("activeScene") ? String(state.activeScene)
+            : (state.HasOwnProp("currentSceneName") ? String(state.currentSceneName) : "Scene")
+        state.standbySnapshot := {
+            scene: prevSc,
+            muted: (state.HasOwnProp("isMuted") ? !!state.isMuted : false)
+        }
+        if (!state.isMuted) {
+            if (IsObject(state.obsWs))
+                SendObsRequest(state.obsWs, "SetInputMute", "RemoteClickerSetMute", '{"inputName":"' EscapeJsonStr(micName) '","inputMuted":true}')
+            state.isMuted := true
+            if (cfg.HasOwnProp("IsMuted")) {
+                cfg.IsMuted := true
+                if (cfg.HasMethod("WriteBool"))
+                    try cfg.WriteBool("Settings", "IsMuted", true)
+            }
+        }
+        if (IsObject(state.obsWs))
+            SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteStandbyScene", '{"sceneName":"' EscapeJsonStr(brbScene) '"}')
+        if (prevSc != "" && prevSc != brbScene)
+            state.previousProgramScene := prevSc
+        state.activeScene := brbScene
+        if (state.HasOwnProp("currentSceneName"))
+            state.currentSceneName := brbScene
+        state.isStandby := true
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Director", "RemoteLocalStandbyEnter", "scene=" brbScene " | prev=" prevSc)
+    } else {
+        snap := state.HasOwnProp("standbySnapshot") ? state.standbySnapshot : ""
+        state.isStandby := false
+        state.standbySnapshot := ""
+        if (IsObject(snap)) {
+            if (snap.HasOwnProp("scene") && snap.scene != "" && snap.scene != "Scene") {
+                if (IsObject(state.obsWs))
+                    SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteStandbyRestoreScene", '{"sceneName":"' EscapeJsonStr(snap.scene) '"}')
+                state.activeScene := snap.scene
+                if (state.HasOwnProp("currentSceneName"))
+                    state.currentSceneName := snap.scene
+            }
+            if (snap.HasOwnProp("muted")) {
+                if (IsObject(state.obsWs))
+                    SendObsRequest(state.obsWs, "SetInputMute", "RemoteClickerSetMute", '{"inputName":"' EscapeJsonStr(micName) '","inputMuted":' (snap.muted ? "true" : "false") '}')
+                state.isMuted := !!snap.muted
+                if (cfg.HasOwnProp("IsMuted")) {
+                    cfg.IsMuted := !!snap.muted
+                    if (cfg.HasMethod("WriteBool"))
+                        try cfg.WriteBool("Settings", "IsMuted", !!snap.muted)
+                }
+            }
+        }
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Director", "RemoteLocalStandbyExit", "scene=" state.activeScene)
+    }
+    if (state.HasOwnProp("rebuildTrayFn") && IsObject(state.rebuildTrayFn)) {
+        try state.rebuildTrayFn.Call()
+    } else if (state.HasMethod("NotifyTrayStatus")) {
+        state.NotifyTrayStatus()
+    }
+    return true
+}
+
+ExecuteRemoteDirectObsTransition(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("obsConnected") || !state.obsConnected || !IsObject(state.obsWs))
+        return false
+    if (state.HasOwnProp("studioModeActive") && state.studioModeActive)
+        return SendObsRequest(state.obsWs, "TriggerStudioModeTransition", "RemoteSceneTransition")
+    prevSc := state.HasOwnProp("previewScene") ? Trim(state.previewScene)
+        : (state.HasOwnProp("previewSceneName") ? Trim(state.previewSceneName) : "")
+    curSc := state.HasOwnProp("activeScene") ? Trim(state.activeScene)
+        : (state.HasOwnProp("currentSceneName") ? Trim(state.currentSceneName) : "")
+    prevProg := state.HasOwnProp("previousProgramScene") ? Trim(state.previousProgramScene) : ""
+    targetSc := (prevSc != "" && prevSc != curSc) ? prevSc : prevProg
+    if (targetSc != "") {
+        ok := SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteSceneTransition", '{"sceneName":"' EscapeJsonStr(targetSc) '"}')
+        if (ok) {
+            if (curSc != "" && curSc != "Scene" && curSc != targetSc)
+                state.previousProgramScene := curSc
+            state.activeScene := targetSc
+            if (state.HasOwnProp("currentSceneName"))
+                state.currentSceneName := targetSc
+            if (state.HasMethod("NotifyTrayStatus"))
+                state.NotifyTrayStatus()
+        }
+        return ok
+    }
+    return false
+}
+
+FormatRemoteDirectObsStatus(activeHost) {
+    hostTxt := Trim(String(activeHost))
+    return "● Fallback: DIRECT OBS :4455" (hostTxt != "" ? (" (" hostTxt ")") : "")
 }
 

@@ -154,6 +154,8 @@ class RelayClient(
 
     fun sendToggleStandby(): Boolean = publishPacket("toggle_standby", "1")
 
+    fun sendTransitionScene(): Boolean = publishPacket("transition_scene", "1")
+
     fun sendSwitchScene(sceneName: String): Boolean {
         val clean = sceneName.trim().replace("|", "/")
         return if (clean.isNotEmpty()) publishPacket("switch_scene", clean) else false

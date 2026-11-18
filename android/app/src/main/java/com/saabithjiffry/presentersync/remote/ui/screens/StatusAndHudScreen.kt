@@ -153,8 +153,11 @@ internal fun StatusAndActionsCard(
         else -> "Searching for OBS Host..."
     }
 
+    val isDirectObsFallback = conn.connected && (conn.usingDirectObsFallback || conn.channelType == com.saabithjiffry.presentersync.remote.network.ChannelType.DIRECT_OBS)
     val statusSub = when {
         !conn.serviceRunning -> "Tap Start Floating HUD to show the always-on-top Mic pill."
+        isDirectObsFallback ->
+            "Fallback: DIRECT OBS :4455 (Host Bridge Offline — ${conn.activeHost})"
         conn.connected && conn.usingRelayFallback ->
             "Connected via Internet Relay fallback (${conn.activeHost})"
         conn.connected && conn.usingBridge ->
@@ -201,6 +204,22 @@ internal fun StatusAndActionsCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (isDirectObsFallback) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFFD97706).copy(alpha = 0.16f),
+                            border = BorderStroke(1.dp, Color(0xFFD97706).copy(alpha = 0.5f))
+                        ) {
+                            Text(
+                                text = "DIRECT OBS :4455",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFD97706)
+                            )
+                        }
+                    }
                 }
             }
 

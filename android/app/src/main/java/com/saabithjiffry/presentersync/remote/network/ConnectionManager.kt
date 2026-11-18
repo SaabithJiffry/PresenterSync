@@ -13,6 +13,7 @@ import com.saabithjiffry.presentersync.remote.config.NetworkMode
 import com.saabithjiffry.presentersync.remote.config.ParsedConnectionPayload
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
+import com.saabithjiffry.presentersync.remote.util.DiagnosticLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,12 +47,31 @@ enum class ConnStatus {
     MIC_ERROR
 }
 
+enum class ChannelType {
+    NONE,
+    HOST_BRIDGE,
+    DIRECT_OBS,
+    WAN_RELAY
+}
+
+typealias ConnectionChannel = ChannelType
+
+data class PresenterTimerState(
+    val timerState: String = "stopped",
+    val timerRemainingSec: Int = 600,
+    val timerPresetSec: Int = 600
+)
+
 data class ConnectionUiState(
     val connected: Boolean = false,
     val connStatus: ConnStatus = ConnStatus.SEARCHING,
     val activeHost: String = "",
     val usingRelayFallback: Boolean = false,
     val usingBridge: Boolean = false,
+    val usingDirectObsFallback: Boolean = false,
+    val studioModeActive: Boolean = false,
+    val previewScene: String = "",
+    val previousProgramScene: String = "",
     val isMuted: Boolean = false,
     val serviceRunning: Boolean = false,
     val recState: Int = 0,
@@ -66,10 +86,25 @@ data class ConnectionUiState(
     val timerRemainingSec: Int = 600,
     val timerPresetSec: Int = 600
 ) {
+    val currentSceneName: String
+        get() = activeScene
+
+    val previewSceneName: String
+        get() = previewScene
+
+    val channelType: ChannelType
+        get() = when {
+            !connected -> ChannelType.NONE
+            usingBridge -> ChannelType.HOST_BRIDGE
+            usingRelayFallback -> ChannelType.WAN_RELAY
+            else -> ChannelType.DIRECT_OBS
+        }
+
     val transportName: String
         get() = when {
             usingBridge -> "Host Bridge"
             usingRelayFallback -> "WAN Relay"
+            usingDirectObsFallback -> "Direct OBS Fallback"
             else -> "OBS WebSocket"
         }
 
@@ -150,9 +185,19 @@ class ConnectionManager(
     private var lastWakeReconnectAtMs: Long = Long.MIN_VALUE
     internal var pongTimeoutMs: Long = PONG_TIMEOUT_MS
     internal var wakeStalenessMs: Long = WAKE_STALENESS_MS
+    internal var bridgeConnectTimeoutMs: Long = BRIDGE_CONNECT_TIMEOUT_MS
     internal var discoverPortOverride: Int = AppConstants.DEFAULT_DISCOVERY_PORT
     internal var failoverBudgetMs: Long = AppConstants.LAN_FAILOVER_DEADLINE_MS
     internal var repromoteIntervalMs: Long = AppConstants.LAN_REPROMOTE_INTERVAL_MS
+
+    internal data class LocalStandbySnapshot(
+        val previousScene: String,
+        val wasMuted: Boolean,
+        val recWasActive: Boolean = false
+    )
+
+    @Volatile
+    internal var localStandbySnapshot: LocalStandbySnapshot? = null
 
     private val connectivityManager = runCatching {
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -269,6 +314,10 @@ class ConnectionManager(
             connStatus = ConnStatus.SEARCHING,
             activeHost = "",
             usingRelayFallback = false,
+            usingBridge = false,
+            usingDirectObsFallback = false,
+            studioModeActive = false,
+            previewScene = "",
             serviceRunning = false,
             recState = 0,
             recSeconds = 0,
@@ -295,6 +344,8 @@ class ConnectionManager(
             connStatus = ConnStatus.SEARCHING,
             activeHost = "",
             usingRelayFallback = false,
+            usingBridge = false,
+            usingDirectObsFallback = false,
             recState = 0,
             recSeconds = 0,
             streamDropWarn = false,
@@ -448,7 +499,8 @@ class ConnectionManager(
 
                 // Prefer Primary Host Companion Bridge (4456) when Session Code or Token is present
                 var bridgeAuthRejected = false
-                if (effectiveCfg.sessionToken.isNotBlank() || effectiveCfg.sessionPairingCode.isNotBlank()) {
+                val hadBridgeCredentials = effectiveCfg.sessionToken.isNotBlank() || effectiveCfg.sessionPairingCode.isNotBlank()
+                if (hadBridgeCredentials) {
                     val bridgeUrl = "ws://$resolvedHost:${effectiveCfg.bridgePort}/ws"
                     logInfo("Attempting Host Bridge WebSocket: $bridgeUrl (hasToken=${effectiveCfg.sessionToken.isNotBlank()})")
                     var bridgeAttempt = attemptBridgeSession(gen, effectiveCfg, "${cand.host}:${effectiveCfg.bridgePort}", bridgeUrl)
@@ -469,7 +521,13 @@ class ConnectionManager(
                         SessionOutcome.AUTH_FAILED -> {
                             bridgeAuthRejected = true
                         }
-                        SessionOutcome.DISCONNECTED -> Unit
+                        SessionOutcome.DISCONNECTED -> {
+                            DiagnosticLogger.recordBreadcrumb(
+                                "Failover",
+                                "BridgeToDirectObsFallback",
+                                "Bridge ${cand.host}:${effectiveCfg.bridgePort} unreachable/closed -> falling back to Direct OBS :${cand.port}"
+                            )
+                        }
                     }
                 }
                 if (gen != generation.get()) return
@@ -483,7 +541,7 @@ class ConnectionManager(
                 }
 
                 val effectiveUrl = "${cand.scheme}://$resolvedHost:${cand.port}${cand.path}"
-                val outcome = attemptObsSession(gen, effectiveCfg, cand.raw, effectiveUrl)
+                val outcome = attemptObsSession(gen, effectiveCfg, cand.raw, effectiveUrl, isBridgeFallback = true)
                 when (outcome) {
                     SessionOutcome.AUTH_FAILED -> {
                         authFailed = true
@@ -500,7 +558,8 @@ class ConnectionManager(
                                 connStatus = ConnStatus.AUTH_FAILED,
                                 activeHost = "",
                                 usingRelayFallback = false,
-                                usingBridge = false
+                                usingBridge = false,
+                                usingDirectObsFallback = false
                             )
                             authFailed = true
                             break
@@ -548,8 +607,13 @@ class ConnectionManager(
         val done = kotlinx.coroutines.CompletableDeferred<BridgeAttemptResult>()
         val devId = SessionPairingClient.getOrCreateDeviceId(context)
         val devName = android.os.Build.MODEL.orEmpty().trim().ifEmpty { "Smart Board" }
+        val timeoutMs = bridgeConnectTimeoutMs.coerceAtLeast(300L)
+        val bridgeHttp = httpClient.newBuilder()
+            .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+            .build()
+        var handshakeTimeoutJob: Job? = null
         val client = HostBridgeClient(
-            httpClient = httpClient,
+            httpClient = bridgeHttp,
             wsBaseUrl = wsUrl,
             sessionToken = cfg.sessionToken,
             sessionCode = cfg.sessionPairingCode,
@@ -558,14 +622,17 @@ class ConnectionManager(
             callbacks = object : HostBridgeCallbacks {
                 override fun onBridgeConnected(hostName: String) {
                     if (gen != generation.get()) return
+                    handshakeTimeoutJob?.cancel()
                     markRxActivity()
                     _uiState.value = _uiState.value.copy(
                         connected = true,
                         connStatus = ConnStatus.CONNECTED,
                         activeHost = "$hostName ($displayRaw)",
                         usingRelayFallback = false,
-                        usingBridge = true
+                        usingBridge = true,
+                        usingDirectObsFallback = false
                     )
+                    DiagnosticLogger.recordBreadcrumb("Connection", "HostBridgeConnected", "$hostName ($displayRaw)")
                     startHeartbeat(gen, cfg.heartbeatSeconds)
                 }
 
@@ -598,6 +665,7 @@ class ConnectionManager(
                 }
 
                 override fun onBridgeAuthFailed(reason: String) {
+                    handshakeTimeoutJob?.cancel()
                     if (gen == generation.get() && !shouldRetryBridgeAuthWithPairingCode(cfg, reason)) {
                         _events.tryEmit(RemoteEvent.ToastMessage("Host Bridge auth failed: $reason"))
                     }
@@ -625,7 +693,9 @@ class ConnectionManager(
                 }
 
                 override fun onBridgeDisconnected(reason: String) {
+                    handshakeTimeoutJob?.cancel()
                     logWarn("Host Bridge disconnected ($wsUrl): $reason")
+                    DiagnosticLogger.recordBreadcrumb("Connection", "HostBridgeDisconnected", "$wsUrl | $reason")
                     pongWatchdogJob?.cancel()
                     heartbeatJob?.cancel()
                     recTickerJob?.cancel()
@@ -636,6 +706,7 @@ class ConnectionManager(
                             connStatus = ConnStatus.SEARCHING,
                             activeHost = "",
                             usingBridge = false,
+                            usingDirectObsFallback = false,
                             recState = 0,
                             recSeconds = 0,
                             streamDropWarn = false,
@@ -651,10 +722,20 @@ class ConnectionManager(
         )
         bridgeClient = client
         client.connect()
+        handshakeTimeoutJob = scope.launch {
+            delay(timeoutMs)
+            if (!done.isCompleted && (!_uiState.value.connected || !_uiState.value.usingBridge)) {
+                logWarn("Host Bridge connect timeout (${timeoutMs}ms) on $wsUrl; failing over to Direct OBS :4455")
+                DiagnosticLogger.recordBreadcrumb("Failover", "BridgeConnectTimeout", "${timeoutMs}ms on $wsUrl")
+                client.closeDead()
+                done.complete(BridgeAttemptResult(SessionOutcome.DISCONNECTED, "timeout"))
+            }
+        }
 
         return try {
             done.await()
         } finally {
+            handshakeTimeoutJob?.cancel()
             pongWatchdogJob?.cancel()
             heartbeatJob?.cancel()
             client.close()
@@ -666,7 +747,8 @@ class ConnectionManager(
         gen: Int,
         cfg: RemoteConfig,
         displayRaw: String,
-        wsUrl: String
+        wsUrl: String,
+        isBridgeFallback: Boolean = true
     ): SessionOutcome {
         val done = kotlinx.coroutines.CompletableDeferred<SessionOutcome>()
         val client = ObsWebSocketClient(
@@ -682,9 +764,19 @@ class ConnectionManager(
                         connected = true,
                         connStatus = ConnStatus.CONNECTED,
                         activeHost = displayRaw,
-                        usingRelayFallback = false
+                        usingRelayFallback = false,
+                        usingBridge = false,
+                        usingDirectObsFallback = isBridgeFallback
+                    )
+                    DiagnosticLogger.recordBreadcrumb(
+                        "Failover",
+                        "DirectObsFallbackConnected",
+                        "host=$displayRaw | fallback=$isBridgeFallback"
                     )
                     startHeartbeat(gen, cfg.heartbeatSeconds)
+                    if (cfg.sessionToken.isNotBlank() || cfg.sessionPairingCode.isNotBlank()) {
+                        startLanRepromotionMonitor(gen)
+                    }
                 }
 
                 override fun onFrameReceived() {
@@ -699,7 +791,9 @@ class ConnectionManager(
                             connected = false,
                             connStatus = ConnStatus.AUTH_FAILED,
                             activeHost = "",
-                            usingRelayFallback = false
+                            usingRelayFallback = false,
+                            usingBridge = false,
+                            usingDirectObsFallback = false
                         )
                         _events.tryEmit(RemoteEvent.ToastMessage("OBS authentication failed (4009). Check password."))
                     }
@@ -709,6 +803,48 @@ class ConnectionManager(
                 override fun onMuteStateChanged(muted: Boolean) {
                     if (gen != generation.get()) return
                     applyNewMuteState(muted)
+                }
+
+                override fun onRecordStateChanged(recState: Int, recSeconds: Int) {
+                    if (gen != generation.get()) return
+                    val prev = _uiState.value
+                    val nextSec = if (recSeconds >= 0) recSeconds else if (recState == 0) 0 else prev.recSeconds
+                    _uiState.value = prev.copy(recState = recState, recSeconds = nextSec)
+                    updateLocalRecTicker(gen, recState)
+                }
+
+                override fun onStreamStateChanged(active: Boolean, reconnecting: Boolean, dropWarn: Boolean) {
+                    if (gen != generation.get()) return
+                    _uiState.value = _uiState.value.copy(streamDropWarn = dropWarn || reconnecting)
+                }
+
+                override fun onStudioModeStateChanged(enabled: Boolean) {
+                    if (gen != generation.get()) return
+                    _uiState.value = _uiState.value.copy(studioModeActive = enabled)
+                }
+
+                override fun onProgramSceneChanged(sceneName: String) {
+                    if (gen != generation.get() || sceneName.isBlank()) return
+                    val cur = _uiState.value
+                    val prevProg = if (cur.activeScene.isNotBlank() && cur.activeScene != "Scene" && cur.activeScene != sceneName) {
+                        cur.activeScene
+                    } else {
+                        cur.previousProgramScene
+                    }
+                    _uiState.value = cur.copy(
+                        previousProgramScene = prevProg,
+                        activeScene = sceneName
+                    )
+                }
+
+                override fun onPreviewSceneChanged(sceneName: String) {
+                    if (gen != generation.get() || sceneName.isBlank()) return
+                    _uiState.value = _uiState.value.copy(previewScene = sceneName)
+                }
+
+                override fun onSceneListChanged(scenes: List<String>) {
+                    if (gen != generation.get() || scenes.isEmpty()) return
+                    _uiState.value = _uiState.value.copy(scenes = scenes)
                 }
 
                 override fun onMicError() {
@@ -734,6 +870,8 @@ class ConnectionManager(
                 override fun onDisconnected(reason: String) {
                     pongWatchdogJob?.cancel()
                     heartbeatJob?.cancel()
+                    recTickerJob?.cancel()
+                    lanRepromoteJob?.cancel()
                     if (gen == generation.get()) {
                         val st = _uiState.value
                         if (st.connStatus != ConnStatus.AUTH_FAILED) {
@@ -741,6 +879,7 @@ class ConnectionManager(
                                 connected = false,
                                 connStatus = ConnStatus.SEARCHING,
                                 activeHost = "",
+                                usingDirectObsFallback = false,
                                 recState = 0,
                                 recSeconds = 0,
                                 streamDropWarn = false,
@@ -760,6 +899,7 @@ class ConnectionManager(
         } finally {
             pongWatchdogJob?.cancel()
             heartbeatJob?.cancel()
+            lanRepromoteJob?.cancel()
             client.close()
             if (obsClient === client) obsClient = null
         }
@@ -902,9 +1042,9 @@ class ConnectionManager(
     private fun startLanRepromotionMonitor(gen: Int) {
         lanRepromoteJob?.cancel()
         lanRepromoteJob = scope.launch {
-            while (gen == generation.get() && _uiState.value.usingRelayFallback) {
+            while (gen == generation.get() && (_uiState.value.usingRelayFallback || _uiState.value.usingDirectObsFallback)) {
                 delay(repromoteIntervalMs.coerceAtLeast(1500L))
-                if (gen != generation.get() || !_uiState.value.usingRelayFallback) break
+                if (gen != generation.get() || (!_uiState.value.usingRelayFallback && !_uiState.value.usingDirectObsFallback)) break
                 if (checkAndPromoteLanIfHealthy(gen)) break
             }
         }
@@ -995,7 +1135,12 @@ class ConnectionManager(
         if (activeVoiceWarn && !prev.voiceWhileMuted && configStore.current.enableVoiceWhileMutedAlert) {
             _events.tryEmit(RemoteEvent.VoiceWhileMutedAlert)
         }
-        if (telemetry.recState == 1) {
+        updateLocalRecTicker(gen, telemetry.recState)
+        updateLocalPresenterTimerTicker(gen, telemetry.timerState)
+    }
+
+    private fun updateLocalRecTicker(gen: Int, recState: Int) {
+        if (recState == 1) {
             if (recTickerJob?.isActive != true) {
                 recTickerJob = scope.launch {
                     while (gen == generation.get() && _uiState.value.connected && _uiState.value.recState == 1) {
@@ -1010,21 +1155,18 @@ class ConnectionManager(
         } else {
             recTickerJob?.cancel()
         }
+    }
 
-        if (telemetry.timerState == "running" || telemetry.timerState == "overtime") {
+    private fun updateLocalPresenterTimerTicker(gen: Int, timerState: String) {
+        if (timerState == "running" || timerState == "overtime") {
             if (presenterTimerJob?.isActive != true) {
                 presenterTimerJob = scope.launch {
-                    while (gen == generation.get() && _uiState.value.connected &&
+                    while (gen == generation.get() &&
                         (_uiState.value.timerState == "running" || _uiState.value.timerState == "overtime")
                     ) {
                         delay(1000L)
-                        val cur = _uiState.value
-                        if (gen == generation.get() && cur.connected &&
-                            (cur.timerState == "running" || cur.timerState == "overtime")
-                        ) {
-                            val nextSec = cur.timerRemainingSec - 1
-                            val nextState = if (nextSec <= 0) "overtime" else cur.timerState
-                            _uiState.value = cur.copy(timerRemainingSec = nextSec, timerState = nextState)
+                        if (gen == generation.get()) {
+                            stepLocalPresenterTimerTick()
                         }
                     }
                 }
@@ -1032,6 +1174,147 @@ class ConnectionManager(
         } else {
             presenterTimerJob?.cancel()
         }
+    }
+
+    internal fun stepLocalPresenterTimerTick(): Boolean {
+        val cur = _uiState.value
+        if (cur.timerState != "running" && cur.timerState != "overtime") return false
+        val prevRem = cur.timerRemainingSec
+        val nextSec = prevRem - 1
+        val enteredOvertime = (nextSec <= 0 && cur.timerState == "running")
+        val nextState = if (nextSec <= 0) "overtime" else cur.timerState
+        val updated = cur.copy(timerRemainingSec = nextSec, timerState = nextState)
+        _uiState.value = updated
+        if (enteredOvertime) {
+            _events.tryEmit(
+                RemoteEvent.StageNudge(
+                    message = "Time Up — Overtime (${updated.formattedCountdown()})",
+                    sender = "Timer",
+                    accentHex = "EF4444"
+                )
+            )
+        } else if (prevRem == 121 && nextSec == 120) {
+            _events.tryEmit(
+                RemoteEvent.StageNudge(
+                    message = "2:00 Remaining",
+                    sender = "Timer",
+                    accentHex = "F59E0B"
+                )
+            )
+        }
+        return true
+    }
+
+    internal fun executeLocalTimerCommand(action: String, durationSec: Int = 0): Boolean {
+        val cur = _uiState.value
+        val activeGen = generation.get()
+        return when (action.lowercase()) {
+            "timer_start" -> {
+                val preset: Int
+                val rem: Int
+                if (durationSec > 0) {
+                    preset = durationSec
+                    rem = durationSec
+                } else if (cur.timerState == "stopped") {
+                    preset = if (cur.timerPresetSec > 0) cur.timerPresetSec else 600
+                    rem = preset
+                } else {
+                    preset = if (cur.timerPresetSec > 0) cur.timerPresetSec else 600
+                    rem = cur.timerRemainingSec
+                }
+                val nextState = if (rem <= 0) "overtime" else "running"
+                _uiState.value = cur.copy(
+                    timerState = nextState,
+                    timerRemainingSec = rem,
+                    timerPresetSec = preset
+                )
+                DiagnosticLogger.recordBreadcrumb("Timer", "LocalTimerStart", "rem=${rem}s | preset=${preset}s")
+                updateLocalPresenterTimerTicker(activeGen, nextState)
+                true
+            }
+            "timer_pause" -> {
+                if (cur.timerState == "stopped") {
+                    return executeLocalTimerCommand("timer_start", 0)
+                }
+                if (cur.timerState == "running" || cur.timerState == "overtime") {
+                    presenterTimerJob?.cancel()
+                    _uiState.value = cur.copy(timerState = "paused")
+                    DiagnosticLogger.recordBreadcrumb("Timer", "LocalTimerPause", "rem=${cur.timerRemainingSec}s")
+                } else if (cur.timerState == "paused") {
+                    val nextState = if (cur.timerRemainingSec <= 0) "overtime" else "running"
+                    _uiState.value = cur.copy(timerState = nextState)
+                    DiagnosticLogger.recordBreadcrumb("Timer", "LocalTimerResume", "rem=${cur.timerRemainingSec}s")
+                    updateLocalPresenterTimerTicker(activeGen, nextState)
+                }
+                true
+            }
+            "timer_reset" -> {
+                presenterTimerJob?.cancel()
+                val preset = if (durationSec > 0) durationSec else if (cur.timerPresetSec > 0) cur.timerPresetSec else 600
+                _uiState.value = cur.copy(
+                    timerState = "stopped",
+                    timerRemainingSec = preset,
+                    timerPresetSec = preset
+                )
+                DiagnosticLogger.recordBreadcrumb("Timer", "LocalTimerReset", "preset=${preset}s")
+                true
+            }
+            else -> false
+        }
+    }
+
+    internal fun executeLocalObsStandbyToggle(enterStandby: Boolean? = null): Boolean {
+        val cur = _uiState.value
+        val obs = obsClient
+        val wantStandby = enterStandby ?: !cur.isStandby
+        if (wantStandby == cur.isStandby) return true
+        val brbScene = cur.standbyScene.trim().ifBlank { "BRB" }
+
+        if (wantStandby) {
+            localStandbySnapshot = LocalStandbySnapshot(
+                previousScene = cur.activeScene,
+                wasMuted = cur.isMuted,
+                recWasActive = (cur.recState == 1)
+            )
+            if (!cur.isMuted) {
+                obs?.sendSetInputMute(true)
+                applyNewMuteState(true)
+            }
+            obs?.sendSetCurrentProgramScene(brbScene)
+            val prevProg = if (cur.activeScene.isNotBlank() && cur.activeScene != brbScene) cur.activeScene else cur.previousProgramScene
+            _uiState.value = _uiState.value.copy(
+                isStandby = true,
+                previousProgramScene = prevProg,
+                activeScene = brbScene
+            )
+            DiagnosticLogger.recordBreadcrumb(
+                "Director",
+                "LocalObsStandbyEnter",
+                "scene=$brbScene | prev=${cur.activeScene} | wasMuted=${cur.isMuted}"
+            )
+        } else {
+            val snap = localStandbySnapshot
+            localStandbySnapshot = null
+            var restoredScene = _uiState.value.activeScene
+            if (snap != null) {
+                if (snap.previousScene.isNotBlank() && snap.previousScene != "Scene") {
+                    obs?.sendSetCurrentProgramScene(snap.previousScene)
+                    restoredScene = snap.previousScene
+                }
+                obs?.sendSetInputMute(snap.wasMuted)
+                applyNewMuteState(snap.wasMuted)
+            }
+            _uiState.value = _uiState.value.copy(
+                isStandby = false,
+                activeScene = restoredScene
+            )
+            DiagnosticLogger.recordBreadcrumb(
+                "Director",
+                "LocalObsStandbyExit",
+                "restoredScene=$restoredScene"
+            )
+        }
+        return true
     }
 
     private fun applyNewMuteState(muted: Boolean) {
@@ -1055,42 +1338,111 @@ class ConnectionManager(
     fun sendToggleRecord(source: String = "quick_menu"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendToggleRecord(source) },
+            obsAction = { it.sendToggleRecord() },
             relayAction = { it.sendToggleRecord() }
         )
 
     fun sendPauseRecord(source: String = "quick_menu"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendPauseRecord(source) },
+            obsAction = { obs ->
+                val ok = obs.sendToggleRecordPause()
+                val cur = _uiState.value
+                if (ok && (cur.recState == 1 || cur.recState == 2)) {
+                    val nextSt = if (cur.recState == 1) 2 else 1
+                    _uiState.value = cur.copy(recState = nextSt)
+                    updateLocalRecTicker(generation.get(), nextSt)
+                }
+                ok
+            },
             relayAction = { it.sendPauseRecord() }
         )
 
     fun sendSplitRecord(source: String = "quick_menu"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendSplitRecord(source) },
+            obsAction = { it.sendSplitRecordFile() },
             relayAction = { it.sendSplitRecord() }
         )
 
     fun sendToggleStandby(source: String = "quick_menu"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendToggleStandby(source) },
+            obsAction = { executeLocalObsStandbyToggle() },
             relayAction = { it.sendToggleStandby() }
         )
 
     fun sendSwitchScene(sceneName: String, source: String = "director"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendSwitchScene(sceneName, source) },
+            obsAction = { obs ->
+                val clean = sceneName.trim()
+                val ok = obs.sendSetCurrentProgramScene(clean)
+                if (ok && clean.isNotEmpty()) {
+                    val cur = _uiState.value
+                    val prevProg = if (cur.activeScene.isNotBlank() && cur.activeScene != "Scene" && cur.activeScene != clean) {
+                        cur.activeScene
+                    } else {
+                        cur.previousProgramScene
+                    }
+                    _uiState.value = cur.copy(previousProgramScene = prevProg, activeScene = clean)
+                }
+                ok
+            },
             relayAction = { it.sendSwitchScene(sceneName) }
         )
 
-    fun sendTimerCommand(action: String, durationSec: Int = 0, source: String = "director"): Boolean =
+    fun sendTransitionScene(source: String = "director"): Boolean =
         sendDirectorAction(
-            bridgeAction = { it.sendTimerCommand(action, durationSec, source) },
-            relayAction = { it.sendTimerCommand(action, durationSec) }
+            bridgeAction = { it.sendTransitionScene(source) },
+            obsAction = { obs ->
+                val cur = _uiState.value
+                if (cur.studioModeActive) {
+                    obs.sendTriggerStudioModeTransition()
+                } else {
+                    val target = if (cur.previewScene.isNotBlank() && cur.previewScene != cur.activeScene) {
+                        cur.previewScene
+                    } else {
+                        cur.previousProgramScene
+                    }
+                    if (target.isNotBlank()) {
+                        val ok = obs.sendSetCurrentProgramScene(target)
+                        if (ok) {
+                            _uiState.value = cur.copy(
+                                previousProgramScene = if (cur.activeScene.isNotBlank() && cur.activeScene != target) cur.activeScene else cur.previousProgramScene,
+                                activeScene = target
+                            )
+                        }
+                        ok
+                    } else {
+                        false
+                    }
+                }
+            },
+            relayAction = { it.sendTransitionScene() }
         )
+
+    fun sendTimerCommand(action: String, durationSec: Int = 0, source: String = "director"): Boolean {
+        val st = _uiState.value
+        val bridge = bridgeClient
+        if (st.connected && bridge != null && st.usingBridge) {
+            return bridge.sendTimerCommand(action, durationSec, source)
+        }
+        val relay = relayClient
+        if (st.connected && relay != null && !st.usingDirectObsFallback) {
+            return relay.sendTimerCommand(action, durationSec)
+        }
+        if (st.usingDirectObsFallback || obsClient != null) {
+            return executeLocalTimerCommand(action, durationSec)
+        }
+        _events.tryEmit(RemoteEvent.ToastMessage("Director controls require an active Host Bridge, Direct OBS, or Relay connection."))
+        return false
+    }
 
     fun sendStageNudge(message: String, accentHex: String = "F59E0B"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendStageNudge(message, accentHex = accentHex) },
+            obsAction = null,
             relayAction = { it.sendStageNudge(message) }
         )
 
@@ -1106,6 +1458,7 @@ class ConnectionManager(
 
     private fun sendDirectorAction(
         bridgeAction: (HostBridgeClient) -> Boolean,
+        obsAction: ((ObsWebSocketClient) -> Boolean)? = null,
         relayAction: (RelayClient) -> Boolean
     ): Boolean {
         val st = _uiState.value
@@ -1113,11 +1466,19 @@ class ConnectionManager(
         if (st.connected && bridge != null && st.usingBridge) {
             return bridgeAction(bridge)
         }
+        val obs = obsClient
+        if (obsAction != null && (st.usingDirectObsFallback || (st.connected && obs != null))) {
+            if (obs != null) {
+                return obsAction(obs)
+            } else if (st.usingDirectObsFallback) {
+                return executeLocalObsStandbyToggle()
+            }
+        }
         val relay = relayClient
         if (st.connected && relay != null) {
             return relayAction(relay)
         }
-        _events.tryEmit(RemoteEvent.ToastMessage("Director controls require an active Primary Host Bridge or Relay connection."))
+        _events.tryEmit(RemoteEvent.ToastMessage("Director controls require an active Primary Host Bridge, Direct OBS, or Relay connection."))
         return false
     }
 
@@ -1455,6 +1816,7 @@ class ConnectionManager(
     }
 
     companion object {
+        const val BRIDGE_CONNECT_TIMEOUT_MS = 1800L
         const val PONG_TIMEOUT_MS = 2500L
         const val WAKE_STALENESS_MS = 25_000L
     }
