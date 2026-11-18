@@ -134,7 +134,8 @@ class MainActivity : ComponentActivity() {
                     isAlt = event.isAltPressed,
                     isShift = event.isShiftPressed,
                     repeatCount = event.repeatCount,
-                    config = cfg
+                    config = cfg,
+                    isMuted = app.connectionManager.uiState.value.isMuted
                 )
                 when (decision) {
                     ClickerDecision.CONSUME_TOGGLE,

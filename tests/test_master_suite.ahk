@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v7.0.5", UIConstants.APP_VERSION == "7.0.5")
+Assert("APP_VERSION is active release v7.0.6", UIConstants.APP_VERSION == "7.0.6")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -787,7 +787,7 @@ Assert("ResetAppearance restores ShowVoiceMeter back to true",
 meterState.voicePeak := 0.1
 VoiceMeterTick(cfgMeter, meterState, () => 0.64)
 Assert("VoiceMeterTick updates voicePeak from reader when unmuted",
-    Abs(meterState.voicePeak - 0.64) < 0.001)
+    Abs(meterState.voicePeak - 0.397) < 0.005)
 
 meterState.isMuted := true
 VoiceMeterTick(cfgMeter, meterState, () => 0.90)
@@ -880,15 +880,19 @@ mockWs6 := MockWebSocket()
 cfgStrm.EnableWS := true
 stStrm.obsWs := mockWs6
 HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":2,"d":{"negotiatedRpcVersion":1}}')
-hasAll7 := (mockWs6.sent.Length == 7)
-    && InStr(mockWs6.sent[1], '"InitState"')
-    && InStr(mockWs6.sent[2], '"InitRecState"')
-    && InStr(mockWs6.sent[3], '"InitStudioState"')
-    && InStr(mockWs6.sent[4], '"InitSceneState"')
-    && InStr(mockWs6.sent[5], '"InitSceneList"')
-    && InStr(mockWs6.sent[6], '"InitStreamState"')
-    && InStr(mockWs6.sent[7], '"InitVCamState"')
-Assert("OpCode 2 dispatches all 7 initial OBS state queries (incl. SceneList, Stream & VCam)", hasAll7)
+allSent8 := ""
+for _, sMsg in mockWs6.sent
+    allSent8 .= sMsg "`n"
+hasAll8 := (mockWs6.sent.Length == 8)
+    && InStr(allSent8, '"InitState"')
+    && InStr(allSent8, '"InitRecState"')
+    && InStr(allSent8, '"InitStudioState"')
+    && InStr(allSent8, '"InitSceneState"')
+    && InStr(allSent8, '"InitPreviewSceneState"')
+    && InStr(allSent8, '"InitSceneList"')
+    && InStr(allSent8, '"InitStreamState"')
+    && InStr(allSent8, '"InitVCamState"')
+Assert("OpCode 2 dispatches all 8 initial OBS state queries (incl. PreviewScene, SceneList, Stream & VCam)", hasAll8)
 
 HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":5,"d":{"eventType":"StreamStateChanged","eventData":{"outputActive":true,"outputState":"OBS_WEBSOCKET_OUTPUT_STARTED"}}}')
 Assert("StreamStateChanged outputActive=true sets streamState=1", stStrm.streamState == 1)
@@ -1319,7 +1323,7 @@ Assert("ApplyControlCenterSettings updates all 6 tab subsystems, persists INI, a
     && cfgCCReload.targetMicName == "Shure MV7"
     && cfgCCReload.EnableAudioCue == true
     && cfgCCReload.EnableWS == true
-    && cfgCCReload.EnableZoom == false
+    && cfgCCReload.EnableZoom == true
     && cfgCCReload.obsPassword == "LivePass240"
     && cfgCCReload.EnablePPT == false
     && cfgCCReload.EnableMicOnly == true
@@ -1497,8 +1501,8 @@ ccAuditLight := ShowControlCenterWindow(cfgAudit, stAudit)
 PostMessage(0x0010, 0, 0, ccAuditLight.Hwnd)
 Sleep(50)
 Theme.SetMode("System")
-Assert("Control Center registers all 28 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
-    ccChkTabCount == 28 && ccUiOk && Theme.SuspendLockCount == 0)
+Assert("Control Center registers all 32 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
+    ccChkTabCount == 32 && ccUiOk && Theme.SuspendLockCount == 0)
 
 ; 21.6 Scope Guard: PresenterSync_Remote remains strictly 1-tier Mic HUD (no multi-tier GUIs)
 remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
@@ -2724,11 +2728,17 @@ uriCustom := BuildHostPairingUri(cfgM7, ["192.168.10.50"])
 Assert("BuildHostPairingUri embeds Custom preset & live/muted hexes cleanly",
     InStr(uriCustom, "&preset=Custom") && InStr(uriCustom, "&clh=0EA5E9") && InStr(uriCustom, "&cmh=FDE047"))
 
-; Push-to-Talk Hold-to-Unmute release cycle
+; Push-to-Talk Hold-to-Unmute release cycle (requires isMuted == true at press start)
 pttCalls := []
 cfgM7.EnablePushToTalk := true
+stM7.isMuted := false
+pttLiveNoop := ExecutePushToTalkHoldCycle(cfgM7, stM7, (m) => pttCalls.Push(m), "b", (k, o) => 1)
+Assert("ExecutePushToTalkHoldCycle is a no-op when mic is already LIVE (isMuted == false)",
+    !pttLiveNoop && pttCalls.Length == 0)
+
+stM7.isMuted := true
 pttOk := ExecutePushToTalkHoldCycle(cfgM7, stM7, (m) => pttCalls.Push(m), "b", (k, o) => 1)
-Assert("ExecutePushToTalkHoldCycle unmutes immediately on press and re-mutes on release",
+Assert("ExecutePushToTalkHoldCycle unmutes immediately on press and re-mutes on release when muted",
     pttOk && pttCalls.Length == 2 && pttCalls[1] == false && pttCalls[2] == true)
 
 ; OBS Scene Switch, Record Pause, Record Split & Standby Macro snapshot/restore

@@ -45,7 +45,8 @@ class ClickerMuteController(
         isAlt: Boolean,
         isShift: Boolean,
         repeatCount: Int,
-        config: RemoteConfig
+        config: RemoteConfig,
+        isMuted: Boolean = true
     ): ClickerDecision {
         val normIncoming = normalizeKeyCodeName(keyCodeName)
 
@@ -89,9 +90,14 @@ class ClickerMuteController(
                     downAtMs = now
                     pressedWithoutToggle = false
                     if (config.enablePushToTalk) {
-                        pttHoldActive = true
                         coughHoldActive = false
-                        ClickerDecision.CONSUME_PTT_HOLD_UNMUTE
+                        if (isMuted) {
+                            pttHoldActive = true
+                            ClickerDecision.CONSUME_PTT_HOLD_UNMUTE
+                        } else {
+                            pttHoldActive = false
+                            ClickerDecision.CONSUME_NOOP
+                        }
                     } else {
                         pttHoldActive = false
                         coughHoldActive = config.enablePushToMute

@@ -191,6 +191,24 @@ data class RemoteConfig(
         longPressDurationMs = longPressDurationMs.toLong(),
         veryLongPressDurationMs = veryLongPressDurationMs.toLong()
     )
+
+    fun withNormalizedPttMutualExclusion(prev: RemoteConfig = this): RemoteConfig {
+        if (!enablePushToTalk) return this
+        val turnedOnPtt = !prev.enablePushToTalk
+        val pickedGesture = (longPressAction != BubbleGestureAction.NONE || veryLongPressAction != BubbleGestureAction.NONE)
+        val turnedOnPtm = !prev.enablePushToMute && enablePushToMute
+        return if (turnedOnPtt || (prev === this)) {
+            copy(
+                enablePushToMute = false,
+                longPressAction = BubbleGestureAction.NONE,
+                veryLongPressAction = BubbleGestureAction.NONE
+            )
+        } else if (pickedGesture || turnedOnPtm) {
+            copy(enablePushToTalk = false)
+        } else {
+            copy(enablePushToMute = false)
+        }
+    }
 }
 
 class RemoteConfigStore(context: Context) {
@@ -266,8 +284,8 @@ class RemoteConfigStore(context: Context) {
             lockHudPosition = prefs.getBoolean("lockHudPosition", false),
             singleTapAction = singleTap,
             doubleTapAction = doubleTap,
-            longPressAction = longPress,
-            veryLongPressAction = veryLongPress,
+            longPressAction = if (rawPtt) BubbleGestureAction.NONE else longPress,
+            veryLongPressAction = if (rawPtt) BubbleGestureAction.NONE else veryLongPress,
             longPressDurationMs = longMs,
             veryLongPressDurationMs = veryLongMs,
             enableMagneticSnap = prefs.getBoolean("enableMagneticSnap", true),
@@ -296,7 +314,8 @@ class RemoteConfigStore(context: Context) {
 
     @Synchronized
     fun update(transform: (RemoteConfig) -> RemoteConfig): RemoteConfig {
-        val next = transform(_config.value)
+        val prev = _config.value
+        val next = transform(prev).withNormalizedPttMutualExclusion(prev)
         saveToPrefs(next)
         _config.value = next
         return next

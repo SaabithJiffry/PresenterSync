@@ -237,7 +237,7 @@ fun PointerSettingsScreen(
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                         Text("Push-to-Talk Mode (Hold to Unmute)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         Text(
-                            "Walkie-talkie style: mic unmutes only while button is held down and re-mutes immediately on release",
+                            "Walkie-talkie style: mic unmutes only while button is held down and re-mutes immediately on release. Enabling Push-to-Talk disables Long-Press, Very-Long-Press, and Push-to-Mute (and vice versa).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -248,7 +248,9 @@ fun PointerSettingsScreen(
                             app.configStore.update {
                                 it.copy(
                                     enablePushToTalk = enabled,
-                                    enablePushToMute = if (enabled) false else it.enablePushToMute
+                                    enablePushToMute = if (enabled) false else it.enablePushToMute,
+                                    longPressAction = if (enabled) com.saabithjiffry.presentersync.remote.input.BubbleGestureAction.NONE else it.longPressAction,
+                                    veryLongPressAction = if (enabled) com.saabithjiffry.presentersync.remote.input.BubbleGestureAction.NONE else it.veryLongPressAction
                                 )
                             }
                         }

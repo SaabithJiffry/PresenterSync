@@ -109,6 +109,8 @@ WaitPushToTalkRelease(cfg, hk, keyWaitFn := "") {
 ExecutePushToTalkHoldCycle(cfg, state, setMuteFn, hk, keyWaitFn := "") {
     if (!IsObject(cfg) || !cfg.HasOwnProp("EnablePushToTalk") || !cfg.EnablePushToTalk)
         return false
+    if (!IsObject(state) || !state.HasOwnProp("isMuted") || !state.isMuted)
+        return false
     if (!IsObject(setMuteFn))
         return false
     setMuteFn.Call(false)
