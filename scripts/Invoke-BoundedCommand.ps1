@@ -23,6 +23,22 @@ if ($ArgumentList.Count -eq 1 -and $ArgumentList[0] -match ',' -and $ArgumentLis
 # Quote arguments containing spaces (Start-Process joins with plain spaces).
 $ArgumentList = @($ArgumentList | ForEach-Object { if ($_ -match '\s' -and $_ -notmatch '^".*"$') { '"' + $_ + '"' } else { $_ } })
 
+# If the target is an AHK script, prepend AutoHotkey executable
+if ($FilePath -like "*.ahk") {
+    $ahkPath = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+    if (-not (Test-Path $ahkPath)) {
+        throw "AutoHotkey executable not found at $ahkPath"
+    }
+    # The script becomes the first argument, followed by any existing arguments
+    $ArgumentList = @($FilePath) + $ArgumentList
+    $FilePath = $ahkPath
+}
+
+if ($FilePath -like "*.py") {
+    $ArgumentList = @($FilePath) + $ArgumentList
+    $FilePath = "python"
+}
+
 $params = @{
     FilePath               = $FilePath
     PassThru               = $true
