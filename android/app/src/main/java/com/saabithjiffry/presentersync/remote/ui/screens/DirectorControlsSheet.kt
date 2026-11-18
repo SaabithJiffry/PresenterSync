@@ -127,7 +127,9 @@ internal fun DirectorDeckAndTimerCard(
     onTimerCommand: (String, Int) -> Unit,
     onSendNudge: (String) -> Unit
 ) {
-    if (!conn.connected || (!conn.usingBridge && !conn.usingRelayFallback)) return
+    val isDirectObsFallback = conn.usingDirectObsFallback ||
+        conn.channelType == com.saabithjiffry.presentersync.remote.network.ChannelType.DIRECT_OBS
+    if (!conn.connected || (!conn.usingBridge && !conn.usingRelayFallback && !isDirectObsFallback)) return
 
     var nudgeDraft by remember { mutableStateOf("") }
     var customMinDraft by remember { mutableStateOf("12") }
@@ -148,11 +150,31 @@ internal fun DirectorDeckAndTimerCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "OBS Director & Presenter Timer",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "OBS Director & Presenter Timer",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (isDirectObsFallback) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFFD97706).copy(alpha = 0.16f),
+                                border = BorderStroke(1.dp, Color(0xFFD97706).copy(alpha = 0.5f))
+                            ) {
+                                Text(
+                                    text = "DIRECT OBS :4455",
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFD97706)
+                                )
+                            }
+                        }
+                    }
                     Text(
                         text = if (conn.isStandby) {
                             "Standby Active (${conn.standbyScene}) • Mic Muted"

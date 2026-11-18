@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.1.1
+; Version: 7.1.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.1.1.0
+;@Ahk2Exe-SetVersion 7.1.2.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -37,8 +37,8 @@ DiagnosticLogger.Init("PresenterSync_Remote")
 
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState) && AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn) ? SetTimer(AppState.presenterTickFn, 0) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => ((IsSet(AppState) && IsObject(AppState) && AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn) ? SetTimer(AppState.presenterTickFn, 0) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
+RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState)) ? ((AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn ? SetTimer(AppState.presenterTickFn, 0) : 0), (AppState.HasOwnProp("recTickFn") && AppState.recTickFn ? SetTimer(AppState.recTickFn, 0) : 0)) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => ((IsSet(AppState) && IsObject(AppState)) ? ((AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn ? SetTimer(AppState.presenterTickFn, 0) : 0), (AppState.HasOwnProp("recTickFn") && AppState.recTickFn ? SetTimer(AppState.recTickFn, 0) : 0)) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSyncRemote.ico")
@@ -294,21 +294,28 @@ class RemoteState {
     candidates := []
     usingRelayFallback := false
     usingBridge := false
+    usingDirectObsFallback := false
 
     isMuted := false
     recState := 0
     recSeconds := 0
     streamDropWarn := false
     voiceWhileMuted := false
+    studioModeActive := false
     activeScene := "Scene"
+    previewScene := ""
+    previousProgramScene := ""
     scenes := []
     isStandby := false
     standbyScene := "BRB"
+    standbySnapshot := ""
     timerState := "stopped"
     timerRemainingSec := 600
     timerPresetSec := 600
     _lastVoiceWarnTick := 0
     presenterTickFn := ""
+    recTickFn := ""
+    _bridgeHandshakeTimerFn := ""
     baseAlpha := 220
     currentAlpha := 220
     breathDir := -5
@@ -387,7 +394,8 @@ class RemoteState {
         this.reconnectTimerFn := ConnectToRemoteOBS.Bind(cfg, this)
         this.heartbeatTimerFn := RemoteHeartbeatTick.Bind(cfg, this)
         this.lanRepromoteTimerFn := TryPromoteRemoteWanToLan.Bind(cfg, this)
-        this.presenterTickFn := RemoteLocalTimerTick.Bind(cfg, this)
+        this.presenterTickFn := RemoteTimerTick.Bind(cfg, this)
+        this.recTickFn := RemoteLocalRecTick.Bind(cfg, this)
         this.pointerHotIfFn := CheckRemotePointerEnable.Bind(cfg)
 
         this.ComputeDimensions(cfg)
@@ -506,6 +514,7 @@ ConnectToRemoteOBS(cfg, state) {
     SetTimer state.reconnectTimerFn, 0
     SetTimer state.heartbeatTimerFn, 0
     CancelRemotePongWatchdog(state)
+    CancelRemoteBridgeHandshakeWatchdog(state)
     if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
         SetTimer state.lanRepromoteTimerFn, 0
 
@@ -522,6 +531,7 @@ ConnectToRemoteOBS(cfg, state) {
     state._sawAuthChallenge := false
     state.activeHost := ""
     state.usingBridge := false
+    state.usingDirectObsFallback := false
 
     if IsObject(state.obsWs) {
         oldWs := state.obsWs
@@ -613,24 +623,27 @@ ConnectToRemoteOBS(cfg, state) {
     }
     wsUrl := (candidate.HasOwnProp("url") && candidate.url != "") ? candidate.url : ("ws://" candidate.host ":" candidate.port)
     isBridgeCand := candidate.HasOwnProp("isBridge") && candidate.isBridge
+    bridgeTimeoutMs := IsSet(RemoteBridgeConstants) ? RemoteBridgeConstants.BRIDGE_CONNECT_TIMEOUT_MS : 1800
 
     try {
         state.obsWs := WebSocket(wsUrl, {
             message: HandleRemoteObsMessage.Bind(cfg, state, candidate),
             close: HandleRemoteObsClose.Bind(cfg, state, candidate)
-        }, true, "", isBridgeCand ? 2200 : 2000) ; Fast connection timeout for failover
+        }, true, "", isBridgeCand ? bridgeTimeoutMs : 2000) ; 1,800ms Bridge connect timeout for fast Direct OBS :4455 fallback
         if (isBridgeCand) {
             if (!TrySendWsText(state.obsWs, BuildRemoteBridgeAuthJson(cfg)))
                 Throw Error("Failed to send Bridge auth payload")
+            StartRemoteBridgeHandshakeWatchdog(cfg, state, candidate, state.connGen, bridgeTimeoutMs)
         }
     } catch {
+        CancelRemoteBridgeHandshakeWatchdog(state)
         state.obsWs := ""
         SetTimer state.breathTimerFn, 0
         if (IsObject(state.MicGui)) {
             state.currentAlpha := GetRemoteEffectiveAlpha(state)
             ApplyMicAppearance(cfg, state)
         }
-        FailoverToNextCandidate(cfg, state)
+        FailoverToNextCandidate(cfg, state, candidate)
     }
 }
 
@@ -641,7 +654,9 @@ ShouldStopLanFailoverForWan(elapsedMs, budgetMs := 5500, canFallbackToRelay := t
 TryPromoteRemoteWanToLan(cfg, state) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
-    if (!state.HasOwnProp("usingRelayFallback") || !state.usingRelayFallback || cfg.NetworkMode = "Internet")
+    canPromoteFromRelay := (state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback && cfg.NetworkMode != "Internet")
+    canPromoteFromDirectObs := (state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback && ((cfg.HasOwnProp("SessionPairingCode") && Trim(cfg.SessionPairingCode) != "") || (cfg.HasOwnProp("SessionToken") && Trim(cfg.SessionToken) != "")))
+    if (!canPromoteFromRelay && !canPromoteFromDirectObs)
         return false
     if ((state.HasOwnProp("_trayMenuOpen") && state._trayMenuOpen) || (state.HasOwnProp("_trayMenuCloseUntil") && A_TickCount < state._trayMenuCloseUntil))
         return false
@@ -660,6 +675,7 @@ TryPromoteRemoteWanToLan(cfg, state) {
             if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
                 SetTimer state.lanRepromoteTimerFn, 0
             state.usingRelayFallback := false
+            state.usingDirectObsFallback := false
             state._lanCycleStartTick := 0
             state.candidates := BuildRemoteLanCandidateQueue(cfg)
             state.candidateIndex := 1
@@ -678,7 +694,24 @@ TryPromoteRemoteWanToLan(cfg, state) {
     return false
 }
 
-FailoverToNextCandidate(cfg, state) {
+FailoverToNextCandidate(cfg, state, failedCandidate := "") {
+    if (IsObject(failedCandidate) && failedCandidate.HasOwnProp("isBridge") && failedCandidate.isBridge) {
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Failover", "BridgeToDirectObsFallback", "Bridge " failedCandidate.raw " failed -> seeking Direct OBS :4455")
+        ; If a matching Direct OBS :4455 candidate exists for the same host, jump directly to it on live Bridge crash
+        if (state.HasOwnProp("candidates") && IsObject(state.candidates)) {
+            Loop state.candidates.Length {
+                idx := A_Index
+                cand := state.candidates[idx]
+                if (idx > state.candidateIndex && (!cand.HasOwnProp("isBridge") || !cand.isBridge) && StrLower(cand.host) == StrLower(failedCandidate.host)) {
+                    state.candidateIndex := idx
+                    SetTimer state.reconnectTimerFn, -30
+                    state.NotifyTrayStatus()
+                    return
+                }
+            }
+        }
+    }
     if (cfg.NetworkMode = "Internet") {
         state.usingRelayFallback := false
         if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
@@ -755,10 +788,12 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
         state.obsWs := ""
 
     CancelRemotePongWatchdog(state)
+    CancelRemoteBridgeHandshakeWatchdog(state)
     state.connGen += 1
     wasConnected := state.obsConnected
     state.obsConnected := false
     state.usingBridge := false
+    state.usingDirectObsFallback := false
     state.activeHost := ""
     state.recState := 0
     state.recSeconds := 0
@@ -769,6 +804,8 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     state.scenes := []
     if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
         SetTimer state.presenterTickFn, 0
+    if (state.HasOwnProp("recTickFn") && IsObject(state.recTickFn))
+        SetTimer state.recTickFn, 0
     SetTimer state.heartbeatTimerFn, 0
     if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
         SetTimer state.lanRepromoteTimerFn, 0
@@ -798,7 +835,7 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     }
     state.NotifyTrayStatus()
 
-    FailoverToNextCandidate(cfg, state)
+    FailoverToNextCandidate(cfg, state, candidate)
 }
 
 HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
@@ -816,6 +853,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             return
         if (ev.kind = "auth_ok") {
             SetTimer state.reconnectTimerFn, 0
+            CancelRemoteBridgeHandshakeWatchdog(state)
             state._lanCycleStartTick := 0
             if (ev.HasOwnProp("hostUuid") && ev.hostUuid != "" && (!cfg.HasOwnProp("PairedHostUuid") || cfg.PairedHostUuid != ev.hostUuid)) {
                 cfg.PairedHostUuid := ev.hostUuid
@@ -827,6 +865,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             }
             state.obsConnected := true
             state.usingBridge := true
+            state.usingDirectObsFallback := false
             state._sawAuthChallenge := false
             state.connStatus := "connected"
             state.activeHost := candidate.raw
@@ -848,6 +887,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             }
             state.NotifyTrayStatus()
         } else if (ev.kind = "auth_error") {
+            CancelRemoteBridgeHandshakeWatchdog(state)
             reasonLow := StrLower(ev.reason)
             isExplicitRevoke := (InStr(reasonLow, "unpaired") || InStr(reasonLow, "revoked"))
             if (!isExplicitRevoke && cfg.SessionToken != "" && cfg.SessionPairingCode != "") {
@@ -889,6 +929,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             state.NotifyTrayStatus()
             TrayTip("Host Bridge authentication failed (" (ev.reason != "" ? ev.reason : "Invalid code/token") "). Re-pair in Change OBS Connection.", "PresenterSync Remote", 3)
         } else if (ev.kind = "mute_state" || ev.kind = "sync_resync") {
+            CancelRemoteBridgeHandshakeWatchdog(state)
             if (ev.HasOwnProp("hostUuid") && ev.hostUuid != "" && (!cfg.HasOwnProp("PairedHostUuid") || cfg.PairedHostUuid != ev.hostUuid)) {
                 cfg.PairedHostUuid := ev.hostUuid
                 try cfg.Write("Connection", "PairedHostUuid", ev.hostUuid)
@@ -896,6 +937,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             if (!state.obsConnected || state.connStatus != "connected") {
                 state.obsConnected := true
                 state.usingBridge := true
+                state.usingDirectObsFallback := false
                 state.connStatus := "connected"
                 state.activeHost := candidate.raw
                 state.currentAlpha := GetRemoteEffectiveAlpha(state)
@@ -1014,28 +1056,47 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         TrySendWsText(ws, identifyJson)
     }
     else if (opCode == 2) {
-        ; Op 2: Identified - Connection and Auth Succeeded!
+        ; Op 2: Identified - Direct OBS :4455 Connection and Auth Succeeded!
         SetTimer state.reconnectTimerFn, 0
+        CancelRemoteBridgeHandshakeWatchdog(state)
         state.obsConnected := true
+        state.usingBridge := false
+        state.usingRelayFallback := false
+        state.usingDirectObsFallback := true
         state._sawAuthChallenge := false
         state.connStatus := "connected"
         state.activeHost := candidate.raw
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Failover", "DirectObsFallbackConnected", "host=" candidate.raw)
 
         ; Start keep-alive heartbeat timer (prevents Wi-Fi radio sleep / router conntrack drops)
         keepAliveMs := Max(10000, cfg.HeartbeatSeconds * 1000)
         SetTimer state.heartbeatTimerFn, keepAliveMs
 
-        ; Restore base alpha & query initial mic mute status
+        ; If Bridge pairing is configured, periodically probe Primary Host Bridge :4456 to auto-repromote when PresenterSync.exe restarts
+        if (((cfg.HasOwnProp("SessionPairingCode") && Trim(cfg.SessionPairingCode) != "") || (cfg.HasOwnProp("SessionToken") && Trim(cfg.SessionToken) != ""))
+            && state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn)) {
+            repromoteMs := state.HasOwnProp("lanRepromoteIntervalMs") ? Max(1500, Integer(state.lanRepromoteIntervalMs)) : 12000
+            SetTimer state.lanRepromoteTimerFn, repromoteMs
+        }
+
+        ; Restore base alpha & query initial mic mute + full Director state directly from OBS :4455
         state.currentAlpha := GetRemoteEffectiveAlpha(state)
         if IsObject(state.MicGui)
             ApplyMicAppearance(cfg, state)
         escMic := EscapeJsonStr(cfg.TargetMicName)
         SendObsRequest(ws, "GetInputMute", "InitRemoteMute", '{"inputName":"' escMic '"}')
+        SendObsRequest(ws, "GetRecordStatus", "InitRemoteRec")
+        SendObsRequest(ws, "GetStreamStatus", "InitRemoteStream")
+        SendObsRequest(ws, "GetStudioModeEnabled", "InitRemoteStudio")
+        SendObsRequest(ws, "GetCurrentProgramScene", "InitRemoteScene")
+        SendObsRequest(ws, "GetCurrentPreviewScene", "InitRemotePreviewScene")
+        SendObsRequest(ws, "GetSceneList", "InitRemoteSceneList")
 
         state.NotifyTrayStatus()
     }
     else if (opCode == 5) {
-        ; Op 5: Event payload
+        ; Op 5: Event payload from Direct OBS :4455
         if (RegExMatch(msg, '"eventType"\s*:\s*"InputMuteStateChanged"')) {
             if (RegExMatch(msg, '"inputName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchInput) && UnescapeJsonStr(matchInput[1]) == cfg.TargetMicName) {
                 if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
@@ -1047,6 +1108,54 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     SyncRemoteMuteState(cfg, state, isMutedNow)
                 }
             }
+        } else if (InStr(msg, '"eventType":"RecordStateChanged"') || InStr(msg, '"eventType": "RecordStateChanged"')) {
+            if (RegExMatch(msg, '"outputState"\s*:\s*"([^"]+)"', &mRecOut)) {
+                outSt := mRecOut[1]
+                if (outSt = "OBS_WEBSOCKET_OUTPUT_STARTED" || outSt = "OBS_WEBSOCKET_OUTPUT_RESUMED") {
+                    if (state.recState == 0)
+                        state.recSeconds := 0
+                    state.recState := 1
+                } else if (outSt = "OBS_WEBSOCKET_OUTPUT_PAUSED") {
+                    state.recState := 2
+                } else if (outSt = "OBS_WEBSOCKET_OUTPUT_STOPPED") {
+                    state.recState := 0
+                    state.recSeconds := 0
+                }
+                UpdateRemoteLocalRecTimer(state)
+                state.NotifyTrayStatus()
+            }
+        } else if (InStr(msg, '"eventType":"StreamStateChanged"') || InStr(msg, '"eventType": "StreamStateChanged"')) {
+            state.streamDropWarn := (InStr(msg, "OBS_WEBSOCKET_OUTPUT_RECONNECTING") != 0)
+            state.NotifyTrayStatus()
+        } else if (InStr(msg, '"eventType":"StudioModeStateChanged"') || InStr(msg, '"eventType": "StudioModeStateChanged"')) {
+            if (RegExMatch(msg, '"studioModeEnabled"\s*:\s*(true|false)', &mStudio)) {
+                state.studioModeActive := (mStudio[1] == "true")
+                if (state.studioModeActive && IsObject(ws))
+                    SendObsRequest(ws, "GetCurrentPreviewScene", "InitRemotePreviewScene")
+            }
+        } else if (InStr(msg, '"eventType":"CurrentProgramSceneChanged"') || InStr(msg, '"eventType": "CurrentProgramSceneChanged"')) {
+            if (RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mScene) || RegExMatch(msg, '"currentProgramSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mScene)) {
+                newSc := UnescapeJsonStr(mScene[1])
+                if (newSc != "" && state.activeScene != newSc) {
+                    if (state.activeScene != "" && state.activeScene != "Scene")
+                        state.previousProgramScene := state.activeScene
+                    state.activeScene := newSc
+                    state.NotifyTrayStatus()
+                }
+            }
+        } else if (InStr(msg, '"eventType":"CurrentPreviewSceneChanged"') || InStr(msg, '"eventType": "CurrentPreviewSceneChanged"')) {
+            if (RegExMatch(msg, '"currentPreviewSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mPrev) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mPrev)) {
+                state.previewScene := UnescapeJsonStr(mPrev[1])
+            }
+        } else if (InStr(msg, '"eventType":"SceneListChanged"') || InStr(msg, '"eventType": "SceneListChanged"')) {
+            parsedScenes := ParseObsSceneList(msg)
+            if (parsedScenes.Length > 0) {
+                state.scenes := parsedScenes
+                if (IsObject(state.rebuildTrayFn))
+                    try state.rebuildTrayFn.Call()
+            } else if (IsObject(ws)) {
+                SendObsRequest(ws, "GetSceneList", "InitRemoteSceneList")
+            }
         } else if (RegExMatch(msg, '"eventType"\s*:\s*"CustomEvent"')) {
             if (RegExMatch(msg, '"(?:command|presenterSyncAction)"\s*:\s*"CloseRemote"')) {
                 if (state.HasOwnProp("onRemoteCloseSignal") && IsObject(state.onRemoteCloseSignal))
@@ -1057,7 +1166,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         }
     }
     else if (opCode == 7) {
-        ; Op 7: Request Response
+        ; Op 7: Request Response from Direct OBS :4455
         if (InStr(msg, '"requestId":"InitRemoteMute"') || InStr(msg, '"requestId": "InitRemoteMute"')) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
                 state.connStatus := "mic_error"
@@ -1083,7 +1192,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.NotifyTrayStatus()
             }
         }
-        else if (InStr(msg, '"requestId":"RemoteClickerMute"') || InStr(msg, '"requestId": "RemoteClickerMute"')) {
+        else if (InStr(msg, '"requestId":"RemoteClickerMute"') || InStr(msg, '"requestId": "RemoteClickerMute"')
+            || InStr(msg, '"requestId":"RemoteClickerSetMute"') || InStr(msg, '"requestId": "RemoteClickerSetMute"')) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
                 if (state.connStatus != "mic_error") {
                     state.connStatus := "mic_error"
@@ -1096,6 +1206,59 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.NotifyTrayStatus()
             }
         }
+        else if (InStr(msg, '"requestId":"InitRemoteRec"') || InStr(msg, '"requestId": "InitRemoteRec"')) {
+            if (RegExMatch(msg, '"outputActive"\s*:\s*(true|false)', &mAct)) {
+                act := (mAct[1] == "true")
+                pau := (RegExMatch(msg, '"outputPaused"\s*:\s*(true|false)', &mPau) && mPau[1] == "true")
+                if (RegExMatch(msg, '"outputDuration"\s*:\s*(\d+)', &mDur))
+                    state.recSeconds := Max(0, Integer(mDur[1]) // 1000)
+                else if (!act)
+                    state.recSeconds := 0
+                state.recState := act ? (pau ? 2 : 1) : 0
+                UpdateRemoteLocalRecTimer(state)
+                state.NotifyTrayStatus()
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitRemoteStream"') || InStr(msg, '"requestId": "InitRemoteStream"')) {
+            reconn := (RegExMatch(msg, '"outputReconnecting"\s*:\s*(true|false)', &mRecn) && mRecn[1] == "true")
+            cong := (RegExMatch(msg, '"outputCongestion"\s*:\s*([0-9.]+)', &mCong)) ? Float(mCong[1]) : 0.0
+            state.streamDropWarn := (reconn || cong >= UIConstants.STREAM_CONGESTION_WARN)
+            state.NotifyTrayStatus()
+        }
+        else if (InStr(msg, '"requestId":"InitRemoteStudio"') || InStr(msg, '"requestId": "InitRemoteStudio"')) {
+            if (RegExMatch(msg, '"studioModeEnabled"\s*:\s*(true|false)', &mSt)) {
+                state.studioModeActive := (mSt[1] == "true")
+                if (state.studioModeActive && IsObject(ws))
+                    SendObsRequest(ws, "GetCurrentPreviewScene", "InitRemotePreviewScene")
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitRemoteScene"') || InStr(msg, '"requestId": "InitRemoteScene"')) {
+            if (RegExMatch(msg, '"currentProgramSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mSc) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mSc)) {
+                newSc := UnescapeJsonStr(mSc[1])
+                if (newSc != "") {
+                    if (state.activeScene != "" && state.activeScene != "Scene" && state.activeScene != newSc)
+                        state.previousProgramScene := state.activeScene
+                    state.activeScene := newSc
+                    state.NotifyTrayStatus()
+                }
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitRemotePreviewScene"') || InStr(msg, '"requestId": "InitRemotePreviewScene"')) {
+            if (RegExMatch(msg, '"currentPreviewSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mPrev) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mPrev)) {
+                state.previewScene := UnescapeJsonStr(mPrev[1])
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitRemoteSceneList"') || InStr(msg, '"requestId": "InitRemoteSceneList"')) {
+            parsedScenes := ParseObsSceneList(msg)
+            if (parsedScenes.Length > 0) {
+                state.scenes := parsedScenes
+                if (IsObject(state.rebuildTrayFn)) {
+                    try state.rebuildTrayFn.Call()
+                } else {
+                    state.NotifyTrayStatus()
+                }
+            }
+        }
     }
 }
 
@@ -1106,6 +1269,40 @@ CancelRemotePongWatchdog(state) {
     }
 }
 
+CancelRemoteBridgeHandshakeWatchdog(state) {
+    if (IsObject(state) && state.HasOwnProp("_bridgeHandshakeTimerFn") && IsObject(state._bridgeHandshakeTimerFn)) {
+        try SetTimer(state._bridgeHandshakeTimerFn, 0)
+        state._bridgeHandshakeTimerFn := ""
+    }
+}
+
+StartRemoteBridgeHandshakeWatchdog(cfg, state, candidate, expectedGen, timeoutMs := 1800) {
+    if (!IsObject(state))
+        return
+    CancelRemoteBridgeHandshakeWatchdog(state)
+    state._bridgeHandshakeTimerFn := OnRemoteBridgeHandshakeTimeout.Bind(cfg, state, candidate, expectedGen)
+    SetTimer state._bridgeHandshakeTimerFn, -Max(300, Integer(timeoutMs))
+}
+
+OnRemoteBridgeHandshakeTimeout(cfg, state, candidate, expectedGen) {
+    if (!IsObject(state))
+        return
+    state._bridgeHandshakeTimerFn := ""
+    if (state.connGen != expectedGen || (state.obsConnected && state.usingBridge))
+        return
+    if (IsSet(DiagnosticLogger))
+        try DiagnosticLogger.RecordBreadcrumb("Failover", "BridgeConnectTimeout", "1800ms exceeded on " candidate.raw " -> falling back to Direct OBS :4455")
+    if IsObject(state.obsWs) {
+        oldWs := state.obsWs
+        state.obsWs := ""
+        oldWs._psClosed := true
+        try oldWs.shutdown()
+    }
+    state.obsConnected := false
+    state.usingBridge := false
+    FailoverToNextCandidate(cfg, state, candidate)
+}
+
 ForceRemoteReconnectNow(cfg, state, reason := "wake") {
     if (!IsObject(cfg) || !IsObject(state))
         return
@@ -1114,10 +1311,13 @@ ForceRemoteReconnectNow(cfg, state, reason := "wake") {
     SetTimer state.reconnectTimerFn, 0
     SetTimer state.heartbeatTimerFn, 0
     CancelRemotePongWatchdog(state)
+    CancelRemoteBridgeHandshakeWatchdog(state)
     if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
         SetTimer state.lanRepromoteTimerFn, 0
     if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
         SetTimer state.presenterTickFn, 0
+    if (state.HasOwnProp("recTickFn") && IsObject(state.recTickFn))
+        SetTimer state.recTickFn, 0
     SetTimer state.breathTimerFn, 0
     state.animSeq += 1
     state.connGen += 1
@@ -1131,6 +1331,7 @@ ForceRemoteReconnectNow(cfg, state, reason := "wake") {
     }
     state.obsConnected := false
     state.usingBridge := false
+    state.usingDirectObsFallback := false
     state.usingRelayFallback := false
     state.activeHost := ""
     state.connStatus := "searching"
@@ -1256,15 +1457,7 @@ SyncRemoteMuteState(cfg, state, newMuted) {
 }
 
 RemoteLocalTimerTick(cfg, state) {
-    if (!IsObject(state) || (state.timerState != "running" && state.timerState != "overtime")) {
-        if (IsObject(state) && state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
-            SetTimer state.presenterTickFn, 0
-        return
-    }
-    state.timerRemainingSec -= 1
-    if (state.timerRemainingSec <= 0 && state.timerState = "running")
-        state.timerState := "overtime"
-    state.NotifyTrayStatus()
+    return RemoteTimerTick(cfg, state)
 }
 
 SyncRemoteBridgeTelemetry(cfg, state, ev) {
@@ -1336,12 +1529,32 @@ _SendRemoteRelayAction(cfg, state, cmd, data := "1") {
 SendRemoteBridgeDeckCommand(cfg, state, actionType) {
     if (IsRemoteUsingInternetChannel(cfg, state))
         return _SendRemoteRelayAction(cfg, state, actionType, "1")
-    if (!IsRemoteUsingBridgeChannel(cfg, state)) {
-        TrayTip("Director commands require an active Primary Host Bridge or Relay connection.", "PresenterSync Remote", 2)
-        return false
+    if (IsRemoteUsingBridgeChannel(cfg, state)) {
+        payload := BuildRemoteBridgeDeckJson(cfg, actionType)
+        return TrySendWsText(state.obsWs, payload)
     }
-    payload := BuildRemoteBridgeDeckJson(cfg, actionType)
-    return TrySendWsText(state.obsWs, payload)
+    if (IsRemoteUsingDirectObsChannel(cfg, state) || (IsObject(state) && state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback)) {
+        actLow := StrLower(Trim(String(actionType)))
+        if (actLow = "toggle_record")
+            return SendObsRequest(state.obsWs, "ToggleRecord", "RemoteToggleRec")
+        if (actLow = "pause_record") {
+            ok := SendObsRequest(state.obsWs, "ToggleRecordPause", "RemotePauseRec")
+            if (ok && (state.recState == 1 || state.recState == 2)) {
+                state.recState := (state.recState == 1) ? 2 : 1
+                UpdateRemoteLocalRecTimer(state)
+                state.NotifyTrayStatus()
+            }
+            return ok
+        }
+        if (actLow = "split_record")
+            return SendObsRequest(state.obsWs, "SplitRecordFile", "RemoteSplitRec")
+        if (actLow = "toggle_standby")
+            return ExecuteRemoteLocalStandbyToggle(cfg, state)
+        if (actLow = "transition_scene")
+            return ExecuteRemoteDirectObsTransition(cfg, state)
+    }
+    TrayTip("Director commands require an active Primary Host Bridge, Direct OBS, or Relay connection.", "PresenterSync Remote", 2)
+    return false
 }
 
 SendRemoteSwitchScene(cfg, state, sceneName) {
@@ -1352,19 +1565,33 @@ SendRemoteSwitchScene(cfg, state, sceneName) {
         return _SendRemoteRelayAction(cfg, state, "switch_scene", clean)
     if (IsRemoteUsingBridgeChannel(cfg, state))
         return TrySendWsText(state.obsWs, BuildRemoteBridgeSceneJson(cfg, clean))
-    if (IsObject(state) && state.obsConnected && IsObject(state.obsWs))
-        return SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteSwitchScene", '{"sceneName":"' EscapeJsonStr(clean) '"}')
+    if (IsObject(state) && state.obsConnected && IsObject(state.obsWs)) {
+        ok := SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteSwitchScene", '{"sceneName":"' EscapeJsonStr(clean) '"}')
+        if (ok) {
+            if (state.HasOwnProp("activeScene") && state.activeScene != "" && state.activeScene != "Scene" && state.activeScene != clean)
+                state.previousProgramScene := state.activeScene
+            state.activeScene := clean
+            if (state.HasMethod("NotifyTrayStatus"))
+                state.NotifyTrayStatus()
+        }
+        return ok
+    }
     return false
+}
+
+SendRemoteTransitionScene(cfg, state) {
+    return SendRemoteBridgeDeckCommand(cfg, state, "transition_scene")
 }
 
 SendRemoteTimerCommand(cfg, state, action, durationSec := 0) {
     if (IsRemoteUsingInternetChannel(cfg, state))
         return _SendRemoteRelayAction(cfg, state, action, String(Integer(durationSec)))
-    if (!IsRemoteUsingBridgeChannel(cfg, state)) {
-        TrayTip("Presenter timer requires a Primary Host Bridge or Relay connection.", "PresenterSync Remote", 2)
-        return false
-    }
-    return TrySendWsText(state.obsWs, BuildRemoteBridgeTimerJson(cfg, action, durationSec))
+    if (IsRemoteUsingBridgeChannel(cfg, state))
+        return TrySendWsText(state.obsWs, BuildRemoteBridgeTimerJson(cfg, action, durationSec))
+    if (IsRemoteUsingDirectObsChannel(cfg, state) || (IsObject(state) && state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback))
+        return ExecuteRemoteLocalTimerCommand(cfg, state, action, durationSec)
+    TrayTip("Presenter timer requires a Primary Host Bridge, Direct OBS, or Relay connection.", "PresenterSync Remote", 2)
+    return false
 }
 
 SendRemoteStageNudge(cfg, state, message) {
@@ -1649,7 +1876,8 @@ GetRemoteTrayStatusText(state) {
     else if (state.obsConnected && state.connStatus = "mic_error")
         return "⚠ Connected (Mic Not Found): " state.activeHost
     else if (state.obsConnected) {
-        txt := "● Connected: " state.activeHost
+        isDirectObs := (state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback)
+        txt := isDirectObs ? FormatRemoteDirectObsStatus(state.activeHost) : ("● Connected: " state.activeHost)
         if (state.HasOwnProp("isStandby") && state.isStandby)
             txt .= " | STANDBY"
         if (state.recState == 1)
@@ -1668,6 +1896,9 @@ GetRemoteTrayStatusText(state) {
 }
 
 SyncRemoteTrayStatus(cfg, state) {
+    instTag := (IsObject(cfg) && cfg.HasOwnProp("InstanceName") && cfg.InstanceName != "") ? (" [" cfg.InstanceName "]") : ""
+    fbTag := (IsObject(state) && state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback) ? " | Fallback: DIRECT OBS :4455" : ""
+    A_IconTip := "PresenterSync Remote v" UIConstants.APP_VERSION instTag fbTag
     newStatus := GetRemoteTrayStatusText(state)
     if (state.HasOwnProp("_lastTrayStatusText") && state._lastTrayStatusText == newStatus)
         return
@@ -1785,6 +2016,7 @@ BuildRemoteTrayMenu(cfg, state) {
         DeckSceneMenu.Add("Connect Primary Bridge for scenes", (*) => 0)
         DeckSceneMenu.Disable("Connect Primary Bridge for scenes")
     }
+    DeckMenu.Add("Transition OBS Scene (Preview <-> Program)", (*) => SendRemoteBridgeDeckCommand(cfg, state, "transition_scene"))
     DeckMenu.Add("Switch Host Scene", DeckSceneMenu)
     DeckMenu.Add("Toggle Standby / `"BRB`" Curtain", (*) => SendRemoteBridgeDeckCommand(cfg, state, "toggle_standby"))
     if (IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby)
@@ -1795,7 +2027,8 @@ BuildRemoteTrayMenu(cfg, state) {
     DeckMenu.Add()
     DeckMenu.Add("Presenter Countdown Timer", BuildSharedPresenterTimerSubmenu(state, (sec, *) => SendRemoteTimerCommand(cfg, state, "timer_start", sec), (*) => SendRemoteTimerCommand(cfg, state, "timer_pause", 0), (sec, *) => SendRemoteTimerCommand(cfg, state, "timer_reset", sec)))
     DeckMenu.Add("Send Stage Nudge to Host...", (*) => PromptSendStageNudgeUI((msg) => SendRemoteStageNudge(cfg, state, msg)))
-    A_TrayMenu.Add("Host Deck Control (Bridge)", DeckMenu)
+    deckLabel := (IsObject(state) && state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback) ? "Host Deck Control (DIRECT OBS :4455)" : "Host Deck Control (Bridge)"
+    A_TrayMenu.Add(deckLabel, DeckMenu)
     A_TrayMenu.Add()
 
     ; 4. POINTER & CONNECTION SETTINGS
@@ -2580,6 +2813,9 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         SetTimer state.reconnectTimerFn, 0
         SetTimer state.heartbeatTimerFn, 0
         CancelRemotePongWatchdog(state)
+        CancelRemoteBridgeHandshakeWatchdog(state)
+        if (state.HasOwnProp("recTickFn") && IsObject(state.recTickFn))
+            SetTimer state.recTickFn, 0
         SetTimer state.breathTimerFn, 0
         state.animSeq += 1
         state.connGen += 1
@@ -2591,6 +2827,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         }
         state.obsConnected := false
         state.usingBridge := false
+        state.usingDirectObsFallback := false
         state.connStatus := "searching"
         state.activeHost := ""
         state.candidateIndex := 1

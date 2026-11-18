@@ -214,6 +214,8 @@ class HostBridgeClient(
 
     fun sendToggleStandby(source: String = "quick_menu"): Boolean = sendDeviceAction("toggle_standby", source)
 
+    fun sendTransitionScene(source: String = "director"): Boolean = sendDeviceAction("transition_scene", source)
+
     fun sendSwitchScene(sceneName: String, source: String = "director"): Boolean {
         val clean = sceneName.trim()
         if (!authenticated || clean.isEmpty()) return false

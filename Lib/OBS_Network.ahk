@@ -269,6 +269,12 @@ IsRemoteUsingBridgeChannel(cfg, state := "") {
     return IsObject(state) && state.HasOwnProp("usingBridge") && state.usingBridge && state.HasOwnProp("obsConnected") && state.obsConnected && IsObject(state.obsWs)
 }
 
+IsRemoteUsingDirectObsChannel(cfg, state := "") {
+    return IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected && IsObject(state.obsWs)
+        && (!state.HasOwnProp("usingBridge") || !state.usingBridge)
+        && !IsRemoteUsingInternetChannel(cfg, state)
+}
+
 DispatchRemoteSetMute(cfg, state, targetMuted) {
     valStr := targetMuted ? "1" : "0"
     if (IsRemoteUsingInternetChannel(cfg, state)) {
