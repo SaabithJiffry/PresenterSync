@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.1.0
+; Version: 7.1.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.1.0.0
+;@Ahk2Exe-SetVersion 7.1.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -85,6 +85,7 @@ class RemoteConfig {
     EnableMagneticSnap := true
     HudClickThrough := false
     HudAutoDodge := false
+    ExcludeFromCapture := true
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -214,6 +215,7 @@ class RemoteConfig {
         this.EnableMagneticSnap := this.ReadBool("Appearance", "EnableMagneticSnap", 1)
         this.HudClickThrough := this.ReadBool("Appearance", "HudClickThrough", 0)
         this.HudAutoDodge := this.ReadBool("Appearance", "HudAutoDodge", 0)
+        this.ExcludeFromCapture := this.ReadBool("Appearance", "ExcludeFromCapture", 1)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -252,6 +254,7 @@ class RemoteConfig {
         this.EnableMagneticSnap := true
         this.HudClickThrough := false
         this.HudAutoDodge := false
+        this.ExcludeFromCapture := true
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.ThemeMode := "System"
@@ -271,6 +274,7 @@ class RemoteConfig {
         this.WriteBool("Appearance", "EnableMagneticSnap", true)
         this.WriteBool("Appearance", "HudClickThrough", false)
         this.WriteBool("Appearance", "HudAutoDodge", false)
+        this.WriteBool("Appearance", "ExcludeFromCapture", true)
         this.Write("Appearance", "OpacityLevel", this.OpacityLevel)
         this.Write("Appearance", "IndicatorScale", this.IndicatorScale)
         this.Write("Appearance", "ThemeMode", this.ThemeMode)
@@ -1493,6 +1497,7 @@ InitRemoteHUD(cfg, state) {
     ; Only create a single layered GDI+ window for the Mic HUD
     hudTitle := "PresenterSync Remote HUD" (cfg.HasOwnProp("InstanceName") && cfg.InstanceName != "" ? " [" cfg.InstanceName "]" : "")
     state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale", hudTitle)
+    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
     ApplyMicAppearance(cfg, state)
 
     if (cfg.ShowIndicator) {
@@ -1501,6 +1506,7 @@ InitRemoteHUD(cfg, state) {
             SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     }
     ApplyHudClickThroughStyle(cfg, state)
+    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
     UpdateAutoDodgeTimer(cfg, state)
 
     OnMessage(0x0201, WM_REMOTE_LBUTTONDOWN.Bind(cfg, state))
@@ -1629,6 +1635,7 @@ RefreshRemoteHudAppearance(cfg, state) {
         SetTimer state.breathTimerFn, 0
     }
     ApplyHudClickThroughStyle(cfg, state)
+    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
     UpdateAutoDodgeTimer(cfg, state)
 }
 
@@ -1744,6 +1751,10 @@ BuildRemoteTrayMenu(cfg, state) {
     AppearanceMenu.Add("Auto-Dodge HUD on Hover", ToggleHudAutoDodge.Bind(cfg, state))
     if (cfg.HudAutoDodge)
         AppearanceMenu.Check("Auto-Dodge HUD on Hover")
+
+    AppearanceMenu.Add("Hide HUD from Screen Share / Capture", (*) => ToggleHudOptionAndRebuild(cfg, state, "ExcludeFromCapture", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu))
+    if (cfg.ExcludeFromCapture)
+        AppearanceMenu.Check("Hide HUD from Screen Share / Capture")
 
     AppearanceMenu.Add()
 

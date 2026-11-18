@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.1.0"
+    static APP_VERSION := "7.1.1"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1240,6 +1240,8 @@ class Config {
     EnableMagneticSnap := true
     HudClickThrough := false
     HudAutoDodge := false
+    ExcludeFromCapture := true
+    ExcludeSecondaryFromCapture := true
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -1412,6 +1414,8 @@ class Config {
         this.EnableMagneticSnap := this.ReadBool("Settings", "EnableMagneticSnap", true)
         this.HudClickThrough := this.ReadBool("Settings", "HudClickThrough", false)
         this.HudAutoDodge := this.ReadBool("Settings", "HudAutoDodge", false)
+        this.ExcludeFromCapture := this.ReadBool("Settings", "ExcludeFromCapture", true)
+        this.ExcludeSecondaryFromCapture := this.ReadBool("Settings", "ExcludeSecondaryFromCapture", true)
         this.OpacityLevel := this.ReadInt("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -1507,6 +1511,8 @@ class Config {
         this.EnableMagneticSnap := true
         this.HudClickThrough := false
         this.HudAutoDodge := false
+        this.ExcludeFromCapture := true
+        this.ExcludeSecondaryFromCapture := true
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.Write("Settings", "ShowExtraHuds", 1)
@@ -1530,6 +1536,8 @@ class Config {
         this.Write("Settings", "EnableMagneticSnap", 1)
         this.Write("Settings", "HudClickThrough", 0)
         this.Write("Settings", "HudAutoDodge", 0)
+        this.Write("Settings", "ExcludeFromCapture", 1)
+        this.Write("Settings", "ExcludeSecondaryFromCapture", 1)
         this.Write("Settings", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         this.Write("Settings", "IndicatorScale", 1.0)
         Theme.SetMode("System")
@@ -1603,6 +1611,8 @@ class Config {
             { sec: "Settings", key: "EnableMagneticSnap", prop: "EnableMagneticSnap", kind: "bool" },
             { sec: "Settings", key: "HudClickThrough", prop: "HudClickThrough", kind: "bool" },
             { sec: "Settings", key: "HudAutoDodge", prop: "HudAutoDodge", kind: "bool" },
+            { sec: "Settings", key: "ExcludeFromCapture", prop: "ExcludeFromCapture", kind: "bool" },
+            { sec: "Settings", key: "ExcludeSecondaryFromCapture", prop: "ExcludeSecondaryFromCapture", kind: "bool" },
             { sec: "Settings", key: "OpacityLevel", prop: "OpacityLevel", kind: "int" },
             { sec: "Settings", key: "IndicatorScale", prop: "IndicatorScale", kind: "float" },
             { sec: "Settings", key: "RemoteNetworkMode", prop: "RemoteNetworkMode", kind: "str" },

@@ -737,6 +737,7 @@ ShowStageNudgeBanner(message, accentHex := "F59E0B", durationMs := 4500, sender 
 
     try {
         nGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20", "PresenterSyncStageBanner")
+        ApplyWindowCaptureAffinity(nGui.Hwnd, true)
         isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
         bgHex := isDark ? "1E293B" : "FFFFFF"
         fgHex := isDark ? "F8FAFC" : "0F172A"
@@ -1180,6 +1181,7 @@ RefreshHudAppearance(cfg, state) {
     state.ComputeDimensions(cfg)
     UpdateHudLayout(state, state.savedX, state.savedY)
     UpdateHudVisibility(cfg, state)
+    ApplyHudCaptureExclusion(cfg, state)
     if (IsAnyMicHudVisible(cfg) && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     else
@@ -1514,6 +1516,27 @@ ToggleHudAutoDodge(cfg, state := "", *) {
 }
 
 ; --- HUD CREATION, LAYOUT & STYLING ---
+ApplyWindowCaptureAffinity(hwnd, exclude := true) {
+    if (!hwnd)
+        return false
+    try return !!DllCall("user32\SetWindowDisplayAffinity", "Ptr", hwnd, "UInt", exclude ? 0x00000011 : 0x00000000, "Int")
+    catch
+        return false
+}
+
+ApplyHudCaptureExclusion(cfg, state) {
+    if (!IsObject(state))
+        return
+    exclPrim := (IsObject(cfg) && cfg.HasOwnProp("ExcludeFromCapture")) ? !!cfg.ExcludeFromCapture : true
+    exclSec := (IsObject(cfg) && cfg.HasOwnProp("ExcludeSecondaryFromCapture")) ? !!cfg.ExcludeSecondaryFromCapture : true
+    for _, key in ["MicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"] {
+        if (state.HasOwnProp(key) && IsGuiValid(state.%key%))
+            ApplyWindowCaptureAffinity(state.%key%.Hwnd, exclPrim)
+    }
+    if (state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui))
+        ApplyWindowCaptureAffinity(state.SecondaryMicGui.Hwnd, exclSec)
+}
+
 InitHUD(cfg, state, showWindows := true) {
     Gdip.Startup()
     state.ComputeDimensions(cfg)
@@ -1527,6 +1550,7 @@ InitHUD(cfg, state, showWindows := true) {
     state.SceneGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.StreamGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     state.VCamGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+    ApplyHudCaptureExclusion(cfg, state)
 
     RenderAllHudPills(cfg, state)
 

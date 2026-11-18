@@ -58,6 +58,7 @@ class FloatingMicOverlayManager(
     private var pillView: MicPillCanvasView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var quickMenuView: View? = null
+    private var quickMenuParams: WindowManager.LayoutParams? = null
     private var attached = false
     private var hiddenForEasterEgg = false
     private var easterHoldRunnable: Runnable? = null
@@ -360,14 +361,13 @@ class FloatingMicOverlayManager(
         )
 
         val wantPassThrough = currentConfig.hudClickThrough || isAutoDodged
-        var baseFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-        if (wantPassThrough) {
-            baseFlags = baseFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        }
-        if (currentConfig.keepScreenOn) {
-            baseFlags = baseFlags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        }
+        val baseFlags = computeOverlayFlags(
+            baseFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            wantPassThrough = wantPassThrough,
+            wantKeepScreenOn = currentConfig.keepScreenOn,
+            hideFromScreenCapture = currentConfig.hideFromScreenCapture
+        )
 
         val params = WindowManager.LayoutParams(
             w,
@@ -403,23 +403,34 @@ class FloatingMicOverlayManager(
 
         val wantPassThrough = currentConfig.hudClickThrough || isAutoDodged
         val wantKeepScreenOn = currentConfig.keepScreenOn
+        val wantSecure = currentConfig.hideFromScreenCapture
         val desiredWinAlpha = computeWindowAlpha(wantPassThrough)
         val hasTouchFlag = (params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0
         val hasKeepScreenFlag = (params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
+        val hasSecureFlag = (params.flags and WindowManager.LayoutParams.FLAG_SECURE) != 0
         val alphaChanged = abs(params.alpha - desiredWinAlpha) > 0.01f
-        if (wantPassThrough != hasTouchFlag || wantKeepScreenOn != hasKeepScreenFlag || alphaChanged) {
-            params.flags = if (wantPassThrough) {
-                params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            } else {
-                params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-            }
-            params.flags = if (wantKeepScreenOn) {
-                params.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-            } else {
-                params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
-            }
+        if (wantPassThrough != hasTouchFlag || wantKeepScreenOn != hasKeepScreenFlag || wantSecure != hasSecureFlag || alphaChanged) {
+            params.flags = computeOverlayFlags(
+                baseFlags = params.flags,
+                wantPassThrough = wantPassThrough,
+                wantKeepScreenOn = wantKeepScreenOn,
+                hideFromScreenCapture = wantSecure
+            )
             params.alpha = desiredWinAlpha
             runCatching { windowManager.updateViewLayout(view, params) }
+        }
+        val mv = quickMenuView
+        val mp = quickMenuParams
+        if (mv != null && mp != null) {
+            val menuHasSecure = (mp.flags and WindowManager.LayoutParams.FLAG_SECURE) != 0
+            if (wantSecure != menuHasSecure) {
+                mp.flags = if (wantSecure) {
+                    mp.flags or WindowManager.LayoutParams.FLAG_SECURE
+                } else {
+                    mp.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+                }
+                runCatching { windowManager.updateViewLayout(mv, mp) }
+            }
         }
     }
 
@@ -1104,7 +1115,8 @@ class FloatingMicOverlayManager(
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                (if (currentConfig.hideFromScreenCapture) WindowManager.LayoutParams.FLAG_SECURE else 0),
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -1124,6 +1136,7 @@ class FloatingMicOverlayManager(
         runCatching {
             windowManager.addView(menuRoot, menuParams)
             quickMenuView = menuRoot
+            quickMenuParams = menuParams
         }
     }
 
@@ -1134,6 +1147,7 @@ class FloatingMicOverlayManager(
         easterProgressRunnable = null
         val mv = quickMenuView ?: return
         quickMenuView = null
+        quickMenuParams = null
         runCatching { windowManager.removeViewImmediate(mv) }
     }
 
@@ -1190,6 +1204,31 @@ class FloatingMicOverlayManager(
 
         fun computeMuteTransitionPulseScale(fraction: Float): Float {
             return 1f + 0.05f * sin(Math.PI * fraction.coerceIn(0f, 1f)).toFloat()
+        }
+
+        fun computeOverlayFlags(
+            baseFlags: Int,
+            wantPassThrough: Boolean,
+            wantKeepScreenOn: Boolean,
+            hideFromScreenCapture: Boolean
+        ): Int {
+            var flags = baseFlags
+            flags = if (wantPassThrough) {
+                flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            } else {
+                flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            }
+            flags = if (wantKeepScreenOn) {
+                flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            } else {
+                flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
+            }
+            flags = if (hideFromScreenCapture) {
+                flags or WindowManager.LayoutParams.FLAG_SECURE
+            } else {
+                flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+            }
+            return flags
         }
     }
 }

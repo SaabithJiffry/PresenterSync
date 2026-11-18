@@ -161,6 +161,7 @@ data class RemoteConfig(
     val enableMagneticSnap: Boolean = true,
     val hudClickThrough: Boolean = false,
     val hudAutoDodge: Boolean = false,
+    val hideFromScreenCapture: Boolean = true,
     val opacityLevel: Int = AppConstants.OPACITY_FROSTED,
     val indicatorScale: Float = 1.0f,
 
@@ -291,6 +292,7 @@ class RemoteConfigStore(context: Context) {
             enableMagneticSnap = prefs.getBoolean("enableMagneticSnap", true),
             hudClickThrough = prefs.getBoolean("hudClickThrough", false),
             hudAutoDodge = prefs.getBoolean("hudAutoDodge", false),
+            hideFromScreenCapture = prefs.getBoolean("hideFromScreenCapture", true),
             opacityLevel = rawOpacity,
             indicatorScale = rawScale,
             firstRun = prefs.getBoolean("firstRun", true),
@@ -526,6 +528,7 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("aggressivePulse", c.aggressivePulse)
             .putBoolean("enableAudioCue", c.enableAudioCue)
             .putBoolean("enableMuteToast", c.enableMuteToast)
+            .putBoolean("hideFromScreenCapture", c.hideFromScreenCapture)
             .putBoolean("enableVoiceWhileMutedAlert", c.enableVoiceWhileMutedAlert)
             .putBoolean("enableHudClickActions", c.enableHudClickActions)
             .putBoolean("lockHudPosition", c.lockHudPosition)

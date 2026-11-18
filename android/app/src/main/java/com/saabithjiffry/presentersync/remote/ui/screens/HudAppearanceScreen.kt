@@ -418,6 +418,12 @@ fun HudAppearanceScreen(
                     onCheckedChange = { v -> app.configStore.update { it.copy(lockHudPosition = v) } }
                 )
                 ExplorerSettingToggleRow(
+                    title = "Hide HUD from Screen Share / Capture",
+                    subtitle = "Apply FLAG_SECURE so screen sharing, OBS capture, and screenshots exclude the floating HUD",
+                    checked = cfg.hideFromScreenCapture,
+                    onCheckedChange = { v -> app.configStore.update { it.copy(hideFromScreenCapture = v) } }
+                )
+                ExplorerSettingToggleRow(
                     title = "Push-to-Talk Mode (Hold Pill to Unmute)",
                     subtitle = "Press and hold floating pill to unmute; releasing immediately mutes mic again. Enabling Push-to-Talk disables Long-Press, Very-Long-Press, and Push-to-Mute (and vice versa).",
                     checked = cfg.enablePushToTalk,

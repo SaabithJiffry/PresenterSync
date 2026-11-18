@@ -1780,7 +1780,7 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.Write("Settings", "ThemeMode", tm)
             Theme.SetMode(tm)
         }
-        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowRow2RecChatHud", "ShowRow3StudioSceneHud", "ShowSecondaryMicHud", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough"] {
+        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowRow2RecChatHud", "ShowRow3StudioSceneHud", "ShowSecondaryMicHud", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough", "ExcludeFromCapture", "ExcludeSecondaryFromCapture"] {
             if vals.HasOwnProp(bProp) {
                 cfg.%bProp% := !!vals.%bProp%
                 cfg.WriteBool("Settings", bProp, cfg.%bProp%)
@@ -2105,34 +2105,38 @@ ShowControlCenterWindow(cfg, state := "", *) {
     for hCtrl in [chkShowInd, chkShowExtra, chkShowText, chkMonoIcon, chkSleek, chkPulse, chkClickPills, chkMagSnap, chkAutoDodge, chkClickThru]
         Theme.RegisterControl(ccGui, hCtrl, "Checkbox", "tabText")
 
-    btnResetPos := ccGui.Add("Button", "x32 y340 w310 h30", "Reset HUD Position to Default")
-    btnResetApp := ccGui.Add("Button", "x360 y340 w320 h30", "Restore Default HUD Appearance")
+    btnResetPos := ccGui.Add("Button", "x32 y332 w310 h28", "Reset HUD Position to Default")
+    btnResetApp := ccGui.Add("Button", "x360 y332 w320 h28", "Restore Default HUD Appearance")
     Theme.RegisterControl(ccGui, btnResetPos, "Button", "tabButton")
     Theme.RegisterControl(ccGui, btnResetApp, "Button", "tabButton")
     btnResetPos.OnEvent("Click", (*) => ResetTrayPosition(cfg, state))
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y388 w130", "Custom Live Hex:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y372 w130", "Custom Live Hex:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edCustomLive := ccGui.Add("Edit", "x165 y384 w175 h26", "#" cfg.CustomLiveHex)
+    edCustomLive := ccGui.Add("Edit", "x165 y368 w175 h24", "#" cfg.CustomLiveHex)
     Theme.RegisterControl(ccGui, edCustomLive, "Edit")
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x360 y388 w130", "Custom Muted Hex:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x360 y372 w130", "Custom Muted Hex:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edCustomMuted := ccGui.Add("Edit", "x495 y384 w185 h26", "#" cfg.CustomMutedHex)
+    edCustomMuted := ccGui.Add("Edit", "x495 y368 w185 h24", "#" cfg.CustomMutedHex)
     Theme.RegisterControl(ccGui, edCustomMuted, "Edit")
 
-    chkSecondaryMic := ccGui.Add("Checkbox", "x32 y424 w310 h24" (cfg.ShowSecondaryMicHud ? " Checked" : ""), "Secondary Independent Mic Pill (Mic-Only)")
+    chkSecondaryMic := ccGui.Add("Checkbox", "x32 y402 w310 h22" (cfg.ShowSecondaryMicHud ? " Checked" : ""), "Secondary Independent Mic Pill (Mic-Only)")
     Theme.RegisterControl(ccGui, chkSecondaryMic, "Checkbox", "tabText")
-    btnResetSecPos := ccGui.Add("Button", "x360 y421 w320 h30", "Reset Secondary Pill Position")
+    btnResetSecPos := ccGui.Add("Button", "x360 y400 w320 h26", "Reset Secondary Pill Position")
     Theme.RegisterControl(ccGui, btnResetSecPos, "Button", "tabButton")
     btnResetSecPos.OnEvent("Click", (*) => ResetSecondaryTrayPosition(cfg, state))
 
-    chkShowRow2 := ccGui.Add("Checkbox", "x32 y456 w310 h24" (cfg.ShowRow2RecChatHud ? " Checked" : ""), "Show Recording && Chat HUD (Row 2)")
-    chkShowRow3 := ccGui.Add("Checkbox", "x360 y456 w320 h24" (cfg.ShowRow3StudioSceneHud ? " Checked" : ""), "Show Studio && Scene HUD (Row 3)")
+    chkShowRow2 := ccGui.Add("Checkbox", "x32 y430 w310 h22" (cfg.ShowRow2RecChatHud ? " Checked" : ""), "Show Recording && Chat HUD (Row 2)")
+    chkShowRow3 := ccGui.Add("Checkbox", "x360 y430 w320 h22" (cfg.ShowRow3StudioSceneHud ? " Checked" : ""), "Show Studio && Scene HUD (Row 3)")
+    chkExcludeCapture := ccGui.Add("Checkbox", "x32 y456 w310 h22" (cfg.ExcludeFromCapture ? " Checked" : ""), "Hide HUD from Screen Share / Capture")
+    chkExcludeSecCapture := ccGui.Add("Checkbox", "x360 y456 w320 h22" (cfg.ExcludeSecondaryFromCapture ? " Checked" : ""), "Hide Secondary Pill from Capture")
     Theme.RegisterControl(ccGui, chkShowRow2, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkShowRow3, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkExcludeCapture, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkExcludeSecCapture, "Checkbox", "tabText")
 
     ; ==========================================================================
     ; TAB 5: REMOTE COMPANION
@@ -2332,6 +2336,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
         chkMagSnap.Value := cfg.EnableMagneticSnap ? 1 : 0
         chkAutoDodge.Value := cfg.HudAutoDodge ? 1 : 0
         chkClickThru.Value := cfg.HudClickThrough ? 1 : 0
+        chkExcludeCapture.Value := cfg.ExcludeFromCapture ? 1 : 0
+        chkExcludeSecCapture.Value := cfg.ExcludeSecondaryFromCapture ? 1 : 0
         ddlRemoteNet.Choose((cfg.RemoteNetworkMode = "Internet") ? 2 : 1)
         edPairCode.Value := cfg.InternetPairingCode
         chkEnableRemoteConn.Value := cfg.EnableRemoteConnections ? 1 : 0
@@ -2429,6 +2435,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
             EnableMagneticSnap: chkMagSnap.Value,
             HudAutoDodge: chkAutoDodge.Value,
             HudClickThrough: chkClickThru.Value,
+            ExcludeFromCapture: chkExcludeCapture.Value,
+            ExcludeSecondaryFromCapture: chkExcludeSecCapture.Value,
             RemoteNetworkMode: (ddlRemoteNet.Value == 2) ? "Internet" : "LAN",
             EnableRemoteConnections: chkEnableRemoteConn.Value,
             PptHotkey: edHkPpt.Value,
