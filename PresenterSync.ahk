@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.0.1
+; Version: 7.0.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,9 +11,10 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.0.1.0
+;@Ahk2Exe-SetVersion 7.0.2.0
 ProcessSetPriority "High"
-SetKeyDelay 50, 50
+SendMode "Input"
+SetKeyDelay -1, -1
 
 #Include <WebSocket>
 #Include <UIA>
@@ -52,6 +53,7 @@ DiagnosticLogger.BindContext(AppConfig, AppState)
 AppState.rebuildTrayFn := BuildTrayMenu.Bind(AppConfig, AppState)
 AppState.rebindHotkeysFn := (*) => RebindAllHostHotkeys(AppConfig, AppState)
 AppState.triggerMuteFn := (*) => TriggerMute(AppConfig, AppState, true)
+AppState.triggerTransitionFn := (*) => TriggerObsSceneTransition(AppConfig, AppState, true)
 AppState.pptNextFn := (*) => SendToPPT(AppConfig, "{Right}")
 AppState.pptPrevFn := (*) => SendToPPT(AppConfig, "{Left}")
 AppState.autoProfileTimerFn := PollAutoProfileTrigger.Bind(AppConfig, AppState)
@@ -87,6 +89,10 @@ BuildTrayMenu(cfg, state) {
     A_TrayMenu.Add("Enable Pointer Mute Only", ToggleMicOnly.Bind(cfg, state))
     if (cfg.EnableMicOnly)
         A_TrayMenu.Check("Enable Pointer Mute Only")
+
+    A_TrayMenu.Add("Enable Pointer OBS Scene Transition", TogglePointerTransition.Bind(cfg, state))
+    if (cfg.EnablePointerTransition)
+        A_TrayMenu.Check("Enable Pointer OBS Scene Transition")
 
     A_TrayMenu.Add()
 
@@ -267,6 +273,7 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Close Remote Companion...", PromptCloseRemoteCompanion.Bind(cfg, state))
     SettingsMenu.Add()
     SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI.Bind(cfg))
+    SettingsMenu.Add("Change Pointer OBS Transition Button...", ChangeHwTransitionHotkeyUI.Bind(cfg, state))
     SettingsMenu.Add("Enable Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state))
     if (cfg.EnablePushToMute)
         SettingsMenu.Check("Enable Cough / Push-to-Mute (Hold)")
@@ -362,6 +369,18 @@ ToggleMicOnly(cfg, state := "", *) {
     }
 
     cfg.WriteBool("Settings", "EnableMicOnly", cfg.EnableMicOnly)
+    NotifyHelpRefresh(state)
+    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
+}
+
+TogglePointerTransition(cfg, state := "", *) {
+    ToolTip()
+    cfg.EnablePointerTransition := !cfg.EnablePointerTransition
+    cfg.WriteBool("Settings", "EnablePointerTransition", cfg.EnablePointerTransition)
+    SetTrayCheck("Enable Pointer OBS Scene Transition", cfg.EnablePointerTransition)
+    if (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+        try state.rebindHotkeysFn.Call()
+    ToolTip("Pointer OBS Scene Transition: " (cfg.EnablePointerTransition ? "ON" : "OFF"))
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -561,7 +580,9 @@ ExitTrayApp(*) {
 
 ; --- SYSTEM HOTKEYS ---
 BoundSystemHotkeys := []
+BoundPptHotkeys := []
 BoundHwMuteHotkey := ""
+BoundHwTransitionHotkey := ""
 BoundPassthroughHooks := []
 
 BindSystemHotkeys(cfg, state) {
@@ -608,54 +629,52 @@ RemoveToolTip() {
     ToolTip
 }
 
-; --- POWERPOINT CONTROLS (OMNI-CATCH) ---
-IsPptInterceptActive(cfg) {
+; --- POWERPOINT CONTROLS (PRE-COMPUTED DYNAMIC INTERCEPTION) ---
+IsPptInterceptActive(cfg, ThisHotkey := "") {
     return cfg.EnablePPT && !HudSnake.IsActive && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
 IsPptKeyNotMute(cfg, pptKey) {
-    muteKey := cfg.HwMuteHotkey
-    if (muteKey = "" || StrLower(muteKey) = "none")
-        return true
-    cleanMute := LTrim(muteKey, "~*$")
-    cleanPpt := LTrim(pptKey, "~*$")
-    normMute := GetKeyName(cleanMute)
-    normPpt := GetKeyName(cleanPpt)
-    if (normMute != "" && normPpt != "")
-        return StrLower(normMute) != StrLower(normPpt)
-    return StrLower(cleanMute) != StrLower(cleanPpt)
+    return IsPptKeyAllowed(cfg, pptKey)
 }
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Down")
-$Down:: SendToPPT(AppConfig, "{Down}")
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Up")
-$Up:: SendToPPT(AppConfig, "{Up}")
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Left")
-$Left:: SendToPPT(AppConfig, "{Left}")
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchArrows && IsPptKeyNotMute(AppConfig, "Right")
-$Right:: SendToPPT(AppConfig, "{Right}")
+PptCondFn := IsPptInterceptActive.Bind(AppConfig)
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchPg && IsPptKeyNotMute(AppConfig, "PgDn")
-$PgDn:: SendToPPT(AppConfig, "{PgDn}")
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchPg && IsPptKeyNotMute(AppConfig, "PgUp")
-$PgUp:: SendToPPT(AppConfig, "{PgUp}")
+BindPptInterceptHotkeys(cfg, state := "") {
+    global BoundPptHotkeys, PptCondFn
+    HotIf PptCondFn
+    for oldHk in BoundPptHotkeys {
+        try Hotkey(oldHk, "Off")
+    }
+    BoundPptHotkeys := []
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchSpace && IsPptKeyNotMute(AppConfig, "Space")
-$Space:: SendToPPT(AppConfig, "{Space}")
+    pptBindings := [
+        { key: "Down", send: "{Down}" },
+        { key: "Up", send: "{Up}" },
+        { key: "Left", send: "{Left}" },
+        { key: "Right", send: "{Right}" },
+        { key: "PgDn", send: "{PgDn}" },
+        { key: "PgUp", send: "{PgUp}" },
+        { key: "Space", send: "{Space}" },
+        { key: "Enter", send: "{Enter}" },
+        { key: "Tab", send: "{Tab}" },
+        { key: "Esc", send: "{Esc}" },
+        { key: "+F5", send: "{Blind}{F5}" }
+    ]
 
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEnter && IsPptKeyNotMute(AppConfig, "Enter")
-$Enter:: SendToPPT(AppConfig, "{Enter}")
-
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchTab && IsPptKeyNotMute(AppConfig, "Tab")
-$Tab:: SendToPPT(AppConfig, "{Tab}")
-
-#HotIf IsPptInterceptActive(AppConfig) && AppConfig.CatchEsc && IsPptKeyNotMute(AppConfig, "Esc")
-$Esc:: SendToPPT(AppConfig, "{Esc}")
-
-#HotIf IsPptInterceptActive(AppConfig) && IsPptKeyNotMute(AppConfig, "+F5")
-$+F5:: SendToPPT(AppConfig, "{Blind}{F5}") ; Always intercepted if PPT mode is active
-
-#HotIf ; Reset directive
+    for item in pptBindings {
+        if IsPptKeyAllowed(cfg, item.key) {
+            hkName := "$" item.key
+            sendKey := item.send
+            try {
+                Hotkey(hkName, ((k, *) => SendToPPT(cfg, k)).Bind(sendKey), "On")
+                BoundPptHotkeys.Push(hkName)
+            }
+        }
+    }
+    HotIf
+}
+BindPptInterceptHotkeys(AppConfig, AppState)
 
 SendToPPT(cfg, Key) {
     static LastSignal := 0
@@ -668,6 +687,8 @@ SendToPPT(cfg, Key) {
         return
     }
     LastSignal := A_TickCount
+    t0 := A_TickCount
+    DiagnosticLogger.RecordBreadcrumb("Input", "SendToPPT", Key)
 
     if WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") {
         if (IsSet(SessionTimeline))
@@ -700,9 +721,10 @@ SendToPPT(cfg, Key) {
     else {
         SoundPlay "*16"
     }
+    DiagnosticLogger.CheckLatency("Input", "SendToPPT", t0, 120, Key)
 }
 
-; --- DYNAMIC HARDWARE MUTE TRIGGER ---
+; --- DYNAMIC HARDWARE MUTE & SCENE TRANSITION TRIGGERS ---
 CheckPointerEnable(cfg, ThisHotkey) {
     return !HudSnake.IsActive && (cfg.EnablePPT || cfg.EnableMicOnly) && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
@@ -724,7 +746,28 @@ BindHwMuteHotkey(cfg, state) {
 }
 BindHwMuteHotkey(AppConfig, AppState)
 
-; --- MUTE CONTROL ---
+CheckTransitionEnable(cfg, ThisHotkey := "") {
+    return !HudSnake.IsActive && cfg.EnablePointerTransition && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
+}
+
+TransitionCondFn := CheckTransitionEnable.Bind(AppConfig)
+
+BindHwTransitionHotkey(cfg, state) {
+    global BoundHwTransitionHotkey, TransitionCondFn
+    HotIf TransitionCondFn
+    if (BoundHwTransitionHotkey != "") {
+        try Hotkey(BoundHwTransitionHotkey, "Off")
+        BoundHwTransitionHotkey := ""
+    }
+    if (cfg.HwTransitionHotkey != "" && cfg.HwTransitionHotkey != "None") {
+        try Hotkey(cfg.HwTransitionHotkey, (*) => TriggerObsSceneTransition(cfg, state), "On")
+        BoundHwTransitionHotkey := cfg.HwTransitionHotkey
+    }
+    HotIf
+}
+BindHwTransitionHotkey(AppConfig, AppState)
+
+; --- MUTE & TRANSITION PASSTHROUGH CONTROL ---
 RegisterPassthroughHooks(cfg, state) {
     global BoundPassthroughHooks
     HotIf
@@ -736,6 +779,11 @@ RegisterPassthroughHooks(cfg, state) {
     if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "") {
         hk := FormatPassthroughHook(cfg.ObsMuteHotkey)
         try Hotkey(hk, LaptopKeyboardMute.Bind(cfg, state), "On")
+        BoundPassthroughHooks.Push(hk)
+    }
+    if (cfg.ObsTransitionHotkey != "None" && cfg.ObsTransitionHotkey != "") {
+        hk := FormatPassthroughHook(cfg.ObsTransitionHotkey)
+        try Hotkey(hk, LaptopObsTransitionPassthrough.Bind(cfg, state), "On")
         BoundPassthroughHooks.Push(hk)
     }
     if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3)) {
@@ -783,8 +831,14 @@ RegisterPassthroughHooks(AppConfig, AppState)
 
 RebindAllHostHotkeys(cfg, state) {
     BindSystemHotkeys(cfg, state)
+    BindPptInterceptHotkeys(cfg, state)
     BindHwMuteHotkey(cfg, state)
+    BindHwTransitionHotkey(cfg, state)
     RegisterPassthroughHooks(cfg, state)
+}
+
+LaptopObsTransitionPassthrough(cfg, state, ThisHotkey := "") {
+    DiagnosticLogger.RecordBreadcrumb("Input", "ObsTransitionPassthrough", cfg.ObsTransitionHotkey)
 }
 
 LaptopCombinedRecToggle(cfg, state, ThisHotkey) {

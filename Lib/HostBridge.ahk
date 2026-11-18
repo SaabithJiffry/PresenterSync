@@ -1371,6 +1371,10 @@ class HostCompanionBridge {
         }
     }
 
+    _HandleBridgeMessage(c, msg) {
+        return this._HandleWsTextMessage(c, msg)
+    }
+
     _HandleWsTextMessage(c, msg) {
         c.lastRxTick := A_TickCount
         msgType := StrLower(_HB_JsonExtractStr(msg, "type"))
@@ -1431,6 +1435,14 @@ class HostCompanionBridge {
                 sName := _HB_JsonExtractStr(msg, "sceneName")
                 ok := ExecuteHostSwitchScene(this.cfg, this.state, sName)
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"switch_scene","ok":' (ok ? "true" : "false") '}')
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "transition_scene":
+                ok := false
+                if (IsObject(this.state) && this.state.HasOwnProp("triggerTransitionFn") && IsObject(this.state.triggerTransitionFn))
+                    ok := (this.state.triggerTransitionFn.Call() != false)
+                else if (IsSet(TriggerObsSceneTransition))
+                    ok := TriggerObsSceneTransition(this.cfg, this.state, true)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"transition_scene","ok":' (ok ? "true" : "false") '}')
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "toggle_standby":
                 ok := ExecuteHostToggleStandby(this.cfg, this.state)

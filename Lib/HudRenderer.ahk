@@ -348,6 +348,8 @@ SyncSceneState(cfg, state, sceneName) {
     if (sceneName != "" && state.currentSceneName != sceneName) {
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
+        if (state.HasOwnProp("currentSceneName") && state.currentSceneName != "")
+            state.previousProgramScene := state.currentSceneName
         state.currentSceneName := sceneName
         state.sceneMarqueeOffset := 0
         state.sceneMarqueePhase := "pause_start"

@@ -27,6 +27,58 @@ ExtractBaseKeyName(hk) {
     return Trim(s)
 }
 
+_DoHotkeysCollide(hkA, hkB) {
+    cleanA := LTrim(Trim(String(hkA)), "~*$")
+    cleanB := LTrim(Trim(String(hkB)), "~*$")
+    cleanA := RegExReplace(cleanA, "^\{(.+)\}$", "$1")
+    cleanB := RegExReplace(cleanB, "^\{(.+)\}$", "$1")
+    if (cleanA = "" || StrLower(cleanA) = "none" || cleanB = "" || StrLower(cleanB) = "none")
+        return false
+    normA := GetKeyName(cleanA)
+    normB := GetKeyName(cleanB)
+    if (normA != "" && normB != "")
+        return StrLower(normA) == StrLower(normB)
+    return StrLower(cleanA) == StrLower(cleanB)
+}
+
+IsPptKeyAllowed(cfg, pptKey) {
+    if (!IsObject(cfg))
+        return false
+    cleanPpt := LTrim(Trim(String(pptKey)), "~*$")
+    cleanPpt := RegExReplace(cleanPpt, "^\{(.+)\}$", "$1")
+    if (cleanPpt = "" || StrLower(cleanPpt) = "none")
+        return false
+
+    switch StrLower(cleanPpt) {
+        case "down", "up", "left", "right":
+            if (cfg.HasOwnProp("CatchArrows") && !cfg.CatchArrows)
+                return false
+        case "pgdn", "pgup", "pagedown", "pageup":
+            if (cfg.HasOwnProp("CatchPg") && !cfg.CatchPg)
+                return false
+            if (!cfg.HasOwnProp("CatchPg") && cfg.HasOwnProp("CatchPgUpDn") && !cfg.CatchPgUpDn)
+                return false
+        case "space":
+            if (cfg.HasOwnProp("CatchSpace") && !cfg.CatchSpace)
+                return false
+        case "enter", "return":
+            if (cfg.HasOwnProp("CatchEnter") && !cfg.CatchEnter)
+                return false
+        case "tab":
+            if (cfg.HasOwnProp("CatchTab") && !cfg.CatchTab)
+                return false
+        case "esc", "escape":
+            if (cfg.HasOwnProp("CatchEsc") && !cfg.CatchEsc)
+                return false
+    }
+
+    for _, prop in ["HwMuteHotkey", "ObsMuteHotkey", "HwTransitionHotkey", "ObsTransitionHotkey"] {
+        if (cfg.HasOwnProp(prop) && _DoHotkeysCollide(cleanPpt, cfg.%prop%))
+            return false
+    }
+    return true
+}
+
 _WaitKeyHoldAndRelease(hk, minHoldSec := 0.35, maxWaitSec := 15, keyWaitFn := "") {
     baseKey := ExtractBaseKeyName(hk)
     if (baseKey = "")
@@ -575,6 +627,11 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
         ExecuteHostToggleStandby(cfg, state)
     } else if (pkt.cmd = "switch_scene") {
         ExecuteHostSwitchScene(cfg, state, pkt.data)
+    } else if (pkt.cmd = "transition_scene") {
+        if (IsObject(state) && state.HasOwnProp("triggerTransitionFn") && IsObject(state.triggerTransitionFn))
+            state.triggerTransitionFn.Call()
+        else
+            TriggerObsSceneTransition(cfg, state, true)
     } else if (pkt.cmd = "timer_start") {
         dur := IsInteger(Trim(String(pkt.data))) ? Integer(Trim(String(pkt.data))) : 0
         StartHostPresenterTimer(cfg, state, dur)
@@ -647,8 +704,11 @@ ExecuteHostSwitchScene(cfg, state, sceneName) {
             return false
         if (IsSet(SyncSceneState))
             SyncSceneState(cfg, state, clean)
-        else
+        else {
+            if (state.HasOwnProp("currentSceneName") && state.currentSceneName != "" && state.currentSceneName != clean)
+                state.previousProgramScene := state.currentSceneName
             state.currentSceneName := clean
+        }
         BroadcastHostRelayDirectorState(cfg, state)
         return true
     }
@@ -657,13 +717,60 @@ ExecuteHostSwitchScene(cfg, state, sceneName) {
         if (ok) {
             if (IsSet(SyncSceneState))
                 SyncSceneState(cfg, state, clean)
-            else
+            else {
+                if (state.HasOwnProp("currentSceneName") && state.currentSceneName != "" && state.currentSceneName != clean)
+                    state.previousProgramScene := state.currentSceneName
                 state.currentSceneName := clean
+            }
             BroadcastHostRelayDirectorState(cfg, state)
         }
         return ok
     }
     return false
+}
+
+TriggerObsSceneTransition(cfg, state, fromHudClick := false) {
+    static lastTick := 0
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    now := A_TickCount
+    if (lastTick != 0 && (now - lastTick < 25))
+        return false
+    if (!fromHudClick && (!cfg.HasOwnProp("EnablePointerTransition") || !cfg.EnablePointerTransition))
+        return false
+    lastTick := now
+
+    t0 := A_TickCount
+    if (IsSet(DiagnosticLogger))
+        DiagnosticLogger.RecordBreadcrumb("Input", "TriggerObsSceneTransition", fromHudClick ? "hud_or_remote" : "pointer")
+
+    dispatched := false
+    detail := ""
+    if (state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+        if (state.HasOwnProp("studioModeActive") && state.studioModeActive) {
+            dispatched := SendObsRequest(state.obsWs, "TriggerStudioModeTransition", "HostSceneTransition")
+            detail := "ws:TriggerStudioModeTransition"
+        } else {
+            prevScene := state.HasOwnProp("previewSceneName") ? state.previewSceneName : ""
+            curScene := state.HasOwnProp("currentSceneName") ? state.currentSceneName : ""
+            prevProg := state.HasOwnProp("previousProgramScene") ? state.previousProgramScene : ""
+            targetScene := (prevScene != "" && prevScene != curScene) ? prevScene : prevProg
+            if (targetScene != "") {
+                dispatched := SendObsRequest(state.obsWs, "SetCurrentProgramScene", "HostSceneTransition", '{"sceneName":"' EscapeJsonStr(targetScene) '"}')
+                detail := "ws:SetCurrentProgramScene:" targetScene
+            }
+        }
+    } else if (WinExist("ahk_exe obs64.exe") && cfg.HasOwnProp("ObsTransitionHotkey") && cfg.ObsTransitionHotkey != "None" && cfg.ObsTransitionHotkey != "") {
+        SetKeyDelay -1, 0
+        try ControlSend FormatSendKey(cfg.ObsTransitionHotkey), , "ahk_exe obs64.exe"
+        SetKeyDelay -1, -1
+        dispatched := true
+        detail := "controlsend:" cfg.ObsTransitionHotkey
+    }
+
+    if (IsSet(DiagnosticLogger))
+        DiagnosticLogger.CheckLatency("Input", "TriggerObsSceneTransition", t0, 120, detail)
+    return dispatched
 }
 
 ExecuteHostPauseRecord(cfg, state) {
@@ -1117,6 +1224,8 @@ HandleObsClose(cfg, state, ws, status, reason) {
     SyncVCamState(cfg, state, false)
     SyncStudioState(cfg, state, false)
     SyncSceneState(cfg, state, "Scene")
+    state.previewSceneName := ""
+    state.previousProgramScene := ""
     state.sceneList := []
     if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
         try state.refreshHelpFn.Call()
@@ -1185,6 +1294,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         SendObsRequest(ws, "GetRecordStatus", "InitRecState")
         SendObsRequest(ws, "GetStudioModeEnabled", "InitStudioState")
         SendObsRequest(ws, "GetCurrentProgramScene", "InitSceneState")
+        SendObsRequest(ws, "GetCurrentPreviewScene", "InitPreviewSceneState")
         SendObsRequest(ws, "GetSceneList", "InitSceneList")
         SendObsRequest(ws, "GetStreamStatus", "InitStreamState")
         SendObsRequest(ws, "GetVirtualCamStatus", "InitVCamState")
@@ -1226,12 +1336,20 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         }
         else if (InStr(msg, '"eventType":"StudioModeStateChanged"') || InStr(msg, '"eventType": "StudioModeStateChanged"')) {
             if (RegExMatch(msg, '"studioModeEnabled"\s*:\s*(true|false)', &matchStudio)) {
-                SyncStudioState(cfg, state, matchStudio[1] == "true")
+                isStudio := (matchStudio[1] == "true")
+                SyncStudioState(cfg, state, isStudio)
+                if (isStudio && IsObject(ws))
+                    SendObsRequest(ws, "GetCurrentPreviewScene", "InitPreviewSceneState")
             }
         }
         else if (InStr(msg, '"eventType":"CurrentProgramSceneChanged"') || InStr(msg, '"eventType": "CurrentProgramSceneChanged"')) {
             if (RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchScene)) {
                 SyncSceneState(cfg, state, UnescapeJsonStr(matchScene[1]))
+            }
+        }
+        else if (InStr(msg, '"eventType":"CurrentPreviewSceneChanged"') || InStr(msg, '"eventType": "CurrentPreviewSceneChanged"')) {
+            if (RegExMatch(msg, '"currentPreviewSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchPrevScene) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchPrevScene)) {
+                state.previewSceneName := UnescapeJsonStr(matchPrevScene[1])
             }
         }
         else if (InStr(msg, '"eventType":"SceneListChanged"') || InStr(msg, '"eventType": "SceneListChanged"')) {
@@ -1294,12 +1412,20 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         }
         else if (InStr(msg, '"requestId":"InitStudioState"') || InStr(msg, '"requestId": "InitStudioState"')) {
             if (RegExMatch(msg, '"studioModeEnabled"\s*:\s*(true|false)', &matchStudio)) {
-                SyncStudioState(cfg, state, matchStudio[1] == "true")
+                isStudio := (matchStudio[1] == "true")
+                SyncStudioState(cfg, state, isStudio)
+                if (isStudio && IsObject(ws))
+                    SendObsRequest(ws, "GetCurrentPreviewScene", "InitPreviewSceneState")
             }
         }
         else if (InStr(msg, '"requestId":"InitSceneState"') || InStr(msg, '"requestId": "InitSceneState"')) {
             if (RegExMatch(msg, '"currentProgramSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchScene) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchScene)) {
                 SyncSceneState(cfg, state, UnescapeJsonStr(matchScene[1]))
+            }
+        }
+        else if (InStr(msg, '"requestId":"InitPreviewSceneState"') || InStr(msg, '"requestId": "InitPreviewSceneState"')) {
+            if (RegExMatch(msg, '"currentPreviewSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchPrevScene) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchPrevScene)) {
+                state.previewSceneName := UnescapeJsonStr(matchPrevScene[1])
             }
         }
         else if (InStr(msg, '"requestId":"InitSceneList"') || InStr(msg, '"requestId": "InitSceneList"')) {

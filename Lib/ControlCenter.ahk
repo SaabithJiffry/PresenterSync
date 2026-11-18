@@ -373,7 +373,9 @@ ShowHelpWindow(cfg, state := "", *) {
         . "Suspend All Hotkeys:`n"
         . "Exit PresenterSync:`n"
         . "Clicker Mute Button:`n"
+        . "Clicker OBS Transition:`n"
         . "OBS Mute / Rec / Pause:`n"
+        . "OBS Transition Fallback:`n"
         . "Conf Mute / Rec / Pause:`n"
         . "Undocumented Chord:"
     normApp := NormalizeConferencingApp(cfg.ConferencingApp)
@@ -385,7 +387,9 @@ ShowHelpWindow(cfg, state := "", *) {
         . FormatHK(cfg.SuspendHotkey) "`n"
         . FormatHK(cfg.ExitHotkey) "`n"
         . FormatHK(cfg.HwMuteHotkey) (cfg.EnablePushToMute ? "  (Hold >= 350ms = Cough Mute)" : "  (Tap Toggle)") "`n"
+        . FormatHK(cfg.HwTransitionHotkey) (cfg.EnablePointerTransition ? "  (Enabled)" : "  (Disabled)") "`n"
         . FormatHK(cfg.ObsMuteHotkey) "  /  " FormatHK(cfg.ObsRecHotkey) "  /  " FormatHK(cfg.ObsPauseHotkey) "`n"
+        . FormatHK(cfg.ObsTransitionHotkey) "`n"
         . FormatHK(activeConfKey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey) "  (" normApp ")`n"
         . "Alt + Ctrl + Shift + S  (Try at your own risk...)"
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y122 w200 h206", scCol1), "Text", "tabMuted")
@@ -735,6 +739,7 @@ ChangeObsSettingsUI(cfg, *) {
         cfg.Write("Settings", "ObsHotkey", values["mute"] != "" ? values["mute"] : "None")
         cfg.Write("Settings", "ObsRecHotkey", values["rec"] != "" ? values["rec"] : "^F9")
         cfg.Write("Settings", "ObsPauseHotkey", values["pause"] != "" ? values["pause"] : "^F10")
+        cfg.Write("Settings", "ObsTransitionHotkey", values["transition"] != "" ? values["transition"] : "None")
         cfg.Write("Settings", "TargetMicName", values["mic"])
         if (values.Has("pw"))
             cfg.Write("Settings", "ObsPassword", values["pw"])
@@ -748,6 +753,8 @@ ChangeObsSettingsUI(cfg, *) {
         {type: "Hotkey", id: "rec", opts: "w280", value: cfg.ObsRecHotkey},
         {type: "Text", opts: "w280 y+10", text: "Pause/Resume Recording Shortcut:"},
         {type: "Hotkey", id: "pause", opts: "w280", value: cfg.ObsPauseHotkey},
+        {type: "Text", opts: "w280 y+10", text: "OBS Transition Shortcut (Fallback):"},
+        {type: "Hotkey", id: "transition", opts: "w280", value: (cfg.ObsTransitionHotkey != "None") ? cfg.ObsTransitionHotkey : ""},
         {type: "Text", opts: "w280 y+10", text: "Exact OBS Audio Source Name (e.g., Mic/Aux):"},
         {type: "Edit", id: "mic", opts: "w280", value: cfg.targetMicName, required: true, errorMsg: "Exact OBS Audio Source Name cannot be empty."},
         {type: "Text", opts: "w280 y+10", text: "OBS WebSocket Password (Optional):"},
@@ -891,6 +898,19 @@ ChangeHwMuteHotkeyUI(cfg, *) {
         cfg.HwMuteHotkey := val,
         cfg.Write("Settings", "HwMuteHotkey", val),
         Reload()
+    ))
+}
+
+ChangeHwTransitionHotkeyUI(cfg, state := "", *) {
+    hasLiveRebind := (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+    btnLabel := hasLiveRebind ? "Save & Apply" : "Save & Restart"
+    return OpenPointerKeyCaptureDialog(cfg.HwTransitionHotkey, btnLabel, (val) => (
+        cfg.HwTransitionHotkey := val,
+        cfg.Write("Settings", "HwTransitionHotkey", val),
+        hasLiveRebind ? (
+            state.rebindHotkeysFn.Call(),
+            (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn) ? state.rebuildTrayFn.Call() : 0
+        ) : Reload()
     ))
 }
 
@@ -1705,6 +1725,10 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             }
             cfg.WriteBool("Pointer", "EnablePushToTalk", cfg.EnablePushToTalk)
         }
+        if vals.HasOwnProp("EnablePointerTransition") {
+            cfg.EnablePointerTransition := !!vals.EnablePointerTransition
+            cfg.WriteBool("Settings", "EnablePointerTransition", cfg.EnablePointerTransition)
+        }
         for pKey in ["CatchArrows", "CatchPg", "CatchSpace", "CatchEnter", "CatchTab", "CatchEsc"] {
             if vals.HasOwnProp(pKey) {
                 cfg.%pKey% := !!vals.%pKey%
@@ -1770,7 +1794,9 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             { prop: "ObsMuteHotkey", key: "ObsHotkey", label: "OBS Mute Hotkey" },
             { prop: "ObsRecHotkey", key: "ObsRecHotkey", label: "OBS Rec Hotkey" },
             { prop: "ObsPauseHotkey", key: "ObsPauseHotkey", label: "OBS Pause Hotkey" },
+            { prop: "ObsTransitionHotkey", key: "ObsTransitionHotkey", label: "OBS Transition Hotkey" },
             { prop: "HwMuteHotkey", key: "HwMuteHotkey", label: "Clicker Mute Button" },
+            { prop: "HwTransitionHotkey", key: "HwTransitionHotkey", label: "Clicker OBS Transition Button" },
             { prop: "PptHotkey", key: "PptHotkey", label: "Cycle Pointer Mode" },
             { prop: "WsHotkey", key: "WsHotkey", label: "Toggle OBS Sync" },
             { prop: "ZoomHotkey", key: "ZoomHotkey", label: "Toggle Conf Monitor" },
@@ -1942,6 +1968,12 @@ ShowControlCenterWindow(cfg, state := "", *) {
     edStandbyScene := ccGui.Add("Edit", "x250 y344 w430 h26", cfg.StandbySceneName)
     Theme.RegisterControl(ccGui, edStandbyScene, "Edit")
 
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y388 w210", "OBS Transition Shortcut (Fallback):"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edObsTransition := ccGui.Add("Edit", "x250 y384 w430 h26", cfg.ObsTransitionHotkey)
+    Theme.RegisterControl(ccGui, edObsTransition, "Edit")
+
     ; ==========================================================================
     ; TAB 3: POINTER & CLICKER
     ; ==========================================================================
@@ -1987,6 +2019,18 @@ ShowControlCenterWindow(cfg, state := "", *) {
     chkEsc := ccGui.Add("Checkbox", "x360 y312 w320 h24" (cfg.CatchEsc ? " Checked" : ""), "Escape Key (End Slide Show)")
     for cCtrl in [chkArrows, chkPg, chkSpace, chkEnter, chkTab, chkEsc]
         Theme.RegisterControl(ccGui, cCtrl, "Checkbox", "tabText")
+
+    chkPointerTransition := ccGui.Add("Checkbox", "x32 y352 w380 h24" (cfg.EnablePointerTransition ? " Checked" : ""), "Enable Pointer OBS Scene Transition (Tap Button to Cut)")
+    Theme.RegisterControl(ccGui, chkPointerTransition, "Checkbox", "tabText")
+
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y388 w210", "Clicker Transition Button Key:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edHwTransition := ccGui.Add("Edit", "x250 y384 w200 h26", cfg.HwTransitionHotkey)
+    Theme.RegisterControl(ccGui, edHwTransition, "Edit")
+    btnCapTransition := ccGui.Add("Button", "x460 y382 w105 h28", "Capture Key")
+    Theme.RegisterControl(ccGui, btnCapTransition, "Button", "tabButton")
+    btnCapTransition.OnEvent("Click", (*) => OpenPointerKeyCaptureDialog(edHwTransition.Value, "Use Key", (newKey) => (edHwTransition.Value := newKey)))
 
     ; ==========================================================================
     ; TAB 4: HUD & APPEARANCE
@@ -2226,9 +2270,12 @@ ShowControlCenterWindow(cfg, state := "", *) {
         edObsMute.Value := cfg.ObsMuteHotkey
         edObsRec.Value := cfg.ObsRecHotkey
         edObsPause.Value := cfg.ObsPauseHotkey
+        edObsTransition.Value := cfg.ObsTransitionHotkey
         edStandbyScene.Value := cfg.StandbySceneName
         ddlPointerMode.Choose(cfg.EnablePPT ? 1 : (cfg.EnableMicOnly ? 2 : 3))
         edHwMute.Value := cfg.HwMuteHotkey
+        chkPointerTransition.Value := cfg.EnablePointerTransition ? 1 : 0
+        edHwTransition.Value := cfg.HwTransitionHotkey
         chkPushToMute.Value := cfg.EnablePushToMute ? 1 : 0
         chkPushToTalk.Value := cfg.EnablePushToTalk ? 1 : 0
         chkArrows.Value := cfg.CatchArrows ? 1 : 0
@@ -2322,9 +2369,12 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ObsMuteHotkey: edObsMute.Value,
             ObsRecHotkey: edObsRec.Value,
             ObsPauseHotkey: edObsPause.Value,
+            ObsTransitionHotkey: edObsTransition.Value,
             StandbySceneName: edStandbyScene.Value,
             PointerMode: ddlPointerMode.Text,
             HwMuteHotkey: edHwMute.Value,
+            EnablePointerTransition: chkPointerTransition.Value,
+            HwTransitionHotkey: edHwTransition.Value,
             EnablePushToMute: chkPushToMute.Value,
             EnablePushToTalk: chkPushToTalk.Value,
             CatchArrows: chkArrows.Value,
