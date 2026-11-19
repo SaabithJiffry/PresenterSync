@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.2.1"
+    static APP_VERSION := "7.2.2"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1319,6 +1319,10 @@ class Config {
     EnableVoiceWhileMutedAlert := true
     EnableCoreAudioFallback := true
     EnableOsMuteDriftWatchdog := true
+    EnableForgottenRecordWatchdog := true
+    AutoRecordOnStreamDrop := true
+    EnableLowDiskWatchdog := true
+    EnableDeadMicWatchdog := true
     ShowVoiceMeter := true
     ShowRecTimer := true
     ShowStreamHud := true
@@ -1495,6 +1499,10 @@ class Config {
         this.EnableVoiceWhileMutedAlert := this.ReadBool("Settings", "EnableVoiceWhileMutedAlert", true)
         this.EnableCoreAudioFallback := this.ReadBool("Settings", "EnableCoreAudioFallback", true)
         this.EnableOsMuteDriftWatchdog := this.ReadBool("Settings", "EnableOsMuteDriftWatchdog", true)
+        this.EnableForgottenRecordWatchdog := this.ReadBool("Settings", "EnableForgottenRecordWatchdog", true)
+        this.AutoRecordOnStreamDrop := this.ReadBool("Settings", "AutoRecordOnStreamDrop", true)
+        this.EnableLowDiskWatchdog := this.ReadBool("Settings", "EnableLowDiskWatchdog", true)
+        this.EnableDeadMicWatchdog := this.ReadBool("Settings", "EnableDeadMicWatchdog", true)
         this.ShowVoiceMeter := this.ReadBool("Settings", "ShowVoiceMeter", true)
         this.ShowRecTimer := this.ReadBool("Settings", "ShowRecTimer", true)
         this.ShowStreamHud := this.ReadBool("Settings", "ShowStreamHud", true)
@@ -1694,6 +1702,10 @@ class Config {
             { sec: "Settings", key: "EnableVoiceWhileMutedAlert", prop: "EnableVoiceWhileMutedAlert", kind: "bool" },
             { sec: "Settings", key: "EnableCoreAudioFallback", prop: "EnableCoreAudioFallback", kind: "bool" },
             { sec: "Settings", key: "EnableOsMuteDriftWatchdog", prop: "EnableOsMuteDriftWatchdog", kind: "bool" },
+            { sec: "Settings", key: "EnableForgottenRecordWatchdog", prop: "EnableForgottenRecordWatchdog", kind: "bool" },
+            { sec: "Settings", key: "AutoRecordOnStreamDrop", prop: "AutoRecordOnStreamDrop", kind: "bool" },
+            { sec: "Settings", key: "EnableLowDiskWatchdog", prop: "EnableLowDiskWatchdog", kind: "bool" },
+            { sec: "Settings", key: "EnableDeadMicWatchdog", prop: "EnableDeadMicWatchdog", kind: "bool" },
             { sec: "Settings", key: "ShowVoiceMeter", prop: "ShowVoiceMeter", kind: "bool" },
             { sec: "Settings", key: "ShowRecTimer", prop: "ShowRecTimer", kind: "bool" },
             { sec: "Settings", key: "ShowStreamHud", prop: "ShowStreamHud", kind: "bool" },
@@ -1916,6 +1928,20 @@ class OverlayState {
     osMicMutedDrift := false
     lastOsDriftWarnTick := 0
     coreAudioWatchdogFn := ""
+    recordDirectory := ""
+    lowDiskMb := -1
+    lowDiskWarnLevel := 0
+    streamDropWarn := false
+    deadMicWarn := false
+    safetyWatchdogFn := ""
+    _forgotRecSinceTick := 0
+    _lastForgotRecWarnTick := 0
+    _streamDropSinceTick := 0
+    _streamDropBackupTriggered := false
+    _lastLowDiskPollTick := 0
+    _lastLowDiskWarnTick := 0
+    _deadMicSinceTick := 0
+    _lastDeadMicWarnTick := 0
     pptNextFn := ""
     pptPrevFn := ""
     streamTimerFn := ""
@@ -2036,6 +2062,7 @@ class OverlayState {
         this.voiceMeterTimerFn := VoiceMeterTick.Bind(cfg, this)
         this.mutedVoiceTimerFn := MutedVoiceMonitorTick.Bind(cfg, this)
         this.coreAudioWatchdogFn := CoreAudioWatchdogTick.Bind(cfg, this)
+        this.safetyWatchdogFn := SafetyWatchdogTick.Bind(cfg, this)
         this.recTimerFn := RecTimerTick.Bind(cfg, this)
         this.presenterTimerFn := PresenterTimerTick.Bind(cfg, this)
         this.streamTimerFn := PollStreamStatus.Bind(cfg, this)

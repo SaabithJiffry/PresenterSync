@@ -1570,6 +1570,8 @@ SyncTelemetryBackendsFromConfig(cfg, state) {
 
     if (IsSet(UpdateCoreAudioWatchdogTimer))
         UpdateCoreAudioWatchdogTimer(cfg, state)
+    if (IsSet(UpdateSafetyWatchdogTimer))
+        UpdateSafetyWatchdogTimer(cfg, state)
 
     hadObsSession := (state.HasOwnProp("obsConnected") && state.obsConnected) || (state.HasOwnProp("obsWs") && IsObject(state.obsWs))
     if (state.HasOwnProp("obsTimerFn") && state.obsTimerFn)
@@ -1682,7 +1684,7 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.EnableMuteToast := !!vals.EnableMuteToast
             cfg.WriteBool("Settings", "EnableMuteToast", cfg.EnableMuteToast)
         }
-        for cProp in ["EnableCoreAudioFallback", "EnableOsMuteDriftWatchdog"] {
+        for cProp in ["EnableCoreAudioFallback", "EnableOsMuteDriftWatchdog", "EnableForgottenRecordWatchdog", "EnableDeadMicWatchdog", "AutoRecordOnStreamDrop", "EnableLowDiskWatchdog"] {
             if vals.HasOwnProp(cProp) {
                 cfg.%cProp% := !!vals.%cProp%
                 cfg.WriteBool("Settings", cProp, cfg.%cProp%)
@@ -1942,6 +1944,10 @@ ShowControlCenterWindow(cfg, state := "", *) {
     chkOsMuteDrift := ccGui.Add("Checkbox", "x360 y378 w330 h24" (cfg.EnableOsMuteDriftWatchdog ? " Checked" : ""), "Detect Hardware / OS Mic Mute Drift while LIVE")
     Theme.RegisterControl(ccGui, chkCoreAudioFallback, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkOsMuteDrift, "Checkbox", "tabText")
+    chkForgottenRec := ccGui.Add("Checkbox", "x32 y410 w310 h24" (cfg.EnableForgottenRecordWatchdog ? " Checked" : ""), "Nudge if Presenting LIVE but Not Recording")
+    chkDeadMic := ccGui.Add("Checkbox", "x360 y410 w330 h24" (cfg.EnableDeadMicWatchdog ? " Checked" : ""), "Warn if Mic is LIVE but Silent for 45s")
+    Theme.RegisterControl(ccGui, chkForgottenRec, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkDeadMic, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkVoiceMeter, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkAudioCue, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkMuteToast, "Checkbox", "tabText")
@@ -1999,6 +2005,11 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
     edObsTransition := ccGui.Add("Edit", "x250 y384 w430 h26", cfg.ObsTransitionHotkey)
     Theme.RegisterControl(ccGui, edObsTransition, "Edit")
+
+    chkAutoRecDrop := ccGui.Add("Checkbox", "x32 y428 w310 h24" (cfg.AutoRecordOnStreamDrop ? " Checked" : ""), "Auto-Start Local Backup Recording on Stream Drop")
+    chkLowDisk := ccGui.Add("Checkbox", "x360 y428 w320 h24" (cfg.EnableLowDiskWatchdog ? " Checked" : ""), "Warn on Low Disk Space While Recording")
+    Theme.RegisterControl(ccGui, chkAutoRecDrop, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkLowDisk, "Checkbox", "tabText")
 
     ; ==========================================================================
     ; TAB 3: POINTER & CLICKER
@@ -2304,6 +2315,10 @@ ShowControlCenterWindow(cfg, state := "", *) {
         chkMuteToast.Value := cfg.EnableMuteToast ? 1 : 0
         chkCoreAudioFallback.Value := cfg.EnableCoreAudioFallback ? 1 : 0
         chkOsMuteDrift.Value := cfg.EnableOsMuteDriftWatchdog ? 1 : 0
+        chkForgottenRec.Value := cfg.EnableForgottenRecordWatchdog ? 1 : 0
+        chkDeadMic.Value := cfg.EnableDeadMicWatchdog ? 1 : 0
+        chkAutoRecDrop.Value := cfg.AutoRecordOnStreamDrop ? 1 : 0
+        chkLowDisk.Value := cfg.EnableLowDiskWatchdog ? 1 : 0
         chkEnableWS.Value := cfg.EnableWS ? 1 : 0
         chkEnableZoom.Value := cfg.EnableZoom ? 1 : 0
         edObsPass.Value := cfg.obsPassword
@@ -2411,6 +2426,10 @@ ShowControlCenterWindow(cfg, state := "", *) {
             EnableMuteToast: chkMuteToast.Value,
             EnableCoreAudioFallback: chkCoreAudioFallback.Value,
             EnableOsMuteDriftWatchdog: chkOsMuteDrift.Value,
+            EnableForgottenRecordWatchdog: chkForgottenRec.Value,
+            EnableDeadMicWatchdog: chkDeadMic.Value,
+            AutoRecordOnStreamDrop: chkAutoRecDrop.Value,
+            EnableLowDiskWatchdog: chkLowDisk.Value,
             EnableWS: chkEnableWS.Value,
             EnableZoom: chkEnableZoom.Value,
             obsPassword: edObsPass.Value,

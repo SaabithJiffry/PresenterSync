@@ -1211,6 +1211,275 @@ UpdateCoreAudioWatchdogTimer(cfg, state) {
     return false
 }
 
+EvaluateForgottenRecordWatchdog(cfg, state, isSlideshowActive, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (nowTick = "")
+        nowTick := A_TickCount
+    if (!state.HasOwnProp("_forgotRecSinceTick"))
+        state._forgotRecSinceTick := 0
+    if (!state.HasOwnProp("_lastForgotRecWarnTick"))
+        state._lastForgotRecWarnTick := 0
+
+    enabled := (!cfg.HasOwnProp("EnableForgottenRecordWatchdog") || cfg.EnableForgottenRecordWatchdog)
+    mode := cfg.HasOwnProp("AudioRoutingMode") ? Integer(cfg.AudioRoutingMode) : 0
+    modeOk := (mode == 1 || mode == 3)
+    micLive := !(state.HasOwnProp("isMuted") && state.isMuted)
+    obsStopped := ((state.HasOwnProp("obsRecState") ? Integer(state.obsRecState) : 0) == 0)
+
+    if (!enabled || !modeOk || !isSlideshowActive || !micLive || !obsStopped) {
+        state._forgotRecSinceTick := 0
+        return false
+    }
+
+    if (state._forgotRecSinceTick = 0)
+        state._forgotRecSinceTick := nowTick
+    if ((nowTick - state._forgotRecSinceTick) < 15000)
+        return false
+
+    if (state._lastForgotRecWarnTick = 0 || (nowTick - state._lastForgotRecWarnTick) >= 120000) {
+        state._lastForgotRecWarnTick := nowTick
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Safety", "ForgottenRecordWarn", "Slideshow LIVE >=15s without OBS recording")
+        if (IsSet(SessionTimeline) && (cfg is Config))
+            try SessionTimeline.Record("Alert", "Forgotten Recording Reminder", state)
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("Slideshow LIVE without OBS Recording — Press Record if you meant to capture", "F59E0B", 5500, "Safety Guard")
+        return true
+    }
+    return false
+}
+
+EvaluateStreamDropWatchdog(cfg, state, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (nowTick = "")
+        nowTick := A_TickCount
+    if (!state.HasOwnProp("streamDropWarn"))
+        state.streamDropWarn := false
+    if (!state.HasOwnProp("_streamDropSinceTick"))
+        state._streamDropSinceTick := 0
+    if (!state.HasOwnProp("_streamDropBackupTriggered"))
+        state._streamDropBackupTriggered := false
+
+    enabled := (!cfg.HasOwnProp("AutoRecordOnStreamDrop") || cfg.AutoRecordOnStreamDrop)
+    isDropping := (state.HasOwnProp("streamState") && state.streamState == 2)
+    obsStopped := ((state.HasOwnProp("obsRecState") ? Integer(state.obsRecState) : 0) == 0)
+    wasWarn := !!state.streamDropWarn
+    wasWatchdogActive := !!state._streamDropBackupTriggered
+
+    if (!enabled || !isDropping) {
+        state._streamDropSinceTick := 0
+        state._streamDropBackupTriggered := false
+        if (wasWatchdogActive) {
+            state.streamDropWarn := false
+            if (wasWarn && IsSet(HostBridgeBroadcastMuteState))
+                try HostBridgeBroadcastMuteState(cfg, state)
+        }
+        return false
+    }
+
+    if (!obsStopped || state._streamDropBackupTriggered) {
+        if (!obsStopped)
+            state._streamDropSinceTick := 0
+        return false
+    }
+
+    if (state._streamDropSinceTick = 0)
+        state._streamDropSinceTick := nowTick
+    if ((nowTick - state._streamDropSinceTick) < 10000)
+        return false
+
+    sent := (state.HasOwnProp("obsWs") && IsObject(state.obsWs)) ? SendObsRequest(state.obsWs, "StartRecord", "AutoBackupRecord") : false
+    state._streamDropBackupTriggered := true
+    state.streamDropWarn := true
+    if (IsSet(DiagnosticLogger))
+        try DiagnosticLogger.RecordBreadcrumb("Safety", "StreamDropAutoBackup", "sent=" (sent ? "1" : "0"))
+    if (IsSet(SessionTimeline) && (cfg is Config))
+        try SessionTimeline.Record("Alert", "Stream-Drop Auto-Backup Recording Triggered", state)
+    if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+        ShowStageNudgeBanner("Stream unstable — Auto-started local OBS backup recording", "F59E0B", 5500, "Safety Guard")
+    if (IsSet(HostBridgeBroadcastMuteState))
+        try HostBridgeBroadcastMuteState(cfg, state)
+    return true
+}
+
+EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return 0
+    if (nowTick = "")
+        nowTick := A_TickCount
+    if (!state.HasOwnProp("lowDiskMb"))
+        state.lowDiskMb := -1
+    if (!state.HasOwnProp("lowDiskWarnLevel"))
+        state.lowDiskWarnLevel := 0
+    if (!state.HasOwnProp("_lastLowDiskWarnTick"))
+        state._lastLowDiskWarnTick := 0
+
+    enabled := (!cfg.HasOwnProp("EnableLowDiskWatchdog") || cfg.EnableLowDiskWatchdog)
+    prevLevel := Integer(state.lowDiskWarnLevel)
+
+    if (!enabled || !IsNumber(freeMb) || Float(freeMb) < 0) {
+        state.lowDiskMb := -1
+        state.lowDiskWarnLevel := 0
+        if (prevLevel != 0 && IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, state)
+        return 0
+    }
+
+    mb := Integer(Round(Float(freeMb)))
+    state.lowDiskMb := mb
+    newLevel := (mb < 512) ? 2 : ((mb < 2048) ? 1 : 0)
+    state.lowDiskWarnLevel := newLevel
+
+    if (newLevel == 0) {
+        if (prevLevel != 0 && IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, state)
+        return 0
+    }
+
+    escalated := (newLevel > prevLevel)
+    cooldownOk := (state._lastLowDiskWarnTick = 0 || (nowTick - state._lastLowDiskWarnTick) >= 60000)
+    if (escalated || cooldownOk) {
+        state._lastLowDiskWarnTick := nowTick
+        msg := (newLevel == 2)
+            ? ("CRITICAL Low Disk Space (" mb " MB free) — Recording drive nearly full!")
+            : ("Low Disk Space (" mb " MB free) — Recording drive below 2 GB")
+        accent := (newLevel == 2) ? "EF4444" : "F59E0B"
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Safety", "LowDiskWarn", "level=" newLevel " freeMb=" mb)
+        if (IsSet(SessionTimeline) && (cfg is Config))
+            try SessionTimeline.Record("Alert", msg, state)
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner(msg, accent, 5500, "Disk Guard")
+        if (IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, state)
+    } else if (newLevel != prevLevel && IsSet(HostBridgeBroadcastMuteState)) {
+        try HostBridgeBroadcastMuteState(cfg, state)
+    }
+    return newLevel
+}
+
+EvaluateDeadMicWatchdog(cfg, state, peak, isPresenting, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (nowTick = "")
+        nowTick := A_TickCount
+    if (!state.HasOwnProp("deadMicWarn"))
+        state.deadMicWarn := false
+    if (!state.HasOwnProp("_deadMicSinceTick"))
+        state._deadMicSinceTick := 0
+    if (!state.HasOwnProp("_lastDeadMicWarnTick"))
+        state._lastDeadMicWarnTick := 0
+
+    enabled := (!cfg.HasOwnProp("EnableDeadMicWatchdog") || cfg.EnableDeadMicWatchdog)
+    appMuted := (state.HasOwnProp("isMuted") && state.isMuted)
+    silent := (IsNumber(peak) && Float(peak) < 0.005)
+    wasWarn := !!state.deadMicWarn
+
+    if (!enabled || appMuted || !isPresenting || !silent) {
+        state._deadMicSinceTick := 0
+        state.deadMicWarn := false
+        if (wasWarn && IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, state)
+        return false
+    }
+
+    if (state._deadMicSinceTick = 0)
+        state._deadMicSinceTick := nowTick
+    if ((nowTick - state._deadMicSinceTick) < 45000)
+        return false
+
+    state.deadMicWarn := true
+    nudgeFired := false
+    if (state._lastDeadMicWarnTick = 0 || (nowTick - state._lastDeadMicWarnTick) >= 180000) {
+        state._lastDeadMicWarnTick := nowTick
+        nudgeFired := true
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Audio", "DeadMicWatchdog", "LIVE mic 0% audio detected for >=45s")
+        if (IsSet(SessionTimeline) && (cfg is Config))
+            try SessionTimeline.Record("Alert", "Dead-Mic Watchdog Alert", state)
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("Mic is LIVE but 0% audio detected for 45s — check hardware switch or input", "EF4444", 6000, "Mic Guard")
+    }
+    if ((!wasWarn || nudgeFired) && IsSet(HostBridgeBroadcastMuteState))
+        try HostBridgeBroadcastMuteState(cfg, state)
+    return true
+}
+
+SafetyWatchdogTick(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    nowTick := A_TickCount
+    isSlideshow := WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") ? true : false
+    obsConn := (state.HasOwnProp("obsConnected") && state.obsConnected)
+
+    if (obsConn)
+        EvaluateForgottenRecordWatchdog(cfg, state, isSlideshow, nowTick)
+    else
+        state._forgotRecSinceTick := 0
+
+    EvaluateStreamDropWatchdog(cfg, state, nowTick)
+
+    if ((!cfg.HasOwnProp("EnableLowDiskWatchdog") || cfg.EnableLowDiskWatchdog)
+        && state.HasOwnProp("obsRecState") && state.obsRecState == 1) {
+        if (!state.HasOwnProp("_lastLowDiskPollTick"))
+            state._lastLowDiskPollTick := 0
+        if (state._lastLowDiskPollTick = 0 || (nowTick - state._lastLowDiskPollTick) >= 30000) {
+            state._lastLowDiskPollTick := nowTick
+            recDir := (state.HasOwnProp("recordDirectory") && state.recordDirectory != "") ? state.recordDirectory : ""
+            if (recDir = "" && obsConn && state.HasOwnProp("obsWs") && IsObject(state.obsWs))
+                SendObsRequest(state.obsWs, "GetRecordDirectory", "InitRecordDir")
+            if (recDir != "") {
+                freeMb := -1
+                try freeMb := DriveGetSpaceFree(recDir)
+                EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick)
+            }
+        }
+    } else {
+        state._lastLowDiskPollTick := 0
+        if (state.HasOwnProp("lowDiskWarnLevel") && state.lowDiskWarnLevel != 0)
+            EvaluateLowDiskWatchdog(cfg, state, -1, nowTick)
+    }
+
+    isPresenting := isSlideshow
+        || (state.HasOwnProp("recState") && state.recState == 1)
+        || (state.HasOwnProp("streamState") && (state.streamState == 1 || state.streamState == 2))
+        || (state.HasOwnProp("zoomConnected") && state.zoomConnected)
+    if ((!cfg.HasOwnProp("EnableDeadMicWatchdog") || cfg.EnableDeadMicWatchdog)
+        && (!state.HasOwnProp("isMuted") || !state.isMuted) && isPresenting) {
+        livePeak := IsSet(AudioMeter) ? AudioMeter.GetPeak() : 0.0
+        curPeak := state.HasOwnProp("voicePeak") ? Float(state.voicePeak) : 0.0
+        EvaluateDeadMicWatchdog(cfg, state, Max(livePeak, curPeak), true, nowTick)
+    } else {
+        EvaluateDeadMicWatchdog(cfg, state, 0.0, false, nowTick)
+    }
+    return true
+}
+
+UpdateSafetyWatchdogTimer(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("safetyWatchdogFn") || !state.safetyWatchdogFn)
+        return false
+    enabled := IsObject(cfg) && (
+        (!cfg.HasOwnProp("EnableForgottenRecordWatchdog") || cfg.EnableForgottenRecordWatchdog)
+        || (!cfg.HasOwnProp("AutoRecordOnStreamDrop") || cfg.AutoRecordOnStreamDrop)
+        || (!cfg.HasOwnProp("EnableLowDiskWatchdog") || cfg.EnableLowDiskWatchdog)
+        || (!cfg.HasOwnProp("EnableDeadMicWatchdog") || cfg.EnableDeadMicWatchdog)
+    )
+    if (enabled) {
+        SetTimer(state.safetyWatchdogFn, 1000)
+        return true
+    }
+    SetTimer(state.safetyWatchdogFn, 0)
+    state._forgotRecSinceTick := 0
+    state._streamDropSinceTick := 0
+    state._deadMicSinceTick := 0
+    state.deadMicWarn := false
+    if (state.HasOwnProp("lowDiskWarnLevel") && state.lowDiskWarnLevel != 0)
+        EvaluateLowDiskWatchdog(cfg, state, -1)
+    return false
+}
+
 SyncUIState(cfg, state, obsIsMuted) {
     if (state.isMuted != obsIsMuted) {
         state.isMuted := obsIsMuted
@@ -1220,8 +1489,12 @@ SyncUIState(cfg, state, obsIsMuted) {
             state.voiceWhileMuted := false
             state.mutedVoiceAboveSince := 0
             state.mutedVoiceQuietSince := 0
-        } else if (state.HasOwnProp("osMicMutedDrift") && state.osMicMutedDrift) {
-            state.osMicMutedDrift := false
+        } else {
+            if (state.HasOwnProp("osMicMutedDrift") && state.osMicMutedDrift)
+                state.osMicMutedDrift := false
+            if (state.HasOwnProp("deadMicWarn") && state.deadMicWarn)
+                state.deadMicWarn := false
+            state._deadMicSinceTick := 0
         }
         PlayMuteAnimation(cfg, state)
         UpdateVoiceMeterTimer(cfg, state)

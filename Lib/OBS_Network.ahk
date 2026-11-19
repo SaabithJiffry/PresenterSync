@@ -1273,6 +1273,11 @@ HandleObsClose(cfg, state, ws, status, reason) {
     }
 
     state.obsConnected := false
+    state.recordDirectory := ""
+    state.streamDropWarn := false
+    state._forgotRecSinceTick := 0
+    state._streamDropSinceTick := 0
+    state._streamDropBackupTriggered := false
     SyncRecState(cfg, state, 0)
     SyncStreamState(cfg, state, 0)
     SyncVCamState(cfg, state, false)
@@ -1346,6 +1351,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         escMic := EscapeJsonStr(cfg.targetMicName)
         SendObsRequest(ws, "GetInputMute", "InitState", '{"inputName":"' escMic '"}')
         SendObsRequest(ws, "GetRecordStatus", "InitRecState")
+        SendObsRequest(ws, "GetRecordDirectory", "InitRecordDir")
         SendObsRequest(ws, "GetStudioModeEnabled", "InitStudioState")
         SendObsRequest(ws, "GetCurrentProgramScene", "InitSceneState")
         SendObsRequest(ws, "GetCurrentPreviewScene", "InitPreviewSceneState")
@@ -1442,6 +1448,10 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                     durMs := Integer(matchDur[1])
                 SyncRecState(cfg, state, active ? (paused ? 2 : 1) : 0, durMs)
             }
+        }
+        else if (InStr(msg, '"requestId":"InitRecordDir"') || InStr(msg, '"requestId": "InitRecordDir"')) {
+            if (RegExMatch(msg, '"recordDirectory"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchRecDir))
+                state.recordDirectory := UnescapeJsonStr(matchRecDir[1])
         }
         else if (InStr(msg, '"requestId":"InitStreamState"') || InStr(msg, '"requestId": "InitStreamState"')
             || InStr(msg, '"requestId":"PollStreamStatus"') || InStr(msg, '"requestId": "PollStreamStatus"')) {

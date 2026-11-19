@@ -251,7 +251,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v7.2.1", UIConstants.APP_VERSION == "7.2.1")
+Assert("APP_VERSION is active release v7.2.2", UIConstants.APP_VERSION == "7.2.2")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -883,7 +883,7 @@ HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":2,"d":{"negotiatedRpcVersion":
 allSent8 := ""
 for _, sMsg in mockWs6.sent
     allSent8 .= sMsg "`n"
-hasAll8 := (mockWs6.sent.Length == 8)
+hasAll8 := (mockWs6.sent.Length == 9)
     && InStr(allSent8, '"InitState"')
     && InStr(allSent8, '"InitRecState"')
     && InStr(allSent8, '"InitStudioState"')
@@ -892,7 +892,8 @@ hasAll8 := (mockWs6.sent.Length == 8)
     && InStr(allSent8, '"InitSceneList"')
     && InStr(allSent8, '"InitStreamState"')
     && InStr(allSent8, '"InitVCamState"')
-Assert("OpCode 2 dispatches all 8 initial OBS state queries (incl. PreviewScene, SceneList, Stream & VCam)", hasAll8)
+    && InStr(allSent8, '"InitRecordDir"')
+Assert("OpCode 2 dispatches all 9 initial OBS state queries (incl. PreviewScene, SceneList, Stream, VCam & RecordDir)", hasAll8)
 
 HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":5,"d":{"eventType":"StreamStateChanged","eventData":{"outputActive":true,"outputState":"OBS_WEBSOCKET_OUTPUT_STARTED"}}}')
 Assert("StreamStateChanged outputActive=true sets streamState=1", stStrm.streamState == 1)
@@ -1501,8 +1502,8 @@ ccAuditLight := ShowControlCenterWindow(cfgAudit, stAudit)
 PostMessage(0x0010, 0, 0, ccAuditLight.Hwnd)
 Sleep(50)
 Theme.SetMode("System")
-Assert("Control Center registers all 36 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
-    ccChkTabCount == 36 && ccUiOk && Theme.SuspendLockCount == 0)
+Assert("Control Center registers all 40 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
+    ccChkTabCount == 40 && ccUiOk && Theme.SuspendLockCount == 0)
 
 ; 21.6 Scope Guard: PresenterSync_Remote remains strictly 1-tier Mic HUD (no multi-tier GUIs)
 remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
