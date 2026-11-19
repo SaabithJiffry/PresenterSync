@@ -120,16 +120,160 @@ ExecutePushToTalkHoldCycle(cfg, state, setMuteFn, hk, keyWaitFn := "") {
 }
 
 GetConferencingAppNames() {
-    return ["Zoom", "Microsoft Teams", "Google Meet"]
+    return ["Auto", "Zoom", "Microsoft Teams", "Google Meet"]
 }
 
 NormalizeConferencingApp(name) {
     cleaned := StrLower(Trim(String(name)))
+    if (cleaned = "auto")
+        return "Auto"
     if (InStr(cleaned, "teams"))
         return "Microsoft Teams"
     if (InStr(cleaned, "meet"))
         return "Google Meet"
     return "Zoom"
+}
+
+_CollectConfWinSnapshots() {
+    snaps := []
+    activeHwnd := 0
+    try activeHwnd := WinExist("A")
+    try {
+        for hwnd in WinGetList() {
+            if !DllCall("IsWindowVisible", "Ptr", hwnd)
+                continue
+            exe := "", title := "", mm := 0
+            try exe := WinGetProcessName(hwnd)
+            try title := WinGetTitle(hwnd)
+            try mm := WinGetMinMax(hwnd)
+            if (exe != "")
+                snaps.Push({ exe: exe, title: title, active: (hwnd == activeHwnd), minMax: mm })
+        }
+    }
+    return snaps
+}
+
+ResolveAutoConfAppTarget(cfg := "", state := "", winSnapshots := "") {
+    target := "Auto"
+    if (IsObject(cfg)) {
+        if (cfg.HasOwnProp("ConfAppTarget") && Trim(String(cfg.ConfAppTarget)) != "")
+            target := Trim(String(cfg.ConfAppTarget))
+        else if (cfg.HasOwnProp("ConferencingApp") && Trim(String(cfg.ConferencingApp)) != "")
+            target := Trim(String(cfg.ConferencingApp))
+    }
+    if (StrLower(target) != "auto") {
+        norm := NormalizeConferencingApp(target)
+        if (IsObject(state))
+            state.detectedConfApp := norm
+        return norm
+    }
+
+    snaps := IsObject(winSnapshots) ? winSnapshots : _CollectConfWinSnapshots()
+    bestApp := ""
+    bestScore := 0
+    for _, w in snaps {
+        exeLow := StrLower(w.HasOwnProp("exe") ? String(w.exe) : "")
+        titleStr := w.HasOwnProp("title") ? String(w.title) : ""
+        isAct := w.HasOwnProp("active") ? !!w.active : false
+        mm := w.HasOwnProp("minMax") ? Integer(w.minMax) : 0
+
+        candApp := ""
+        if (exeLow = "zoom.exe") {
+            candApp := "Zoom"
+        } else if (exeLow = "ms-teams.exe" || exeLow = "teams.exe") {
+            candApp := "Teams"
+        } else if (exeLow = "chrome.exe" || exeLow = "msedge.exe" || exeLow = "brave.exe") {
+            if (InStr(titleStr, "Meet -") || InStr(titleStr, "Google Meet"))
+                candApp := "Meet"
+        }
+
+        if (candApp != "") {
+            score := isAct ? 3 : ((mm != -1) ? 2 : 1)
+            if (score > bestScore) {
+                bestScore := score
+                bestApp := candApp
+            }
+        }
+    }
+
+    if (IsObject(state))
+        state.detectedConfApp := bestApp
+    return bestApp
+}
+
+GetConfiguredUiaKeywords(cfg := "") {
+    muteList := ["mute", "mute my audio", "mute mic", "mute microphone", "turn off microphone"]
+    unmuteList := ["unmute", "unmute my audio", "unmute mic", "unmute microphone", "turn on microphone"]
+    seenM := Map(), seenU := Map()
+    for _, k in muteList
+        seenM[StrLower(k)] := true
+    for _, k in unmuteList
+        seenU[StrLower(k)] := true
+
+    if (IsObject(cfg)) {
+        if (cfg.HasOwnProp("UiaMuteKeywords") && Trim(String(cfg.UiaMuteKeywords)) != "") {
+            for _, raw in StrSplit(String(cfg.UiaMuteKeywords), [",", ";"]) {
+                kw := Trim(raw)
+                if (kw != "" && !seenM.Has(StrLower(kw))) {
+                    seenM[StrLower(kw)] := true
+                    muteList.Push(kw)
+                }
+            }
+        }
+        if (cfg.HasOwnProp("UiaUnmuteKeywords") && Trim(String(cfg.UiaUnmuteKeywords)) != "") {
+            for _, raw in StrSplit(String(cfg.UiaUnmuteKeywords), [",", ";"]) {
+                kw := Trim(raw)
+                if (kw != "" && !seenU.Has(StrLower(kw))) {
+                    seenU[StrLower(kw)] := true
+                    unmuteList.Push(kw)
+                }
+            }
+        }
+    }
+    return { mute: muteList, unmute: unmuteList }
+}
+
+CheckMeetBackgroundTabWarning(cfg, state, winSnapshots := "") {
+    static lastWarnTick := 0
+    if (!IsObject(state))
+        return false
+    resolved := ResolveAutoConfAppTarget(cfg, state, winSnapshots)
+    norm := NormalizeConferencingApp(resolved)
+    if (resolved = "" || norm != "Google Meet") {
+        state.meetBgTabWarn := false
+        return false
+    }
+
+    snaps := IsObject(winSnapshots) ? winSnapshots : _CollectConfWinSnapshots()
+    hasMeetWin := false
+    meetMinimized := false
+    browserSwitchedTab := false
+    for _, w in snaps {
+        exeLow := StrLower(w.HasOwnProp("exe") ? String(w.exe) : "")
+        if !(exeLow = "chrome.exe" || exeLow = "msedge.exe" || exeLow = "brave.exe" || exeLow = "firefox.exe")
+            continue
+        titleStr := w.HasOwnProp("title") ? String(w.title) : ""
+        isAct := w.HasOwnProp("active") ? !!w.active : false
+        mm := w.HasOwnProp("minMax") ? Integer(w.minMax) : 0
+        if (InStr(titleStr, "Meet -") || InStr(titleStr, "Google Meet")) {
+            hasMeetWin := true
+            if (mm == -1)
+                meetMinimized := true
+        } else if (isAct) {
+            browserSwitchedTab := true
+        }
+    }
+
+    warn := (meetMinimized || (!hasMeetWin && browserSwitchedTab))
+    state.meetBgTabWarn := warn
+    if (warn && (!IsSet(g_IsTestMode) || !g_IsTestMode)) {
+        now := A_TickCount
+        if (lastWarnTick == 0 || (now - lastWarnTick) >= 30000) {
+            lastWarnTick := now
+            try TrayTip("Google Meet is minimized or in a background browser tab — UIA mute sync may pause until restored.", "PresenterSync", 2)
+        }
+    }
+    return warn
 }
 
 GetConferencingWindowSpec(appType := "Zoom") {
@@ -1656,29 +1800,52 @@ PushObsMuteToZoom(cfg, state, obsIsMuted, mockZoomState := "", sendFn := "") {
         SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
 }
 
-ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "") {
+ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "", cfg := "") {
     if (!IsObject(result))
         result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
     normApp := NormalizeConferencingApp(appType)
+    kwCfg := GetConfiguredUiaKeywords(cfg)
+    hasCustomMute := (IsObject(cfg) && cfg.HasOwnProp("UiaMuteKeywords") && Trim(String(cfg.UiaMuteKeywords)) != "")
+    hasCustomUnmute := (IsObject(cfg) && cfg.HasOwnProp("UiaUnmuteKeywords") && Trim(String(cfg.UiaUnmuteKeywords)) != "")
     for n in names {
         if (!result.hasMic && !RegExMatch(n, "i)\b(when joining|on entry|all|participants|everyone|settings)\b")) {
-            if (normApp = "Microsoft Teams") {
-                if RegExMatch(n, "i)\bunmute(\b.*\bmic|\b)|^turn on microphone") {
-                    result.hasMic := true, result.muted := true, result.micHwnd := hwnd
-                } else if RegExMatch(n, "i)\bmute(\b.*\bmic|\b)|^turn off microphone") {
-                    result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+            nLow := StrLower(Trim(String(n)))
+            matchedCustom := false
+            if (hasCustomUnmute) {
+                for _, uk in kwCfg.unmute {
+                    if (InStr(nLow, StrLower(uk))) {
+                        result.hasMic := true, result.muted := true, result.micHwnd := hwnd, matchedCustom := true
+                        break
+                    }
                 }
-            } else if (normApp = "Google Meet") {
-                if RegExMatch(n, "i)turn on microphone|unmute microphone") {
-                    result.hasMic := true, result.muted := true, result.micHwnd := hwnd
-                } else if RegExMatch(n, "i)turn off microphone|mute microphone") {
-                    result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+            }
+            if (!matchedCustom && hasCustomMute) {
+                for _, mk in kwCfg.mute {
+                    if (InStr(nLow, StrLower(mk))) {
+                        result.hasMic := true, result.muted := false, result.micHwnd := hwnd, matchedCustom := true
+                        break
+                    }
                 }
-            } else {
-                if RegExMatch(n, "i)\bunmute\b.*\baudio\b|^unmute(\b|,|$)") {
-                    result.hasMic := true, result.muted := true, result.micHwnd := hwnd
-                } else if RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute(\b|,|$)") {
-                    result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+            }
+            if (!matchedCustom) {
+                if (normApp = "Microsoft Teams") {
+                    if RegExMatch(n, "i)\bunmute(\b.*\bmic|\b)|^turn on microphone") {
+                        result.hasMic := true, result.muted := true, result.micHwnd := hwnd
+                    } else if RegExMatch(n, "i)\bmute(\b.*\bmic|\b)|^turn off microphone") {
+                        result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+                    }
+                } else if (normApp = "Google Meet") {
+                    if RegExMatch(n, "i)turn on microphone|unmute microphone") {
+                        result.hasMic := true, result.muted := true, result.micHwnd := hwnd
+                    } else if RegExMatch(n, "i)turn off microphone|mute microphone") {
+                        result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+                    }
+                } else {
+                    if RegExMatch(n, "i)\bunmute\b.*\baudio\b|^unmute(\b|,|$)") {
+                        result.hasMic := true, result.muted := true, result.micHwnd := hwnd
+                    } else if RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute(\b|,|$)") {
+                        result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+                    }
                 }
             }
         }
@@ -1703,11 +1870,11 @@ ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "")
     return result
 }
 
-DetectZoomStates(targetSpec := "ahk_exe Zoom.exe", appType := "Zoom", mockElementNames := "") {
+DetectZoomStates(targetSpec := "ahk_exe Zoom.exe", appType := "Zoom", mockElementNames := "", cfg := "") {
     result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
     if IsObject(mockElementNames) {
         result.foundWindow := true
-        return ParseConferencingElementNames(mockElementNames, appType, 1, result)
+        return ParseConferencingElementNames(mockElementNames, appType, 1, result, cfg)
     }
 
     hwndList := WinGetList(targetSpec)
@@ -1723,7 +1890,7 @@ DetectZoomStates(targetSpec := "ahk_exe Zoom.exe", appType := "Zoom", mockElemen
         if (ww < 50 || wh < 50)
             continue
         names := UIA.GetWindowElementNames(hwnd, false)
-        ParseConferencingElementNames(names, appType, hwnd, result)
+        ParseConferencingElementNames(names, appType, hwnd, result, cfg)
         if (result.hasMic && result.hasRec && result.recState > 0 && result.hasChat && result.unreadChat > 0)
             break
     }
@@ -1734,9 +1901,11 @@ ZoomStateMonitor(cfg, state) {
     if (!cfg.EnableZoom && !cfg.EnableWS)
         return
 
-    appType := cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom"
+    resolvedApp := ResolveAutoConfAppTarget(cfg, state)
+    appType := (resolvedApp != "") ? resolvedApp : (cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom")
+    CheckMeetBackgroundTabWarning(cfg, state)
     confSpec := GetConferencingWindowSpec(appType)
-    zoomInfo := DetectZoomStates(confSpec, appType)
+    zoomInfo := DetectZoomStates(confSpec, appType, "", cfg)
     if (zoomInfo.hasChat)
         SyncChatState(cfg, state, zoomInfo.unreadChat)
     else
