@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.4.1
+; Version: 7.4.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.4.1.0
+;@Ahk2Exe-SetVersion 7.4.2.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -319,6 +319,11 @@ class RemoteState {
     timerState := "stopped"
     timerRemainingSec := 600
     timerPresetSec := 600
+    slideIndex := 0
+    slideTotal := 0
+    slideTitle := ""
+    quickDeckGui := ""
+    quickDeckCtrls := ""
     _lastVoiceWarnTick := 0
     presenterTickFn := ""
     recTickFn := ""
@@ -1778,6 +1783,7 @@ InitRemoteHUD(cfg, state) {
     UpdateAutoDodgeTimer(cfg, state)
 
     OnMessage(0x0201, WM_REMOTE_LBUTTONDOWN.Bind(cfg, state))
+    OnMessage(0x0203, (wP, lP, m, h) => (IsObject(state.MicGui) && h == state.MicGui.Hwnd) ? ShowRemoteTouchDeckGUI(cfg, state) : 0)
     OnMessage(0x0205, WM_REMOTE_RBUTTONUP.Bind(state))
     OnMessage(0x02E0, WM_REMOTE_DPICHANGED.Bind(cfg, state))
     OnMessage(0x007E, OnRemoteDisplayChange.Bind(cfg, state))
@@ -1906,6 +1912,177 @@ RefreshRemoteHudAppearance(cfg, state) {
     ApplyHudClickThroughStyle(cfg, state)
     ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
     UpdateAutoDodgeTimer(cfg, state)
+    UpdateRemoteTouchDeckUI(cfg, state)
+}
+
+UpdateRemoteTouchDeckUI(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("quickDeckGui") || !IsObject(state.quickDeckGui))
+        return
+    try {
+        if (!WinExist("ahk_id " state.quickDeckGui.Hwnd))
+            return
+    } catch {
+        return
+    }
+    ctrls := state.quickDeckCtrls
+    if (!IsObject(ctrls))
+        return
+
+    modeLbl := GetRemoteConnectionModeLabel(state)
+    scName := (state.HasOwnProp("activeScene") && state.activeScene != "") ? state.activeScene : "Scene"
+    recBadge := (state.recState == 1) ? ("REC " FormatElapsedShort(state.recSeconds)) : ((state.recState == 2) ? ("PAUSED " FormatElapsedShort(state.recSeconds)) : "REC OFF")
+    if (state.HasOwnProp("streamDropWarn") && state.streamDropWarn)
+        recBadge .= " | STREAM WARN"
+    ctrls.lblHeader.Value := modeLbl "  |  Scene: " scName "  |  " recBadge
+
+    ctrls.btnMute.Text := state.isMuted ? "UNMUTE MIC (Currently MUTED)" : "MUTE MIC (Currently LIVE)"
+
+    sIdx := state.HasOwnProp("slideIndex") ? Integer(state.slideIndex) : 0
+    sTot := state.HasOwnProp("slideTotal") ? Integer(state.slideTotal) : 0
+    sTitle := (state.HasOwnProp("slideTitle") && state.slideTitle != "") ? (" - " state.slideTitle) : ""
+    ctrls.lblSlide.Value := (sIdx > 0) ? ("Slide " sIdx (sTot > 0 ? (" / " sTot) : "") sTitle) : "Slide: (No active slideshow)"
+
+    tState := state.HasOwnProp("timerState") ? state.timerState : "stopped"
+    tRem := state.HasOwnProp("timerRemainingSec") ? Integer(state.timerRemainingSec) : 600
+    ctrls.lblTimer.Value := "Timer: " FormatCountdownClock(tRem) " (" tState ")"
+    ctrls.btnTimerPause.Text := (tState = "paused") ? "Resume" : "Pause"
+    ctrls.btnStandby.Text := (state.HasOwnProp("isStandby") && state.isStandby) ? "Exit BRB" : "Standby (BRB)"
+
+    Loop 6 {
+        btn := ctrls.sceneBtns[A_Index]
+        if (IsObject(state.scenes) && A_Index <= state.scenes.Length) {
+            sn := String(state.scenes[A_Index])
+            btn.Text := (sn == scName) ? ("[*] " sn) : sn
+            btn.Visible := true
+            btn.Enabled := true
+        } else {
+            btn.Visible := false
+            btn.Enabled := false
+        }
+    }
+}
+
+ShowRemoteTouchDeckGUI(cfg, state, *) {
+    winKey := "PresenterSync Remote Quick Deck"
+    existing := Theme.FocusExistingWindow(winKey)
+    if (IsObject(existing)) {
+        UpdateRemoteTouchDeckUI(cfg, state)
+        return existing
+    }
+
+    deckGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", winKey)
+    deckGui.MarginX := 14
+    deckGui.MarginY := 12
+    Theme.ApplyToWindow(deckGui)
+    Theme.NamedWindows[winKey] := deckGui
+    ApplyWindowCaptureAffinity(deckGui.Hwnd, (IsObject(cfg) && cfg.HasOwnProp("ExcludeFromCapture")) ? cfg.ExcludeFromCapture : true)
+
+    deckGui.SetFont("s10 w700", Theme.UiFont)
+    lblHeader := deckGui.Add("Text", "x14 y14 w592 h26", "Connecting...")
+    Theme.RegisterControl(deckGui, lblHeader, "Text")
+
+    deckGui.SetFont("s11 w700", Theme.UiFont)
+    btnMute := deckGui.Add("Button", "x14 y50 w290 h52", "MUTE / UNMUTE")
+    btnTrans := deckGui.Add("Button", "x316 y50 w290 h52", "OBS TRANSITION (Preview <-> Program)")
+    Theme.RegisterControl(deckGui, btnMute, "Button", "accent")
+    Theme.RegisterControl(deckGui, btnTrans, "Button")
+    btnMute.OnEvent("Click", (*) => (OnRemoteClickerMute(cfg, state, true), UpdateRemoteTouchDeckUI(cfg, state)))
+    btnTrans.OnEvent("Click", (*) => SendRemoteBridgeDeckCommand(cfg, state, "transition_scene"))
+
+    deckGui.SetFont("s9 w600", Theme.UiFont)
+    lblSlide := deckGui.Add("Text", "x14 y114 w592 h22", "Slide: (No active slideshow)")
+    Theme.RegisterControl(deckGui, lblSlide, "Text", "muted")
+
+    btnPrevSlide := deckGui.Add("Button", "x14 y142 w190 h42", "Prev Slide")
+    btnNextSlide := deckGui.Add("Button", "x215 y142 w190 h42", "Next Slide")
+    btnStartSlide := deckGui.Add("Button", "x416 y142 w190 h42", "Start Slideshow (F5)")
+    for _, sb in [btnPrevSlide, btnNextSlide, btnStartSlide]
+        Theme.RegisterControl(deckGui, sb, "Button")
+    btnPrevSlide.OnEvent("Click", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_prev"))
+    btnNextSlide.OnEvent("Click", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_next"))
+    btnStartSlide.OnEvent("Click", (*) => SendRemoteBridgeDeckCommand(cfg, state, "slide_start"))
+
+    lblSceneHdr := deckGui.Add("Text", "x14 y198 w592 h20", "Scene Switcher:")
+    Theme.RegisterControl(deckGui, lblSceneHdr, "Text")
+
+    sceneBtns := []
+    Loop 6 {
+        idx := A_Index
+        bx := 14 + (idx - 1) * 100
+        sBtn := deckGui.Add("Button", "x" bx " y222 w94 h42 Hidden", "Scene " idx)
+        Theme.RegisterControl(deckGui, sBtn, "Button")
+        sBtn.OnEvent("Click", ((i, *) => (
+            (IsObject(state.scenes) && i <= state.scenes.Length) ? SendRemoteSwitchScene(cfg, state, state.scenes[i]) : 0
+        )).Bind(idx))
+        sceneBtns.Push(sBtn)
+    }
+
+    lblTimer := deckGui.Add("Text", "x14 y278 w592 h22", "Timer: 10:00 (stopped)")
+    Theme.RegisterControl(deckGui, lblTimer, "Text")
+
+    btnStandby := deckGui.Add("Button", "x14 y304 w116 h42", "Standby (BRB)")
+    btnT5 := deckGui.Add("Button", "x138 y304 w82 h42", "+5m")
+    btnT10 := deckGui.Add("Button", "x228 y304 w82 h42", "+10m")
+    btnT15 := deckGui.Add("Button", "x318 y304 w82 h42", "+15m")
+    btnTimerPause := deckGui.Add("Button", "x408 y304 w104 h42", "Pause")
+    btnTimerReset := deckGui.Add("Button", "x520 y304 w86 h42", "Reset")
+    for _, tb in [btnStandby, btnT5, btnT10, btnT15, btnTimerPause, btnTimerReset]
+        Theme.RegisterControl(deckGui, tb, "Button")
+    btnStandby.OnEvent("Click", (*) => (SendRemoteBridgeDeckCommand(cfg, state, "toggle_standby"), UpdateRemoteTouchDeckUI(cfg, state)))
+    btnT5.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, "timer_start", 300))
+    btnT10.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, "timer_start", 600))
+    btnT15.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, "timer_start", 900))
+    btnTimerPause.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, (state.timerState = "paused") ? "timer_start" : "timer_pause", 0))
+    btnTimerReset.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, "timer_reset", state.timerPresetSec))
+
+    btnNudge1 := deckGui.Add("Button", "x14 y360 w190 h40", "2 min left")
+    btnNudge2 := deckGui.Add("Button", "x215 y360 w190 h40", "Wrap up")
+    btnNudge3 := deckGui.Add("Button", "x416 y360 w190 h40", "Check Mic")
+    for _, nb in [btnNudge1, btnNudge2, btnNudge3]
+        Theme.RegisterControl(deckGui, nb, "Button")
+    btnNudge1.OnEvent("Click", (*) => SendRemoteStageNudge(cfg, state, "2 min left"))
+    btnNudge2.OnEvent("Click", (*) => SendRemoteStageNudge(cfg, state, "Wrap up"))
+    btnNudge3.OnEvent("Click", (*) => SendRemoteStageNudge(cfg, state, "Check Mic"))
+
+    edNudge := deckGui.Add("Edit", "x14 y412 w444 h40", "")
+    btnSendNudge := deckGui.Add("Button", "x468 y412 w138 h40", "Send Nudge")
+    Theme.RegisterControl(deckGui, edNudge, "Edit")
+    Theme.RegisterControl(deckGui, btnSendNudge, "Button")
+    btnSendNudge.OnEvent("Click", (*) => (
+        (Trim(edNudge.Value) != "") ? (SendRemoteStageNudge(cfg, state, Trim(edNudge.Value)), edNudge.Value := "") : 0
+    ))
+
+    btnCloseDeck := deckGui.Add("Button", "x486 y466 w120 h40", "Close")
+    Theme.RegisterControl(deckGui, btnCloseDeck, "Button")
+
+    CloseQuickDeck(*) {
+        Theme.UnregisterWindow(deckGui, winKey)
+        if (IsObject(state)) {
+            state.quickDeckGui := ""
+            state.quickDeckCtrls := ""
+        }
+        deckGui.Destroy()
+    }
+    btnCloseDeck.OnEvent("Click", CloseQuickDeck)
+    deckGui.OnEvent("Close", CloseQuickDeck)
+    deckGui.OnEvent("Escape", CloseQuickDeck)
+
+    if (IsObject(state)) {
+        state.quickDeckGui := deckGui
+        state.quickDeckCtrls := {
+            lblHeader: lblHeader,
+            btnMute: btnMute,
+            lblSlide: lblSlide,
+            lblTimer: lblTimer,
+            btnTimerPause: btnTimerPause,
+            btnStandby: btnStandby,
+            sceneBtns: sceneBtns
+        }
+    }
+    UpdateRemoteTouchDeckUI(cfg, state)
+    if (!IsSet(g_IsTestMode) || !g_IsTestMode)
+        deckGui.Show("w620 h520")
+    return deckGui
 }
 
 ; --- TRAY MENU & COSMETIC ACTIONS ---
@@ -1947,6 +2124,7 @@ SyncRemoteTrayStatus(cfg, state) {
     instTag := (IsObject(cfg) && cfg.HasOwnProp("InstanceName") && cfg.InstanceName != "") ? (" [" cfg.InstanceName "]") : ""
     fbTag := (IsObject(state) && state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback) ? " | Fallback: DIRECT OBS :4455" : ""
     A_IconTip := "PresenterSync Remote v" UIConstants.APP_VERSION instTag fbTag
+    UpdateRemoteTouchDeckUI(cfg, state)
     newStatus := GetRemoteTrayStatusText(state)
     if (state.HasOwnProp("_lastTrayStatusText") && state._lastTrayStatusText == newStatus)
         return
@@ -1984,6 +2162,7 @@ BuildRemoteTrayMenu(cfg, state) {
     A_TrayMenu.Add("Show Mute Indicator", ToggleRemoteIndicator.Bind(cfg, state))
     if (cfg.ShowIndicator)
         A_TrayMenu.Check("Show Mute Indicator")
+    A_TrayMenu.Add("Open Quick Deck...", (*) => ShowRemoteTouchDeckGUI(cfg, state))
 
     ; 3. COSMETIC APPEARANCE SUBMENU
     AppearanceMenu := Menu()
@@ -2094,6 +2273,18 @@ BuildRemoteTrayMenu(cfg, state) {
     PointerMenu.Add("Launch Clicker Tester...", (*) => ShowPointerTester())
     A_TrayMenu.Add("Pointer Controls", PointerMenu)
 
+    ProfilesMenu := Menu()
+    savedProfs := LoadSavedHostProfiles(cfg)
+    if (savedProfs.Length == 0) {
+        ProfilesMenu.Add("(No Saved Profiles)", (*) => 0)
+        ProfilesMenu.Disable("(No Saved Profiles)")
+    } else {
+        for _, prof in savedProfs {
+            pNm := prof.name
+            ProfilesMenu.Add(pNm " (" (prof.host != "" ? prof.host : prof.networkMode) ")", ((nm, *) => (ApplyHostProfile(cfg, state, nm), BuildRemoteTrayMenu(cfg, state))).Bind(pNm))
+        }
+    }
+    A_TrayMenu.Add("Switch Room / Profile", ProfilesMenu)
     A_TrayMenu.Add("Change OBS Connection...", (*) => ShowRemoteConnectionUI(cfg, state, false))
     A_TrayMenu.Add("Change App Shortcuts...", (*) => ChangeRemoteAppHotkeysUI(cfg, state))
     A_TrayMenu.Add("Start with Windows", ToggleStartWithWindows.Bind(cfg, state))
@@ -2610,6 +2801,35 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+4", "Choose Same Router (LAN) or Different Networks (Over the Internet):"), "Text", "muted")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "Saved Host Profiles (Room Switching):"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    ddlProfiles := dlg.Add("DropDownList", "xm w210", [])
+    Theme.RegisterControl(dlg, ddlProfiles, "DropDownList")
+    btnSaveProf := dlg.Add("Button", "x+6 yp w72 h24", "Save Profile")
+    btnDelProf := dlg.Add("Button", "x+6 yp w66 h24", "Delete")
+    Theme.RegisterControl(dlg, btnSaveProf, "Button")
+    Theme.RegisterControl(dlg, btnDelProf, "Button")
+
+    RefreshProfilesCombo(selectName := "") {
+        ddlProfiles.Delete()
+        names := []
+        for _, p in LoadSavedHostProfiles(cfg)
+            names.Push(p.name)
+        if (names.Length > 0) {
+            ddlProfiles.Add(names)
+            if (selectName != "") {
+                for idx, nm in names {
+                    if (nm = selectName) {
+                        ddlProfiles.Choose(idx)
+                        break
+                    }
+                }
+            }
+        }
+    }
+    RefreshProfilesCombo()
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
     Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Network Mode:"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
     netChoice := (cfg.NetworkMode = "Internet") ? 2 : 1
@@ -2754,10 +2974,87 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     }
     btnPairCode.OnEvent("Click", PairByCodeAction)
 
-    btnTest := dlg.Add("Button", "xm w230 h30 y+8", "Test Connection")
-    btnGuide := dlg.Add("Button", "x+10 yp w120 h30", "Setup Guide")
+    btnTest := dlg.Add("Button", "xm w130 h30 y+8", "Test Connection")
+    btnPasteUri := dlg.Add("Button", "x+8 yp w118 h30", "Paste Pairing URI")
+    btnGuide := dlg.Add("Button", "x+8 yp w96 h30", "Setup Guide")
     Theme.RegisterControl(dlg, btnTest, "Button")
+    Theme.RegisterControl(dlg, btnPasteUri, "Button")
     Theme.RegisterControl(dlg, btnGuide, "Button")
+
+    OnProfileSelected(*) {
+        profSel := ddlProfiles.Text
+        for _, p in LoadSavedHostProfiles(cfg) {
+            if (p.name = profSel) {
+                editHost.Value := p.host
+                editBridgePort.Value := p.bridgePort
+                editPort.Value := p.obsPort
+                editSession.Value := p.code
+                editPair.Value := p.wanCode
+                editPw.Value := p.obsPass
+                ddlNetMode.Choose(p.networkMode = "Internet" ? 2 : 1)
+                UpdateModeFields()
+                statusTxt.Value := "Loaded profile '" p.name "'"
+                break
+            }
+        }
+    }
+    ddlProfiles.OnEvent("Change", OnProfileSelected)
+
+    SaveProfileAction(*) {
+        defName := Trim(editHost.Value) != "" ? Trim(editHost.Value) : "Room 1"
+        ib := InputBox("Enter a name for this host profile (e.g. Lecture Hall A):", "Save Host Profile", "w320 h130", defName)
+        if (ib.Result != "OK" || Trim(ib.Value) = "")
+            return
+        ok := SaveHostProfile(cfg, Trim(ib.Value), {
+            host: Trim(editHost.Value),
+            bridgePort: Trim(editBridgePort.Value),
+            obsPort: Trim(editPort.Value),
+            code: Trim(editSession.Value),
+            wanCode: Trim(editPair.Value),
+            obsPass: editPw.Value,
+            networkMode: (ddlNetMode.Value == 2 ? "Internet" : "LAN")
+        })
+        if (ok) {
+            RefreshProfilesCombo(Trim(ib.Value))
+            try BuildRemoteTrayMenu(cfg, state)
+            statusTxt.Value := "✓ Saved profile '" Trim(ib.Value) "'"
+        }
+    }
+    btnSaveProf.OnEvent("Click", SaveProfileAction)
+
+    DeleteProfileAction(*) {
+        sel := Trim(ddlProfiles.Text)
+        if (sel = "")
+            return
+        if (DeleteHostProfile(cfg, sel)) {
+            RefreshProfilesCombo()
+            try BuildRemoteTrayMenu(cfg, state)
+            statusTxt.Value := "Deleted profile '" sel "'"
+        }
+    }
+    btnDelProf.OnEvent("Click", DeleteProfileAction)
+
+    PastePairingUriAction(*) {
+        parsed := ParsePairingUri(A_Clipboard)
+        if (!parsed.ok) {
+            statusTxt.Value := "✕ " parsed.error
+            return
+        }
+        if (parsed.host != "")
+            editHost.Value := parsed.host
+        editBridgePort.Value := parsed.bridgePort
+        editPort.Value := parsed.obsPort
+        if (parsed.code != "")
+            editSession.Value := parsed.code
+        if (parsed.obsPass != "")
+            editPw.Value := parsed.obsPass
+        if (parsed.wanCode != "")
+            editPair.Value := parsed.wanCode
+        ddlNetMode.Choose((parsed.host = "" && parsed.wanCode != "") ? 2 : 1)
+        UpdateModeFields()
+        statusTxt.Value := "✓ Parsed pairing URI (" (parsed.host != "" ? parsed.host ":" parsed.bridgePort : parsed.wanCode) ")"
+    }
+    btnPasteUri.OnEvent("Click", PastePairingUriAction)
 
     btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt, (ddlNetMode.Value == 2 ? "Internet" : "LAN"), editPair.Value))
     btnGuide.OnEvent("Click", (*) => ShowRemoteHelpUI(cfg, state))
