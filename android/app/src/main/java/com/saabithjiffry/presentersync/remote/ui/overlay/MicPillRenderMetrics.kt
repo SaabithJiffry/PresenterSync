@@ -1,6 +1,8 @@
 package com.saabithjiffry.presentersync.remote.ui.overlay
 
 import com.saabithjiffry.presentersync.remote.config.AppConstants
+import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -390,5 +392,28 @@ object MicPillMetricsCalculator {
         val ng = (g * factor).roundToInt().coerceIn(0, 255)
         val nb = (b * factor).roundToInt().coerceIn(0, 255)
         return (a shl 24) or (nr shl 16) or (ng shl 8) or nb
+    }
+
+    const val AMBER_ALERT_BORDER_ARGB: Int = 0xFFF59E0B.toInt()
+
+    fun formatPillMiniBadgeText(connState: ConnectionUiState, showBadges: Boolean): String {
+        if (!showBadges) return ""
+        val parts = ArrayList<String>(3)
+        if (connState.timerState != "stopped") {
+            val rem = connState.timerRemainingSec
+            val prefix = if (rem < 0 || connState.timerState == "overtime") "-" else ""
+            val absSec = abs(rem)
+            val m = absSec / 60
+            val s = absSec % 60
+            parts.add(String.format(java.util.Locale.US, "%s%02d:%02d", prefix, m, s))
+        }
+        if (connState.isStandby) parts.add("BRB")
+        if (connState.recState == 1) parts.add("REC")
+        else if (connState.recState == 2) parts.add("PAUSE")
+        return parts.joinToString(" • ")
+    }
+
+    fun shouldShowAmberAlertBorder(connState: ConnectionUiState, showBadges: Boolean): Boolean {
+        return showBadges && connState.voiceWhileMuted
     }
 }

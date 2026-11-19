@@ -43,11 +43,22 @@ class MicPillCanvasView(context: Context) : View(context) {
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         letterSpacing = MicPillMetricsCalculator.TEXT_LETTER_SPACING
     }
+    private val miniBadgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#E6111827")
+    }
+    private val miniBadgeTextPaint = Paint(
+        Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG
+    ).apply {
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        color = Color.parseColor("#F8FAFC")
+    }
 
     // Reusable geometry objects (zero per-frame allocations)
     private val pillRect = RectF()
     private val specularRect = RectF()
     private val haloRect = RectF()
+    private val miniBadgeRect = RectF()
     private val micBodyRect = RectF()
     private val micArcRect = RectF()
     private val micCradlePath = Path()
@@ -251,8 +262,9 @@ class MicPillCanvasView(context: Context) : View(context) {
         }
 
         // 4. Optical sub-linear outer border (strictly <= 3.0dp even at 5.0x)
-        borderPaint.strokeWidth = metrics.strokeWidthPx
-        borderPaint.color = borderColor
+        val amberAlert = !isOffline && MicPillMetricsCalculator.shouldShowAmberAlertBorder(connState, config.showPillMiniBadges)
+        borderPaint.strokeWidth = if (amberAlert) metrics.strokeWidthPx * 1.25f else metrics.strokeWidthPx
+        borderPaint.color = if (amberAlert) MicPillMetricsCalculator.AMBER_ALERT_BORDER_ARGB else borderColor
         borderPaint.alpha = effectiveAlpha
         canvas.drawRoundRect(pillRect, metrics.cornerRadiusPx, metrics.cornerRadiusPx, borderPaint)
 
@@ -284,6 +296,50 @@ class MicPillCanvasView(context: Context) : View(context) {
 
         // 6. Hold-progress ring drawn safely within outer inset padding
         drawHoldProgressRing(canvas, metrics)
+
+        // 7. Compact bottom-edge mini-badge strip (Timer / BRB / REC) without overlapping main icon+label
+        val badgeText = if (!isOffline) MicPillMetricsCalculator.formatPillMiniBadgeText(connState, config.showPillMiniBadges) else ""
+        if (badgeText.isNotEmpty()) {
+            drawPillMiniBadgeStrip(canvas, metrics, badgeText, effectiveAlpha, h)
+        }
+    }
+
+    private fun drawPillMiniBadgeStrip(
+        canvas: Canvas,
+        metrics: MicPillRenderMetrics,
+        badgeText: String,
+        effectiveAlpha: Int,
+        canvasHeightPx: Float
+    ) {
+        val density = metrics.density
+        val badgeTextSize = (metrics.innerHeightPx * 0.22f).coerceIn(7f * density, 10.5f * density)
+        miniBadgeTextPaint.textSize = badgeTextSize
+        miniBadgeTextPaint.color = when {
+            connState.timerState == "overtime" -> Color.parseColor("#FCA5A5")
+            connState.isStandby -> Color.parseColor("#FCD34D")
+            connState.recState == 1 -> Color.parseColor("#FCA5A5")
+            else -> Color.parseColor("#F8FAFC")
+        }
+        miniBadgeTextPaint.alpha = effectiveAlpha
+        miniBadgeBgPaint.alpha = (effectiveAlpha * 0.90f).roundToInt().coerceIn(0, 255)
+
+        val textW = miniBadgeTextPaint.measureText(badgeText)
+        val padH = 5f * density
+        val fm = miniBadgeTextPaint.fontMetrics
+        val textH = fm.descent - fm.ascent
+        val chipH = textH + 3f * density
+        val maxChipW = (metrics.innerWidthPx - 4f * density).coerceAtLeast(12f * density)
+        val chipW = (textW + padH * 2f).coerceAtMost(maxChipW)
+        val cx = (metrics.pillLeft + metrics.pillRight) / 2f
+        val bottomY = (metrics.pillBottom + chipH * 0.35f).coerceAtMost(canvasHeightPx - 1f)
+        val topY = (bottomY - chipH).coerceAtLeast(metrics.pillBottom - chipH)
+        miniBadgeRect.set(cx - chipW / 2f, topY, cx + chipW / 2f, bottomY)
+        val chipRadius = chipH / 2f
+        canvas.drawRoundRect(miniBadgeRect, chipRadius, chipRadius, miniBadgeBgPaint)
+
+        val baseline = miniBadgeRect.centerY() - (fm.ascent + fm.descent) / 2f
+        val textX = cx - minOf(textW, chipW - padH) / 2f
+        canvas.drawText(badgeText, textX, baseline, miniBadgeTextPaint)
     }
 
     private fun ensureFillShader(bgColor: Int, top: Float, bottom: Float) {

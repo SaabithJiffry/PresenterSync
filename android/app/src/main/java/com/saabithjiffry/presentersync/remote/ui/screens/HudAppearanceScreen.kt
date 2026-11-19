@@ -446,6 +446,12 @@ fun HudAppearanceScreen(
                     onCheckedChange = { v -> app.configStore.update { it.copy(confirmBeforeStopRecording = v) } }
                 )
                 ExplorerSettingToggleRow(
+                    title = "Show Pill Mini-Badges (Timer / BRB / REC / Voice Alert)",
+                    subtitle = "Display compact timer, BRB, REC badges and amber voice-while-muted border on the floating pill",
+                    checked = cfg.showPillMiniBadges,
+                    onCheckedChange = { v -> app.configStore.update { it.copy(showPillMiniBadges = v) } }
+                )
+                ExplorerSettingToggleRow(
                     title = "Push-to-Talk Mode (Hold Pill to Unmute)",
                     subtitle = "Press and hold floating pill to unmute; releasing immediately mutes mic again. Enabling Push-to-Talk disables Long-Press, Very-Long-Press, and Push-to-Mute (and vice versa).",
                     checked = cfg.enablePushToTalk,

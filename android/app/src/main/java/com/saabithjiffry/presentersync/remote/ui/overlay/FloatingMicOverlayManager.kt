@@ -753,6 +753,9 @@ class FloatingMicOverlayManager(
                 connectionManager.reconnectNow()
                 Toast.makeText(context, "Reconnecting PresenterSync...", Toast.LENGTH_SHORT).show()
             }
+            BubbleGestureAction.TRANSITION_SCENE -> {
+                connectionManager.sendTransitionScene("gesture")
+            }
             BubbleGestureAction.HIDE_PILL -> {
                 configStore.update { it.copy(showIndicator = false) }
             }
@@ -833,7 +836,7 @@ class FloatingMicOverlayManager(
             container.addView(telemetryBanner)
         }
 
-        if (currentConn.connected && (currentConn.usingBridge || currentConn.usingRelayFallback)) {
+        if (currentConn.connected) {
             val deckDivider = View(context).apply { setBackgroundColor(dividerColor) }
             container.addView(deckDivider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
 
@@ -920,35 +923,135 @@ class FloatingMicOverlayManager(
                 container.addView(deckRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             }
 
-            val dirRow = LinearLayout(context).apply {
+            if (currentConn.usingBridge || currentConn.usingRelayFallback) {
+                val dirRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val pad = (6 * density).roundToInt()
+                    setPadding(pad, (3 * density).roundToInt(), pad, (3 * density).roundToInt())
+                }
+                val standbySurface = if (currentConn.isStandby) Color.parseColor("#D97706") else btnSurface
+                val standbyTextCol = if (currentConn.isStandby) Color.WHITE else textColor
+                addRowButton(
+                    dirRow,
+                    label = if (currentConn.recState == 2) "▶ Res" else "❚❚ Pause",
+                    bgCol = btnSurface,
+                    fgCol = textColor,
+                    closeAfter = true
+                ) {
+                    connectionManager.sendPauseRecord("quick_menu")
+                }
+                addRowButton(dirRow, "Split", btnSurface, textColor, closeAfter = true) {
+                    connectionManager.sendSplitRecord("quick_menu")
+                }
+                addRowButton(
+                    dirRow,
+                    label = if (currentConn.isStandby) "BRB ON" else "BRB",
+                    bgCol = standbySurface,
+                    fgCol = standbyTextCol,
+                    closeAfter = true
+                ) {
+                    connectionManager.sendToggleStandby("quick_menu")
+                }
+                container.addView(dirRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            }
+
+            // 1-tap OBS Scene Transition (Preview <-> Program)
+            val transRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val pad = (6 * density).roundToInt()
-                setPadding(pad, (3 * density).roundToInt(), pad, pad)
+                setPadding(pad, (3 * density).roundToInt(), pad, (3 * density).roundToInt())
             }
-            val standbySurface = if (currentConn.isStandby) Color.parseColor("#D97706") else btnSurface
-            val standbyTextCol = if (currentConn.isStandby) Color.WHITE else textColor
+            addRowButton(transRow, "⇄ Transition (Preview ↔ Program)", accentColor, Color.WHITE, closeAfter = true) {
+                connectionManager.sendTransitionScene("quick_menu")
+            }
+            container.addView(transRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+            // Live Scene Switcher chips
+            if (currentConn.scenes.isNotEmpty()) {
+                val sceneScroll = android.widget.HorizontalScrollView(context).apply {
+                    isHorizontalScrollBarEnabled = false
+                }
+                val sceneRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val pad = (6 * density).roundToInt()
+                    setPadding(pad, (3 * density).roundToInt(), pad, (3 * density).roundToInt())
+                }
+                for (sceneName in currentConn.scenes) {
+                    val isActive = sceneName == currentConn.activeScene
+                    val chip = TextView(context).apply {
+                        text = sceneName
+                        setTextColor(if (isActive) Color.WHITE else textColor)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                        typeface = Typeface.create(Typeface.DEFAULT, if (isActive) Typeface.BOLD else Typeface.NORMAL)
+                        val hp = (10 * density).roundToInt()
+                        val vp = (6 * density).roundToInt()
+                        setPadding(hp, vp, hp, vp)
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.RECTANGLE
+                            cornerRadius = 14f * density
+                            setColor(if (isActive) accentColor else btnSurface)
+                        }
+                        isClickable = true
+                        isFocusable = false
+                        setOnClickListener {
+                            performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            connectionManager.sendSwitchScene(sceneName, "quick_menu")
+                            dismissQuickMenu()
+                        }
+                    }
+                    val clp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        marginStart = (3 * density).roundToInt()
+                        marginEnd = (3 * density).roundToInt()
+                    }
+                    sceneRow.addView(chip, clp)
+                }
+                sceneScroll.addView(sceneRow)
+                container.addView(sceneScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            }
+
+            // Quick Timer controls (5m, 10m, 15m, Pause/Resume, Reset)
+            val timerRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val pad = (6 * density).roundToInt()
+                setPadding(pad, (3 * density).roundToInt(), pad, (3 * density).roundToInt())
+            }
+            addRowButton(timerRow, "5m", btnSurface, textColor, closeAfter = false) {
+                connectionManager.sendTimerCommand("timer_start", 300, "quick_menu")
+            }
+            addRowButton(timerRow, "10m", btnSurface, textColor, closeAfter = false) {
+                connectionManager.sendTimerCommand("timer_start", 600, "quick_menu")
+            }
+            addRowButton(timerRow, "15m", btnSurface, textColor, closeAfter = false) {
+                connectionManager.sendTimerCommand("timer_start", 900, "quick_menu")
+            }
             addRowButton(
-                dirRow,
-                label = if (currentConn.recState == 2) "▶ Res" else "❚❚ Pause",
+                timerRow,
+                label = if (currentConn.timerState == "paused") "▶" else "❚❚",
                 bgCol = btnSurface,
                 fgCol = textColor,
-                closeAfter = true
+                closeAfter = false
             ) {
-                connectionManager.sendPauseRecord("quick_menu")
+                connectionManager.sendTimerCommand("timer_pause", 0, "quick_menu")
             }
-            addRowButton(dirRow, "Split", btnSurface, textColor, closeAfter = true) {
-                connectionManager.sendSplitRecord("quick_menu")
+            addRowButton(timerRow, "↺", btnSurface, textColor, closeAfter = false) {
+                connectionManager.sendTimerCommand("timer_reset", 0, "quick_menu")
             }
-            addRowButton(
-                dirRow,
-                label = if (currentConn.isStandby) "BRB ON" else "BRB",
-                bgCol = standbySurface,
-                fgCol = standbyTextCol,
-                closeAfter = true
-            ) {
-                connectionManager.sendToggleStandby("quick_menu")
+            container.addView(timerRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+            // Quick Stage Nudge buttons
+            if (currentConn.usingBridge || currentConn.usingRelayFallback) {
+                val nudgeRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val pad = (6 * density).roundToInt()
+                    setPadding(pad, (3 * density).roundToInt(), pad, pad)
+                }
+                for (nudgeMsg in listOf("2 min left", "Wrap up", "Check Mic")) {
+                    addRowButton(nudgeRow, nudgeMsg, btnSurface, textColor, closeAfter = true) {
+                        connectionManager.sendStageNudge(nudgeMsg)
+                    }
+                }
+                container.addView(nudgeRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             }
-            container.addView(dirRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
 
         fun addMenuRow(label: String, onClick: () -> Unit) {
