@@ -11,6 +11,7 @@
 ; ==============================================================================
 
 #DllLoad ws2_32.dll
+#Include WebRemoteUI.ahk
 
 class HostBridgeConstants {
     static DEFAULT_PORT := 4456
@@ -1096,6 +1097,20 @@ class HostCompanionBridge {
         this._QueueText(c, hdr . jsonBody)
     }
 
+    _SendHtmlResponse(c, statusLine, htmlBody, extraHeaders := "") {
+        bLen := 0
+        _HB_StrToUtf8Buf(htmlBody, &bLen)
+        hdr := "HTTP/1.1 " statusLine "`r`n"
+            . "Content-Type: text/html; charset=utf-8`r`n"
+            . "Cache-Control: no-store`r`n"
+            . "Content-Length: " bLen "`r`n"
+            . "Connection: close`r`n"
+            . extraHeaders
+            . "`r`n"
+        c.closeAfterSend := true
+        this._QueueText(c, hdr . htmlBody)
+    }
+
     _CloseClient(c) {
         key := c.key
         if (!this.clients.Has(key))
@@ -1162,6 +1177,14 @@ class HostCompanionBridge {
 
             if (method = "GET" && (cleanPath = "/ws" || RegExMatch(hdrText, "i)Upgrade:\s*websocket"))) {
                 this._HandleWsUpgrade(c, hdrText, rawPath, hdrEnd)
+                return
+            }
+
+            if (method = "GET" && (cleanPath = "/" || cleanPath = "/remote" || cleanPath = "/remote/")) {
+                c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
+                appVer := IsSet(UIConstants) ? UIConstants.APP_VERSION : ""
+                htmlBody := BuildWebRemoteHtml(appVer, this.boundTcpPort)
+                this._SendHtmlResponse(c, "200 OK", htmlBody)
                 return
             }
 

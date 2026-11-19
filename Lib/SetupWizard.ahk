@@ -532,6 +532,23 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     btnCopy.GetPos(, &leftY, , &leftH)
     leftBottom := leftY + leftH
 
+    activePort := (IsObject(state) && state.HasOwnProp("activeBridgePort") && state.activeBridgePort > 0) ? state.activeBridgePort : 4456
+    primaryWebIp := (endpoints.ips.Length > 0) ? endpoints.ips[1] : (A_ComputerName ".local")
+    webRemoteUrl := "http://" primaryWebIp ":" activePort "/"
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "x20 y+8 w340", "Web Remote URL (Browser / iPad / Mac):"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    editWebUrl := dlg.Add("Edit", "x20 y+4 w270 h26 ReadOnly -Wrap", webRemoteUrl)
+    Theme.RegisterControl(dlg, editWebUrl, "Edit")
+    btnCopyWeb := dlg.Add("Button", "x+6 yp w64 h26", "Copy")
+    Theme.RegisterControl(dlg, btnCopyWeb, "Button")
+    btnCopyWeb.OnEvent("Click", (*) => (
+        A_Clipboard := webRemoteUrl,
+        TrayTip("Web Remote URL copied: " webRemoteUrl, "Copied!", 1)
+    ))
+    editWebUrl.GetPos(, &webY, , &webH)
+    leftBottom := webY + webH
+
     ; --- RIGHT COLUMN: SMART BOARD QR PAIRING & PAIRED DEVICES ---
     if (!cfg.HasOwnProp("SessionPairingCode") || cfg.SessionPairingCode = "")
         cfg.SessionPairingCode := GenerateSessionPairingCode()
