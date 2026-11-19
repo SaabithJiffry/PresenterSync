@@ -1791,7 +1791,7 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.Write("Settings", "ThemeMode", tm)
             Theme.SetMode(tm)
         }
-        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowRow2RecChatHud", "ShowRow3StudioSceneHud", "ShowSecondaryMicHud", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough", "ExcludeFromCapture", "ExcludeSecondaryFromCapture"] {
+        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowRow2RecChatHud", "ShowRow3StudioSceneHud", "ShowSecondaryMicHud", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough", "ExcludeFromCapture", "ExcludeSecondaryFromCapture", "ConfirmBeforeStopRecording"] {
             if vals.HasOwnProp(bProp) {
                 cfg.%bProp% := !!vals.%bProp%
                 cfg.WriteBool("Settings", bProp, cfg.%bProp%)
@@ -2008,8 +2008,10 @@ ShowControlCenterWindow(cfg, state := "", *) {
 
     chkAutoRecDrop := ccGui.Add("Checkbox", "x32 y428 w310 h24" (cfg.AutoRecordOnStreamDrop ? " Checked" : ""), "Auto-Start Local Backup Recording on Stream Drop")
     chkLowDisk := ccGui.Add("Checkbox", "x360 y428 w320 h24" (cfg.EnableLowDiskWatchdog ? " Checked" : ""), "Warn on Low Disk Space While Recording")
+    chkConfirmStopRec := ccGui.Add("Checkbox", "x32 y460 w420 h24" (cfg.ConfirmBeforeStopRecording ? " Checked" : ""), "Require 2nd-Tap Confirm (3s) Before Stopping Recording")
     Theme.RegisterControl(ccGui, chkAutoRecDrop, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkLowDisk, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkConfirmStopRec, "Checkbox", "tabText")
 
     ; ==========================================================================
     ; TAB 3: POINTER & CLICKER
@@ -2319,6 +2321,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
         chkDeadMic.Value := cfg.EnableDeadMicWatchdog ? 1 : 0
         chkAutoRecDrop.Value := cfg.AutoRecordOnStreamDrop ? 1 : 0
         chkLowDisk.Value := cfg.EnableLowDiskWatchdog ? 1 : 0
+        chkConfirmStopRec.Value := cfg.ConfirmBeforeStopRecording ? 1 : 0
         chkEnableWS.Value := cfg.EnableWS ? 1 : 0
         chkEnableZoom.Value := cfg.EnableZoom ? 1 : 0
         edObsPass.Value := cfg.obsPassword
@@ -2430,6 +2433,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
             EnableDeadMicWatchdog: chkDeadMic.Value,
             AutoRecordOnStreamDrop: chkAutoRecDrop.Value,
             EnableLowDiskWatchdog: chkLowDisk.Value,
+            ConfirmBeforeStopRecording: chkConfirmStopRec.Value,
             EnableWS: chkEnableWS.Value,
             EnableZoom: chkEnableZoom.Value,
             obsPassword: edObsPass.Value,

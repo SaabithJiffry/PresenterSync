@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.2.2"
+    static APP_VERSION := "7.2.3"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -91,6 +91,7 @@ class UIConstants {
     static OBS_INIT_DELAY_MS := 100
     static TOOLTIP_DURATION_MS := 2000
     static STUDIO_LONG_PRESS_MS := 600
+    static STOP_RECORD_CONFIRM_WINDOW_MS := 3000
 
     ; --- Opacity Presets & Corner Constants ---
     static OPACITY_SOLID := 255
@@ -1321,6 +1322,7 @@ class Config {
     EnableOsMuteDriftWatchdog := true
     EnableForgottenRecordWatchdog := true
     AutoRecordOnStreamDrop := true
+    ConfirmBeforeStopRecording := true
     EnableLowDiskWatchdog := true
     EnableDeadMicWatchdog := true
     ShowVoiceMeter := true
@@ -1501,6 +1503,7 @@ class Config {
         this.EnableOsMuteDriftWatchdog := this.ReadBool("Settings", "EnableOsMuteDriftWatchdog", true)
         this.EnableForgottenRecordWatchdog := this.ReadBool("Settings", "EnableForgottenRecordWatchdog", true)
         this.AutoRecordOnStreamDrop := this.ReadBool("Settings", "AutoRecordOnStreamDrop", true)
+        this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", true)
         this.EnableLowDiskWatchdog := this.ReadBool("Settings", "EnableLowDiskWatchdog", true)
         this.EnableDeadMicWatchdog := this.ReadBool("Settings", "EnableDeadMicWatchdog", true)
         this.ShowVoiceMeter := this.ReadBool("Settings", "ShowVoiceMeter", true)
@@ -1704,6 +1707,7 @@ class Config {
             { sec: "Settings", key: "EnableOsMuteDriftWatchdog", prop: "EnableOsMuteDriftWatchdog", kind: "bool" },
             { sec: "Settings", key: "EnableForgottenRecordWatchdog", prop: "EnableForgottenRecordWatchdog", kind: "bool" },
             { sec: "Settings", key: "AutoRecordOnStreamDrop", prop: "AutoRecordOnStreamDrop", kind: "bool" },
+            { sec: "Settings", key: "ConfirmBeforeStopRecording", prop: "ConfirmBeforeStopRecording", kind: "bool" },
             { sec: "Settings", key: "EnableLowDiskWatchdog", prop: "EnableLowDiskWatchdog", kind: "bool" },
             { sec: "Settings", key: "EnableDeadMicWatchdog", prop: "EnableDeadMicWatchdog", kind: "bool" },
             { sec: "Settings", key: "ShowVoiceMeter", prop: "ShowVoiceMeter", kind: "bool" },
@@ -1878,6 +1882,7 @@ class OverlayState {
     confRecState := 0
     confRecElapsedSec := 0
     recSourceTag := ""
+    stopRecConfirmUntil := 0
     studioModeActive := false
     currentSceneName := "Scene"
     previewSceneName := ""

@@ -487,7 +487,9 @@ internal fun RemoteDashboardScreen(
                                     onToggleStandby = { app.connectionManager.sendToggleStandby("dashboard") },
                                     onSwitchScene = { s -> app.connectionManager.sendSwitchScene(s, "dashboard") },
                                     onTimerCommand = { act, dur -> app.connectionManager.sendTimerCommand(act, dur, "dashboard") },
-                                    onSendNudge = { msg -> app.connectionManager.sendStageNudge(msg) }
+                                    onSendNudge = { msg -> app.connectionManager.sendStageNudge(msg) },
+                                    onToggleRecord = { app.connectionManager.sendToggleRecord("dashboard") },
+                                    confirmBeforeStopRecording = cfg.confirmBeforeStopRecording
                                 )
 
                                 FormFactorOptimizationCard(
@@ -576,7 +578,9 @@ internal fun RemoteDashboardScreen(
                             onToggleStandby = { app.connectionManager.sendToggleStandby("dashboard") },
                             onSwitchScene = { s -> app.connectionManager.sendSwitchScene(s, "dashboard") },
                             onTimerCommand = { act, dur -> app.connectionManager.sendTimerCommand(act, dur, "dashboard") },
-                            onSendNudge = { msg -> app.connectionManager.sendStageNudge(msg) }
+                            onSendNudge = { msg -> app.connectionManager.sendStageNudge(msg) },
+                            onToggleRecord = { app.connectionManager.sendToggleRecord("dashboard") },
+                            confirmBeforeStopRecording = cfg.confirmBeforeStopRecording
                         )
 
                         FormFactorOptimizationCard(

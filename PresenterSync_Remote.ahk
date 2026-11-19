@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.2.2
+; Version: 7.2.3
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.2.2.0
+;@Ahk2Exe-SetVersion 7.2.3.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -86,6 +86,7 @@ class RemoteConfig {
     HudClickThrough := false
     HudAutoDodge := false
     ExcludeFromCapture := true
+    ConfirmBeforeStopRecording := true
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -216,6 +217,7 @@ class RemoteConfig {
         this.HudClickThrough := this.ReadBool("Appearance", "HudClickThrough", 0)
         this.HudAutoDodge := this.ReadBool("Appearance", "HudAutoDodge", 0)
         this.ExcludeFromCapture := this.ReadBool("Appearance", "ExcludeFromCapture", 1)
+        this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", 1)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -299,6 +301,7 @@ class RemoteState {
     isMuted := false
     recState := 0
     recSeconds := 0
+    stopRecConfirmUntil := 0
     streamDropWarn := false
     voiceWhileMuted := false
     osMicMutedDrift := false
@@ -1551,6 +1554,11 @@ _SendRemoteRelayAction(cfg, state, cmd, data := "1") {
 }
 
 SendRemoteBridgeDeckCommand(cfg, state, actionType) {
+    actLow := StrLower(Trim(String(actionType)))
+    if (actLow = "toggle_record" || actLow = "stop_record") {
+        if (!TryConfirmRemoteStopRecording(cfg, state))
+            return false
+    }
     if (IsRemoteUsingInternetChannel(cfg, state))
         return _SendRemoteRelayAction(cfg, state, actionType, "1")
     if (IsRemoteUsingBridgeChannel(cfg, state)) {

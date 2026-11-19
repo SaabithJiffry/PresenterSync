@@ -1140,3 +1140,28 @@ FormatRemoteDirectObsStatus(activeHost) {
     return "● Fallback: DIRECT OBS :4455" (hostTxt != "" ? (" (" hostTxt ")") : "")
 }
 
+TryConfirmRemoteStopRecording(cfg, state, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return true
+    if (nowTick = "")
+        nowTick := A_TickCount
+    if (!state.HasOwnProp("stopRecConfirmUntil"))
+        state.stopRecConfirmUntil := 0
+    confirmEnabled := !cfg.HasOwnProp("ConfirmBeforeStopRecording") || cfg.ConfirmBeforeStopRecording
+    isRecording := (state.HasOwnProp("recState") && state.recState != 0)
+    if (!confirmEnabled || !isRecording) {
+        state.stopRecConfirmUntil := 0
+        return true
+    }
+    if (nowTick >= state.stopRecConfirmUntil) {
+        winMs := IsSet(UIConstants) ? UIConstants.STOP_RECORD_CONFIRM_WINDOW_MS : 3000
+        state.stopRecConfirmUntil := nowTick + winMs
+        if (!IsSet(g_IsTestMode) || !g_IsTestMode) {
+            try TrayTip("Click Start/Stop Recording again within 3s to STOP recording", "PresenterSync Remote", 0x2)
+        }
+        return false
+    }
+    state.stopRecConfirmUntil := 0
+    return true
+}
+

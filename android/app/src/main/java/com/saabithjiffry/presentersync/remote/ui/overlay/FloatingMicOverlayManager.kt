@@ -67,6 +67,7 @@ class FloatingMicOverlayManager(
     private var isAutoDodged = false
     private var isIdleDimmed = false
     private var lastIdleWakeKey = ""
+    private var pendingStopRecordUntilMs: Long = 0L
 
     private var currentConfig: RemoteConfig = configStore.current
     private var currentConn: ConnectionUiState = connectionManager.uiState.value
@@ -832,10 +833,10 @@ class FloatingMicOverlayManager(
             container.addView(deckDivider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
 
             val btnSurface = if (isDark) Color.parseColor("#383838") else Color.parseColor("#F1F5F9")
-            val recSurface = if (currentConn.recState == 1) Color.parseColor("#DC2626") else btnSurface
-            val recTextCol = if (currentConn.recState == 1) Color.WHITE else textColor
+            val recSurface = if (currentConn.recState != 0) Color.parseColor("#DC2626") else btnSurface
+            val recTextCol = if (currentConn.recState != 0) Color.WHITE else textColor
 
-            fun addRowButton(row: LinearLayout, label: String, bgCol: Int, fgCol: Int, closeAfter: Boolean, onTap: () -> Unit) {
+            fun addRowButton(row: LinearLayout, label: String, bgCol: Int, fgCol: Int, closeAfter: Boolean, onTap: () -> Unit): TextView {
                 val tv = TextView(context).apply {
                     text = label
                     gravity = Gravity.CENTER
@@ -862,6 +863,7 @@ class FloatingMicOverlayManager(
                     marginEnd = (3 * density).roundToInt()
                 }
                 row.addView(tv, lp)
+                return tv
             }
 
             if (currentConn.usingBridge) {
@@ -873,14 +875,39 @@ class FloatingMicOverlayManager(
                 addRowButton(deckRow, "◀ Prev", btnSurface, textColor, closeAfter = false) {
                     connectionManager.sendPptPrev("quick_menu")
                 }
-                addRowButton(
+                var recBtn: TextView? = null
+                recBtn = addRowButton(
                     deckRow,
-                    label = if (currentConn.recState == 1) "⏹ Stop" else "⏺ Rec",
+                    label = if (currentConn.recState != 0) "⏹ Stop" else "⏺ Rec",
                     bgCol = recSurface,
                     fgCol = recTextCol,
-                    closeAfter = true
+                    closeAfter = false
                 ) {
-                    connectionManager.sendToggleRecord("quick_menu")
+                    if (currentConn.recState == 0 || !currentConfig.confirmBeforeStopRecording) {
+                        pendingStopRecordUntilMs = 0L
+                        connectionManager.sendToggleRecord("quick_menu")
+                        dismissQuickMenu()
+                    } else {
+                        val now = System.currentTimeMillis()
+                        if (pendingStopRecordUntilMs > 0L && now < pendingStopRecordUntilMs) {
+                            pendingStopRecordUntilMs = 0L
+                            connectionManager.sendToggleRecord("quick_menu")
+                            dismissQuickMenu()
+                        } else {
+                            pendingStopRecordUntilMs = now + STOP_RECORD_CONFIRM_WINDOW_MS
+                            recBtn?.text = "Tap Stop (3s)"
+                            (recBtn?.background as? GradientDrawable)?.setColor(Color.parseColor("#D97706"))
+                            recBtn?.setTextColor(Color.WHITE)
+                            handler.postDelayed({
+                                if (quickMenuView != null && System.currentTimeMillis() >= pendingStopRecordUntilMs) {
+                                    pendingStopRecordUntilMs = 0L
+                                    recBtn?.text = if (currentConn.recState != 0) "⏹ Stop" else "⏺ Rec"
+                                    (recBtn?.background as? GradientDrawable)?.setColor(recSurface)
+                                    recBtn?.setTextColor(recTextCol)
+                                }
+                            }, STOP_RECORD_CONFIRM_WINDOW_MS)
+                        }
+                    }
                 }
                 addRowButton(deckRow, "Next ▶", btnSurface, textColor, closeAfter = false) {
                     connectionManager.sendPptNext("quick_menu")
@@ -1141,6 +1168,7 @@ class FloatingMicOverlayManager(
     }
 
     private fun dismissQuickMenu() {
+        pendingStopRecordUntilMs = 0L
         easterHoldRunnable?.let { handler.removeCallbacks(it) }
         easterHoldRunnable = null
         easterProgressRunnable?.let { handler.removeCallbacks(it) }
@@ -1201,6 +1229,7 @@ class FloatingMicOverlayManager(
     companion object {
         const val PTT_HOLD_THRESHOLD_MS = 300L
         const val MUTE_TRANSITION_DURATION_MS = 160L
+        const val STOP_RECORD_CONFIRM_WINDOW_MS = 3000L
 
         fun computeMuteTransitionPulseScale(fraction: Float): Float {
             return 1f + 0.05f * sin(Math.PI * fraction.coerceIn(0f, 1f)).toFloat()
