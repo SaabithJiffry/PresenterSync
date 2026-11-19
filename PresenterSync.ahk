@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.3.2
+; Version: 7.3.3
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.3.2.0
+;@Ahk2Exe-SetVersion 7.3.3.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -736,6 +736,9 @@ SendToPPT(cfg, Key) {
         if (!comHandled) {
             try ControlSend Key, , "ahk_class screenClass ahk_exe POWERPNT.EXE"
         }
+        try PollPowerPointSlideTelemetry(AppState)
+        if (IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, AppState)
     }
     else if WinExist("PowerPoint Presenter View ahk_exe POWERPNT.EXE") {
         try ControlSend Key, , "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
@@ -747,7 +750,10 @@ SendToPPT(cfg, Key) {
         try ControlSend Key, , "ahk_exe POWERPNT.EXE"
     }
     else {
-        SoundPlay "*16"
+        dir := (Key = "{Up}" || Key = "{Left}" || Key = "{PgUp}") ? "prev" : "next"
+        fb := TryDispatchFallbackSlideKey(dir)
+        if (!fb.handled)
+            SoundPlay "*16"
     }
     DiagnosticLogger.CheckLatency("Input", "SendToPPT", t0, 120, Key)
 }

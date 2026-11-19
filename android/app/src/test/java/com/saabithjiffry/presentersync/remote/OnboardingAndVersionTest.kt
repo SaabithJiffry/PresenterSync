@@ -15,7 +15,7 @@ class OnboardingAndVersionTest {
 
     @Test
     fun activeAppVersionMatchesMilestone11Release() {
-        assertEquals("7.3.2", AppConstants.APP_VERSION)
+        assertEquals("7.3.3", AppConstants.APP_VERSION)
     }
 
     @Test

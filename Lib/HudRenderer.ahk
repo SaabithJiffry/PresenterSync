@@ -1412,6 +1412,13 @@ SafetyWatchdogTick(cfg, state) {
         return false
     nowTick := A_TickCount
     isSlideshow := WinExist("ahk_class screenClass ahk_exe POWERPNT.EXE") ? true : false
+    if (isSlideshow || (state.HasOwnProp("slideIndex") && state.slideIndex > 0)) {
+        prevSlideIdx := state.HasOwnProp("slideIndex") ? state.slideIndex : 0
+        prevSlideTot := state.HasOwnProp("slideTotal") ? state.slideTotal : 0
+        try PollPowerPointSlideTelemetry(state)
+        if ((state.slideIndex != prevSlideIdx || state.slideTotal != prevSlideTot) && IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, state)
+    }
     obsConn := (state.HasOwnProp("obsConnected") && state.obsConnected)
 
     if (obsConn)
