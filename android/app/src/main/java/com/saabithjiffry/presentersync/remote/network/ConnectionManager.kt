@@ -88,7 +88,11 @@ data class ConnectionUiState(
     val standbyScene: String = "BRB",
     val timerState: String = "stopped",
     val timerRemainingSec: Int = 600,
-    val timerPresetSec: Int = 600
+    val timerPresetSec: Int = 600,
+    val slideIndex: Int = 0,
+    val slideTotal: Int = 0,
+    val slideTitle: String = "",
+    val slideNotes: String = ""
 ) {
     val currentSceneName: String
         get() = activeScene
@@ -1143,7 +1147,11 @@ class ConnectionManager(
             standbyScene = telemetry.standbyScene,
             timerState = telemetry.timerState,
             timerRemainingSec = telemetry.timerRemainingSec,
-            timerPresetSec = telemetry.timerPresetSec
+            timerPresetSec = telemetry.timerPresetSec,
+            slideIndex = telemetry.slideIndex,
+            slideTotal = telemetry.slideTotal,
+            slideTitle = telemetry.slideTitle,
+            slideNotes = telemetry.slideNotes
         )
         if (activeVoiceWarn && !prev.voiceWhileMuted && configStore.current.enableVoiceWhileMutedAlert) {
             _events.tryEmit(RemoteEvent.VoiceWhileMutedAlert)
@@ -1347,6 +1355,9 @@ class ConnectionManager(
 
     fun sendPptPrev(source: String = "quick_menu"): Boolean =
         sendBridgeDeckAction { it.sendPptPrev(source) }
+
+    fun sendStartSlideshow(source: String = "podium"): Boolean =
+        sendBridgeDeckAction { it.sendStartSlideshow(source) }
 
     fun sendToggleRecord(source: String = "quick_menu"): Boolean =
         sendDirectorAction(

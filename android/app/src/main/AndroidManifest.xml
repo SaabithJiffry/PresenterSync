@@ -83,6 +83,17 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <receiver
+            android:name=".widget.PresenterSyncWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.saabithjiffry.presentersync.remote.ACTION_WIDGET_TOGGLE_MUTE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/presentersync_widget_info" />
+        </receiver>
     </application>
 
 </manifest>

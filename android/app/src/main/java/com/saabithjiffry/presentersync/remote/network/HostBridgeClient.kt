@@ -24,7 +24,11 @@ data class BridgeTelemetryState(
     val standbyScene: String = "BRB",
     val timerState: String = "stopped",
     val timerRemainingSec: Int = 600,
-    val timerPresetSec: Int = 600
+    val timerPresetSec: Int = 600,
+    val slideIndex: Int = 0,
+    val slideTotal: Int = 0,
+    val slideTitle: String = "",
+    val slideNotes: String = ""
 )
 
 interface HostBridgeCallbacks {
@@ -152,7 +156,11 @@ class HostBridgeClient(
                             standbyScene = obj.optString("standbyScene", "BRB").ifBlank { "BRB" },
                             timerState = obj.optString("timerState", "stopped").ifBlank { "stopped" },
                             timerRemainingSec = obj.optInt("timerRemainingSec", 600),
-                            timerPresetSec = obj.optInt("timerPresetSec", 600).coerceAtLeast(60)
+                            timerPresetSec = obj.optInt("timerPresetSec", 600).coerceAtLeast(60),
+                            slideIndex = obj.optInt("slideIndex", 0).coerceAtLeast(0),
+                            slideTotal = obj.optInt("slideTotal", 0).coerceAtLeast(0),
+                            slideTitle = obj.optString("slideTitle", ""),
+                            slideNotes = obj.optString("slideNotes", "")
                         )
                         callbacks.onMuteStateChanged(muted, mode, mic)
                         callbacks.onTelemetryChanged(telemetry)
@@ -213,6 +221,8 @@ class HostBridgeClient(
     fun sendPptNext(source: String = "quick_menu"): Boolean = sendDeviceAction("ppt_next", source)
 
     fun sendPptPrev(source: String = "quick_menu"): Boolean = sendDeviceAction("ppt_prev", source)
+
+    fun sendStartSlideshow(source: String = "podium"): Boolean = sendDeviceAction("slide_start", source)
 
     fun sendToggleRecord(source: String = "quick_menu"): Boolean = sendDeviceAction("toggle_record", source)
 

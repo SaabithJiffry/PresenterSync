@@ -179,6 +179,7 @@ internal fun RemoteDashboardScreen(
     var showQuickQrScanner by rememberSaveable { mutableStateOf(false) }
     var showHelpDialog by rememberSaveable { mutableStateOf(false) }
     var showAboutDialog by rememberSaveable { mutableStateOf(false) }
+    var showPodiumMode by rememberSaveable { mutableStateOf(false) }
     var selectedTabIndex by rememberSaveable { mutableStateOf(0) }
 
     LaunchedEffect(pendingDeepLink) {
@@ -195,6 +196,14 @@ internal fun RemoteDashboardScreen(
         }
         showConnectionDialog = false
         app.connectionManager.applyDeepLinkAsync(parsed)
+    }
+
+    if (showPodiumMode) {
+        PodiumDeckScreen(
+            app = app,
+            onExitPodium = { showPodiumMode = false }
+        )
+        return
     }
 
     Scaffold(
@@ -345,6 +354,14 @@ internal fun RemoteDashboardScreen(
                         .padding(formFactor.outerPaddingDp.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
+                    Button(
+                        onClick = { showPodiumMode = true },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Podium Deck (Full-Screen OLED Mode)", fontWeight = FontWeight.Bold)
+                    }
+
                     UpdateReadyInlineBanner(app = app)
 
                     if (showSetupWizard) {
