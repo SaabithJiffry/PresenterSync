@@ -30,6 +30,23 @@ class HostBridgeConstants {
     static WS_GUID := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 }
 
+GetBridgeFallbackPorts(preferredPort := 4456) {
+    pref := HostBridgeConstants.DEFAULT_PORT
+    try pref := Integer(preferredPort)
+    if (pref < 0 || pref > 65535)
+        pref := HostBridgeConstants.DEFAULT_PORT
+    ports := [pref]
+    seen := Map(pref, true)
+    Loop 8 {
+        p := 4457 + A_Index
+        if (!seen.Has(p)) {
+            seen[p] := true
+            ports.Push(p)
+        }
+    }
+    return ports
+}
+
 EnsureHostUuid(cfg := "") {
     if (IsObject(cfg) && cfg.HasOwnProp("HostUuid") && Trim(cfg.HostUuid) != "")
         return Trim(cfg.HostUuid)
@@ -311,12 +328,25 @@ class HostCompanionBridge {
     }
 
     _BindListeners(tcpPort, udpPort, discoverPort) {
-        if (!this._BindTcpListenSocket(tcpPort))
+        boundOk := false
+        for _, candPort in GetBridgeFallbackPorts(tcpPort) {
+            if (this._BindTcpListenSocket(candPort)) {
+                boundOk := true
+                break
+            }
+        }
+        if (!boundOk)
             return false
+        if (IsObject(this.state))
+            this.state.activeBridgePort := this.boundTcpPort
+        if (tcpPort > 0 && this.boundTcpPort != tcpPort && IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Bridge", "PortFallback", "from=" tcpPort " to=" this.boundTcpPort)
         if (udpPort >= 0) {
+            targetUdp := (udpPort == tcpPort && this.boundTcpPort != tcpPort) ? this.boundTcpPort : udpPort
             uSock := -1
             uBound := 0
-            this._BindUdpSocket(udpPort, this.wmUdp, &uSock, &uBound)
+            if (!this._BindUdpSocket(targetUdp, this.wmUdp, &uSock, &uBound) && targetUdp != 0)
+                this._BindUdpSocket(0, this.wmUdp, &uSock, &uBound)
             this.udpSock := uSock
             this.boundUdpPort := uBound
         }
@@ -331,6 +361,7 @@ class HostCompanionBridge {
     }
 
     _BindTcpListenSocket(tcpPort) {
+        this.boundTcpPort := 0
         this.tcpListenSock := DllCall("ws2_32\socket", "Int", 2, "Int", 1, "Int", 6, "Ptr")
         if (this.tcpListenSock = -1) {
             this.lastError := "TCP socket create failed: " DllCall("ws2_32\WSAGetLastError", "Int")
@@ -339,11 +370,14 @@ class HostCompanionBridge {
 
         optOn := Buffer(4, 0)
         NumPut("Int", 1, optOn, 0)
-        DllCall("ws2_32\setsockopt", "Ptr", this.tcpListenSock, "Int", 0xFFFF, "Int", 4, "Ptr", optOn, "Int", 4, "Int")
+        ; SO_EXCLUSIVEADDRUSE (-5) prevents two processes from binding the same port cleanly so fallback 4458..4465 triggers
+        DllCall("ws2_32\setsockopt", "Ptr", this.tcpListenSock, "Int", 0xFFFF, "Int", -5, "Ptr", optOn, "Int", 4, "Int")
 
         tcpAddr := _HB_MakeSockAddrIn(tcpPort, 0)
         if (DllCall("ws2_32\bind", "Ptr", this.tcpListenSock, "Ptr", tcpAddr, "Int", 16, "Int") != 0) {
             this.lastError := "TCP bind port " tcpPort " failed: " DllCall("ws2_32\WSAGetLastError", "Int")
+            try DllCall("ws2_32\closesocket", "Ptr", this.tcpListenSock)
+            this.tcpListenSock := -1
             return false
         }
 
@@ -354,12 +388,18 @@ class HostCompanionBridge {
 
         if (DllCall("ws2_32\listen", "Ptr", this.tcpListenSock, "Int", 16, "Int") != 0) {
             this.lastError := "TCP listen failed: " DllCall("ws2_32\WSAGetLastError", "Int")
+            try DllCall("ws2_32\closesocket", "Ptr", this.tcpListenSock)
+            this.tcpListenSock := -1
+            this.boundTcpPort := 0
             return false
         }
 
         ; FD_READ(1) | FD_WRITE(2) | FD_ACCEPT(8) | FD_CLOSE(32) = 0x2B
         if (DllCall("ws2_32\WSAAsyncSelect", "Ptr", this.tcpListenSock, "Ptr", this.hwnd, "UInt", this.wmTcp, "Int", 0x2B, "Int") != 0) {
             this.lastError := "TCP WSAAsyncSelect failed"
+            try DllCall("ws2_32\closesocket", "Ptr", this.tcpListenSock)
+            this.tcpListenSock := -1
+            this.boundTcpPort := 0
             return false
         }
         return true
@@ -472,6 +512,8 @@ class HostCompanionBridge {
         this.boundTcpPort := 0
         this.boundUdpPort := 0
         this.boundDiscoverPort := 0
+        if (IsObject(this.state) && this.state.HasOwnProp("activeBridgePort"))
+            this.state.activeBridgePort := 0
         if (this.wsaStarted) {
             try DllCall("ws2_32\WSACleanup")
             this.wsaStarted := false
@@ -1786,7 +1828,8 @@ UriEncodeComponent(str) {
     return out
 }
 
-BuildHostPairingUri(cfg, candidateIps := "") {
+BuildHostPairingUri(cfg, candidateIps := "", bridgePortOverride := 0) {
+    global g_HostCompanionBridge
     hosts := []
     seen := Map()
     PushHost(h) {
@@ -1813,7 +1856,14 @@ BuildHostPairingUri(cfg, candidateIps := "") {
     }
 
     obsPort := 4455
-    bridgePort := (IsObject(cfg) && cfg.HasOwnProp("BridgePort")) ? cfg.BridgePort : 4456
+    bridgePort := 0
+    try bridgePort := Integer(bridgePortOverride)
+    if (bridgePort <= 0 && IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running && g_HostCompanionBridge.boundTcpPort > 0)
+        bridgePort := Integer(g_HostCompanionBridge.boundTcpPort)
+    if (bridgePort <= 0 && IsSet(AppState) && IsObject(AppState) && AppState.HasOwnProp("activeBridgePort") && AppState.activeBridgePort > 0)
+        bridgePort := Integer(AppState.activeBridgePort)
+    if (bridgePort <= 0)
+        bridgePort := (IsObject(cfg) && cfg.HasOwnProp("BridgePort")) ? Integer(cfg.BridgePort) : 4456
     obsPw := (IsObject(cfg) && cfg.HasOwnProp("obsPassword")) ? cfg.obsPassword : ""
     sessCode := (IsObject(cfg) && cfg.HasOwnProp("SessionPairingCode")) ? cfg.SessionPairingCode : ""
     micName := (IsObject(cfg) && cfg.HasOwnProp("targetMicName")) ? cfg.targetMicName : "Mic/Aux"

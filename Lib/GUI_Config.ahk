@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.2.3"
+    static APP_VERSION := "7.2.4"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1376,10 +1376,56 @@ class Config {
     savedY := "Default"
     savedSecondaryX := "Default"
     savedSecondaryY := "Default"
+    _lastBackupTick := 0
 
     __New(filePath := "") {
         this.ConfigFile := (filePath != "") ? filePath : A_ScriptDir "\MicOverlay_Config.ini"
         this.Load()
+    }
+
+    IsValidConfigFile(filePath := "") {
+        p := (filePath != "") ? filePath : this.ConfigFile
+        if (p = "" || !FileExist(p))
+            return false
+        sz := 0
+        try sz := FileGetSize(p)
+        catch
+            return false
+        if (sz <= 0)
+            return false
+        try {
+            sec := IniRead(p, "Settings", , "")
+            if (sec != "")
+                return true
+        }
+        try {
+            raw := FileRead(p)
+            if (RegExMatch(raw, "im)^\s*\[Settings\]") > 0)
+                return true
+        }
+        return false
+    }
+
+    BackupToFile(force := true) {
+        if (this.ConfigFile = "")
+            return false
+        now := A_TickCount
+        if (!force && this._lastBackupTick != 0 && (now - this._lastBackupTick) < 5000)
+            return false
+        if (!this.IsValidConfigFile(this.ConfigFile))
+            return false
+        bakPath := this.ConfigFile ".bak"
+        tmpPath := bakPath ".tmp"
+        try {
+            FileCopy(this.ConfigFile, tmpPath, 1)
+            FileMove(tmpPath, bakPath, 1)
+            this._lastBackupTick := now
+            return true
+        } catch {
+            try if FileExist(tmpPath)
+                FileDelete(tmpPath)
+            return false
+        }
     }
 
     Read(section, key, defaultVal := "") {
@@ -1388,6 +1434,7 @@ class Config {
 
     Write(section, key, val) {
         IniWrite(val, this.ConfigFile, section, key)
+        this.BackupToFile(false)
     }
 
     ReadBool(section, key, defaultValue := 0) {
@@ -1420,9 +1467,21 @@ class Config {
 
     WriteBool(section, key, value) {
         IniWrite(value ? 1 : 0, this.ConfigFile, section, key)
+        this.BackupToFile(false)
     }
 
     Load() {
+        bakPath := this.ConfigFile ".bak"
+        if (!this.IsValidConfigFile(this.ConfigFile) && this.IsValidConfigFile(bakPath)) {
+            try {
+                SplitPath(this.ConfigFile, , &cfgDir)
+                if (cfgDir != "" && !DirExist(cfgDir))
+                    DirCreate(cfgDir)
+                FileCopy(bakPath, this.ConfigFile, 1)
+                if (IsSet(DiagnosticLogger))
+                    try DiagnosticLogger.RecordBreadcrumb("Config", "RecoveredFromBak", this.ConfigFile)
+            }
+        }
         this.AudioRoutingMode := this.ReadInt("Settings", "AudioRoutingMode", 0)
         if (this.AudioRoutingMode < 0 || this.AudioRoutingMode > 3)
             this.AudioRoutingMode := 0
@@ -1586,6 +1645,7 @@ class Config {
         this.savedY := this.Read("Position", "Y", "Default")
         this.savedSecondaryX := this.Read("SecondaryPosition", "X", "Default")
         this.savedSecondaryY := this.Read("SecondaryPosition", "Y", "Default")
+        this.BackupToFile(true)
     }
 
     ResetAppearance() {
@@ -1658,7 +1718,9 @@ class Config {
 
     DeleteFile() {
         if FileExist(this.ConfigFile)
-            FileDelete(this.ConfigFile)
+            try FileDelete(this.ConfigFile)
+        if FileExist(this.ConfigFile ".bak")
+            try FileDelete(this.ConfigFile ".bak")
     }
 
     NormalizeProfileName(name) {
@@ -1938,6 +2000,7 @@ class OverlayState {
     lowDiskWarnLevel := 0
     streamDropWarn := false
     deadMicWarn := false
+    activeBridgePort := 0
     safetyWatchdogFn := ""
     _forgotRecSinceTick := 0
     _lastForgotRecWarnTick := 0

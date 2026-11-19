@@ -542,7 +542,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     lblQrHdr.GetPos(, &qhY, , &qhH)
     qrTop := qhY + qhH + 4
 
-    qrUri := BuildHostPairingUri(cfg, endpoints.ips)
+    qrUri := BuildHostPairingUri(cfg, endpoints.ips, (IsObject(state) && state.HasOwnProp("activeBridgePort") && state.activeBridgePort > 0) ? state.activeBridgePort : 0)
     qrRes := QrCode.BuildHBitmap(qrUri, 114)
     hQrBmp := qrRes.hBitmap
 
@@ -634,7 +634,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     SetTimer(RefreshBridgeDevices, 1000)
 
     RefreshQrBitmap() {
-        newUri := BuildHostPairingUri(cfg, endpoints.ips)
+        newUri := BuildHostPairingUri(cfg, endpoints.ips, (IsObject(state) && state.HasOwnProp("activeBridgePort") && state.activeBridgePort > 0) ? state.activeBridgePort : 0)
         nextQr := QrCode.BuildHBitmap(newUri, 114)
         if (nextQr.hBitmap) {
             oldBmp := hQrBmp
@@ -747,6 +747,28 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     return dlg
 }
 
+_GetSetupProbeOverride(overrides, key) {
+    if (!IsObject(overrides))
+        return { found: false, val: "" }
+    if ((overrides is Map) && overrides.Has(key))
+        return { found: true, val: overrides[key] }
+    if (overrides.HasOwnProp(key))
+        return { found: true, val: overrides.%key% }
+    return { found: false, val: "" }
+}
+
+_DetectWindowsFirewallState() {
+    try {
+        fw := ComObject("HNetCfg.FwPolicy2")
+        profMask := Integer(fw.CurrentProfileTypes)
+        profile := (profMask & 4) ? "Public" : ((profMask & 2) ? "Private" : ((profMask & 1) ? "Domain" : "Unknown"))
+        pubBlocked := ((profMask & 4) != 0) && !!fw.FirewallEnabled(4) && (Integer(fw.DefaultInboundAction(4)) == 0)
+        return { profile: profile, blocked: pubBlocked }
+    } catch {
+        return { profile: "Unknown", blocked: false }
+    }
+}
+
 RunWindowsSetupProbes(cfg, state := "", overrides := "") {
     obsListening := (IsObject(overrides) && overrides.HasOwnProp("obsPortListening"))
         ? !!overrides.obsPortListening
@@ -788,18 +810,38 @@ RunWindowsSetupProbes(cfg, state := "", overrides := "") {
         ? ("Bridge TCP :" bridgeSum.tcpPort " & UDP :" bridgeSum.discoverPort " ready (" ipCount " LAN IP)")
         : "Host Bridge listener inactive"
 
+    activeTcp := (IsObject(bridgeSum) && bridgeSum.HasOwnProp("tcpPort") && bridgeSum.tcpPort > 0) ? Integer(bridgeSum.tcpPort) : 4456
+    ovFwProf := _GetSetupProbeOverride(overrides, "firewallProfile")
+    ovFwBlk := _GetSetupProbeOverride(overrides, "firewallBlocked")
+    fwDet := (!ovFwProf.found || !ovFwBlk.found) ? _DetectWindowsFirewallState() : { profile: "Private", blocked: false }
+    fwProfile := ovFwProf.found ? String(ovFwProf.val) : fwDet.profile
+    fwBlocked := ovFwBlk.found ? !!ovFwBlk.val : (ovFwProf.found ? (StrLower(fwProfile) = "public") : fwDet.blocked)
+    s5Ok := !fwBlocked
+    s5Detail := fwBlocked
+        ? ("Public network profile active — inbound TCP :" activeTcp " & UDP :4457 may be blocked by Windows Firewall")
+        : ("Network profile: " fwProfile " (TCP :" activeTcp " & UDP :4457 ready)")
+
+    ovAdmin := _GetSetupProbeOverride(overrides, "isAdmin")
+    isAdmin := ovAdmin.found ? !!ovAdmin.val : !!A_IsAdmin
+    s6Ok := isAdmin
+    s6Detail := isAdmin
+        ? "Elevated (Admin) — Send/hotkeys can reach elevated OBS/Zoom/PPT windows"
+        : "Non-Admin (UIPI active) — Run as Administrator if hotkeys fail on elevated OBS/Zoom/PPT"
+
     steps := [
         { id: 1, title: "1. OBS WebSocket v5 (:4455)", ok: s1Ok, detail: s1Detail },
         { id: 2, title: "2. Audio Routing & Mic Probe", ok: s2Ok, detail: s2Detail },
         { id: 3, title: "3. Floating Mic HUD Overlay", ok: s3Ok, detail: s3Detail },
-        { id: 4, title: "4. Classroom UDP Discovery & QR", ok: s4Ok, detail: s4Detail }
+        { id: 4, title: "4. Classroom UDP Discovery & QR", ok: s4Ok, detail: s4Detail },
+        { id: 5, title: "5. Windows Firewall Profile (:" activeTcp "/4457)", ok: s5Ok, detail: s5Detail, profile: fwProfile, blocked: fwBlocked },
+        { id: 6, title: "6. UIPI Elevation & Hotkey Access", ok: s6Ok, detail: s6Detail, isAdmin: isAdmin }
     ]
     passed := 0
     for stp in steps {
         if (stp.ok)
             passed += 1
     }
-    return { passedCount: passed, totalCount: steps.Length, steps: steps }
+    return { passedCount: passed, totalCount: steps.Length, steps: steps, firewallProfile: fwProfile, firewallBlocked: fwBlocked, isAdmin: isAdmin }
 }
 
 ShowGuidedSetupWizard(cfg, state := "", *) {
@@ -821,7 +863,7 @@ ShowGuidedSetupWizard(cfg, state := "", *) {
     Theme.RegisterControl(wGui, wGui.Add("Text", "xm y+4 w480", "Verify OBS WebSocket, CoreAudio routing, floating HUD visibility, and Classroom QR discovery."), "Text", "muted")
 
     rowCtrls := []
-    Loop 4 {
+    Loop 6 {
         wGui.SetFont("s9 w700", Theme.UiFont)
         lblTitle := wGui.Add("Text", "xm y+12 w480", "Step " A_Index)
         Theme.RegisterControl(wGui, lblTitle, "Text")

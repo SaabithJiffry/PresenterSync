@@ -70,6 +70,8 @@ Assert("FormatPassthroughHook cleanup", FormatPassthroughHook("~$!a") == "~$!a")
 testIni := A_ScriptDir "\test_master_config.ini"
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 
 cfg := Config(testIni)
 Assert("Config instantiated", IsObject(cfg))
@@ -251,7 +253,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v7.2.3", UIConstants.APP_VERSION == "7.2.3")
+Assert("APP_VERSION is active release v7.2.4", UIConstants.APP_VERSION == "7.2.4")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -370,6 +372,8 @@ Assert("SendObsSetInputMute sets inputMuted bool",
 dimIni := A_ScriptDir "\dim_test_config.ini"
 if FileExist(dimIni)
     FileDelete(dimIni)
+if FileExist(dimIni ".bak")
+    FileDelete(dimIni ".bak")
 cfgDim := Config(dimIni)
 cfgDim.IndicatorScale := 1.0
 cfgDim.ShowText := false
@@ -400,6 +404,8 @@ Assert("Primary and Remote icon files exist with multi-resolution frames",
 
 if FileExist(dimIni)
     FileDelete(dimIni)
+if FileExist(dimIni ".bak")
+    FileDelete(dimIni ".bak")
 
 ; ==============================================================================
 ; SECTION 8: LIVE ENVIRONMENT FIXES (CLICKER TESTER, MARQUEE SCENE, LABEL MODE,
@@ -1157,6 +1163,8 @@ Assert("IsRemoteUsingInternetChannel honors active relay fallback even in LAN mo
 ; ==============================================================================
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 cfgProf := Config(testIni)
 cfgProf.AudioRoutingMode := 1
 cfgProf.ConferencingApp := "Zoom"
@@ -1217,6 +1225,8 @@ AuditDialogGeometry("ProfileManager", ShowProfileManagerUI(cfgProfCheck, stProf)
 ; ==============================================================================
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 cfgSys := Config(testIni)
 Assert("StartWithWindows defaults strictly to false",
     cfgSys.StartWithWindows == false && cfgSys.ReadBool("Settings", "StartWithWindows", 0) == false)
@@ -1267,6 +1277,8 @@ Assert("CheckForUpdates parses release JSON and /tags fallback for update_availa
 ; ==============================================================================
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 cfgCC := Config(testIni)
 stCC := OverlayState(cfgCC)
 ccEvents := { tray: 0, help: 0, rebind: 0 }
@@ -1345,6 +1357,8 @@ ApplyControlCenterSettings(cfgCC, stCC, { EnableWS: false, EnableZoom: false }, 
 ; ==============================================================================
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 
 ; 21.1 Optimistic mute flip matrix across Modes 1/2/3 and telemetry combinations
 Assert("ShouldOptimisticallyFlipMute handles Mode 1/2/3 & WS/Zoom telemetry accurately",
@@ -2485,6 +2499,8 @@ Assert("ExecuteHostToggleRecord sends ToggleRecord to OBS when connected",
 ; ==============================================================================
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 cfgAp := Config(testIni)
 cfgAp.AudioRoutingMode := 1
 cfgAp.SaveProfile("Default")
@@ -2636,6 +2652,8 @@ Assert("HelpCenter Remote catalog includes rfeat-easter-snake without leaking to
 ; ==============================================================================
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 cfgM6 := Config(testIni)
 uuid1 := cfgM6.HostUuid
 cfgM6b := Config(testIni)
@@ -2707,6 +2725,8 @@ Assert("NormalizeColorHex & PickReadableIconHex enforce WCAG contrast on light/d
 
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 cfgM7 := Config(testIni)
 stM7 := OverlayState(cfgM7)
 stM7.suppressNudgeBanners := true
@@ -2847,10 +2867,13 @@ if FileExist(tmpMd)
     FileDelete(tmpMd)
 
 ; Bounded ring buffer eviction test (> 2000 entries -> retains newest 2000)
+prevAutoTl := SessionTimeline.EnableAutosave
+SessionTimeline.EnableAutosave := false
 SessionTimeline.Clear()
 Loop 2050 {
     SessionTimeline.Record("Mic", "Evt " A_Index, "", "", A_Index)
 }
+SessionTimeline.EnableAutosave := prevAutoTl
 boundedEntries := SessionTimeline.GetEntries()
 Assert("SessionTimeline bounds capacity at 2000 entries and evicts oldest FIFO",
     boundedEntries.Length == SessionTimeline.MAX_ENTRIES
@@ -2885,24 +2908,33 @@ probeOk := RunWindowsSetupProbes(probeCfg, 0, {
     obsPortListening: true,
     audioMeterAvailable: true,
     lanIps: ["192.168.50.10"],
-    bridgeSummary: { running: true, tcpPort: 4456, discoverPort: 4457 }
+    bridgeSummary: { running: true, tcpPort: 4456, discoverPort: 4457 },
+    firewallProfile: "Private",
+    firewallBlocked: false,
+    isAdmin: true
 })
 probeNoGui := RunWindowsSetupProbes(probeCfg, tlState, {
     obsPortListening: true,
     audioMeterAvailable: true,
     lanIps: ["192.168.50.10"],
-    bridgeSummary: { running: true, tcpPort: 4456, discoverPort: 4457 }
+    bridgeSummary: { running: true, tcpPort: 4456, discoverPort: 4457 },
+    firewallProfile: "Private",
+    firewallBlocked: false,
+    isAdmin: true
 })
 probeEmpty := RunWindowsSetupProbes({ EnableWS: false, AudioRoutingMode: 0, ShowIndicator: false }, 0, {
     obsPortListening: false,
     audioMeterAvailable: false,
     lanIps: [],
-    bridgeSummary: { running: false, tcpPort: 4456, discoverPort: 4457 }
+    bridgeSummary: { running: false, tcpPort: 4456, discoverPort: 4457 },
+    firewallProfile: "Public",
+    firewallBlocked: true,
+    isAdmin: false
 })
-Assert("RunWindowsSetupProbes evaluates 4 checks accurately for ready vs unconfigured states",
-    probeOk.totalCount == 4 && probeOk.passedCount == 4
-    && probeNoGui.passedCount == 3 && !probeNoGui.steps[3].ok
-    && probeEmpty.totalCount == 4 && probeEmpty.passedCount == 0)
+Assert("RunWindowsSetupProbes evaluates 6 checks accurately for ready vs unconfigured states",
+    probeOk.totalCount == 6 && probeOk.passedCount == 6
+    && probeNoGui.passedCount == 5 && !probeNoGui.steps[3].ok
+    && probeEmpty.totalCount == 6 && probeEmpty.passedCount == 0)
 
 primM8Src := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
 remM8Src := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
@@ -2920,6 +2952,8 @@ SessionTimeline.Clear()
 secIni := A_Temp "\ps_sec_mic_test_" A_TickCount ".ini"
 if FileExist(secIni)
     FileDelete(secIni)
+if FileExist(secIni ".bak")
+    FileDelete(secIni ".bak")
 cfgSec := Config(secIni)
 Assert("Secondary Mic Pill defaults OFF with Independent SecondaryPosition='Default'",
     !cfgSec.ShowSecondaryMicHud && cfgSec.savedSecondaryX == "Default" && cfgSec.savedSecondaryY == "Default")
@@ -3022,6 +3056,8 @@ for gObj in GetHudGuiList(stSec, true) {
 }
 if FileExist(secIni)
     FileDelete(secIni)
+if FileExist(secIni ".bak")
+    FileDelete(secIni ".bak")
 
 ; Scope Guard: STRICTLY Primary PresenterSync.ahk ONLY (zero references in PresenterSync_Remote.ahk)
 primM9Src := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
@@ -3031,9 +3067,12 @@ Assert("Scope guard: Secondary Independent Mic Pill lives strictly in Primary Ap
     && InStr(remM9Src, UIConstants.APP_VERSION)
     && !RegExMatch(remM9Src, "SecondaryMicGui|ShowSecondaryMicHud|SecondaryPosition|ToggleSecondaryMic"))
 
-; Cleanup test ini
+; Cleanup test ini & timeline autosave
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
+SessionTimeline.ClearAutosave()
 
 ; ==============================================================================
 ; WRITE MASTER RESULTS REPORT

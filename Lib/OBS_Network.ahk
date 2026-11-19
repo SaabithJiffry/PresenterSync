@@ -574,7 +574,7 @@ UpdateHostInternetRelay(cfg, state) {
     if (state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
         SetTimer state.relayTimerFn, 0
     if (ShouldEnableHostInternetRelay(cfg)) {
-        if (!state.relayConnected)
+        if (!state.relayConnected && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
             SetTimer state.relayTimerFn, -80
     } else {
         state.relayConnected := false

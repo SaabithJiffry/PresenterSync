@@ -68,6 +68,8 @@ if (A_Args.Length >= 2 && A_Args[1] = "--serve") {
 testIni := A_ScriptDir "\test_host_bridge_cfg.ini"
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 cfg := Config(testIni)
 cfg.SessionPairingCode := "K7M-9P2"
 cfg.obsPassword := "bridgePass123"
@@ -401,6 +403,8 @@ Assert("StopHostCompanionBridge shuts down cleanly", !IsObject(g_HostCompanionBr
 
 if FileExist(testIni)
     FileDelete(testIni)
+if FileExist(testIni ".bak")
+    FileDelete(testIni ".bak")
 
 report := "=== PRESENTER SYNC HOST BRIDGE UNIT REPORT ===`nPassed: " PassCount " | Failed: " FailCount "`n`n"
 for r in results
