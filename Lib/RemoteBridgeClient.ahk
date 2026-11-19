@@ -1356,6 +1356,38 @@ GetRemoteConnectionModeLabel(state) {
     return "OBS :4455"
 }
 
+BuildRemotePillBadgeText(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return ""
+    if (cfg.HasOwnProp("ShowPillMiniBadges") && !cfg.ShowPillMiniBadges)
+        return ""
+    parts := []
+    if (state.HasOwnProp("timerState") && (state.timerState = "running" || state.timerState = "paused" || state.timerState = "overtime")) {
+        rem := state.HasOwnProp("timerRemainingSec") ? Integer(state.timerRemainingSec) : 0
+        isOt := (state.timerState = "overtime" || rem < 0)
+        absSec := Abs(rem)
+        parts.Push((isOt ? "-" : "") Format("{:02d}:{:02d}", absSec // 60, Mod(absSec, 60)))
+    }
+    if (state.HasOwnProp("isStandby") && state.isStandby)
+        parts.Push("BRB")
+    if ((state.HasOwnProp("recState") && state.recState == 1) || (state.HasOwnProp("obsRecState") && state.obsRecState == 1))
+        parts.Push("REC")
+    out := ""
+    for idx, p in parts
+        out .= (idx > 1 ? " " : "") p
+    return out
+}
+
+GetRemotePillAlertBorderArgb(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return 0
+    if (cfg.HasOwnProp("ShowPillMiniBadges") && !cfg.ShowPillMiniBadges)
+        return 0
+    if (state.HasOwnProp("voiceWhileMuted") && state.voiceWhileMuted && state.HasOwnProp("isMuted") && state.isMuted)
+        return 0xFFF59E0B
+    return 0
+}
+
 ClampRemotePositionToBounds(x, y, w, h, monLeft, monTop, monRight, monBottom) {
     maxX := Max(monLeft, monRight - Max(1, w))
     maxY := Max(monTop, monBottom - Max(1, h))
@@ -1475,5 +1507,23 @@ ProbeRemoteDualEndpoints(host, bridgePort := 4456, obsPort := 4455, probeFn := "
         obsDetail: obsDetail,
         summary: bridgeDetail " | " obsDetail
     }
+}
+
+ComputePositionRatio(x, y, monLeft, monTop, monRight, monBottom) {
+    monW := Max(1, Number(monRight) - Number(monLeft))
+    monH := Max(1, Number(monBottom) - Number(monTop))
+    xr := Max(0.0, Min(1.0, (Number(x) - Number(monLeft)) / monW))
+    yr := Max(0.0, Min(1.0, (Number(y) - Number(monTop)) / monH))
+    return {xRatio: Round(xr, 6), yRatio: Round(yr, 6)}
+}
+
+ResolvePositionFromRatio(xRatio, yRatio, w, h, monLeft, monTop, monRight, monBottom) {
+    monW := Max(1, Number(monRight) - Number(monLeft))
+    monH := Max(1, Number(monBottom) - Number(monTop))
+    xr := Max(0.0, Min(1.0, Number(xRatio)))
+    yr := Max(0.0, Min(1.0, Number(yRatio)))
+    rawX := Round(Number(monLeft) + (xr * monW))
+    rawY := Round(Number(monTop) + (yr * monH))
+    return ClampRemotePositionToBounds(rawX, rawY, w, h, monLeft, monTop, monRight, monBottom)
 }
 

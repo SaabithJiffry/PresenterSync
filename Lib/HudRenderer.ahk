@@ -79,10 +79,17 @@ _RenderMicPillSurface(hwnd, x, y, w, h, cfg, state, alpha, overrideMuted := "") 
     } else {
         bgRgb := mutedState ? state.colors.muted : state.colors.live
         brdBgr := mutedState ? state.colors.borderMuted : state.colors.borderLive
+        if (IsSet(GetRemotePillAlertBorderArgb) && GetRemotePillAlertBorderArgb(cfg, state) != 0)
+            brdBgr := UIConstants.RgbHexToBgrInt("F59E0B")
         useCustomContrast := (cfg.HasOwnProp("HudColorPreset") && NormalizeHudColorPreset(cfg.HudColorPreset) = "Custom")
         icHex := cfg.MonoIcon ? (mutedState ? state.colors.iconMuted : state.colors.iconLive) : (useCustomContrast ? PickReadableIconHex(bgRgb) : "FFFFFF")
         glyph := mutedState ? Chr(0xF781) : Chr(0xE720)
         lbl := mutedState ? "MUTED" : "LIVE"
+        if (IsSet(BuildRemotePillBadgeText)) {
+            badgeTxt := BuildRemotePillBadgeText(cfg, state)
+            if (badgeTxt != "")
+                lbl .= " " badgeTxt
+        }
     }
     contentArgb := Gdip.HexToArgb(icHex)
 

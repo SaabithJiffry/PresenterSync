@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.4.2
+; Version: 7.4.3
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.4.2.0
+;@Ahk2Exe-SetVersion 7.4.3.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -85,6 +85,9 @@ class RemoteConfig {
     EnableMagneticSnap := true
     HudClickThrough := false
     HudAutoDodge := false
+    LockHudPosition := false
+    EnableIdleAutoDim := false
+    ShowPillMiniBadges := true
     ExcludeFromCapture := true
     ConfirmBeforeStopRecording := true
     OpacityLevel := 220
@@ -95,9 +98,14 @@ class RemoteConfig {
     AutoCheckUpdates := true
     LastUpdateCheckEpoch := 0
     SkippedUpdateVersion := ""
+    RemoteNextSlideKey := ""
+    RemotePrevSlideKey := ""
+    RemoteTransitionKey := ""
 
     savedX := "Default"
     savedY := "Default"
+    savedXRatio := ""
+    savedYRatio := ""
 
     __New(filePath := "") {
         global g_RemoteCli
@@ -196,6 +204,9 @@ class RemoteConfig {
         this.ExitHotkey := this.Read("Shortcuts", "ExitHotkey", "!+F12")
         if (this.ExitHotkey = "")
             this.ExitHotkey := "!+F12"
+        this.RemoteNextSlideKey := this.Read("Shortcuts", "RemoteNextSlideKey", "")
+        this.RemotePrevSlideKey := this.Read("Shortcuts", "RemotePrevSlideKey", "")
+        this.RemoteTransitionKey := this.Read("Shortcuts", "RemoteTransitionKey", "")
 
         this.ShowIndicator := this.ReadBool("Appearance", "ShowIndicator", 1)
         rawTheme := StrLower(Trim(this.Read("Appearance", "ThemeMode", "System")))
@@ -216,6 +227,9 @@ class RemoteConfig {
         this.EnableMagneticSnap := this.ReadBool("Appearance", "EnableMagneticSnap", 1)
         this.HudClickThrough := this.ReadBool("Appearance", "HudClickThrough", 0)
         this.HudAutoDodge := this.ReadBool("Appearance", "HudAutoDodge", 0)
+        this.LockHudPosition := this.ReadBool("Appearance", "LockHudPosition", 0)
+        this.EnableIdleAutoDim := this.ReadBool("Appearance", "EnableIdleAutoDim", 0)
+        this.ShowPillMiniBadges := this.ReadBool("Appearance", "ShowPillMiniBadges", 1)
         this.ExcludeFromCapture := this.ReadBool("Appearance", "ExcludeFromCapture", 1)
         this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", 1)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
@@ -236,13 +250,19 @@ class RemoteConfig {
 
         this.savedX := this.Read("Position", "X", "Default")
         this.savedY := this.Read("Position", "Y", "Default")
+        this.savedXRatio := this.Read("Position", "XRatio", "")
+        this.savedYRatio := this.Read("Position", "YRatio", "")
     }
 
     ResetPosition() {
         this.savedX := "Default"
         this.savedY := "Default"
+        this.savedXRatio := ""
+        this.savedYRatio := ""
         this.Write("Position", "X", "Default")
         this.Write("Position", "Y", "Default")
+        this.Write("Position", "XRatio", "")
+        this.Write("Position", "YRatio", "")
     }
 
     ResetAppearance() {
@@ -256,6 +276,9 @@ class RemoteConfig {
         this.EnableMagneticSnap := true
         this.HudClickThrough := false
         this.HudAutoDodge := false
+        this.LockHudPosition := false
+        this.EnableIdleAutoDim := false
+        this.ShowPillMiniBadges := true
         this.ExcludeFromCapture := true
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
@@ -276,6 +299,9 @@ class RemoteConfig {
         this.WriteBool("Appearance", "EnableMagneticSnap", true)
         this.WriteBool("Appearance", "HudClickThrough", false)
         this.WriteBool("Appearance", "HudAutoDodge", false)
+        this.WriteBool("Appearance", "LockHudPosition", false)
+        this.WriteBool("Appearance", "EnableIdleAutoDim", false)
+        this.WriteBool("Appearance", "ShowPillMiniBadges", true)
         this.WriteBool("Appearance", "ExcludeFromCapture", true)
         this.Write("Appearance", "OpacityLevel", this.OpacityLevel)
         this.Write("Appearance", "IndicatorScale", this.IndicatorScale)
@@ -334,10 +360,13 @@ class RemoteState {
     animSeq := 0
     isDraggingHud := false
     isAutoDodged := false
+    isIdleDimmed := false
+    lastActivityTick := 0
 
     dragTimerFn := ""
     breathTimerFn := ""
     autoDodgeTimerFn := ""
+    idleDimTimerFn := ""
     reconnectTimerFn := ""
     heartbeatTimerFn := ""
     lanRepromoteTimerFn := ""
@@ -364,6 +393,9 @@ class RemoteState {
     activePointerKey := ""
     activeToggleMuteHk := ""
     activeExitHk := ""
+    activeRemoteNextSlideHk := ""
+    activeRemotePrevSlideHk := ""
+    activeRemoteTransitionHk := ""
     onRemoteCloseSignal := ""
 
     MicGui := ""
@@ -403,6 +435,8 @@ class RemoteState {
 
         this.breathTimerFn := BreathingAnimation.Bind(cfg, this)
         this.autoDodgeTimerFn := AutoDodgeTick.Bind(cfg, this)
+        this.lastActivityTick := A_TickCount
+        this.idleDimTimerFn := RemoteIdleDimTick.Bind(cfg, this)
         this.reconnectTimerFn := ConnectToRemoteOBS.Bind(cfg, this)
         this.heartbeatTimerFn := RemoteHeartbeatTick.Bind(cfg, this)
         this.lanRepromoteTimerFn := TryPromoteRemoteWanToLan.Bind(cfg, this)
@@ -433,10 +467,19 @@ class RemoteState {
 
         rawX := cfg.savedX
         rawY := cfg.savedY
-        if (rawX = "Default" || rawY = "Default" || !IsInteger(rawX) || !IsInteger(rawY)) {
+        hasRatio := (cfg.HasOwnProp("savedXRatio") && cfg.HasOwnProp("savedYRatio")
+            && cfg.savedXRatio != "" && cfg.savedYRatio != ""
+            && IsNumber(cfg.savedXRatio) && IsNumber(cfg.savedYRatio))
+        if (rawX = "Default" || rawY = "Default" || (!hasRatio && (!IsInteger(rawX) || !IsInteger(rawY)))) {
             MonitorGetWorkArea(1, &Left, &Top, &Right, &Bottom)
             this.savedX := Max(Left + UIConstants.SCREEN_MIN_PAD, Right - this.baseWidth - UIConstants.SCREEN_MARGIN_X)
             this.savedY := Max(Top + UIConstants.SCREEN_MIN_PAD, Bottom - this.baseHeight - UIConstants.SCREEN_MARGIN_Y)
+        } else if (hasRatio) {
+            vLeft := SysGet(76), vTop := SysGet(77)
+            vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+            pos := ResolvePositionFromRatio(cfg.savedXRatio, cfg.savedYRatio, this.baseWidth, this.baseHeight, vLeft, vTop, vRight, vBottom)
+            this.savedX := pos.x
+            this.savedY := pos.y
         } else {
             sx := Integer(rawX), sy := Integer(rawY)
             vLeft := SysGet(76), vTop := SysGet(77)
@@ -519,7 +562,59 @@ if (AppConfig.FirstRun || (AppConfig.NetworkMode = "Internet" ? (AppConfig.Inter
 GetRemoteEffectiveAlpha(state) {
     if (IsObject(state) && state.HasOwnProp("isAutoDodged") && state.isAutoDodged)
         return Min(state.baseAlpha, UIConstants.DODGE_ALPHA)
+    if (IsObject(state) && state.HasOwnProp("isIdleDimmed") && state.isIdleDimmed)
+        return Min(state.baseAlpha, 90)
     return state.baseAlpha
+}
+
+NotifyRemoteActivity(cfg, state) {
+    if (!IsObject(state))
+        return
+    state.lastActivityTick := A_TickCount
+    if (state.HasOwnProp("isIdleDimmed") && state.isIdleDimmed) {
+        state.isIdleDimmed := false
+        state.currentAlpha := GetRemoteEffectiveAlpha(state)
+        if (state.HasOwnProp("MicGui") && IsGuiValid(state.MicGui))
+            try Gdip.SetLayeredAlpha(state.MicGui.Hwnd, state.currentAlpha)
+    }
+}
+
+UpdateRemoteIdleDimTimer(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("idleDimTimerFn") || !state.idleDimTimerFn)
+        return
+    needDim := (IsObject(cfg) && cfg.HasOwnProp("ShowIndicator") && cfg.ShowIndicator
+        && cfg.HasOwnProp("EnableIdleAutoDim") && cfg.EnableIdleAutoDim
+        && state.HasOwnProp("MicGui") && IsGuiValid(state.MicGui))
+    SetTimer(state.idleDimTimerFn, needDim ? 1000 : 0)
+    if (!needDim && state.HasOwnProp("isIdleDimmed") && state.isIdleDimmed) {
+        state.isIdleDimmed := false
+        state.currentAlpha := GetRemoteEffectiveAlpha(state)
+        if (IsGuiValid(state.MicGui))
+            try Gdip.SetLayeredAlpha(state.MicGui.Hwnd, state.currentAlpha)
+    }
+}
+
+RemoteIdleDimTick(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return
+    if (!cfg.HasOwnProp("EnableIdleAutoDim") || !cfg.EnableIdleAutoDim || !cfg.ShowIndicator)
+        return
+    if (!state.HasOwnProp("MicGui") || !IsGuiValid(state.MicGui) || state.isDraggingHud)
+        return
+    pt := Buffer(8, 0)
+    if (DllCall("GetCursorPos", "Ptr", pt, "Int")) {
+        mx := NumGet(pt, 0, "Int"), my := NumGet(pt, 4, "Int")
+        if (mx >= state.savedX && mx <= (state.savedX + state.baseWidth)
+            && my >= state.savedY && my <= (state.savedY + state.baseHeight)) {
+            NotifyRemoteActivity(cfg, state)
+            return
+        }
+    }
+    if (!state.isIdleDimmed && (A_TickCount - state.lastActivityTick) >= 10000) {
+        state.isIdleDimmed := true
+        state.currentAlpha := GetRemoteEffectiveAlpha(state)
+        try Gdip.SetLayeredAlpha(state.MicGui.Hwnd, state.currentAlpha)
+    }
 }
 
 ConnectToRemoteOBS(cfg, state) {
@@ -1431,13 +1526,15 @@ OnRemotePowerBroadcast(cfg, state, wParam, lParam, msg, hwnd) {
 OnRemoteDisplayChange(cfg, state, wParam, lParam, msg, hwnd) {
     if (!IsObject(state) || !state.HasOwnProp("MicGui") || !IsObject(state.MicGui))
         return
+    prevX := state.savedX
+    prevY := state.savedY
     state.ComputeDimensions(cfg)
     vLeft := SysGet(76), vTop := SysGet(77)
     vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
     clamped := ClampRemotePositionToBounds(state.savedX, state.savedY, state.baseWidth, state.baseHeight, vLeft, vTop, vRight, vBottom)
-    if (clamped.x != state.savedX || clamped.y != state.savedY) {
-        state.savedX := clamped.x
-        state.savedY := clamped.y
+    state.savedX := clamped.x
+    state.savedY := clamped.y
+    if (clamped.x != prevX || clamped.y != prevY) {
         try state.MicGui.Move(clamped.x, clamped.y, state.baseWidth, state.baseHeight)
         if (IsObject(cfg) && cfg.HasMethod("Write")) {
             cfg.savedX := clamped.x
@@ -1468,6 +1565,7 @@ RemoteHeartbeatTick(cfg, state) {
 
 SyncRemoteMuteState(cfg, state, newMuted) {
     if (state.isMuted != newMuted) {
+        NotifyRemoteActivity(cfg, state)
         state.isMuted := newMuted
         cfg.IsMuted := newMuted
         cfg.WriteBool("Settings", "IsMuted", newMuted)
@@ -1745,6 +1843,21 @@ RegisterRemoteAppHotkeys(cfg, state) {
             state.activeExitHk := cfg.ExitHotkey
         }
     }
+    remoteBindings := [
+        ["RemoteNextSlideKey", "activeRemoteNextSlideHk", "ppt_next"],
+        ["RemotePrevSlideKey", "activeRemotePrevSlideHk", "ppt_prev"],
+        ["RemoteTransitionKey", "activeRemoteTransitionHk", "transition_scene"]
+    ]
+    for _, spec in remoteBindings {
+        cfgProp := spec[1], stateProp := spec[2], act := spec[3]
+        hkVal := cfg.HasOwnProp(cfgProp) ? cfg.%cfgProp% : ""
+        if (hkVal != "" && hkVal != "None") {
+            try {
+                Hotkey hkVal, ((a, *) => SendRemoteBridgeDeckCommand(cfg, state, a)).Bind(act), "On"
+                state.%stateProp% := hkVal
+            }
+        }
+    }
 }
 
 UnregisterRemoteAppHotkeys(cfg, state) {
@@ -1759,6 +1872,20 @@ UnregisterRemoteAppHotkeys(cfg, state) {
         try Hotkey hkExit, "Off"
     }
     state.activeExitHk := ""
+
+    remoteBindings := [
+        ["RemoteNextSlideKey", "activeRemoteNextSlideHk"],
+        ["RemotePrevSlideKey", "activeRemotePrevSlideHk"],
+        ["RemoteTransitionKey", "activeRemoteTransitionHk"]
+    ]
+    for _, spec in remoteBindings {
+        cfgProp := spec[1], stateProp := spec[2]
+        hkVal := (state.HasOwnProp(stateProp) && state.%stateProp% != "") ? state.%stateProp% : (cfg.HasOwnProp(cfgProp) ? cfg.%cfgProp% : "")
+        if (hkVal != "" && hkVal != "None") {
+            try Hotkey hkVal, "Off"
+        }
+        state.%stateProp% := ""
+    }
 }
 
 ; --- SINGLE-PILL HUD CREATION & DRAGGING ---
@@ -1781,6 +1908,7 @@ InitRemoteHUD(cfg, state) {
     ApplyHudClickThroughStyle(cfg, state)
     ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
     UpdateAutoDodgeTimer(cfg, state)
+    UpdateRemoteIdleDimTimer(cfg, state)
 
     OnMessage(0x0201, WM_REMOTE_LBUTTONDOWN.Bind(cfg, state))
     OnMessage(0x0203, (wP, lP, m, h) => (IsObject(state.MicGui) && h == state.MicGui.Hwnd) ? ShowRemoteTouchDeckGUI(cfg, state) : 0)
@@ -1795,12 +1923,23 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     if (!IsObject(state.MicGui) || hwnd != state.MicGui.Hwnd)
         return
 
+    NotifyRemoteActivity(cfg, state)
     prevX := state.savedX
     prevY := state.savedY
     prevMouseMode := A_CoordModeMouse
     CoordMode("Mouse", "Screen")
     MouseGetPos(&startMX, &startMY)
     downTick := A_TickCount
+
+    if (cfg.HasOwnProp("LockHudPosition") && cfg.LockHudPosition) {
+        KeyWait "LButton"
+        MouseGetPos(&endMX, &endMY)
+        CoordMode("Mouse", prevMouseMode)
+        isShortClick := (Abs(endMX - startMX) <= 6 && Abs(endMY - startMY) <= 6 && (A_TickCount - downTick) < 400)
+        if (isShortClick)
+            HandleRemoteHudClick(cfg, state)
+        return
+    }
 
     state.animSeq += 1
     SetTimer state.breathTimerFn, 0
@@ -1831,6 +1970,13 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
             cfg.savedY := Y
             cfg.Write("Position", "X", X)
             cfg.Write("Position", "Y", Y)
+            vLeft := SysGet(76), vTop := SysGet(77)
+            vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+            ratio := ComputePositionRatio(X, Y, vLeft, vTop, vRight, vBottom)
+            cfg.savedXRatio := ratio.xRatio
+            cfg.savedYRatio := ratio.yRatio
+            cfg.Write("Position", "XRatio", ratio.xRatio)
+            cfg.Write("Position", "YRatio", ratio.yRatio)
         }
     }
     state.currentAlpha := GetRemoteEffectiveAlpha(state)
@@ -1858,8 +2004,10 @@ HandleRemoteHudClick(cfg, state) {
 }
 
 WM_REMOTE_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
-    if (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
+    if (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd) {
+        NotifyRemoteActivity("", state)
         A_TrayMenu.Show()
+    }
 }
 
 OnRemoteMenuLoop(state, isEnter, wParam, lParam, msg, hwnd) {
@@ -1912,6 +2060,7 @@ RefreshRemoteHudAppearance(cfg, state) {
     ApplyHudClickThroughStyle(cfg, state)
     ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
     UpdateAutoDodgeTimer(cfg, state)
+    UpdateRemoteIdleDimTimer(cfg, state)
     UpdateRemoteTouchDeckUI(cfg, state)
 }
 
@@ -2210,6 +2359,17 @@ BuildRemoteTrayMenu(cfg, state) {
     if (cfg.HudAutoDodge)
         AppearanceMenu.Check("Auto-Dodge HUD on Hover")
 
+    AppearanceMenu.Add("Auto-Dim HUD When Idle (10s)", (*) => ToggleHudOptionAndRebuild(cfg, state, "EnableIdleAutoDim", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu))
+    if (cfg.EnableIdleAutoDim)
+        AppearanceMenu.Check("Auto-Dim HUD When Idle (10s)")
+    AppearanceMenu.Add("Show Pill Mini-Badges (Timer / BRB / REC)", (*) => ToggleHudOptionAndRebuild(cfg, state, "ShowPillMiniBadges", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu))
+    if (cfg.ShowPillMiniBadges)
+        AppearanceMenu.Check("Show Pill Mini-Badges (Timer / BRB / REC)")
+
+    AppearanceMenu.Add("Lock Pill Position", (*) => ToggleHudOptionAndRebuild(cfg, state, "LockHudPosition", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu))
+    if (cfg.LockHudPosition)
+        AppearanceMenu.Check("Lock Pill Position")
+
     AppearanceMenu.Add("Hide HUD from Screen Share / Capture", (*) => ToggleHudOptionAndRebuild(cfg, state, "ExcludeFromCapture", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu))
     if (cfg.ExcludeFromCapture)
         AppearanceMenu.Check("Hide HUD from Screen Share / Capture")
@@ -2296,6 +2456,7 @@ BuildRemoteTrayMenu(cfg, state) {
     ; 5. HELP, SAFETY & EXIT
     A_TrayMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
     A_TrayMenu.Add("View Error && Diagnostic Log...", (*) => DiagnosticLogger.ShowLogViewerWindow(cfg, state))
+    A_TrayMenu.Add("Export Sanitized Diagnostics...", (*) => ExportRemoteSanitizedDiagnostics(cfg, state))
     A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI(cfg, state))
     A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync_Remote.exe", cfg))
     A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
@@ -2481,8 +2642,14 @@ ChangeRemoteAppHotkeysUI(cfg, state, *) {
         UnregisterRemoteAppHotkeys(cfg, state)
         cfg.PptHotkey := values["ppt"]
         cfg.ExitHotkey := values["exit"]
+        cfg.RemoteNextSlideKey := values["nextSlide"]
+        cfg.RemotePrevSlideKey := values["prevSlide"]
+        cfg.RemoteTransitionKey := values["transition"]
         cfg.Write("Shortcuts", "PptHotkey", cfg.PptHotkey)
         cfg.Write("Shortcuts", "ExitHotkey", cfg.ExitHotkey)
+        cfg.Write("Shortcuts", "RemoteNextSlideKey", cfg.RemoteNextSlideKey)
+        cfg.Write("Shortcuts", "RemotePrevSlideKey", cfg.RemotePrevSlideKey)
+        cfg.Write("Shortcuts", "RemoteTransitionKey", cfg.RemoteTransitionKey)
         if dlg.HasOwnProp("_releaseState")
             dlg._releaseState.Call()
         dlg.Destroy()
@@ -2492,16 +2659,51 @@ ChangeRemoteAppHotkeysUI(cfg, state, *) {
     }
 
     elements := [
-        {type: "Text", opts: "xm w170 h25 +0x200", text: "Toggle Pointer Mute:"},
+        {type: "Text", opts: "xm w190 h25 +0x200", text: "Toggle Pointer Mute:"},
         {type: "Hotkey", id: "ppt", opts: "x+10 yp w130 h25", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
-        {type: "Text", opts: "xm y+8 w170 h25 +0x200", text: "Exit PresenterSync Remote:"},
-        {type: "Hotkey", id: "exit", opts: "x+10 yp w130 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."}
+        {type: "Text", opts: "xm y+8 w190 h25 +0x200", text: "Exit PresenterSync Remote:"},
+        {type: "Hotkey", id: "exit", opts: "x+10 yp w130 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Text", opts: "xm y+12 w190 h25 +0x200", text: "Next Slide (Optional):"},
+        {type: "Hotkey", id: "nextSlide", opts: "x+10 yp w130 h25", value: cfg.RemoteNextSlideKey},
+        {type: "Text", opts: "xm y+8 w190 h25 +0x200", text: "Previous Slide (Optional):"},
+        {type: "Hotkey", id: "prevSlide", opts: "x+10 yp w130 h25", value: cfg.RemotePrevSlideKey},
+        {type: "Text", opts: "xm y+8 w190 h25 +0x200", text: "OBS Transition (Optional):"},
+        {type: "Hotkey", id: "transition", opts: "x+10 yp w130 h25", value: cfg.RemoteTransitionKey}
     ]
 
     return BuildSettingsWindow("Edit Remote App Shortcuts", elements, SaveRemoteAppHk, {
         saveBtnText: "Save & Apply",
-        saveBtnOpts: "xm w310 h32 Default y+16"
+        saveBtnOpts: "xm w330 h32 Default y+16"
     })
+}
+
+ExportRemoteSanitizedDiagnostics(cfg, state := "", *) {
+    logDir := IsSet(DiagnosticLogger) ? DiagnosticLogger.LogDir : (A_ScriptDir "\logs")
+    if (!DirExist(logDir))
+        DirCreate(logDir)
+    outPath := logDir "\PresenterSync_Remote_Diagnostics_" FormatTime(A_Now, "yyyyMMdd_HHmmss") ".txt"
+    secrets := IsSet(DiagnosticLogger) ? DiagnosticLogger._CollectSecrets(cfg) : []
+    if (IsObject(cfg)) {
+        for _, prop in ["ObsPassword", "BridgeToken", "SessionPairingCode", "InternetPairingCode"] {
+            if (cfg.HasOwnProp(prop) && cfg.%prop% != "")
+                secrets.Push(String(cfg.%prop%))
+        }
+    }
+    report := "=== PresenterSync Remote Sanitized Diagnostics ===`r`n"
+        . "Timestamp: " FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss") "`r`n"
+        . "Version: " (IsSet(UIConstants) ? UIConstants.APP_VERSION : "") "`r`n"
+        . "AHK: " A_AhkVersion " | OS: " A_OSVersion "`r`n"
+    if (IsSet(DiagnosticLogger)) {
+        report .= "`r`n--- Settings Snapshot ---`r`n" DiagnosticLogger._FormatSettingsSnapshot(cfg) "`r`n"
+            . "`r`n--- State Snapshot ---`r`n" DiagnosticLogger._FormatStateSnapshot(state) "`r`n"
+            . "`r`n--- Recent Log Tail ---`r`n" DiagnosticLogger.GetRecentLogTail(24000) "`r`n"
+        report := DiagnosticLogger._ScrubSecrets(report, secrets)
+    }
+    try FileDelete(outPath)
+    FileAppend(report, outPath, "UTF-8")
+    A_Clipboard := outPath
+    TrayTip("Sanitized diagnostics exported to:`n" outPath "`n(Path copied to clipboard)", "PresenterSync Remote", 1)
+    return outPath
 }
 
 BuildRemoteHelpStatusLine(cfg, state) {

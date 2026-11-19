@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.4.2"
+    static APP_VERSION := "7.4.3"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1305,6 +1305,7 @@ class Config {
     EnableZoom := false
 
     ShowIndicator := true
+    ShowPillMiniBadges := true
     ShowExtraHuds := true
     ShowRow2RecChatHud := true
     ShowRow3StudioSceneHud := true
@@ -1550,6 +1551,7 @@ class Config {
         ; OBS WebSocket and Conferencing (Zoom/Teams) tracking may now run simultaneously.
 
         this.ShowIndicator := this.ReadBool("Settings", "ShowIndicator", true)
+        this.ShowPillMiniBadges := this.ReadBool("Settings", "ShowPillMiniBadges", true)
         this.ShowExtraHuds := this.ReadBool("Settings", "ShowExtraHuds", true)
         this.ShowRow2RecChatHud := this.ReadBool("Settings", "ShowRow2RecChatHud", true)
         this.ShowRow3StudioSceneHud := this.ReadBool("Settings", "ShowRow3StudioSceneHud", true)
@@ -1764,6 +1766,7 @@ class Config {
             { sec: "Settings", key: "EnableWS", prop: "EnableWS", kind: "bool" },
             { sec: "Settings", key: "EnableZoom", prop: "EnableZoom", kind: "bool" },
             { sec: "Settings", key: "ShowIndicator", prop: "ShowIndicator", kind: "bool" },
+            { sec: "Settings", key: "ShowPillMiniBadges", prop: "ShowPillMiniBadges", kind: "bool" },
             { sec: "Settings", key: "ShowExtraHuds", prop: "ShowExtraHuds", kind: "bool" },
             { sec: "Settings", key: "ShowRow2RecChatHud", prop: "ShowRow2RecChatHud", kind: "bool" },
             { sec: "Settings", key: "ShowRow3StudioSceneHud", prop: "ShowRow3StudioSceneHud", kind: "bool" },
