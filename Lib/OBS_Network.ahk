@@ -276,6 +276,148 @@ CheckMeetBackgroundTabWarning(cfg, state, winSnapshots := "") {
     return warn
 }
 
+_GetComItemOrIndex(col, idx) {
+    if (!IsObject(col))
+        return ""
+    try return col.Item(idx)
+    try return col[idx]
+    return ""
+}
+
+PollPowerPointSlideTelemetry(state, pptApp := "") {
+    if (!IsObject(state))
+        return false
+
+    app := ""
+    if (IsObject(pptApp)) {
+        app := pptApp
+    } else {
+        try app := ComObjActive("PowerPoint.Application")
+        catch
+            app := ""
+    }
+
+    if (IsObject(app)) {
+        ssWinCount := 0
+        try ssWinCount := Integer(app.SlideShowWindows.Count)
+        if (ssWinCount >= 1) {
+            ssWin := _GetComItemOrIndex(app.SlideShowWindows, 1)
+            if (IsObject(ssWin)) {
+                curIdx := 0
+                total := 0
+                title := ""
+                notes := ""
+                try {
+                    view := ssWin.View
+                    curIdx := Integer(view.CurrentShowPosition)
+                    slideObj := view.Slide
+                    try total := Integer(ssWin.Presentation.Slides.Count)
+                    catch {
+                        try total := Integer(app.ActivePresentation.Slides.Count)
+                    }
+                    try title := Trim(String(slideObj.Shapes.Title.TextFrame.TextRange.Text))
+                    try {
+                        ph := _GetComItemOrIndex(slideObj.NotesPage.Shapes.Placeholders, 2)
+                        if (IsObject(ph))
+                            notes := Trim(String(ph.TextFrame.TextRange.Text))
+                    }
+                    if (StrLen(notes) > 2000)
+                        notes := SubStr(notes, 1, 2000)
+                }
+                prevIdx := state.HasOwnProp("slideIndex") ? Integer(state.slideIndex) : 0
+                state.slideIndex := curIdx
+                state.slideTotal := total
+                state.slideTitle := title
+                state.slideNotes := notes
+                if (curIdx > 0 && curIdx != prevIdx && IsSet(SessionTimeline)) {
+                    try SessionTimeline.Record("slide", "Slide " curIdx (total > 0 ? ("/" total) : "") (title != "" ? (" - " title) : ""), state, title)
+                }
+                return true
+            }
+        }
+    }
+
+    state.slideIndex := 0
+    state.slideTotal := 0
+    state.slideTitle := ""
+    state.slideNotes := ""
+    return false
+}
+
+StartPowerPointSlideshow(pptApp := "") {
+    app := ""
+    if (IsObject(pptApp)) {
+        app := pptApp
+    } else {
+        try app := ComObjActive("PowerPoint.Application")
+        catch
+            app := ""
+    }
+    if (IsObject(app)) {
+        try {
+            app.ActivePresentation.SlideShowSettings.Run()
+            return true
+        }
+    }
+    if (WinExist("ahk_exe POWERPNT.EXE")) {
+        try {
+            WinActivate("ahk_exe POWERPNT.EXE")
+            Send("{F5}")
+            return true
+        }
+    }
+    return false
+}
+
+GetFallbackSlideKey(exe, dir := "next") {
+    exeLow := StrLower(Trim(String(exe)))
+    dLow := StrLower(Trim(String(dir)))
+    isPrev := (dLow = "prev" || dLow = "previous" || dLow = "{left}" || dLow = "{up}" || dLow = "{pgup}")
+    if (exeLow = "acrobat.exe" || exeLow = "acrord32.exe" || exeLow = "sumatrapdf.exe" || exeLow = "foxitpdfreader.exe")
+        return isPrev ? "{PgUp}" : "{PgDn}"
+    if (exeLow = "chrome.exe" || exeLow = "msedge.exe" || exeLow = "brave.exe" || exeLow = "firefox.exe")
+        return isPrev ? "{Left}" : "{Right}"
+    return ""
+}
+
+TryDispatchFallbackSlideKey(dir := "next", mockWin := "", dryRun := false) {
+    targetExe := ""
+    targetSpec := ""
+    isActive := false
+    if (IsObject(mockWin)) {
+        targetExe := mockWin.HasOwnProp("exe") ? String(mockWin.exe) : ""
+        isActive := mockWin.HasOwnProp("active") ? !!mockWin.active : true
+        targetSpec := "ahk_exe " targetExe
+    } else {
+        activeExe := ""
+        try activeExe := WinGetProcessName("A")
+        if (activeExe != "" && GetFallbackSlideKey(activeExe, dir) != "") {
+            targetExe := activeExe
+            targetSpec := "A"
+            isActive := true
+        } else {
+            for _, cand in ["Acrobat.exe", "AcroRd32.exe", "SumatraPDF.exe", "FoxitPDFReader.exe", "chrome.exe", "msedge.exe", "brave.exe", "firefox.exe"] {
+                if (WinExist("ahk_exe " cand)) {
+                    targetExe := cand
+                    targetSpec := "ahk_exe " cand
+                    break
+                }
+            }
+        }
+    }
+    key := GetFallbackSlideKey(targetExe, dir)
+    if (key = "")
+        return { handled: false, exe: "", key: "" }
+    if (!dryRun && (!IsSet(g_IsTestMode) || !g_IsTestMode)) {
+        if (isActive) {
+            try Send(key)
+        } else if (targetSpec != "") {
+            try ControlSend(key, , targetSpec)
+        }
+    }
+    return { handled: true, exe: targetExe, key: key }
+}
+
 GetConferencingWindowSpec(appType := "Zoom") {
     switch NormalizeConferencingApp(appType) {
         case "Microsoft Teams":
@@ -1241,7 +1383,8 @@ ExecuteHostRemotePptCommand(cfg, state, direction := "next") {
     }
     if (!cfg.HasOwnProp("EnablePPT") || !cfg.EnablePPT)
         return false
-    return false
+    fb := TryDispatchFallbackSlideKey(isPrev ? "prev" : "next")
+    return fb.handled
 }
 
 _DispatchHostRemoteControlSend(cfg, state, nextMuted) {

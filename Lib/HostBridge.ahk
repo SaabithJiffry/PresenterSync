@@ -1537,6 +1537,10 @@ class HostCompanionBridge {
             case "ppt_prev":
                 ok := ExecuteHostRemotePptCommand(this.cfg, this.state, "prev")
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"ppt_prev","ok":' (ok ? "true" : "false") '}')
+            case "slide_start":
+                ok := IsSet(StartPowerPointSlideshow) ? StartPowerPointSlideshow() : false
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"slide_start","ok":' (ok ? "true" : "false") '}')
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "toggle_record":
                 ok := ExecuteHostToggleRecord(this.cfg, this.state)
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_record","ok":' (ok ? "true" : "false") '}')
@@ -1606,6 +1610,10 @@ class HostCompanionBridge {
         recSrcTag := this.state.HasOwnProp("recSourceTag") ? String(this.state.recSourceTag) : ""
         meetBgWarnStr := (this.state.HasOwnProp("meetBgTabWarn") && this.state.meetBgTabWarn) ? "true" : "false"
         detConfApp := this.state.HasOwnProp("detectedConfApp") ? String(this.state.detectedConfApp) : ""
+        sIdx := this.state.HasOwnProp("slideIndex") ? Integer(this.state.slideIndex) : 0
+        sTot := this.state.HasOwnProp("slideTotal") ? Integer(this.state.slideTotal) : 0
+        sTitle := this.state.HasOwnProp("slideTitle") ? String(this.state.slideTitle) : ""
+        sNotes := this.state.HasOwnProp("slideNotes") ? String(this.state.slideNotes) : ""
         streamWarnStr := ((this.state.HasOwnProp("streamDropWarn") && this.state.streamDropWarn) || (this.state.HasOwnProp("streamState") && this.state.streamState == 2)) ? "true" : "false"
         voiceMutedStr := (this.state.HasOwnProp("voiceWhileMuted") && this.state.voiceWhileMuted) ? "true" : "false"
         osDriftStr := (this.state.HasOwnProp("osMicMutedDrift") && this.state.osMicMutedDrift) ? "true" : "false"
@@ -1627,7 +1635,7 @@ class HostCompanionBridge {
         tRem := this.state.HasOwnProp("timerRemainingSec") ? Integer(this.state.timerRemainingSec) : 600
         tPre := this.state.HasOwnProp("timerPresetSec") ? Integer(this.state.timerPresetSec) : 600
         hostUuid := EnsureHostUuid(this.cfg)
-        return '"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount
+        return '"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount
     }
 
     _BuildMuteStateJson() {
