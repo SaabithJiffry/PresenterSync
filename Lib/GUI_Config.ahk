@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.5.5"
+    static APP_VERSION := "7.6.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
