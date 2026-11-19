@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.2.1
+; Version: 7.2.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.2.1.0
+;@Ahk2Exe-SetVersion 7.2.2.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -302,6 +302,9 @@ class RemoteState {
     streamDropWarn := false
     voiceWhileMuted := false
     osMicMutedDrift := false
+    lowDiskWarnLevel := 0
+    lowDiskMb := -1
+    deadMicWarn := false
     studioModeActive := false
     activeScene := "Scene"
     previewScene := ""
@@ -1003,6 +1006,9 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     streamDropWarn: state.streamDropWarn,
                     voiceWhileMuted: state.voiceWhileMuted,
                     osMicMutedDrift: state.osMicMutedDrift,
+                    lowDiskWarnLevel: state.lowDiskWarnLevel,
+                    lowDiskMb: state.lowDiskMb,
+                    deadMicWarn: state.deadMicWarn,
                     isStandby: (dParts[1] = "1" || dParts[1] = "true"),
                     timerState: dParts[3],
                     timerRemainingSec: IsInteger(dParts[4]) ? Integer(dParts[4]) : state.timerRemainingSec,
@@ -1469,6 +1475,17 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
     prevWarn := state.streamDropWarn
     prevVoiceWarn := state.voiceWhileMuted
     prevOsDrift := state.HasOwnProp("osMicMutedDrift") ? !!state.osMicMutedDrift : false
+    prevDiskLvl := state.lowDiskWarnLevel
+    prevDeadMic := state.deadMicWarn
+    state.lowDiskWarnLevel := (ev.HasOwnProp("lowDiskWarnLevel") && IsNumber(ev.lowDiskWarnLevel)) ? Integer(ev.lowDiskWarnLevel) : 0
+    state.lowDiskMb := (ev.HasOwnProp("lowDiskMb") && IsNumber(ev.lowDiskMb)) ? Integer(ev.lowDiskMb) : -1
+    state.deadMicWarn := ev.HasOwnProp("deadMicWarn") ? !!ev.deadMicWarn : false
+    if (state.lowDiskWarnLevel > prevDiskLvl && state.lowDiskWarnLevel > 0) {
+        try TrayTip("Low disk space on Host recording drive: " state.lowDiskMb " MB free", "PresenterSync Remote", state.lowDiskWarnLevel >= 2 ? 0x3 : 0x2)
+    }
+    if (state.deadMicWarn && !prevDeadMic) {
+        try TrayTip("Host mic is LIVE but no audio detected - check hardware switch or input", "PresenterSync Remote", 0x2)
+    }
     state.osMicMutedDrift := ev.HasOwnProp("osMicMutedDrift") ? !!ev.osMicMutedDrift : false
     if (state.osMicMutedDrift && !prevOsDrift) {
         try TrayTip("OS Mic Muted - Windows hardware/privacy switch is muting the host mic while LIVE", "PresenterSync Remote", 0x2)
@@ -1512,7 +1529,7 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
         }
     }
 
-    changed := (prevRec != state.recState || prevOsDrift != state.osMicMutedDrift || prevWarn != state.streamDropWarn || prevVoiceWarn != state.voiceWhileMuted
+    changed := (prevRec != state.recState || prevDiskLvl != state.lowDiskWarnLevel || prevDeadMic != state.deadMicWarn || prevOsDrift != state.osMicMutedDrift || prevWarn != state.streamDropWarn || prevVoiceWarn != state.voiceWhileMuted
         || prevStandby != state.isStandby || prevTimerSt != state.timerState || prevTimerRem != state.timerRemainingSec
         || prevScene != state.activeScene || state.recState > 0)
     if (changed) {
@@ -1897,6 +1914,10 @@ GetRemoteTrayStatusText(state) {
             txt .= " | ⚠ STREAM WARN"
         if (state.osMicMutedDrift)
             txt .= " | OS MIC MUTED"
+        if (state.lowDiskWarnLevel > 0)
+            txt .= (state.lowDiskWarnLevel >= 2 ? " | LOW DISK CRITICAL " : " | LOW DISK ") state.lowDiskMb "MB"
+        if (state.deadMicWarn)
+            txt .= " | DEAD MIC"
         if (state.voiceWhileMuted && state.isMuted)
             txt .= " | ⚠ MIC SIGNAL"
         return txt

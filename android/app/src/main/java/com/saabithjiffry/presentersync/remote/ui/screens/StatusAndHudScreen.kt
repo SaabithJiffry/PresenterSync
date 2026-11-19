@@ -274,6 +274,22 @@ internal fun StatusAndActionsCard(
                                 color = Color(0xFFDC2626)
                             )
                         }
+                        if (conn.lowDiskWarnLevel > 0) {
+                            Text(
+                                text = if (conn.lowDiskWarnLevel >= 2) "LOW DISK CRITICAL - ${conn.lowDiskMb} MB free on Host recording drive" else "Low disk space - ${conn.lowDiskMb} MB free on Host recording drive",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (conn.lowDiskWarnLevel >= 2) Color(0xFFDC2626) else Color(0xFFD97706)
+                            )
+                        }
+                        if (conn.deadMicWarn) {
+                            Text(
+                                text = "Host mic is LIVE but no audio detected - check hardware switch or input",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFDC2626)
+                            )
+                        }
                         if (conn.voiceWhileMuted && conn.isMuted) {
                             Text(
                                 text = "⚠ You're on mute — mic signal detected on Host",
