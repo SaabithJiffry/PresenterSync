@@ -282,6 +282,10 @@ class FloatingHudForegroundService : LifecycleService() {
     }
 
     private fun updateNotification(cfg: RemoteConfig, conn: ConnectionUiState) {
+        try {
+            com.saabithjiffry.presentersync.remote.widget.PresenterSyncWidgetProvider.requestUpdate(this)
+        } catch (_: Throwable) {
+        }
         val mgr = getSystemService(NotificationManager::class.java) ?: return
         mgr.notify(NOTIFICATION_ID, buildNotification(cfg, conn))
     }
