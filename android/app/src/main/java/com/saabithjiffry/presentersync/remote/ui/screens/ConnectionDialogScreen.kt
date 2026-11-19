@@ -1,6 +1,21 @@
 package com.saabithjiffry.presentersync.remote.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.os.PowerManager
+import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import com.saabithjiffry.presentersync.remote.config.PairingUriBuilder
+import com.saabithjiffry.presentersync.remote.network.DualEndpointProbe
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -654,6 +669,110 @@ fun ConnectionSettingsForm(
             )
         }
 
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val ignoringBattery = pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+        if (!ignoringBattery) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFD97706).copy(alpha = 0.14f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Battery optimization is enabled — Android may throttle background WebSocket & BT clicker.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFD97706),
+                        fontWeight = FontWeight.Medium
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                            }
+                        },
+                        contentPadding = CompactExplorerButtonPadding
+                    ) {
+                        Text("Disable Battery Optimization", maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+        }
+
+        var showShareQrDialog by remember { mutableStateOf(false) }
+        val clipboard = LocalClipboardManager.current
+        OutlinedButton(
+            onClick = { showShareQrDialog = true },
+            contentPadding = CompactExplorerButtonPadding,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Share Pairing QR", maxLines = 1, softWrap = false)
+        }
+        if (showShareQrDialog) {
+            val shareUri = remember(hostAddress, bridgePortStr, pairingCode, hostPortStr, obsPassword) {
+                PairingUriBuilder.build(
+                    initialConfig.copy(
+                        hostAddress = hostAddress,
+                        bridgePort = bridgePortStr.toIntOrNull() ?: 4456,
+                        sessionPairingCode = pairingCode,
+                        hostPort = hostPortStr.toIntOrNull() ?: 4455,
+                        obsPassword = obsPassword
+                    )
+                )
+            }
+            val qrBitmap = remember(shareUri) {
+                runCatching {
+                    val matrix = QRCodeWriter().encode(shareUri, BarcodeFormat.QR_CODE, 420, 420)
+                    Bitmap.createBitmap(420, 420, Bitmap.Config.ARGB_8888).apply {
+                        for (x in 0 until 420) {
+                            for (y in 0 until 420) {
+                                setPixel(x, y, if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+                            }
+                        }
+                    }
+                }.getOrNull()
+            }
+            AlertDialog(
+                onDismissRequest = { showShareQrDialog = false },
+                title = { Text("Share Pairing QR") },
+                text = {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (qrBitmap != null) {
+                            Image(
+                                bitmap = qrBitmap.asImageBitmap(),
+                                contentDescription = "Pairing QR Code",
+                                modifier = Modifier.size(220.dp)
+                            )
+                        }
+                        Text(
+                            text = shareUri,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        clipboard.setText(AnnotatedString(shareUri))
+                        Toast.makeText(context, "Pairing URI copied", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Text("Copy URI")
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showShareQrDialog = false }) {
+                        Text("Close")
+                    }
+                }
+            )
+        }
+
         if (statusText.isNotEmpty()) {
             val statusColor = when {
                 statusText.startsWith("✓") -> Color(0xFF10B981)
@@ -687,6 +806,14 @@ fun ConnectionSettingsForm(
                     testing = true
                     statusText = "Testing..."
                     scope.launch {
+                        val dualSummary = if (networkMode == NetworkMode.LAN) {
+                            val firstHost = hostAddress.split(",").firstOrNull()?.trim().orEmpty()
+                            DualEndpointProbe.probe(
+                                host = firstHost,
+                                bridgePort = bridgePortStr.toIntOrNull() ?: 4456,
+                                obsPort = hostPortStr.toIntOrNull() ?: 4455
+                            ).formatSummary()
+                        } else ""
                         val res = connectionManager.testConnection(
                             networkMode = networkMode,
                             hostAddress = hostAddress,
@@ -695,7 +822,7 @@ fun ConnectionSettingsForm(
                             pairingCode = pairingCode,
                             onProgress = { msg -> statusText = msg }
                         )
-                        statusText = res
+                        statusText = if (dualSummary.isNotEmpty()) "$res\n$dualSummary" else res
                         testing = false
                     }
                 },

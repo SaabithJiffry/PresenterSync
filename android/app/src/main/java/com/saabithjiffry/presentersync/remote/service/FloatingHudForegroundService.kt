@@ -21,6 +21,7 @@ import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.R
 import com.saabithjiffry.presentersync.remote.audio.AudioCuePlayer
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
+import com.saabithjiffry.presentersync.remote.input.BubbleGestureAction
 import com.saabithjiffry.presentersync.remote.network.ConnStatus
 import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
 import com.saabithjiffry.presentersync.remote.network.RemoteEvent
@@ -38,6 +39,7 @@ class FloatingHudForegroundService : LifecycleService() {
     private lateinit var toastBannerManager: FloatingToastBannerManager
     private lateinit var audioCuePlayer: AudioCuePlayer
     private lateinit var hapticAlertPlayer: HapticAlertPlayer
+    private lateinit var backgroundMediaClickerController: BackgroundMediaClickerController
     private var warned2mThisRun = false
     private var warnedOvertimeThisRun = false
     private var prevVoiceWhileMuted = false
@@ -81,6 +83,17 @@ class FloatingHudForegroundService : LifecycleService() {
         toastBannerManager = FloatingToastBannerManager(this)
         audioCuePlayer = AudioCuePlayer()
         hapticAlertPlayer = HapticAlertPlayer(this)
+        backgroundMediaClickerController = BackgroundMediaClickerController(this) { action ->
+            when (action) {
+                BubbleGestureAction.TOGGLE_MUTE -> app.connectionManager.toggleMuteFromHud()
+                BubbleGestureAction.MUTE_ONLY -> app.connectionManager.setMuteFromHud(true)
+                BubbleGestureAction.UNMUTE_ONLY -> app.connectionManager.setMuteFromHud(false)
+                BubbleGestureAction.TRANSITION_SCENE -> app.connectionManager.sendTransitionScene("media_clicker")
+                BubbleGestureAction.SLIDE_NEXT -> app.connectionManager.sendPptNext("media_clicker")
+                BubbleGestureAction.SLIDE_PREV -> app.connectionManager.sendPptPrev("media_clicker")
+                else -> Unit
+            }
+        }
         acquireWifiLock()
         registerWakeReceiver()
         app.configStore.setHudWasActive(true)
@@ -94,6 +107,7 @@ class FloatingHudForegroundService : LifecycleService() {
             }.collect { (cfg, conn) ->
                 overlayManager.showOrUpdate(cfg, conn)
                 hudSnakeOverlayManager.updateConfig(cfg)
+                backgroundMediaClickerController.update(cfg)
                 updateNotification(cfg, conn)
                 QuickToggleTileService.requestRefresh(this@FloatingHudForegroundService)
 
@@ -206,6 +220,9 @@ class FloatingHudForegroundService : LifecycleService() {
         overlayManager.hide()
         audioCuePlayer.release()
         hapticAlertPlayer.cancel()
+        if (::backgroundMediaClickerController.isInitialized) {
+            backgroundMediaClickerController.release()
+        }
         app.connectionManager.stop()
         releaseWifiLock()
         QuickToggleTileService.requestRefresh(this)
@@ -232,6 +249,9 @@ class FloatingHudForegroundService : LifecycleService() {
         overlayManager.hide()
         audioCuePlayer.release()
         hapticAlertPlayer.cancel()
+        if (::backgroundMediaClickerController.isInitialized) {
+            backgroundMediaClickerController.release()
+        }
         app.connectionManager.stop()
         releaseWifiLock()
         QuickToggleTileService.requestRefresh(this)

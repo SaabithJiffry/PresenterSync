@@ -756,6 +756,12 @@ class FloatingMicOverlayManager(
             BubbleGestureAction.TRANSITION_SCENE -> {
                 connectionManager.sendTransitionScene("gesture")
             }
+            BubbleGestureAction.SLIDE_NEXT -> {
+                connectionManager.sendPptNext("gesture")
+            }
+            BubbleGestureAction.SLIDE_PREV -> {
+                connectionManager.sendPptPrev("gesture")
+            }
             BubbleGestureAction.HIDE_PILL -> {
                 configStore.update { it.copy(showIndicator = false) }
             }
