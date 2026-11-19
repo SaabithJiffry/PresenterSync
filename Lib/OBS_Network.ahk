@@ -369,6 +369,156 @@ StartPowerPointSlideshow(pptApp := "") {
     return false
 }
 
+HandleWtsSessionChange(wParam, lParam, cfg, state) {
+    if (Integer(wParam) == 0x7) { ; WTS_SESSION_LOCK
+        if (IsObject(cfg) && (!cfg.HasOwnProp("AutoMuteOnLock") || cfg.AutoMuteOnLock)) {
+            if (IsSet(DiagnosticLogger))
+                try DiagnosticLogger.RecordBreadcrumb("Safety", "AutoMuteOnLock", "WTS_SESSION_LOCK")
+            ExecuteHostRemoteSetMute(cfg, state, true)
+            return true
+        }
+    }
+    return false
+}
+
+CheckConfMeetingEndAutoMute(cfg, state, inMeetingNow) {
+    if (!IsObject(state))
+        return false
+    wasIn := state.HasOwnProp("wasInConfMeeting") ? !!state.wasInConfMeeting : false
+    nowIn := !!inMeetingNow
+    state.wasInConfMeeting := nowIn
+    if (wasIn && !nowIn && IsObject(cfg) && cfg.HasOwnProp("AutoMuteOnMeetingEnd") && cfg.AutoMuteOnMeetingEnd) {
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Safety", "AutoMuteOnMeetingEnd", "meeting ended")
+        ExecuteHostRemoteSetMute(cfg, state, true)
+        return true
+    }
+    return false
+}
+
+DispatchCliCommandString(cmdStr, cfg, state) {
+    cmd := Trim(String(cmdStr))
+    if (cmd = "")
+        return false
+    cmdLow := StrLower(cmd)
+    switch cmdLow {
+        case "mute":
+            ExecuteHostRemoteSetMute(cfg, state, true)
+            return true
+        case "unmute":
+            ExecuteHostRemoteSetMute(cfg, state, false)
+            return true
+        case "toggle-mute":
+            ExecuteHostRemoteToggleMute(cfg, state)
+            return true
+        case "transition":
+            TriggerObsSceneTransition(cfg, state, true)
+            return true
+        case "standby":
+            ExecuteHostToggleStandby(cfg, state)
+            return true
+        case "split":
+            ExecuteHostSplitRecord(cfg, state)
+            return true
+    }
+    if (SubStr(cmdLow, 1, 6) = "nudge:") {
+        txt := Trim(SubStr(cmd, 7))
+        if (txt != "") {
+            BroadcastHostStageNudge(cfg, state, txt, "CLI")
+            return true
+        }
+        return false
+    }
+    if (SubStr(cmdLow, 1, 6) = "scene:") {
+        sc := Trim(SubStr(cmd, 7))
+        if (sc != "") {
+            ExecuteHostSwitchScene(cfg, state, sc)
+            return true
+        }
+        return false
+    }
+    return false
+}
+
+OnHostCopyData(cfg, state, wParam, lParam, msg, hwnd) {
+    if (!lParam)
+        return 0
+    dwData := NumGet(lParam, 0, "UPtr")
+    if (dwData != 0x5053434C) ; "PSCL"
+        return 0
+    cbData := NumGet(lParam, A_PtrSize, "UInt")
+    lpData := NumGet(lParam, A_PtrSize * 2, "Ptr")
+    if (!lpData || cbData == 0)
+        return 0
+    cmdStr := StrGet(lpData, cbData // 2, "UTF-16")
+    cmdStr := RTrim(cmdStr, "`0")
+    return DispatchCliCommandString(cmdStr, cfg, state) ? 1 : 0
+}
+
+ParseHostCliArgs(args) {
+    if (!IsObject(args) || args.Length == 0)
+        return ""
+    i := 1
+    while (i <= args.Length) {
+        a := Trim(String(args[i]))
+        aLow := StrLower(a)
+        switch aLow {
+            case "--mute":
+                return "mute"
+            case "--unmute":
+                return "unmute"
+            case "--toggle-mute":
+                return "toggle-mute"
+            case "--transition":
+                return "transition"
+            case "--standby":
+                return "standby"
+            case "--split":
+                return "split"
+        }
+        if (SubStr(aLow, 1, 8) = "--nudge=") {
+            val := Trim(SubStr(a, 9), '"')
+            return (val != "") ? ("nudge:" val) : ""
+        }
+        if (aLow = "--nudge" && i < args.Length) {
+            val := Trim(String(args[i + 1]), '"')
+            return (val != "") ? ("nudge:" val) : ""
+        }
+        if (SubStr(aLow, 1, 8) = "--scene=") {
+            val := Trim(SubStr(a, 9), '"')
+            return (val != "") ? ("scene:" val) : ""
+        }
+        if (aLow = "--scene" && i < args.Length) {
+            val := Trim(String(args[i + 1]), '"')
+            return (val != "") ? ("scene:" val) : ""
+        }
+        i += 1
+    }
+    return ""
+}
+
+SendHostCliCopyData(cmdStr, targetTitle := "PresenterSync_HostIpcMsg ahk_class AutoHotkeyGUI") {
+    cmd := Trim(String(cmdStr))
+    if (cmd = "")
+        return false
+    prevDetect := A_DetectHiddenWindows
+    DetectHiddenWindows(true)
+    hwnd := WinExist(targetTitle)
+    DetectHiddenWindows(prevDetect)
+    if (!hwnd)
+        return false
+    cds := Buffer(A_PtrSize * 3, 0)
+    NumPut("UPtr", 0x5053434C, cds, 0) ; "PSCL"
+    NumPut("UInt", (StrLen(cmd) + 1) * 2, cds, A_PtrSize)
+    NumPut("Ptr", StrPtr(cmd), cds, A_PtrSize * 2)
+    try {
+        res := SendMessage(0x004A, 0, cds.Ptr, , hwnd, , , , 3000)
+        return (res == 1)
+    } catch {
+        return false
+    }
+}
+
 GetFallbackSlideKey(exe, dir := "next") {
     exeLow := StrLower(Trim(String(exe)))
     dLow := StrLower(Trim(String(dir)))
@@ -1754,6 +1904,14 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         SendObsRequest(ws, "GetStreamStatus", "InitStreamState")
         SendObsRequest(ws, "GetVirtualCamStatus", "InitVCamState")
         RequestObsInputList(ws)
+        if (!(state.HasOwnProp("hasEverConnectedObsThisRun") && state.hasEverConnectedObsThisRun)) {
+            state.hasEverConnectedObsThisRun := true
+            if (IsObject(cfg) && cfg.HasOwnProp("AutoMuteOnFirstObsConnect") && cfg.AutoMuteOnFirstObsConnect) {
+                if (IsSet(DiagnosticLogger))
+                    try DiagnosticLogger.RecordBreadcrumb("Safety", "AutoMuteOnFirstObsConnect", "first OBS Identified")
+                ExecuteHostRemoteSetMute(cfg, state, true)
+            }
+        }
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
             try state.refreshHelpFn.Call()
     }
@@ -2049,6 +2207,7 @@ ZoomStateMonitor(cfg, state) {
     CheckMeetBackgroundTabWarning(cfg, state)
     confSpec := GetConferencingWindowSpec(appType)
     zoomInfo := DetectZoomStates(confSpec, appType, "", cfg)
+    CheckConfMeetingEndAutoMute(cfg, state, zoomInfo.hasMic)
     if (zoomInfo.hasChat)
         SyncChatState(cfg, state, zoomInfo.unreadChat)
     else

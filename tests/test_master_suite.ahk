@@ -253,7 +253,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v7.3.3", UIConstants.APP_VERSION == "7.3.3")
+Assert("APP_VERSION is active release v7.3.4", UIConstants.APP_VERSION == "7.3.4")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -1517,8 +1517,8 @@ ccAuditLight := ShowControlCenterWindow(cfgAudit, stAudit)
 PostMessage(0x0010, 0, 0, ccAuditLight.Hwnd)
 Sleep(50)
 Theme.SetMode("System")
-Assert("Control Center registers all 41 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
-    ccChkTabCount == 41 && ccUiOk && Theme.SuspendLockCount == 0)
+Assert("Control Center registers all 44 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
+    ccChkTabCount == 44 && ccUiOk && Theme.SuspendLockCount == 0)
 
 ; 21.6 Scope Guard: PresenterSync_Remote remains strictly 1-tier Mic HUD (no multi-tier GUIs)
 remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
