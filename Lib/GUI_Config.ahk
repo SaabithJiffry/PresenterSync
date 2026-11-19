@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.3.1"
+    static APP_VERSION := "7.3.2"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1292,6 +1292,8 @@ class Config {
     ConferencingApp := "Zoom"
     ZoomRecHotkey := "!r"
     ZoomPauseHotkey := "!p"
+    UiaMuteKeywords := ""
+    UiaUnmuteKeywords := ""
     obsPassword := ""
     targetMicName := "Mic/Aux"
     SecondaryAudioSources := ""
@@ -1506,6 +1508,8 @@ class Config {
         this.TeamsMuteHotkey := this.Read("Settings", "TeamsMuteHotkey", "^+m")
         this.MeetMuteHotkey := this.Read("Settings", "MeetMuteHotkey", "^d")
         this.ConferencingApp := NormalizeConferencingApp(this.Read("Settings", "ConferencingApp", "Zoom"))
+        this.UiaMuteKeywords := Trim(this.Read("Settings", "UiaMuteKeywords", ""))
+        this.UiaUnmuteKeywords := Trim(this.Read("Settings", "UiaUnmuteKeywords", ""))
         this.ZoomRecHotkey := this.Read("Settings", "ZoomRecHotkey", "")
         if (this.ZoomRecHotkey = "") {
             this.ZoomRecHotkey := "!r"
@@ -1742,6 +1746,8 @@ class Config {
             { sec: "Settings", key: "TeamsMuteHotkey", prop: "TeamsMuteHotkey", kind: "str" },
             { sec: "Settings", key: "MeetMuteHotkey", prop: "MeetMuteHotkey", kind: "str" },
             { sec: "Settings", key: "ConferencingApp", prop: "ConferencingApp", kind: "str" },
+            { sec: "Settings", key: "UiaMuteKeywords", prop: "UiaMuteKeywords", kind: "str" },
+            { sec: "Settings", key: "UiaUnmuteKeywords", prop: "UiaUnmuteKeywords", kind: "str" },
             { sec: "Settings", key: "ZoomRecHotkey", prop: "ZoomRecHotkey", kind: "str" },
             { sec: "Settings", key: "ZoomPauseHotkey", prop: "ZoomPauseHotkey", kind: "str" },
             { sec: "Settings", key: "TargetMicName", prop: "targetMicName", kind: "str" },
@@ -1933,6 +1939,8 @@ class OverlayState {
     relayWs := ""
     relayConnected := false
     zoomConnected := false
+    meetBgTabWarn := false
+    detectedConfApp := ""
     IsSyncing := false
     syncSource := ""
     zoomLastMuted := -1

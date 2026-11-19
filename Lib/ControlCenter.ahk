@@ -1675,6 +1675,16 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.SecondaryAudioSources := sec
             cfg.Write("Settings", "SecondaryAudioSources", sec)
         }
+        if vals.HasOwnProp("UiaMuteKeywords") {
+            umk := Trim(String(vals.UiaMuteKeywords))
+            cfg.UiaMuteKeywords := umk
+            cfg.Write("Settings", "UiaMuteKeywords", umk)
+        }
+        if vals.HasOwnProp("UiaUnmuteKeywords") {
+            uuk := Trim(String(vals.UiaUnmuteKeywords))
+            cfg.UiaUnmuteKeywords := uuk
+            cfg.Write("Settings", "UiaUnmuteKeywords", uuk)
+        }
         if vals.HasOwnProp("ShowVoiceMeter") {
             cfg.ShowVoiceMeter := !!vals.ShowVoiceMeter
             cfg.WriteBool("Settings", "ShowVoiceMeter", cfg.ShowVoiceMeter)
@@ -1995,6 +2005,14 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
     edSecondaryAudioSources := ccGui.Add("Edit", "x250 y442 w430 h26", cfg.HasOwnProp("SecondaryAudioSources") ? cfg.SecondaryAudioSources : "")
     Theme.RegisterControl(ccGui, edSecondaryAudioSources, "Edit")
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y473 w104", "UIA Mute Words:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x352 y473 w118", "UIA Unmute Words:"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edUiaMuteKeywords := ccGui.Add("Edit", "x138 y470 w204 h24", cfg.HasOwnProp("UiaMuteKeywords") ? cfg.UiaMuteKeywords : "")
+    edUiaUnmuteKeywords := ccGui.Add("Edit", "x472 y470 w208 h24", cfg.HasOwnProp("UiaUnmuteKeywords") ? cfg.UiaUnmuteKeywords : "")
+    Theme.RegisterControl(ccGui, edUiaMuteKeywords, "Edit")
+    Theme.RegisterControl(ccGui, edUiaUnmuteKeywords, "Edit")
     Theme.RegisterControl(ccGui, chkVoiceMeter, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkAudioCue, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkMuteToast, "Checkbox", "tabText")
@@ -2355,6 +2373,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
         }
         cbTargetMic.Text := cfg.targetMicName
         edSecondaryAudioSources.Value := cfg.HasOwnProp("SecondaryAudioSources") ? cfg.SecondaryAudioSources : ""
+        edUiaMuteKeywords.Value := cfg.HasOwnProp("UiaMuteKeywords") ? cfg.UiaMuteKeywords : ""
+        edUiaUnmuteKeywords.Value := cfg.HasOwnProp("UiaUnmuteKeywords") ? cfg.UiaUnmuteKeywords : ""
         edZoomMute.Value := cfg.ZoomMuteHotkey
         edTeamsMute.Value := cfg.TeamsMuteHotkey
         edMeetMute.Value := cfg.MeetMuteHotkey
@@ -2468,6 +2488,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ConferencingApp: ddlConfApp.Text,
             targetMicName: cbTargetMic.Text,
             SecondaryAudioSources: edSecondaryAudioSources.Value,
+            UiaMuteKeywords: edUiaMuteKeywords.Value,
+            UiaUnmuteKeywords: edUiaUnmuteKeywords.Value,
             ZoomMuteHotkey: edZoomMute.Value,
             TeamsMuteHotkey: edTeamsMute.Value,
             MeetMuteHotkey: edMeetMute.Value,
