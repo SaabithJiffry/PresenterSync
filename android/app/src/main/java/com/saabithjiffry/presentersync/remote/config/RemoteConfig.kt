@@ -153,6 +153,8 @@ data class RemoteConfig(
     val enableHapticAlerts: Boolean = true,
     val hapticIntensity: Float = 0.8f,
     val showPillMiniBadges: Boolean = true,
+    val enableBackgroundMediaClicker: Boolean = false,
+    val backgroundMediaPrimaryAction: BubbleGestureAction = BubbleGestureAction.TOGGLE_MUTE,
     val enableHudClickActions: Boolean = true,
     val lockHudPosition: Boolean = false,
     val singleTapAction: BubbleGestureAction = BubbleGestureAction.NONE,
@@ -288,6 +290,11 @@ class RemoteConfigStore(context: Context) {
             enableHapticAlerts = prefs.getBoolean("enableHapticAlerts", true),
             hapticIntensity = prefs.getFloat("hapticIntensity", 0.8f).coerceIn(0.2f, 1.0f),
             showPillMiniBadges = prefs.getBoolean("showPillMiniBadges", true),
+            enableBackgroundMediaClicker = prefs.getBoolean("enableBackgroundMediaClicker", false),
+            backgroundMediaPrimaryAction = prefs.getString("backgroundMediaPrimaryAction", null)
+                ?.let { BubbleGestureAction.fromRaw(it) }
+                ?.takeIf { it == BubbleGestureAction.TOGGLE_MUTE || it == BubbleGestureAction.TRANSITION_SCENE }
+                ?: BubbleGestureAction.TOGGLE_MUTE,
             enableHudClickActions = prefs.getBoolean("enableHudClickActions", true),
             lockHudPosition = prefs.getBoolean("lockHudPosition", false),
             singleTapAction = singleTap,
@@ -542,6 +549,15 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("enableHapticAlerts", c.enableHapticAlerts)
             .putFloat("hapticIntensity", c.hapticIntensity.coerceIn(0.2f, 1.0f))
             .putBoolean("showPillMiniBadges", c.showPillMiniBadges)
+            .putBoolean("enableBackgroundMediaClicker", c.enableBackgroundMediaClicker)
+            .putString(
+                "backgroundMediaPrimaryAction",
+                if (c.backgroundMediaPrimaryAction == BubbleGestureAction.TRANSITION_SCENE) {
+                    BubbleGestureAction.TRANSITION_SCENE.rawValue
+                } else {
+                    BubbleGestureAction.TOGGLE_MUTE.rawValue
+                }
+            )
             .putBoolean("enableHudClickActions", c.enableHudClickActions)
             .putBoolean("lockHudPosition", c.lockHudPosition)
             .putString("singleTapAction", c.singleTapAction.rawValue)

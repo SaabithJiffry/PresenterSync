@@ -13,6 +13,8 @@ enum class BubbleGestureAction(
     OPEN_SETTINGS("open_settings", "Open Settings", "Bring PresenterSync Remote window to front"),
     RECONNECT("reconnect", "Reconnect Host", "Restart LAN/Bridge/Relay connection"),
     TRANSITION_SCENE("transition_scene", "OBS Transition", "Trigger OBS Studio Mode or Scene Transition"),
+    SLIDE_NEXT("slide_next", "Next Slide", "Advance presentation slide on Host"),
+    SLIDE_PREV("slide_prev", "Previous Slide", "Return to previous presentation slide on Host"),
     HIDE_PILL("hide_pill", "Hide Floating Pill", "Hide floating indicator until reopened from tile/notification");
 
     companion object {

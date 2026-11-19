@@ -280,6 +280,59 @@ fun PointerSettingsScreen(
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Background Bluetooth Media Clicker", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Capture BT headset/media clicker Play/Pause, Next, Previous & Volume buttons even when screen is off",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = cfg.enableBackgroundMediaClicker,
+                        onCheckedChange = { enabled ->
+                            app.configStore.update { it.copy(enableBackgroundMediaClicker = enabled) }
+                        }
+                    )
+                }
+                if (cfg.enableBackgroundMediaClicker) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Play/Pause Action:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        FilterChip(
+                            selected = cfg.backgroundMediaPrimaryAction == com.saabithjiffry.presentersync.remote.input.BubbleGestureAction.TOGGLE_MUTE,
+                            onClick = {
+                                app.configStore.update {
+                                    it.copy(backgroundMediaPrimaryAction = com.saabithjiffry.presentersync.remote.input.BubbleGestureAction.TOGGLE_MUTE)
+                                }
+                            },
+                            label = { Text("Toggle Mute") }
+                        )
+                        FilterChip(
+                            selected = cfg.backgroundMediaPrimaryAction == com.saabithjiffry.presentersync.remote.input.BubbleGestureAction.TRANSITION_SCENE,
+                            onClick = {
+                                app.configStore.update {
+                                    it.copy(backgroundMediaPrimaryAction = com.saabithjiffry.presentersync.remote.input.BubbleGestureAction.TRANSITION_SCENE)
+                                }
+                            },
+                            label = { Text("OBS Transition") }
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
                 // Assigned Button Row
                 ResponsiveExplorerActionRow(
                     title = "Pointer Mute Button",
