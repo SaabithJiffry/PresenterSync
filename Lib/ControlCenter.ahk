@@ -1699,7 +1699,7 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.EnableMuteToast := !!vals.EnableMuteToast
             cfg.WriteBool("Settings", "EnableMuteToast", cfg.EnableMuteToast)
         }
-        for cProp in ["EnableCoreAudioFallback", "EnableOsMuteDriftWatchdog", "EnableForgottenRecordWatchdog", "EnableDeadMicWatchdog", "AutoRecordOnStreamDrop", "EnableLowDiskWatchdog"] {
+        for cProp in ["EnableCoreAudioFallback", "EnableOsMuteDriftWatchdog", "EnableForgottenRecordWatchdog", "EnableDeadMicWatchdog", "AutoRecordOnStreamDrop", "EnableLowDiskWatchdog", "AutoMuteOnLock", "AutoMuteOnMeetingEnd", "AutoMuteOnFirstObsConnect"] {
             if vals.HasOwnProp(cProp) {
                 cfg.%cProp% := !!vals.%cProp%
                 cfg.WriteBool("Settings", cProp, cfg.%cProp%)
@@ -1989,15 +1989,21 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, edZoomRec, "Edit")
     Theme.RegisterControl(ccGui, edZoomPause, "Edit")
 
-    chkVoiceMeter := ccGui.Add("Checkbox", "x32 y314 w310 h24" (cfg.ShowVoiceMeter ? " Checked" : ""), "Show Live CoreAudio Voice Activity Bar on LIVE Pill")
-    chkAudioCue := ccGui.Add("Checkbox", "x360 y314 w320 h24" (cfg.EnableAudioCue ? " Checked" : ""), "Play Two-Tone Acoustic Chime on Mute / Unmute")
-    chkMuteToast := ccGui.Add("Checkbox", "x32 y346 w310 h24" (cfg.EnableMuteToast ? " Checked" : ""), "Show Brief Cursor Tooltip Toast on Mute Change")
-    chkCoreAudioFallback := ccGui.Add("Checkbox", "x32 y378 w310 h24" (cfg.EnableCoreAudioFallback ? " Checked" : ""), "CoreAudio OS-Level Endpoint Mute Fallback")
-    chkOsMuteDrift := ccGui.Add("Checkbox", "x360 y378 w330 h24" (cfg.EnableOsMuteDriftWatchdog ? " Checked" : ""), "Detect Hardware / OS Mic Mute Drift while LIVE")
+    chkVoiceMeter := ccGui.Add("Checkbox", "x32 y312 w310 h22" (cfg.ShowVoiceMeter ? " Checked" : ""), "Show Live CoreAudio Voice Activity Bar on LIVE Pill")
+    chkAudioCue := ccGui.Add("Checkbox", "x360 y312 w320 h22" (cfg.EnableAudioCue ? " Checked" : ""), "Play Two-Tone Acoustic Chime on Mute / Unmute")
+    chkMuteToast := ccGui.Add("Checkbox", "x32 y338 w310 h22" (cfg.EnableMuteToast ? " Checked" : ""), "Show Brief Cursor Tooltip Toast on Mute Change")
+    chkAutoMuteLock := ccGui.Add("Checkbox", "x360 y338 w330 h22" (cfg.AutoMuteOnLock ? " Checked" : ""), "Auto-Mute on Windows Lock")
+    chkCoreAudioFallback := ccGui.Add("Checkbox", "x32 y364 w310 h22" (cfg.EnableCoreAudioFallback ? " Checked" : ""), "CoreAudio OS-Level Endpoint Mute Fallback")
+    chkOsMuteDrift := ccGui.Add("Checkbox", "x360 y364 w330 h22" (cfg.EnableOsMuteDriftWatchdog ? " Checked" : ""), "Detect Hardware / OS Mic Mute Drift while LIVE")
     Theme.RegisterControl(ccGui, chkCoreAudioFallback, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkOsMuteDrift, "Checkbox", "tabText")
-    chkForgottenRec := ccGui.Add("Checkbox", "x32 y410 w310 h24" (cfg.EnableForgottenRecordWatchdog ? " Checked" : ""), "Nudge if Presenting LIVE but Not Recording")
-    chkDeadMic := ccGui.Add("Checkbox", "x360 y410 w330 h24" (cfg.EnableDeadMicWatchdog ? " Checked" : ""), "Warn if Mic is LIVE but Silent for 45s")
+    chkForgottenRec := ccGui.Add("Checkbox", "x32 y390 w310 h22" (cfg.EnableForgottenRecordWatchdog ? " Checked" : ""), "Nudge if Presenting LIVE but Not Recording")
+    chkDeadMic := ccGui.Add("Checkbox", "x360 y390 w330 h22" (cfg.EnableDeadMicWatchdog ? " Checked" : ""), "Warn if Mic is LIVE but Silent for 45s")
+    chkAutoMuteMeetingEnd := ccGui.Add("Checkbox", "x32 y416 w310 h22" (cfg.AutoMuteOnMeetingEnd ? " Checked" : ""), "Auto-Mute on Meeting End")
+    chkAutoMuteFirstObs := ccGui.Add("Checkbox", "x360 y416 w330 h22" (cfg.AutoMuteOnFirstObsConnect ? " Checked" : ""), "Auto-Mute on First OBS Connect")
+    Theme.RegisterControl(ccGui, chkAutoMuteLock, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkAutoMuteMeetingEnd, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkAutoMuteFirstObs, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkForgottenRec, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkDeadMic, "Checkbox", "tabText")
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
@@ -2383,6 +2389,9 @@ ShowControlCenterWindow(cfg, state := "", *) {
         chkVoiceMeter.Value := cfg.ShowVoiceMeter ? 1 : 0
         chkAudioCue.Value := cfg.EnableAudioCue ? 1 : 0
         chkMuteToast.Value := cfg.EnableMuteToast ? 1 : 0
+        chkAutoMuteLock.Value := cfg.AutoMuteOnLock ? 1 : 0
+        chkAutoMuteMeetingEnd.Value := cfg.AutoMuteOnMeetingEnd ? 1 : 0
+        chkAutoMuteFirstObs.Value := cfg.AutoMuteOnFirstObsConnect ? 1 : 0
         chkCoreAudioFallback.Value := cfg.EnableCoreAudioFallback ? 1 : 0
         chkOsMuteDrift.Value := cfg.EnableOsMuteDriftWatchdog ? 1 : 0
         chkForgottenRec.Value := cfg.EnableForgottenRecordWatchdog ? 1 : 0
@@ -2498,6 +2507,9 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ShowVoiceMeter: chkVoiceMeter.Value,
             EnableAudioCue: chkAudioCue.Value,
             EnableMuteToast: chkMuteToast.Value,
+            AutoMuteOnLock: chkAutoMuteLock.Value,
+            AutoMuteOnMeetingEnd: chkAutoMuteMeetingEnd.Value,
+            AutoMuteOnFirstObsConnect: chkAutoMuteFirstObs.Value,
             EnableCoreAudioFallback: chkCoreAudioFallback.Value,
             EnableOsMuteDriftWatchdog: chkOsMuteDrift.Value,
             EnableForgottenRecordWatchdog: chkForgottenRec.Value,

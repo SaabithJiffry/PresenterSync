@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.3.3"
+    static APP_VERSION := "7.3.4"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1326,6 +1326,9 @@ class Config {
     EnableForgottenRecordWatchdog := true
     AutoRecordOnStreamDrop := true
     ConfirmBeforeStopRecording := true
+    AutoMuteOnLock := true
+    AutoMuteOnMeetingEnd := false
+    AutoMuteOnFirstObsConnect := false
     EnableLowDiskWatchdog := true
     EnableDeadMicWatchdog := true
     ShowVoiceMeter := true
@@ -1569,6 +1572,9 @@ class Config {
         this.EnableForgottenRecordWatchdog := this.ReadBool("Settings", "EnableForgottenRecordWatchdog", true)
         this.AutoRecordOnStreamDrop := this.ReadBool("Settings", "AutoRecordOnStreamDrop", true)
         this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", true)
+        this.AutoMuteOnLock := this.ReadBool("Settings", "AutoMuteOnLock", true)
+        this.AutoMuteOnMeetingEnd := this.ReadBool("Settings", "AutoMuteOnMeetingEnd", false)
+        this.AutoMuteOnFirstObsConnect := this.ReadBool("Settings", "AutoMuteOnFirstObsConnect", false)
         this.EnableLowDiskWatchdog := this.ReadBool("Settings", "EnableLowDiskWatchdog", true)
         this.EnableDeadMicWatchdog := this.ReadBool("Settings", "EnableDeadMicWatchdog", true)
         this.ShowVoiceMeter := this.ReadBool("Settings", "ShowVoiceMeter", true)
@@ -1779,6 +1785,9 @@ class Config {
             { sec: "Settings", key: "EnableForgottenRecordWatchdog", prop: "EnableForgottenRecordWatchdog", kind: "bool" },
             { sec: "Settings", key: "AutoRecordOnStreamDrop", prop: "AutoRecordOnStreamDrop", kind: "bool" },
             { sec: "Settings", key: "ConfirmBeforeStopRecording", prop: "ConfirmBeforeStopRecording", kind: "bool" },
+            { sec: "Settings", key: "AutoMuteOnLock", prop: "AutoMuteOnLock", kind: "bool" },
+            { sec: "Settings", key: "AutoMuteOnMeetingEnd", prop: "AutoMuteOnMeetingEnd", kind: "bool" },
+            { sec: "Settings", key: "AutoMuteOnFirstObsConnect", prop: "AutoMuteOnFirstObsConnect", kind: "bool" },
             { sec: "Settings", key: "EnableLowDiskWatchdog", prop: "EnableLowDiskWatchdog", kind: "bool" },
             { sec: "Settings", key: "EnableDeadMicWatchdog", prop: "EnableDeadMicWatchdog", kind: "bool" },
             { sec: "Settings", key: "ShowVoiceMeter", prop: "ShowVoiceMeter", kind: "bool" },
@@ -1945,6 +1954,9 @@ class OverlayState {
     slideTotal := 0
     slideTitle := ""
     slideNotes := ""
+    hasEverConnectedObsThisRun := false
+    wasInConfMeeting := false
+    ipcMsgGui := ""
     IsSyncing := false
     syncSource := ""
     zoomLastMuted := -1

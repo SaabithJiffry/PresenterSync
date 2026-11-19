@@ -1,17 +1,17 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.3.3
+; Version: 7.3.4
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
-#SingleInstance Force
+#SingleInstance Off
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.3.3.0
+;@Ahk2Exe-SetVersion 7.3.4.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -24,13 +24,42 @@ SetKeyDelay -1, -1
 #Include <GUI_Config>
 #Include <HudSnakeGame>
 
+if (A_Args.Length > 0) {
+    cliCmd := ParseHostCliArgs(A_Args)
+    if (cliCmd != "") {
+        okCli := SendHostCliCopyData(cliCmd)
+        ExitApp(okCli ? 0 : 1)
+    }
+}
+
+EnforceHostSingleInstance() {
+    prevDetect := A_DetectHiddenWindows
+    DetectHiddenWindows(true)
+    try {
+        myPid := ProcessExist()
+        for _, hwnd in WinGetList("PresenterSync_HostIpcMsg ahk_class AutoHotkeyGUI") {
+            pid := WinGetPID(hwnd)
+            if (pid && pid != myPid) {
+                try ProcessClose(pid)
+                Sleep(150)
+            }
+        }
+    }
+    DetectHiddenWindows(prevDetect)
+}
+EnforceHostSingleInstance()
+
 global AppState := ""
 DiagnosticLogger.Init("PresenterSync")
 
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0) : 0, SessionTimeline.ClearAutosave(), StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0) : 0, SessionTimeline.ClearAutosave(), StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+UnregisterHostWtsNotification(st) {
+    if (IsObject(st) && st.HasOwnProp("ipcMsgGui") && IsObject(st.ipcMsgGui))
+        try DllCall("Wtsapi32\WTSUnRegisterSessionNotification", "Ptr", st.ipcMsgGui.Hwnd)
+}
+RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0, UnregisterHostWtsNotification(AppState)) : 0, SessionTimeline.ClearAutosave(), StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0, UnregisterHostWtsNotification(AppState)) : 0, SessionTimeline.ClearAutosave(), StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSync.ico")
@@ -81,6 +110,10 @@ UpdateSafetyWatchdogTimer(AppConfig, AppState)
 if (AppConfig.EnableRemoteConnections)
     StartHostCompanionBridge(AppConfig, AppState, AppConfig.BridgePort)
 OnMessage(0x0218, OnHostPowerBroadcast.Bind(AppConfig, AppState))
+AppState.ipcMsgGui := Gui("-Caption +ToolWindow", "PresenterSync_HostIpcMsg")
+try DllCall("Wtsapi32\WTSRegisterSessionNotification", "Ptr", AppState.ipcMsgGui.Hwnd, "UInt", 0)
+OnMessage(0x02B1, (wParam, lParam, msg, hwnd) => HandleWtsSessionChange(wParam, lParam, AppConfig, AppState))
+OnMessage(0x004A, OnHostCopyData.Bind(AppConfig, AppState))
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync.exe")
 
 ; --- CUSTOM TRAY MENU ---
