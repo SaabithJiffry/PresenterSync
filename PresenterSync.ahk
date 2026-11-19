@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.2.3
+; Version: 7.2.4
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.2.3.0
+;@Ahk2Exe-SetVersion 7.2.4.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -29,8 +29,8 @@ DiagnosticLogger.Init("PresenterSync")
 
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0) : 0, StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0) : 0, StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0) : 0, SessionTimeline.ClearAutosave(), StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0) : 0, SessionTimeline.ClearAutosave(), StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSync.ico")
@@ -50,6 +50,9 @@ if (AppConfig.AudioRoutingMode == 0
 ; 2. Initialize State, HUD, Tray Menu & Background Services
 AppState := OverlayState(AppConfig)
 DiagnosticLogger.BindContext(AppConfig, AppState)
+recoveredTl := SessionTimeline.RecoverFromAutosave()
+if (recoveredTl > 0)
+    DiagnosticLogger.RecordBreadcrumb("Timeline", "RecoveredAutosave", "entries=" recoveredTl)
 AppState.rebuildTrayFn := BuildTrayMenu.Bind(AppConfig, AppState)
 AppState.rebindHotkeysFn := (*) => RebindAllHostHotkeys(AppConfig, AppState)
 AppState.triggerMuteFn := (*) => TriggerMute(AppConfig, AppState, true)

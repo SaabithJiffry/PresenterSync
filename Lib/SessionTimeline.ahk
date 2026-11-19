@@ -9,6 +9,8 @@ class SessionTimeline {
     static Entries := []
     static SessionStartUtc := ""
     static _NextSeq := 1
+    static AutosaveFile := A_ScriptDir "\logs\SessionTimeline_active.jsonl"
+    static EnableAutosave := true
 
     static _EnsureInit() {
         if (this.SessionStartUtc = "")
@@ -72,6 +74,172 @@ class SessionTimeline {
         return Trim(s)
     }
 
+    static _EscapeJson(rawVal) {
+        s := String(rawVal)
+        s := StrReplace(s, "\", "\\")
+        s := StrReplace(s, '"', '\"')
+        s := StrReplace(s, "`r", "\r")
+        s := StrReplace(s, "`n", "\n")
+        s := StrReplace(s, "`t", "\t")
+        s := StrReplace(s, "`b", "\b")
+        s := StrReplace(s, "`f", "\f")
+        return s
+    }
+
+    static _UnescapeJson(str) {
+        s := String(str)
+        out := ""
+        i := 1
+        len := StrLen(s)
+        while (i <= len) {
+            ch := SubStr(s, i, 1)
+            if (ch = "\" && i < len) {
+                nxt := SubStr(s, i + 1, 1)
+                switch nxt {
+                    case '"': out .= '"'
+                    case "\": out .= "\"
+                    case "/": out .= "/"
+                    case "b": out .= "`b"
+                    case "f": out .= "`f"
+                    case "n": out .= "`n"
+                    case "r": out .= "`r"
+                    case "t": out .= "`t"
+                    case "u":
+                        if (i + 5 <= len && RegExMatch(SubStr(s, i + 2, 4), "^[0-9A-Fa-f]{4}$")) {
+                            out .= Chr(Integer("0x" SubStr(s, i + 2, 4)))
+                            i += 6
+                            continue
+                        }
+                        out .= "\u"
+                    default: out .= nxt
+                }
+                i += 2
+            } else {
+                out .= ch
+                i += 1
+            }
+        }
+        return out
+    }
+
+    static _ExtractJsonStr(line, key, def := "") {
+        if (RegExMatch(line, '"' key '"\s*:\s*"((?:[^"\\]|\\.)*)"', &m))
+            return this._UnescapeJson(m[1])
+        return def
+    }
+
+    static _ExtractJsonInt(line, key, def := 0) {
+        if (RegExMatch(line, '"' key '"\s*:\s*(-?\d+)', &m)) {
+            try return Integer(m[1])
+        }
+        return def
+    }
+
+    static _ExtractJsonBool(line, key, def := false) {
+        if (RegExMatch(line, '"' key '"\s*:\s*(true|false)', &m))
+            return (m[1] = "true")
+        return def
+    }
+
+    static _SerializeEntryJson(entry) {
+        return '{"seq":' entry.seq
+            . ',"utcStr":"' this._EscapeJson(entry.utcStr) '"'
+            . ',"localStr":"' this._EscapeJson(entry.localStr) '"'
+            . ',"offsetSec":' entry.offsetSec
+            . ',"timecode":"' this._EscapeJson(entry.timecode) '"'
+            . ',"ytTimestamp":"' this._EscapeJson(entry.ytTimestamp) '"'
+            . ',"recActive":' (entry.recActive ? "true" : "false")
+            . ',"color":"' this._EscapeJson(entry.color) '"'
+            . ',"category":"' this._EscapeJson(entry.category) '"'
+            . ',"summary":"' this._EscapeJson(entry.summary) '"'
+            . ',"details":"' this._EscapeJson(entry.details) '"}'
+    }
+
+    static _AppendAutosave(entry) {
+        if (!this.EnableAutosave || Trim(String(this.AutosaveFile)) = "")
+            return false
+        try {
+            SplitPath(this.AutosaveFile, , &parentDir)
+            if (parentDir != "" && !DirExist(parentDir))
+                DirCreate(parentDir)
+            FileAppend(this._SerializeEntryJson(entry) "`n", this.AutosaveFile, "UTF-8")
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static RecoverFromAutosave(filePath := "") {
+        target := (Trim(String(filePath)) != "") ? Trim(String(filePath)) : this.AutosaveFile
+        if (target = "" || !FileExist(target))
+            return 0
+        try raw := FileRead(target, "UTF-8")
+        catch
+            return 0
+        if (Trim(raw) = "")
+            return 0
+        this._EnsureInit()
+        recovered := 0
+        for _, rawLine in StrSplit(raw, "`n", "`r") {
+            line := Trim(rawLine)
+            if (line = "" || SubStr(line, 1, 1) != "{" || SubStr(line, -1) != "}")
+                continue
+            sumTxt := SubStr(Trim(this._ExtractJsonStr(line, "summary", "")), 1, 160)
+            if (sumTxt = "")
+                continue
+            cat := Trim(this._ExtractJsonStr(line, "category", "System"))
+            if (cat = "")
+                cat := "System"
+            offSec := Max(0, this._ExtractJsonInt(line, "offsetSec", 0))
+            seqVal := this._ExtractJsonInt(line, "seq", this._NextSeq)
+            tc := this._ExtractJsonStr(line, "timecode", "")
+            if (tc = "")
+                tc := this.FormatHms(offSec)
+            yt := this._ExtractJsonStr(line, "ytTimestamp", "")
+            if (yt = "")
+                yt := this.FormatYouTubeTimestamp(offSec)
+            clr := this._ExtractJsonStr(line, "color", "")
+            if (clr = "")
+                clr := this._CategoryToMarkerColor(cat)
+            utcStr := this._ExtractJsonStr(line, "utcStr", FormatTime(A_NowUTC, "yyyy-MM-dd HH:mm:ss") " UTC")
+            locStr := this._ExtractJsonStr(line, "localStr", FormatTime(, "HH:mm:ss"))
+            detTxt := SubStr(Trim(this._ExtractJsonStr(line, "details", "")), 1, 240)
+            recAct := this._ExtractJsonBool(line, "recActive", false)
+            entry := {
+                seq: seqVal,
+                utcStr: utcStr,
+                localStr: locStr,
+                offsetSec: offSec,
+                timecode: tc,
+                ytTimestamp: yt,
+                recActive: recAct,
+                color: clr,
+                category: cat,
+                summary: sumTxt,
+                details: detTxt
+            }
+            this.Entries.Push(entry)
+            if (seqVal >= this._NextSeq)
+                this._NextSeq := seqVal + 1
+            recovered += 1
+        }
+        while (this.Entries.Length > this.MAX_ENTRIES)
+            this.Entries.RemoveAt(1)
+        return recovered
+    }
+
+    static ClearAutosave(filePath := "") {
+        target := (Trim(String(filePath)) != "") ? Trim(String(filePath)) : this.AutosaveFile
+        if (target = "")
+            return false
+        if (FileExist(target)) {
+            try FileDelete(target)
+            catch
+                return false
+        }
+        return !FileExist(target)
+    }
+
     static _ComputeOffsetSec(state := "", offsetSecOverride := -1) {
         this._EnsureInit()
         if (IsInteger(offsetSecOverride) && Integer(offsetSecOverride) >= 0)
@@ -117,6 +285,7 @@ class SessionTimeline {
         this.Entries.Push(entry)
         while (this.Entries.Length > this.MAX_ENTRIES)
             this.Entries.RemoveAt(1)
+        this._AppendAutosave(entry)
         return entry
     }
 
