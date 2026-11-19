@@ -182,6 +182,185 @@ _RBC_UrlDecode(str) {
     return out
 }
 
+_RBC_UrlEncode(str) {
+    s := String(str)
+    if (s = "")
+        return ""
+    buf := Buffer(StrPut(s, "UTF-8") - 1, 0)
+    StrPut(s, buf, "UTF-8")
+    out := ""
+    Loop buf.Size {
+        b := NumGet(buf, A_Index - 1, "UChar")
+        if ((b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) || b == 0x2D || b == 0x2E || b == 0x5F || b == 0x7E)
+            out .= Chr(b)
+        else
+            out .= Format("%{:02X}", b)
+    }
+    return out
+}
+
+ParsePairingUri(rawUri) {
+    s := Trim(String(rawUri))
+    if (!RegExMatch(s, "i)^presentersync://(pair|connect)/?(?:\?(.*))?$", &m))
+        return { ok: false, error: "Invalid pairing URI (expected presentersync://pair or presentersync://connect)" }
+
+    params := Map()
+    q := (m.Count >= 2) ? m[2] : ""
+    if (q != "") {
+        for _, pair in StrSplit(q, "&") {
+            if (pair = "")
+                continue
+            eq := InStr(pair, "=")
+            if (eq > 0) {
+                k := StrLower(Trim(_RBC_UrlDecode(SubStr(pair, 1, eq - 1))))
+                v := Trim(_RBC_UrlDecode(SubStr(pair, eq + 1)))
+            } else {
+                k := StrLower(Trim(_RBC_UrlDecode(pair)))
+                v := ""
+            }
+            if (k != "")
+                params[k] := v
+        }
+    }
+
+    hostVal := params.Has("host") ? params["host"] : (params.Has("hosts") ? params["hosts"] : "")
+    obsPortRaw := params.Has("obsport") ? params["obsport"] : (params.Has("bp") || params.Has("bridgeport") ? (params.Has("port") ? params["port"] : "4455") : "4455")
+    bPortRaw := params.Has("bp") ? params["bp"] : (params.Has("bridgeport") ? params["bridgeport"] : (params.Has("port") ? params["port"] : "4456"))
+    codeVal := params.Has("code") ? params["code"] : (params.Has("session") ? params["session"] : "")
+    obsPassVal := params.Has("obspass") ? params["obspass"] : (params.Has("pw") ? params["pw"] : "")
+    wanVal := params.Has("wan") ? params["wan"] : (params.Has("rc") ? params["rc"] : (params.Has("pair") ? params["pair"] : (params.Has("internet") ? params["internet"] : "")))
+
+    if (hostVal = "" && wanVal = "" && codeVal = "")
+        return { ok: false, error: "Pairing URI missing host, session code, or WAN code" }
+
+    bPort := (IsInteger(bPortRaw) && Integer(bPortRaw) >= 1 && Integer(bPortRaw) <= 65535) ? String(Integer(bPortRaw)) : "4456"
+    oPort := (IsInteger(obsPortRaw) && Integer(obsPortRaw) >= 1 && Integer(obsPortRaw) <= 65535) ? String(Integer(obsPortRaw)) : "4455"
+    return {
+        ok: true,
+        host: hostVal,
+        bridgePort: bPort,
+        code: codeVal,
+        obsPort: oPort,
+        obsPass: obsPassVal,
+        wanCode: wanVal
+    }
+}
+
+_RBC_ParseProfileLine(rawVal) {
+    params := Map()
+    for _, pair in StrSplit(String(rawVal), "&") {
+        eq := InStr(pair, "=")
+        if (eq > 0) {
+            k := StrLower(Trim(_RBC_UrlDecode(SubStr(pair, 1, eq - 1))))
+            v := _RBC_UrlDecode(SubStr(pair, eq + 1))
+            if (k != "")
+                params[k] := v
+        }
+    }
+    return {
+        host: params.Has("host") ? params["host"] : "",
+        bridgePort: params.Has("bp") && IsInteger(params["bp"]) ? String(Integer(params["bp"])) : "4456",
+        obsPort: params.Has("obsport") && IsInteger(params["obsport"]) ? String(Integer(params["obsport"])) : "4455",
+        code: params.Has("code") ? params["code"] : "",
+        wanCode: params.Has("wan") ? params["wan"] : "",
+        obsPass: params.Has("pw") ? params["pw"] : "",
+        networkMode: (params.Has("mode") && StrLower(params["mode"]) = "internet") ? "Internet" : "LAN"
+    }
+}
+
+LoadSavedHostProfiles(cfg) {
+    profiles := []
+    if (!IsObject(cfg) || !cfg.HasOwnProp("ConfigFile") || cfg.ConfigFile = "" || !FileExist(cfg.ConfigFile))
+        return profiles
+    rawSec := ""
+    try rawSec := IniRead(cfg.ConfigFile, "HostProfiles", , "")
+    if (Trim(rawSec) = "")
+        return profiles
+    for _, line in StrSplit(rawSec, "`n", "`r") {
+        eq := InStr(line, "=")
+        if (eq <= 1)
+            continue
+        pName := Trim(SubStr(line, 1, eq - 1))
+        pVal := SubStr(line, eq + 1)
+        if (pName = "")
+            continue
+        parsed := _RBC_ParseProfileLine(pVal)
+        parsed.name := pName
+        profiles.Push(parsed)
+    }
+    return profiles
+}
+
+SaveHostProfile(cfg, profileName, data) {
+    clean := Trim(String(profileName))
+    clean := RegExReplace(clean, "[\r\n=]", "_")
+    if (clean = "" || !IsObject(cfg) || !cfg.HasOwnProp("ConfigFile") || cfg.ConfigFile = "" || !IsObject(data))
+        return false
+    h := data.HasOwnProp("host") ? String(data.host) : ""
+    bp := data.HasOwnProp("bridgePort") && IsInteger(data.bridgePort) ? String(Integer(data.bridgePort)) : "4456"
+    op := data.HasOwnProp("obsPort") && IsInteger(data.obsPort) ? String(Integer(data.obsPort)) : "4455"
+    cd := data.HasOwnProp("code") ? String(data.code) : ""
+    wn := data.HasOwnProp("wanCode") ? String(data.wanCode) : ""
+    pw := data.HasOwnProp("obsPass") ? String(data.obsPass) : ""
+    md := (data.HasOwnProp("networkMode") && StrLower(String(data.networkMode)) = "internet") ? "Internet" : "LAN"
+    enc := "host=" _RBC_UrlEncode(h) "&bp=" bp "&obsport=" op "&code=" _RBC_UrlEncode(cd) "&wan=" _RBC_UrlEncode(wn) "&pw=" _RBC_UrlEncode(pw) "&mode=" md
+    try {
+        IniWrite(enc, cfg.ConfigFile, "HostProfiles", clean)
+        return true
+    } catch {
+        return false
+    }
+}
+
+DeleteHostProfile(cfg, profileName) {
+    clean := Trim(String(profileName))
+    if (clean = "" || !IsObject(cfg) || !cfg.HasOwnProp("ConfigFile") || cfg.ConfigFile = "")
+        return false
+    try {
+        IniDelete(cfg.ConfigFile, "HostProfiles", clean)
+        return true
+    } catch {
+        return false
+    }
+}
+
+ApplyHostProfile(cfg, state, profileName) {
+    clean := Trim(String(profileName))
+    if (clean = "" || !IsObject(cfg))
+        return false
+    target := ""
+    for _, prof in LoadSavedHostProfiles(cfg) {
+        if (prof.name = clean) {
+            target := prof
+            break
+        }
+    }
+    if (!IsObject(target))
+        return false
+    cfg.HostAddress := target.host
+    cfg.BridgePort := Integer(target.bridgePort)
+    cfg.HostPort := target.obsPort
+    cfg.SessionPairingCode := target.code
+    cfg.InternetPairingCode := target.wanCode
+    cfg.ObsPassword := target.obsPass
+    cfg.NetworkMode := target.networkMode
+    if (cfg.HasMethod("Write")) {
+        cfg.Write("Settings", "HostAddress", cfg.HostAddress)
+        cfg.Write("Settings", "BridgePort", cfg.BridgePort)
+        cfg.Write("Settings", "HostPort", cfg.HostPort)
+        cfg.Write("Settings", "SessionPairingCode", cfg.SessionPairingCode)
+        cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode)
+        cfg.Write("Settings", "ObsPassword", cfg.ObsPassword)
+        cfg.Write("Settings", "NetworkMode", cfg.NetworkMode)
+    }
+    if (IsObject(state)) {
+        HandleRemotePowerBroadcast(0x7, state)
+        if (state.HasMethod("NotifyTrayStatus"))
+            try state.NotifyTrayStatus()
+    }
+    return true
+}
+
 ParseRemotePairingUri(rawUri) {
     s := Trim(String(rawUri))
     if (!RegExMatch(s, "i)^presentersync://connect/?(?:\?(.*))?$", &m))
@@ -1163,6 +1342,18 @@ TryConfirmRemoteStopRecording(cfg, state, nowTick := "") {
     }
     state.stopRecConfirmUntil := 0
     return true
+}
+
+GetRemoteConnectionModeLabel(state) {
+    if (!IsObject(state) || !state.obsConnected)
+        return "Disconnected"
+    if (state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback)
+        return "Direct OBS :4455"
+    if (state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback)
+        return "WAN Relay"
+    if (state.HasOwnProp("usingBridge") && state.usingBridge)
+        return "Host Bridge :4456"
+    return "OBS :4455"
 }
 
 ClampRemotePositionToBounds(x, y, w, h, monLeft, monTop, monRight, monBottom) {
