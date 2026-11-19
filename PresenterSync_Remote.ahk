@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.4.0
+; Version: 7.4.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.4.0.0
+;@Ahk2Exe-SetVersion 7.4.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -1416,22 +1416,31 @@ VerifyOrReconnectRemote(cfg, state, reason := "wake") {
 
 HandleRemotePowerEvent(cfg, state, wParam, lParam := 0) {
     wp := Integer(wParam)
-    if (wp == 4) { ; PBT_APMSUSPEND
-        if (IsObject(state))
-            state.isSystemSuspending := true
-        return "suspend"
-    }
-    if (wp == 7 || wp == 18) { ; PBT_APMRESUMESUSPEND / PBT_APMRESUMEAUTOMATIC
-        if (IsObject(state))
-            state.isSystemSuspending := false
-        VerifyOrReconnectRemote(cfg, state, wp == 18 ? "power_resume_auto" : "power_resume")
-        return "resume"
-    }
-    return ""
+    return HandleRemotePowerBroadcast(wp, state, (st) => VerifyOrReconnectRemote(cfg, st, wp == 18 ? "power_resume_auto" : "power_resume"))
 }
 
 OnRemotePowerBroadcast(cfg, state, wParam, lParam, msg, hwnd) {
     HandleRemotePowerEvent(cfg, state, wParam, lParam)
+}
+
+OnRemoteDisplayChange(cfg, state, wParam, lParam, msg, hwnd) {
+    if (!IsObject(state) || !state.HasOwnProp("MicGui") || !IsObject(state.MicGui))
+        return
+    state.ComputeDimensions(cfg)
+    vLeft := SysGet(76), vTop := SysGet(77)
+    vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+    clamped := ClampRemotePositionToBounds(state.savedX, state.savedY, state.baseWidth, state.baseHeight, vLeft, vTop, vRight, vBottom)
+    if (clamped.x != state.savedX || clamped.y != state.savedY) {
+        state.savedX := clamped.x
+        state.savedY := clamped.y
+        try state.MicGui.Move(clamped.x, clamped.y, state.baseWidth, state.baseHeight)
+        if (IsObject(cfg) && cfg.HasMethod("Write")) {
+            cfg.savedX := clamped.x
+            cfg.savedY := clamped.y
+            try cfg.Write("Position", "X", clamped.x)
+            try cfg.Write("Position", "Y", clamped.y)
+        }
+    }
 }
 
 RemoteHeartbeatTick(cfg, state) {
@@ -1771,6 +1780,7 @@ InitRemoteHUD(cfg, state) {
     OnMessage(0x0201, WM_REMOTE_LBUTTONDOWN.Bind(cfg, state))
     OnMessage(0x0205, WM_REMOTE_RBUTTONUP.Bind(state))
     OnMessage(0x02E0, WM_REMOTE_DPICHANGED.Bind(cfg, state))
+    OnMessage(0x007E, OnRemoteDisplayChange.Bind(cfg, state))
     OnMessage(0x0211, OnRemoteMenuLoop.Bind(state, true))
     OnMessage(0x0212, OnRemoteMenuLoop.Bind(state, false))
 }
@@ -2998,18 +3008,20 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
     currentIndex := 1
     testSuccess := false
     btnTest.Enabled := false
+    firstTarget := endpoints[1]
+    dualRes := ProbeRemoteDualEndpoints(firstTarget.host, 4456, Integer(portClean))
 
     TryNextCandidate() {
         ClearProbeTimer()
         if (IsCancelled() || testSuccess)
             return
         if (currentIndex > endpoints.Length) {
-            FinishTest("✕ All " endpoints.Length " candidate(s) unreachable (Check IP, Port & Firewall)")
+            FinishTest("✕ " dualRes.summary " (Check IP, Port & Firewall)")
             return
         }
 
         target := endpoints[currentIndex]
-        statusLabel.Value := "Testing " target.raw " (" currentIndex "/" endpoints.Length ")..."
+        statusLabel.Value := "Testing " target.raw " (" currentIndex "/" endpoints.Length ") | " dualRes.summary
         SetTimer RunCurrentProbe, -15
 
         OnCandidateTimeout() {
@@ -3044,7 +3056,7 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
                     TrySendWsText(ws, '{"op":1,"d":{"rpcVersion":1,"eventSubscriptions":0' authStr '}}')
                 } else if RegExMatch(msg, '"op"\s*:\s*2') {
                     testSuccess := true
-                    FinishTest("✓ Connected to " target.raw " (" currentIndex "/" endpoints.Length ")!")
+                    FinishTest("✓ Connected to " target.raw " | " dualRes.summary)
                 }
             }
 

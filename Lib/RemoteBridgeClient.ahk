@@ -1165,3 +1165,124 @@ TryConfirmRemoteStopRecording(cfg, state, nowTick := "") {
     return true
 }
 
+ClampRemotePositionToBounds(x, y, w, h, monLeft, monTop, monRight, monBottom) {
+    maxX := Max(monLeft, monRight - Max(1, w))
+    maxY := Max(monTop, monBottom - Max(1, h))
+    cx := Max(monLeft, Min(Integer(x), maxX))
+    cy := Max(monTop, Min(Integer(y), maxY))
+    return { x: cx, y: cy }
+}
+
+HandleRemotePowerBroadcast(wParam, state, reconnectFn := "") {
+    wp := Integer(wParam)
+    if (wp == 0x4) { ; PBT_APMSUSPEND
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Power", "PowerSuspend", "PBT_APMSUSPEND")
+        if (IsObject(state)) {
+            state.isSystemSuspending := true
+            state.lastSuspendTick := A_TickCount
+        }
+        return "suspend"
+    }
+    if (wp == 0x7 || wp == 0x12) { ; PBT_APMRESUMESUSPEND / PBT_APMRESUMEAUTOMATIC
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Power", "PowerResume", wp == 0x12 ? "PBT_APMRESUMEAUTOMATIC" : "PBT_APMRESUMESUSPEND")
+        if (IsObject(state)) {
+            state.isSystemSuspending := false
+            state.lastRxTick := 0
+            state.reconnecting := false
+            if (state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+                oldWs := state.obsWs
+                state.obsWs := ""
+                try oldWs._psClosed := true
+                try oldWs.shutdown()
+            }
+            if (state.HasOwnProp("obsConnected"))
+                state.obsConnected := false
+        }
+        if (IsObject(reconnectFn)) {
+            reconnectFn.Call(state)
+        } else if (IsObject(state) && state.HasOwnProp("reconnectTimerFn") && IsObject(state.reconnectTimerFn)) {
+            SetTimer(state.reconnectTimerFn, -50)
+        }
+        return "resume"
+    }
+    return ""
+}
+
+ProbeRemoteTcpPort(host, port, timeoutMs := 750) {
+    cleanHost := Trim(String(host))
+    pNum := IsInteger(port) ? Integer(port) : 0
+    if (cleanHost = "" || pNum < 1 || pNum > 65535)
+        return false
+    if (IsLoopbackHost(cleanHost))
+        return IsLocalTcpPortListening(pNum)
+    ipNum := DllCall("ws2_32\inet_addr", "AStr", cleanHost, "UInt")
+    if (ipNum == 0xFFFFFFFF)
+        return false
+    wsaBuf := Buffer(408, 0)
+    if (DllCall("ws2_32\WSAStartup", "UShort", 0x0202, "Ptr", wsaBuf.Ptr, "Int") != 0)
+        return false
+    sock := DllCall("ws2_32\socket", "Int", 2, "Int", 1, "Int", 6, "UPtr") ; AF_INET, SOCK_STREAM, IPPROTO_TCP
+    if (sock = -1 || sock = 0xFFFFFFFFFFFFFFFF)
+        return false
+    ok := false
+    try {
+        nonBlk := Buffer(4, 0)
+        NumPut("UInt", 1, nonBlk, 0)
+        DllCall("ws2_32\ioctlsocket", "Ptr", sock, "UInt", 0x8004667E, "Ptr", nonBlk.Ptr, "Int")
+        sa := Buffer(16, 0)
+        NumPut("UShort", 2, sa, 0)
+        NumPut("UShort", DllCall("ws2_32\htons", "UShort", pNum, "UShort"), sa, 2)
+        NumPut("UInt", ipNum, sa, 4)
+        DllCall("ws2_32\connect", "Ptr", sock, "Ptr", sa.Ptr, "Int", 16, "Int")
+        fdWrite := Buffer(8 + A_PtrSize * 2, 0)
+        NumPut("UInt", 1, fdWrite, 0)
+        NumPut("Ptr", sock, fdWrite, A_PtrSize)
+        tv := Buffer(8, 0)
+        sec := timeoutMs // 1000
+        usec := Mod(timeoutMs, 1000) * 1000
+        NumPut("Int", sec, tv, 0)
+        NumPut("Int", usec, tv, 4)
+        sel := DllCall("ws2_32\select", "Int", 0, "Ptr", 0, "Ptr", fdWrite.Ptr, "Ptr", 0, "Ptr", tv.Ptr, "Int")
+        if (sel > 0) {
+            errVal := Buffer(4, 0)
+            errLen := Buffer(4, 0)
+            NumPut("Int", 4, errLen, 0)
+            if (DllCall("ws2_32\getsockopt", "Ptr", sock, "Int", 0xFFFF, "Int", 0x1007, "Ptr", errVal.Ptr, "Ptr", errLen.Ptr, "Int") == 0)
+                ok := (NumGet(errVal, 0, "Int") == 0)
+        }
+    } finally {
+        DllCall("ws2_32\closesocket", "Ptr", sock)
+    }
+    return ok
+}
+
+ProbeRemoteDualEndpoints(host, bridgePort := 4456, obsPort := 4455, probeFn := "") {
+    cleanHost := Trim(String(host))
+    bPort := (IsInteger(bridgePort) && Integer(bridgePort) >= 1 && Integer(bridgePort) <= 65535) ? Integer(bridgePort) : 4456
+    oPort := (IsInteger(obsPort) && Integer(obsPort) >= 1 && Integer(obsPort) <= 65535) ? Integer(obsPort) : 4455
+    bridgeOk := false
+    obsOk := false
+    if (IsObject(probeFn)) {
+        res := probeFn.Call(cleanHost, bPort, oPort)
+        if (IsObject(res)) {
+            bridgeOk := res.HasOwnProp("bridgeOk") ? !!res.bridgeOk : false
+            obsOk := res.HasOwnProp("obsOk") ? !!res.obsOk : false
+        }
+    } else if (cleanHost != "") {
+        bRes := ProbeHostBridgeHealth(cleanHost, bPort, "", 800)
+        bridgeOk := (IsObject(bRes) && bRes.HasOwnProp("ok")) ? !!bRes.ok : false
+        obsOk := ProbeRemoteTcpPort(cleanHost, oPort, 800)
+    }
+    bridgeDetail := "Host Bridge (:" bPort "): " (bridgeOk ? "OK" : "UNREACHABLE")
+    obsDetail := "Direct OBS (:" oPort "): " (obsOk ? "OK" : "UNREACHABLE")
+    return {
+        bridgeOk: bridgeOk,
+        bridgeDetail: bridgeDetail,
+        obsOk: obsOk,
+        obsDetail: obsDetail,
+        summary: bridgeDetail " | " obsDetail
+    }
+}
+
