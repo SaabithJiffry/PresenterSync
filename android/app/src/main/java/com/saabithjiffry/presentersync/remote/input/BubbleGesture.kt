@@ -12,6 +12,7 @@ enum class BubbleGestureAction(
     OPEN_QUICK_MENU("open_quick_menu", "Open Quick Menu", "Show the floating Explorer Quick Menu"),
     OPEN_SETTINGS("open_settings", "Open Settings", "Bring PresenterSync Remote window to front"),
     RECONNECT("reconnect", "Reconnect Host", "Restart LAN/Bridge/Relay connection"),
+    TRANSITION_SCENE("transition_scene", "OBS Transition", "Trigger OBS Studio Mode or Scene Transition"),
     HIDE_PILL("hide_pill", "Hide Floating Pill", "Hide floating indicator until reopened from tile/notification");
 
     companion object {
