@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -49,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -160,27 +162,36 @@ fun HudAppearanceScreen(
                             when (previewStateIdx) {
                                 1 -> ConnectionUiState(connStatus = ConnStatus.CONNECTED, connected = true, isMuted = true)
                                 2 -> ConnectionUiState(connStatus = ConnStatus.SEARCHING, connected = false, isMuted = false)
+                                3 -> ConnectionUiState(connStatus = ConnStatus.AUTH_FAILED, connected = false, isMuted = false)
                                 else -> ConnectionUiState(connStatus = ConnStatus.CONNECTED, connected = true, isMuted = false)
                             }
                         }
                         val previewOverride: Boolean? = when (previewStateIdx) {
                             1 -> true
-                            2 -> null
+                            2, 3 -> null
                             else -> false
                         }
 
-                        AndroidView(
-                            factory = { ctx -> MicPillCanvasView(ctx) },
-                            update = { view ->
-                                view.updateRenderState(
-                                    cfg = previewCfg,
-                                    conn = previewConn,
-                                    alpha = cfg.opacityLevel,
-                                    mutedOverride = previewOverride
-                                )
-                                view.requestLayout()
-                            }
-                        )
+                        val density = LocalDensity.current
+                        BoxWithConstraints(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val maxPreviewWidthPx = with(density) { maxWidth.roundToPx().coerceAtLeast(120) }
+                            AndroidView(
+                                factory = { ctx -> MicPillCanvasView(ctx) },
+                                update = { view ->
+                                    view.updateRenderState(
+                                        cfg = previewCfg,
+                                        conn = previewConn,
+                                        alpha = cfg.opacityLevel,
+                                        mutedOverride = previewOverride,
+                                        maxContainerWidthPx = maxPreviewWidthPx
+                                    )
+                                    view.requestLayout()
+                                }
+                            )
+                        }
 
                         if (cfg.indicatorScale > formFactor.previewMaxScale) {
                             Text(
@@ -196,7 +207,12 @@ fun HudAppearanceScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf(0 to "Preview LIVE", 1 to "Preview MUTED", 2 to "Preview OFFLINE").forEach { (idx, title) ->
+                    listOf(
+                        0 to "Preview LIVE",
+                        1 to "Preview MUTED",
+                        2 to "Preview OFFLINE",
+                        3 to "Preview AUTH ERR"
+                    ).forEach { (idx, title) ->
                         FilterChip(
                             selected = previewStateIdx == idx,
                             onClick = { previewStateIdx = idx },

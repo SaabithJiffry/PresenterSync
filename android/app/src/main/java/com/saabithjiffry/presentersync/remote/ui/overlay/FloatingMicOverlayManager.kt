@@ -149,8 +149,9 @@ class FloatingMicOverlayManager(
         val density = context.resources.displayMetrics.density
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
         val view = pillView
-        val w = view?.computeTargetWidthPx() ?: layoutParams?.width ?: 200
-        val h = view?.computeTargetHeightPx() ?: layoutParams?.height ?: 80
+        val w = view?.computeTargetWidthPx(bounds.width) ?: layoutParams?.width ?: 200
+        val h = view?.computeTargetHeightPx(bounds.width) ?: layoutParams?.height ?: 80
+        val inset = view?.computeOuterInsetPx(bounds.width) ?: 0
         val pos = layoutParams?.let { OverlayPointPx(it.x, it.y) }
             ?: ScreenBoundsCalculator.resolvePosition(
                 savedX = currentConfig.savedX,
@@ -161,13 +162,17 @@ class FloatingMicOverlayManager(
                 marginXPx = (AppConstants.SCREEN_MARGIN_X * density).roundToInt(),
                 marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt()
             )
-        return pos to h
+        return OverlayPointPx(pos.x + inset, pos.y + inset) to (h - inset * 2).coerceAtLeast(16)
     }
 
     fun currentPillRectPx(): Rect {
-        val (anchor, h) = currentAnchorForToast()
-        val w = pillView?.computeTargetWidthPx() ?: layoutParams?.width ?: 200
-        return Rect(anchor.x, anchor.y, anchor.x + w, anchor.y + h)
+        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+        val view = pillView
+        val w = view?.computeTargetWidthPx(bounds.width) ?: layoutParams?.width ?: 200
+        val inset = view?.computeOuterInsetPx(bounds.width) ?: 0
+        val (anchor, innerH) = currentAnchorForToast()
+        val innerW = (w - inset * 2).coerceAtLeast(16)
+        return Rect(anchor.x, anchor.y, anchor.x + innerW, anchor.y + innerH)
     }
 
     fun setHiddenForEasterEgg(hidden: Boolean) {
