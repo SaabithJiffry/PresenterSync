@@ -1670,6 +1670,11 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.targetMicName := mic
             cfg.Write("Settings", "TargetMicName", mic)
         }
+        if vals.HasOwnProp("SecondaryAudioSources") {
+            sec := Trim(String(vals.SecondaryAudioSources))
+            cfg.SecondaryAudioSources := sec
+            cfg.Write("Settings", "SecondaryAudioSources", sec)
+        }
         if vals.HasOwnProp("ShowVoiceMeter") {
             cfg.ShowVoiceMeter := !!vals.ShowVoiceMeter
             cfg.WriteBool("Settings", "ShowVoiceMeter", cfg.ShowVoiceMeter)
@@ -1913,8 +1918,45 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y172 w210", "Target OBS Audio Source:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edTargetMic := ccGui.Add("Edit", "x250 y168 w430 h26", cfg.targetMicName)
-    Theme.RegisterControl(ccGui, edTargetMic, "Edit")
+    BuildMicInputChoices(stObj, curText) {
+        choices := []
+        seen := Map()
+        if (IsObject(stObj)) {
+            src := (stObj.HasOwnProp("obsAudioInputs") && IsObject(stObj.obsAudioInputs) && stObj.obsAudioInputs.Length > 0)
+                ? stObj.obsAudioInputs
+                : ((stObj.HasOwnProp("obsInputs") && IsObject(stObj.obsInputs)) ? stObj.obsInputs : [])
+            for _, item in src {
+                clean := Trim(String(item))
+                if (clean != "" && !seen.Has(clean)) {
+                    seen[clean] := true
+                    choices.Push(clean)
+                }
+            }
+        }
+        cleanCur := Trim(String(curText))
+        if (cleanCur != "" && !seen.Has(cleanCur))
+            choices.Push(cleanCur)
+        return choices
+    }
+    cbTargetMic := ccGui.Add("ComboBox", "x250 y168 w310", BuildMicInputChoices(state, cfg.targetMicName))
+    cbTargetMic.Text := cfg.targetMicName
+    Theme.RegisterControl(ccGui, cbTargetMic, "DropDownList")
+    btnRefreshInputs := ccGui.Add("Button", "x568 y167 w112 h28", "Refresh Inputs")
+    Theme.RegisterControl(ccGui, btnRefreshInputs, "Button", "tabButton")
+    btnRefreshInputs.OnEvent("Click", (*) => (IsObject(state) && state.HasOwnProp("obsWs") && IsObject(state.obsWs) ? RequestObsInputList(state.obsWs, state) : 0))
+    RefreshTargetMicCombo(*) {
+        if (ccGui._closed)
+            return
+        savedText := cbTargetMic.Text
+        cbTargetMic.Delete()
+        newChoices := BuildMicInputChoices(state, savedText)
+        if (newChoices.Length > 0)
+            cbTargetMic.Add(newChoices)
+        cbTargetMic.Text := savedText
+    }
+    prevRefreshInputsFn := (IsObject(state) && state.HasOwnProp("refreshInputsFn")) ? state.refreshInputsFn : ""
+    if (IsObject(state))
+        state.refreshInputsFn := RefreshTargetMicCombo
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y212 w210", "Zoom / Teams / Meet Mute Keys:"), "Text", "tabText")
@@ -1948,6 +1990,11 @@ ShowControlCenterWindow(cfg, state := "", *) {
     chkDeadMic := ccGui.Add("Checkbox", "x360 y410 w330 h24" (cfg.EnableDeadMicWatchdog ? " Checked" : ""), "Warn if Mic is LIVE but Silent for 45s")
     Theme.RegisterControl(ccGui, chkForgottenRec, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkDeadMic, "Checkbox", "tabText")
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y446 w210", "Secondary OBS Mics (comma):"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edSecondaryAudioSources := ccGui.Add("Edit", "x250 y442 w430 h26", cfg.HasOwnProp("SecondaryAudioSources") ? cfg.SecondaryAudioSources : "")
+    Theme.RegisterControl(ccGui, edSecondaryAudioSources, "Edit")
     Theme.RegisterControl(ccGui, chkVoiceMeter, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkAudioCue, "Checkbox", "tabText")
     Theme.RegisterControl(ccGui, chkMuteToast, "Checkbox", "tabText")
@@ -2306,7 +2353,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
             if (NormalizeConferencingApp(cfg.ConferencingApp) = cName)
                 ddlConfApp.Choose(i)
         }
-        edTargetMic.Value := cfg.targetMicName
+        cbTargetMic.Text := cfg.targetMicName
+        edSecondaryAudioSources.Value := cfg.HasOwnProp("SecondaryAudioSources") ? cfg.SecondaryAudioSources : ""
         edZoomMute.Value := cfg.ZoomMuteHotkey
         edTeamsMute.Value := cfg.TeamsMuteHotkey
         edMeetMute.Value := cfg.MeetMuteHotkey
@@ -2418,7 +2466,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
         vals := {
             AudioRoutingMode: ddlRouting.Value,
             ConferencingApp: ddlConfApp.Text,
-            targetMicName: edTargetMic.Value,
+            targetMicName: cbTargetMic.Text,
+            SecondaryAudioSources: edSecondaryAudioSources.Value,
             ZoomMuteHotkey: edZoomMute.Value,
             TeamsMuteHotkey: edTeamsMute.Value,
             MeetMuteHotkey: edMeetMute.Value,
@@ -2507,6 +2556,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
         if (ccGui._closed)
             return
         ccGui._closed := true
+        if (IsObject(state) && state.HasOwnProp("refreshInputsFn"))
+            state.refreshInputsFn := prevRefreshInputsFn
         Theme.UnregisterWindow(ccGui, "PresenterSync - Control Center")
         Theme.ReleaseSuspend()
         ccGui.Destroy()

@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.3.0"
+    static APP_VERSION := "7.3.1"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1294,6 +1294,7 @@ class Config {
     ZoomPauseHotkey := "!p"
     obsPassword := ""
     targetMicName := "Mic/Aux"
+    SecondaryAudioSources := ""
 
     EnablePPT := false
     EnableMicOnly := false
@@ -1519,6 +1520,7 @@ class Config {
         this.targetMicName := Trim(this.Read("Settings", "TargetMicName", "Mic/Aux"))
         if (this.targetMicName = "")
             this.targetMicName := "Mic/Aux"
+        this.SecondaryAudioSources := Trim(this.Read("Settings", "SecondaryAudioSources", ""))
         rawBrb := Trim(this.Read("Settings", "StandbySceneName", "BRB"))
         this.StandbySceneName := (rawBrb != "") ? rawBrb : "BRB"
 
@@ -1743,6 +1745,7 @@ class Config {
             { sec: "Settings", key: "ZoomRecHotkey", prop: "ZoomRecHotkey", kind: "str" },
             { sec: "Settings", key: "ZoomPauseHotkey", prop: "ZoomPauseHotkey", kind: "str" },
             { sec: "Settings", key: "TargetMicName", prop: "targetMicName", kind: "str" },
+            { sec: "Settings", key: "SecondaryAudioSources", prop: "SecondaryAudioSources", kind: "str" },
             { sec: "Settings", key: "EnablePPT", prop: "EnablePPT", kind: "bool" },
             { sec: "Settings", key: "EnableMicOnly", prop: "EnableMicOnly", kind: "bool" },
             { sec: "Settings", key: "EnablePointerTransition", prop: "EnablePointerTransition", kind: "bool" },
@@ -1950,6 +1953,9 @@ class OverlayState {
     previewSceneName := ""
     previousProgramScene := ""
     sceneList := []
+    obsInputs := []
+    obsAudioInputs := []
+    refreshInputsFn := ""
     unreadChatCount := 0
     streamState := 0
     streamCongestion := 0.0
