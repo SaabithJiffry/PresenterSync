@@ -253,7 +253,7 @@ Assert("GetLocalNetworkEndpoints returns ips array", IsObject(netInfo.ips) && ne
 Assert("GetLocalNetworkEndpoints returns details array", IsObject(netInfo.details) && netInfo.details.Length > 0)
 Assert("Local ComputerName resolved", A_ComputerName != "")
 
-Assert("APP_VERSION is active release v7.3.0", UIConstants.APP_VERSION == "7.3.0")
+Assert("APP_VERSION is active release v7.3.1", UIConstants.APP_VERSION == "7.3.1")
 guideTxt := GetRemoteSetupGuideText()
 Assert("GetRemoteSetupGuideText covers 4455, 4009 & Test Connection",
     InStr(guideTxt, "4455") && InStr(guideTxt, "4009") && InStr(guideTxt, "Test Connection"))
@@ -889,7 +889,7 @@ HandleObsMessage(cfgStrm, stStrm, mockWs6, '{"op":2,"d":{"negotiatedRpcVersion":
 allSent8 := ""
 for _, sMsg in mockWs6.sent
     allSent8 .= sMsg "`n"
-hasAll8 := (mockWs6.sent.Length == 9)
+hasAll8 := (mockWs6.sent.Length == 10)
     && InStr(allSent8, '"InitState"')
     && InStr(allSent8, '"InitRecState"')
     && InStr(allSent8, '"InitStudioState"')
@@ -898,6 +898,7 @@ hasAll8 := (mockWs6.sent.Length == 9)
     && InStr(allSent8, '"InitSceneList"')
     && InStr(allSent8, '"InitStreamState"')
     && InStr(allSent8, '"InitVCamState"')
+    && InStr(allSent8, '"InitInputList"')
     && InStr(allSent8, '"InitRecordDir"')
 Assert("OpCode 2 dispatches all 9 initial OBS state queries (incl. PreviewScene, SceneList, Stream, VCam & RecordDir)", hasAll8)
 

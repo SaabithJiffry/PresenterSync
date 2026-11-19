@@ -205,7 +205,7 @@ DispatchHostMuteToggle(cfg, state) {
     zoomOpen := WinExist(confSpec)
 
     if (cfg.AudioRoutingMode == 1) {
-        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
             return true
         if (!obsOpen || cfg.ObsMuteHotkey = "None" || cfg.ObsMuteHotkey = "") {
             if (TryCoreAudioFallbackMute(cfg, state, !state.isMuted, "HostToggleMode1"))
@@ -227,7 +227,7 @@ DispatchHostMuteToggle(cfg, state) {
         try ControlSend FormatSendKey(confHk), , confSpec
         SetKeyDelay 50, 50
     } else if (cfg.AudioRoutingMode == 3) {
-        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
             return true
         obsCanSend := (obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
         confCanSend := (zoomOpen && confHk != "" && confHk != "None")
@@ -248,7 +248,7 @@ DispatchHostMuteToggle(cfg, state) {
         SetKeyDelay 50, 50
         SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
     } else {
-        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
             return true
         if (TryCoreAudioFallbackMute(cfg, state, !state.isMuted, "HostToggleMode0"))
             return true
@@ -455,6 +455,52 @@ SendObsSetInputMute(ws, micName, muted, requestId := "ZoomSyncObsMute") {
     escMic := EscapeJsonStr(micName)
     mutedStr := muted ? "true" : "false"
     return SendObsRequest(ws, "SetInputMute", requestId, '{"inputName":"' escMic '","inputMuted":' mutedStr '}')
+}
+
+GetAllMutedAudioSources(cfg) {
+    sources := []
+    seen := Map()
+    if (!IsObject(cfg))
+        return sources
+    primary := cfg.HasOwnProp("targetMicName") ? Trim(String(cfg.targetMicName))
+        : (cfg.HasOwnProp("TargetMicName") ? Trim(String(cfg.TargetMicName)) : "")
+    if (primary != "") {
+        sources.Push(primary)
+        seen[StrLower(primary)] := true
+    }
+    if (cfg.HasOwnProp("SecondaryAudioSources") && Trim(String(cfg.SecondaryAudioSources)) != "") {
+        for _, rawItem in StrSplit(String(cfg.SecondaryAudioSources), [",", ";"]) {
+            item := Trim(rawItem)
+            if (item != "" && !seen.Has(StrLower(item))) {
+                seen[StrLower(item)] := true
+                sources.Push(item)
+            }
+        }
+    }
+    return sources
+}
+
+SendObsSetInputMuteGroup(cfg, ws, muted, requestId := "ZoomSyncObsMute") {
+    sources := GetAllMutedAudioSources(cfg)
+    if (sources.Length == 0)
+        return false
+    anySent := false
+    for idx, srcName in sources {
+        reqId := (idx == 1) ? requestId : (requestId "_" idx)
+        if (SendObsSetInputMute(ws, srcName, muted, reqId))
+            anySent := true
+    }
+    return anySent
+}
+
+SendObsToggleInputMuteGroup(cfg, state, ws, requestId := "HostClickerMute") {
+    sources := GetAllMutedAudioSources(cfg)
+    if (sources.Length == 0)
+        return false
+    if (sources.Length == 1)
+        return SendObsToggleInputMute(ws, sources[1], requestId)
+    targetMuted := (IsObject(state) && state.HasOwnProp("isMuted")) ? !state.isMuted : true
+    return SendObsSetInputMuteGroup(cfg, ws, targetMuted, requestId)
 }
 
 SendObsBroadcastCloseRemote(ws, requestId := "ManualCloseRemote") {
@@ -695,7 +741,7 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
 ExecuteHostRemoteToggleMute(cfg, state) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
-    if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMute(state.obsWs, cfg.targetMicName, "HostClickerMute"))
+    if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
         return true
     return _DispatchHostRemoteControlSend(cfg, state, !state.isMuted)
 }
@@ -704,7 +750,7 @@ ExecuteHostRemoteSetMute(cfg, state, targetMuted) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
     wantMuted := !!targetMuted
-    if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsSetInputMute(state.obsWs, cfg.targetMicName, wantMuted, "HostRemoteSetMute")) {
+    if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsSetInputMuteGroup(cfg, state.obsWs, wantMuted, "HostRemoteSetMute")) {
         if (!!state.isMuted = wantMuted)
             BroadcastHostRelayMuteState(cfg, state)
         return true
@@ -1291,6 +1337,68 @@ HandleObsClose(cfg, state, ws, status, reason) {
     SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
 }
 
+RequestObsInputList(ws := "", state := "") {
+    if (!IsObject(ws) && IsObject(state) && state.HasOwnProp("obsWs"))
+        ws := state.obsWs
+    if (!IsObject(ws))
+        return false
+    if (IsObject(state) && state.HasOwnProp("obsConnected") && !state.obsConnected)
+        return false
+    return SendObsRequest(ws, "GetInputList", "InitInputList")
+}
+
+IsObsAudioInputKind(kind) {
+    k := StrLower(Trim(String(kind)))
+    if (k = "")
+        return false
+    static knownAudioKinds := Map(
+        "wasapi_input_capture", true,
+        "wasapi_output_capture", true,
+        "coreaudio_input_capture", true,
+        "coreaudio_output_capture", true,
+        "pulse_input_capture", true,
+        "pulse_output_capture", true,
+        "alsa_input_capture", true,
+        "jack_input_capture", true,
+        "oss_input_capture", true,
+        "asio_input_capture", true,
+        "dshow_input", true,
+        "ffmpeg_source", true,
+        "vlc_source", true,
+        "ndi_source", true
+    )
+    if (knownAudioKinds.Has(k))
+        return true
+    return (InStr(k, "audio") || InStr(k, "input_capture") || InStr(k, "output_capture"))
+}
+
+ParseObsInputList(rawMsg) {
+    allInputs := []
+    audioInputs := []
+    seenAll := Map()
+    seenAudio := Map()
+    pos := 1
+    while (pos := RegExMatch(rawMsg, "\{[^{}]*\}", &objMatch, pos)) {
+        objTxt := objMatch[0]
+        if (RegExMatch(objTxt, '"inputName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mName)) {
+            name := UnescapeJsonStr(mName[1])
+            kind := ""
+            if (RegExMatch(objTxt, '"inputKind"\s*:\s*"((?:[^"\\]|\\.)*)"', &mKind))
+                kind := UnescapeJsonStr(mKind[1])
+            if (name != "" && !seenAll.Has(name)) {
+                seenAll[name] := true
+                allInputs.Push(name)
+            }
+            if (name != "" && IsObsAudioInputKind(kind) && !seenAudio.Has(name)) {
+                seenAudio[name] := true
+                audioInputs.Push(name)
+            }
+        }
+        pos += objMatch.Len
+    }
+    return { all: allInputs, audio: audioInputs }
+}
+
 ParseObsSceneList(rawMsg) {
     scenes := []
     seen := Map()
@@ -1358,6 +1466,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         SendObsRequest(ws, "GetSceneList", "InitSceneList")
         SendObsRequest(ws, "GetStreamStatus", "InitStreamState")
         SendObsRequest(ws, "GetVirtualCamStatus", "InitVCamState")
+        RequestObsInputList(ws)
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
             try state.refreshHelpFn.Call()
     }
@@ -1498,6 +1607,13 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                 state.sceneList := parsedScenes
                 HostBridgeBroadcastMuteState(cfg, state)
             }
+        }
+        else if (InStr(msg, '"requestId":"InitInputList"') || InStr(msg, '"requestId": "InitInputList"')) {
+            parsedInputs := ParseObsInputList(msg)
+            state.obsInputs := parsedInputs.all
+            state.obsAudioInputs := parsedInputs.audio
+            if (state.HasOwnProp("refreshInputsFn") && IsObject(state.refreshInputsFn))
+                try state.refreshInputsFn.Call(state.obsAudioInputs, state.obsInputs)
         }
         else if (InStr(msg, '"requestId":"HostSplitRec"') || InStr(msg, '"requestId": "HostSplitRec"')) {
             if (RegExMatch(msg, '"result"\s*:\s*true') && IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
@@ -1648,7 +1764,7 @@ ZoomStateMonitor(cfg, state) {
         if (state.zoomLastMuted != -1 && zoomInfo.muted != state.zoomLastMuted && zoomInfo.muted != state.isMuted) {
             sentObs := false
             if (cfg.EnableWS && state.obsConnected)
-                sentObs := SendObsSetInputMute(state.obsWs, cfg.targetMicName, zoomInfo.muted)
+                sentObs := SendObsSetInputMuteGroup(cfg, state.obsWs, zoomInfo.muted)
             if (!sentObs && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "" && WinExist("ahk_exe obs64.exe")) {
                 SetKeyDelay -1, 30
                 try ControlSend FormatSendKey(cfg.ObsMuteHotkey),, "ahk_exe obs64.exe"
