@@ -37,6 +37,10 @@ class FloatingHudForegroundService : LifecycleService() {
     private lateinit var hudSnakeOverlayManager: HudSnakeOverlayManager
     private lateinit var toastBannerManager: FloatingToastBannerManager
     private lateinit var audioCuePlayer: AudioCuePlayer
+    private lateinit var hapticAlertPlayer: HapticAlertPlayer
+    private var warned2mThisRun = false
+    private var warnedOvertimeThisRun = false
+    private var prevVoiceWhileMuted = false
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeReceiverRegistered = false
 
@@ -76,6 +80,7 @@ class FloatingHudForegroundService : LifecycleService() {
         )
         toastBannerManager = FloatingToastBannerManager(this)
         audioCuePlayer = AudioCuePlayer()
+        hapticAlertPlayer = HapticAlertPlayer(this)
         acquireWifiLock()
         registerWakeReceiver()
         app.configStore.setHudWasActive(true)
@@ -91,6 +96,32 @@ class FloatingHudForegroundService : LifecycleService() {
                 hudSnakeOverlayManager.updateConfig(cfg)
                 updateNotification(cfg, conn)
                 QuickToggleTileService.requestRefresh(this@FloatingHudForegroundService)
+
+                if (conn.timerState == "stopped") {
+                    warned2mThisRun = false
+                    warnedOvertimeThisRun = false
+                } else if (conn.connected && (conn.timerState == "running" || conn.timerState == "overtime")) {
+                    if (conn.timerRemainingSec > 120 && conn.timerState == "running") {
+                        warned2mThisRun = false
+                        warnedOvertimeThisRun = false
+                    }
+                    if (conn.timerRemainingSec <= 0 || conn.timerState == "overtime") {
+                        if (!warnedOvertimeThisRun) {
+                            warnedOvertimeThisRun = true
+                            warned2mThisRun = true
+                            hapticAlertPlayer.play(HapticAlertType.TIMER_OVERTIME, cfg)
+                        }
+                    } else if (conn.timerRemainingSec <= 120) {
+                        if (!warned2mThisRun) {
+                            warned2mThisRun = true
+                            hapticAlertPlayer.play(HapticAlertType.TIMER_WARNING_2M, cfg)
+                        }
+                    }
+                }
+                if (conn.voiceWhileMuted && !prevVoiceWhileMuted) {
+                    hapticAlertPlayer.play(HapticAlertType.SPEAKING_WHILE_MUTED, cfg)
+                }
+                prevVoiceWhileMuted = conn.voiceWhileMuted
             }
         }
 
@@ -100,6 +131,7 @@ class FloatingHudForegroundService : LifecycleService() {
                 when (ev) {
                     is RemoteEvent.MuteChanged -> {
                         overlayManager.playMuteTransition(ev.isMuted)
+                        hapticAlertPlayer.play(if (ev.isMuted) HapticAlertType.MUTE else HapticAlertType.UNMUTE, cfg)
                         if (cfg.enableAudioCue) {
                             audioCuePlayer.playMuteCue(ev.isMuted)
                         }
@@ -112,6 +144,7 @@ class FloatingHudForegroundService : LifecycleService() {
                         Toast.makeText(applicationContext, ev.message, Toast.LENGTH_SHORT).show()
                     }
                     is RemoteEvent.StageNudge -> {
+                        hapticAlertPlayer.play(HapticAlertType.STAGE_NUDGE, cfg)
                         val (anchor, pillH) = overlayManager.currentAnchorForToast()
                         val accentCol = runCatching {
                             val h = com.saabithjiffry.presentersync.remote.config.HudColorPalettes.normalizeColorHex(ev.accentHex, "#F59E0B")
@@ -172,6 +205,7 @@ class FloatingHudForegroundService : LifecycleService() {
         toastBannerManager.hide()
         overlayManager.hide()
         audioCuePlayer.release()
+        hapticAlertPlayer.cancel()
         app.connectionManager.stop()
         releaseWifiLock()
         QuickToggleTileService.requestRefresh(this)
@@ -197,6 +231,7 @@ class FloatingHudForegroundService : LifecycleService() {
         toastBannerManager.hide()
         overlayManager.hide()
         audioCuePlayer.release()
+        hapticAlertPlayer.cancel()
         app.connectionManager.stop()
         releaseWifiLock()
         QuickToggleTileService.requestRefresh(this)

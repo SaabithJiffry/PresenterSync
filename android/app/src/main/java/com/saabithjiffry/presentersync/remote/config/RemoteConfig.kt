@@ -150,6 +150,8 @@ data class RemoteConfig(
     val enableAudioCue: Boolean = false,
     val enableMuteToast: Boolean = false,
     val enableVoiceWhileMutedAlert: Boolean = true,
+    val enableHapticAlerts: Boolean = true,
+    val hapticIntensity: Float = 0.8f,
     val showPillMiniBadges: Boolean = true,
     val enableHudClickActions: Boolean = true,
     val lockHudPosition: Boolean = false,
@@ -283,6 +285,8 @@ class RemoteConfigStore(context: Context) {
             enableAudioCue = prefs.getBoolean("enableAudioCue", false),
             enableMuteToast = prefs.getBoolean("enableMuteToast", false),
             enableVoiceWhileMutedAlert = prefs.getBoolean("enableVoiceWhileMutedAlert", true),
+            enableHapticAlerts = prefs.getBoolean("enableHapticAlerts", true),
+            hapticIntensity = prefs.getFloat("hapticIntensity", 0.8f).coerceIn(0.2f, 1.0f),
             showPillMiniBadges = prefs.getBoolean("showPillMiniBadges", true),
             enableHudClickActions = prefs.getBoolean("enableHudClickActions", true),
             lockHudPosition = prefs.getBoolean("lockHudPosition", false),
@@ -535,6 +539,8 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("hideFromScreenCapture", c.hideFromScreenCapture)
             .putBoolean("confirmBeforeStopRecording", c.confirmBeforeStopRecording)
             .putBoolean("enableVoiceWhileMutedAlert", c.enableVoiceWhileMutedAlert)
+            .putBoolean("enableHapticAlerts", c.enableHapticAlerts)
+            .putFloat("hapticIntensity", c.hapticIntensity.coerceIn(0.2f, 1.0f))
             .putBoolean("showPillMiniBadges", c.showPillMiniBadges)
             .putBoolean("enableHudClickActions", c.enableHudClickActions)
             .putBoolean("lockHudPosition", c.lockHudPosition)

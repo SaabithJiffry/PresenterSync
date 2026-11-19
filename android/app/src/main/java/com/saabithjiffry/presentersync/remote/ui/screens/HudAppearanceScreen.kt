@@ -452,6 +452,24 @@ fun HudAppearanceScreen(
                     onCheckedChange = { v -> app.configStore.update { it.copy(showPillMiniBadges = v) } }
                 )
                 ExplorerSettingToggleRow(
+                    title = "Silent Haptic / Vibration Alerts",
+                    subtitle = "Distinct vibration patterns for Mute/Unmute, 2m timer warning, overtime, speaking-while-muted, and stage nudges",
+                    checked = cfg.enableHapticAlerts,
+                    onCheckedChange = { v -> app.configStore.update { it.copy(enableHapticAlerts = v) } }
+                )
+                if (cfg.enableHapticAlerts) {
+                    Text(
+                        text = "Haptic Intensity: ${(cfg.hapticIntensity * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Slider(
+                        value = cfg.hapticIntensity.coerceIn(0.2f, 1.0f),
+                        onValueChange = { v -> app.configStore.update { it.copy(hapticIntensity = v.coerceIn(0.2f, 1.0f)) } },
+                        valueRange = 0.2f..1.0f
+                    )
+                }
+                ExplorerSettingToggleRow(
                     title = "Push-to-Talk Mode (Hold Pill to Unmute)",
                     subtitle = "Press and hold floating pill to unmute; releasing immediately mutes mic again. Enabling Push-to-Talk disables Long-Press, Very-Long-Press, and Push-to-Mute (and vice versa).",
                     checked = cfg.enablePushToTalk,
