@@ -113,7 +113,32 @@ import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadd
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import com.saabithjiffry.presentersync.remote.ui.theme.PresenterSyncTheme
 import com.saabithjiffry.presentersync.remote.ui.theme.ResponsiveExplorerActionRow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+internal const val STOP_RECORD_CONFIRM_WINDOW_MS = 3000L
+
+internal data class StopRecordTapResult(
+    val shouldExecuteStop: Boolean,
+    val nextPendingUntilMs: Long
+)
+
+internal fun evaluateStopRecordTap(
+    isRecording: Boolean,
+    confirmEnabled: Boolean,
+    pendingUntilMs: Long,
+    nowMs: Long,
+    windowMs: Long = STOP_RECORD_CONFIRM_WINDOW_MS
+): StopRecordTapResult {
+    if (!isRecording || !confirmEnabled) {
+        return StopRecordTapResult(shouldExecuteStop = true, nextPendingUntilMs = 0L)
+    }
+    return if (pendingUntilMs > 0L && nowMs < pendingUntilMs) {
+        StopRecordTapResult(shouldExecuteStop = true, nextPendingUntilMs = 0L)
+    } else {
+        StopRecordTapResult(shouldExecuteStop = false, nextPendingUntilMs = nowMs + windowMs)
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -125,7 +150,9 @@ internal fun DirectorDeckAndTimerCard(
     onToggleStandby: () -> Unit,
     onSwitchScene: (String) -> Unit,
     onTimerCommand: (String, Int) -> Unit,
-    onSendNudge: (String) -> Unit
+    onSendNudge: (String) -> Unit,
+    onToggleRecord: () -> Unit = {},
+    confirmBeforeStopRecording: Boolean = true
 ) {
     val isDirectObsFallback = conn.usingDirectObsFallback ||
         conn.channelType == com.saabithjiffry.presentersync.remote.network.ChannelType.DIRECT_OBS
@@ -133,6 +160,19 @@ internal fun DirectorDeckAndTimerCard(
 
     var nudgeDraft by remember { mutableStateOf("") }
     var customMinDraft by remember { mutableStateOf("12") }
+    var pendingStopRecordUntilMs by remember { mutableStateOf(0L) }
+    val isRecording = conn.recState != 0
+    val isConfirmingStop = isRecording && pendingStopRecordUntilMs > 0L
+
+    LaunchedEffect(pendingStopRecordUntilMs, conn.recState) {
+        if (conn.recState == 0) {
+            pendingStopRecordUntilMs = 0L
+        } else if (pendingStopRecordUntilMs > 0L) {
+            val remaining = (pendingStopRecordUntilMs - System.currentTimeMillis()).coerceAtLeast(0L)
+            delay(remaining)
+            pendingStopRecordUntilMs = 0L
+        }
+    }
     val timerWarningAmber = conn.timerState == "running" && conn.timerRemainingSec in 1..120
     val timerOvertimeRed = conn.timerState == "overtime" || (conn.timerState == "running" && conn.timerRemainingSec <= 0)
     val timerColor = when {
@@ -194,6 +234,41 @@ internal fun DirectorDeckAndTimerCard(
                 ) {
                     Text(if (conn.isStandby) "Exit BRB" else "Standby BRB", maxLines = 1, softWrap = false)
                 }
+            }
+
+            Button(
+                onClick = {
+                    val res = evaluateStopRecordTap(
+                        isRecording = isRecording,
+                        confirmEnabled = confirmBeforeStopRecording,
+                        pendingUntilMs = pendingStopRecordUntilMs,
+                        nowMs = System.currentTimeMillis()
+                    )
+                    pendingStopRecordUntilMs = res.nextPendingUntilMs
+                    if (res.shouldExecuteStop) {
+                        onToggleRecord()
+                    }
+                },
+                contentPadding = CompactExplorerButtonPadding,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = when {
+                        isConfirmingStop -> Color(0xFFD97706)
+                        isRecording -> Color(0xFFDC2626)
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    when {
+                        isConfirmingStop -> "Tap Again to Stop (3s)"
+                        isRecording -> "Stop Recording"
+                        else -> "Start Recording"
+                    },
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
             Row(

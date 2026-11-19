@@ -2315,6 +2315,31 @@ ShowSceneSwitcherPopup(cfg, state) {
     return built.scenes
 }
 
+TryConfirmStopRecording(cfg, state, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return true
+    if (nowTick = "")
+        nowTick := A_TickCount
+    if (!state.HasOwnProp("stopRecConfirmUntil"))
+        state.stopRecConfirmUntil := 0
+    confirmEnabled := !cfg.HasOwnProp("ConfirmBeforeStopRecording") || cfg.ConfirmBeforeStopRecording
+    isRecording := (state.HasOwnProp("obsRecState") && state.obsRecState != 0) || (state.HasOwnProp("recState") && state.recState != 0)
+    if (!confirmEnabled || !isRecording) {
+        state.stopRecConfirmUntil := 0
+        return true
+    }
+    if (nowTick >= state.stopRecConfirmUntil) {
+        state.stopRecConfirmUntil := nowTick + UIConstants.STOP_RECORD_CONFIRM_WINDOW_MS
+        if (!IsSet(g_IsTestMode) || !g_IsTestMode) {
+            try ToolTip("Click REC again within 3s to STOP recording")
+            try SetTimer(() => ToolTip(), -UIConstants.STOP_RECORD_CONFIRM_WINDOW_MS)
+        }
+        return false
+    }
+    state.stopRecConfirmUntil := 0
+    return true
+}
+
 HandleHudPillClick(cfg, state, hwnd) {
     if (!IsObject(cfg) || !IsObject(state) || !hwnd)
         return false
@@ -2334,6 +2359,8 @@ HandleHudPillClick(cfg, state, hwnd) {
         return isSecMic ? "secondary_mic" : "mic"
     }
     if (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd) {
+        if (!TryConfirmStopRecording(cfg, state))
+            return "rec_confirm"
         ExecuteHostToggleRecord(cfg, state)
         if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && cfg.HasOwnProp("EnableZoom") && cfg.EnableZoom) {
             ToolTip(GetRecBreakdownText(state))

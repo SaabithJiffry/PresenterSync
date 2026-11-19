@@ -424,6 +424,12 @@ fun HudAppearanceScreen(
                     onCheckedChange = { v -> app.configStore.update { it.copy(hideFromScreenCapture = v) } }
                 )
                 ExplorerSettingToggleRow(
+                    title = "Require 2nd-Tap Confirm (3s) Before Stopping Recording",
+                    subtitle = "Prevents accidental taps from stopping an active OBS recording (1st tap arms 3s amber confirmation)",
+                    checked = cfg.confirmBeforeStopRecording,
+                    onCheckedChange = { v -> app.configStore.update { it.copy(confirmBeforeStopRecording = v) } }
+                )
+                ExplorerSettingToggleRow(
                     title = "Push-to-Talk Mode (Hold Pill to Unmute)",
                     subtitle = "Press and hold floating pill to unmute; releasing immediately mutes mic again. Enabling Push-to-Talk disables Long-Press, Very-Long-Press, and Push-to-Mute (and vice versa).",
                     checked = cfg.enablePushToTalk,

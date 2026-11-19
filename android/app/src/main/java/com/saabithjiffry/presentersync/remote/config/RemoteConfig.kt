@@ -162,6 +162,7 @@ data class RemoteConfig(
     val hudClickThrough: Boolean = false,
     val hudAutoDodge: Boolean = false,
     val hideFromScreenCapture: Boolean = true,
+    val confirmBeforeStopRecording: Boolean = true,
     val opacityLevel: Int = AppConstants.OPACITY_FROSTED,
     val indicatorScale: Float = 1.0f,
 
@@ -293,6 +294,7 @@ class RemoteConfigStore(context: Context) {
             hudClickThrough = prefs.getBoolean("hudClickThrough", false),
             hudAutoDodge = prefs.getBoolean("hudAutoDodge", false),
             hideFromScreenCapture = prefs.getBoolean("hideFromScreenCapture", true),
+            confirmBeforeStopRecording = prefs.getBoolean("confirmBeforeStopRecording", true),
             opacityLevel = rawOpacity,
             indicatorScale = rawScale,
             firstRun = prefs.getBoolean("firstRun", true),
@@ -529,6 +531,7 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("enableAudioCue", c.enableAudioCue)
             .putBoolean("enableMuteToast", c.enableMuteToast)
             .putBoolean("hideFromScreenCapture", c.hideFromScreenCapture)
+            .putBoolean("confirmBeforeStopRecording", c.confirmBeforeStopRecording)
             .putBoolean("enableVoiceWhileMutedAlert", c.enableVoiceWhileMutedAlert)
             .putBoolean("enableHudClickActions", c.enableHudClickActions)
             .putBoolean("lockHudPosition", c.lockHudPosition)
