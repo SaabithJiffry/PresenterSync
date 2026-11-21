@@ -1,7 +1,7 @@
 package com.saabithjiffry.presentersync.remote.config
 
 object AppConstants {
-    const val APP_VERSION = "7.6.1"
+    const val APP_VERSION = "7.6.2"
 
     // Base HUD dimensions & layout ratios (matching GUI_Config.ahk UIConstants)
     const val BASE_WIDTH_TEXT = 168

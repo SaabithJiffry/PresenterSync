@@ -77,6 +77,7 @@ import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
 import com.saabithjiffry.presentersync.remote.config.ResolvedFormFactor
 import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
 import com.saabithjiffry.presentersync.remote.network.ConnectionManager
+import com.saabithjiffry.presentersync.remote.network.RelayCrypto
 import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import kotlinx.coroutines.launch
@@ -132,6 +133,7 @@ fun ConnectionSettingsForm(
     var networkMode by remember(initialConfig) { mutableStateOf(initialConfig.networkMode) }
     var sessionCodeInput by remember(initialConfig) { mutableStateOf(initialConfig.sessionPairingCode) }
     var pairingCode by remember(initialConfig) { mutableStateOf(initialConfig.internetPairingCode) }
+    var relayBaseUrl by remember(initialConfig) { mutableStateOf(initialConfig.relayBaseUrl) }
     var hostAddress by remember(initialConfig) { mutableStateOf(initialConfig.hostAddress) }
     var hostPortStr by remember(initialConfig) { mutableStateOf(initialConfig.hostPort.toString()) }
     var bridgePortStr by remember(initialConfig) { mutableStateOf(initialConfig.bridgePort.toString()) }
@@ -449,6 +451,7 @@ fun ConnectionSettingsForm(
                                         bridgePortStr = prof.bridgePort.toString()
                                         obsPassword = prof.obsPassword
                                         pairingCode = prof.internetPairingCode
+                                        relayBaseUrl = prof.relayBaseUrl
                                         sessionCodeInput = prof.sessionPairingCode
                                         targetMicName = prof.targetMicName
                                         heartbeatStr = prof.heartbeatSeconds.toString()
@@ -490,6 +493,7 @@ fun ConnectionSettingsForm(
                                         networkMode = networkMode,
                                         sessionPairingCode = sessionCodeInput.trim(),
                                         internetPairingCode = pairingCode.trim(),
+                                        relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(relayBaseUrl),
                                         hostAddress = hostAddress.trim(),
                                         hostPort = hPort,
                                         bridgePort = bPort,
@@ -559,6 +563,18 @@ fun ConnectionSettingsForm(
                     )
                 },
                 placeholder = { Text("e.g. PS-A1B2-C3D4") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = relayBaseUrl,
+                onValueChange = { relayBaseUrl = it },
+                label = { Text("Relay Server URL (ntfy)") },
+                placeholder = { Text(AppConstants.NTFY_BASE_URL) },
+                supportingText = {
+                    Text("Default: https://ntfy.sh (supports self-hosted http:// or https://). Payloads are AES-256-GCM encrypted.")
+                },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -820,7 +836,8 @@ fun ConnectionSettingsForm(
                             portStr = hostPortStr,
                             password = obsPassword,
                             pairingCode = pairingCode,
-                            onProgress = { msg -> statusText = msg }
+                            onProgress = { msg -> statusText = msg },
+                            relayBaseUrl = relayBaseUrl
                         )
                         statusText = if (dualSummary.isNotEmpty()) "$res\n$dualSummary" else res
                         testing = false
@@ -879,6 +896,7 @@ fun ConnectionSettingsForm(
                             sessionPairingCode = sessionCodeInput.trim(),
                             pairedHostUuid = selectedHostUuid.ifBlank { prev.pairedHostUuid },
                             internetPairingCode = pairingCode.trim(),
+                            relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(relayBaseUrl),
                             hostAddress = hostAddress.trim(),
                             hostPort = port,
                             bridgePort = bPort,

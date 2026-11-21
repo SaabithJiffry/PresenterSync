@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.6.1
+; Version: 7.6.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.6.1.0
+;@Ahk2Exe-SetVersion 7.6.2.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -50,6 +50,8 @@ class RemoteConfig {
     NetworkMode := "LAN"
     EnableRelayFallback := true
     InternetPairingCode := ""
+    RelayBaseUrl := "https://ntfy.sh"
+    EnableRelayEncryption := true
     HostAddress := "127.0.0.1"
     HostPort := "4455"
     BridgePort := "4456"
@@ -166,6 +168,8 @@ class RemoteConfig {
         this.NetworkMode := (rawNetMode = "internet") ? "Internet" : "LAN"
         this.EnableRelayFallback := this.ReadBool("Connection", "EnableRelayFallback", 1)
         this.InternetPairingCode := Trim(this.Read("Connection", "InternetPairingCode", ""))
+        this.RelayBaseUrl := NormalizeRelayBaseUrl(this.Read("Connection", "RelayBaseUrl", "https://ntfy.sh"))
+        this.EnableRelayEncryption := this.ReadBool("Connection", "EnableRelayEncryption", 1)
         this.HostAddress := this.Read("Connection", "HostAddress", "127.0.0.1")
         rawPort := Trim(this.Read("Connection", "HostPort", "4455"))
         this.HostPort := (IsInteger(rawPort) && Integer(rawPort) >= 1 && Integer(rawPort) <= 65535) ? String(Integer(rawPort)) : "4455"
@@ -323,6 +327,10 @@ class RemoteState {
     usingRelayFallback := false
     usingBridge := false
     usingDirectObsFallback := false
+    relayReplayGuard := ""
+    _relayOutSeq := 0
+    _relaySessionId := ""
+    _relayPeerLegacy := false
 
     isMuted := false
     recState := 0
@@ -654,12 +662,20 @@ ConnectToRemoteOBS(cfg, state) {
             return
         }
         topic := GetInternetRelayTopic(pairCode)
-        wsUrl := "wss://ntfy.sh/" topic "/ws"
+        relayBase := GetEffectiveRelayBaseUrl(cfg)
+        wsUrl := BuildRelayWsUrl(relayBase, topic)
+        if (wsUrl = "") {
+            state.NotifyTrayStatus()
+            return
+        }
+        state.relayReplayGuard := RelayReplayGuard()
         relayPrefix := (state.HasOwnProp("usingRelayFallback") && state.usingRelayFallback) ? "Relay Bridge (" : "Internet ("
+        wsScheme := InStr(wsUrl, "ws://") == 1 ? "ws" : "wss"
+        wsHost := RegExReplace(wsUrl, "i)^wss?://([^/:]+).*$", "$1")
         candidate := {
-            host: "ntfy.sh",
-            port: "443",
-            scheme: "wss",
+            host: wsHost,
+            port: (wsScheme = "ws" ? "80" : "443"),
+            scheme: wsScheme,
             path: "/" topic "/ws",
             url: wsUrl,
             raw: relayPrefix pairCode ")"
@@ -688,9 +704,8 @@ ConnectToRemoteOBS(cfg, state) {
                 state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
                 SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
             }
-            authTok := GetInternetRelayAuthToken(pairCode, cfg.ObsPassword)
             mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-            PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
+            PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", "sync_req", "0"), relayBase, mockWs)
             state.NotifyTrayStatus()
         } catch {
             state.obsWs := ""
@@ -1066,8 +1081,15 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         return
     }
 
-    pkt := ParseRelayPacket(msg)
+    if (!state.HasOwnProp("relayReplayGuard") || !IsObject(state.relayReplayGuard))
+        state.relayReplayGuard := RelayReplayGuard()
+    pkt := ParseRelayEnvelope(msg, cfg.InternetPairingCode, cfg.ObsPassword, state.relayReplayGuard, true)
     if IsObject(pkt) {
+        if (!pkt.ok) {
+            if (IsSet(DiagnosticLogger))
+                try DiagnosticLogger.RecordBreadcrumb("Relay", pkt.replayRejected ? "ReplayRejected" : "DecryptRejected", pkt.error)
+            return
+        }
         if (pkt.src != "host")
             return
         expectedTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
@@ -1089,6 +1111,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             TrayTip("Internet Relay authentication failed. Check password in Change OBS Connection.", "PresenterSync Remote", 3)
             return
         }
+        state._relayPeerLegacy := !pkt.encrypted
         if (pkt.cmd = "state") {
             if (!state.obsConnected || state.connStatus != "connected") {
                 state.obsConnected := true
@@ -1099,25 +1122,68 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     ApplyMicAppearance(cfg, state)
                 state.NotifyTrayStatus()
             }
-            SyncRemoteMuteState(cfg, state, (pkt.data = "1" || pkt.data = "true"))
-        } else if (pkt.cmd = "dir_state") {
-            dParts := StrSplit(pkt.data, ";")
-            if (dParts.Length >= 5) {
+            SyncRemoteMuteState(cfg, state, pkt.hasMutedField ? !!pkt.isMuted : (pkt.data = "1" || pkt.data = "true"))
+            if (pkt.hasTelemetry) {
                 SyncRemoteBridgeTelemetry(cfg, state, {
-                    recState: IsInteger(dParts[2]) ? Integer(dParts[2]) : state.recState,
-                    recSeconds: state.recSeconds,
-                    streamDropWarn: state.streamDropWarn,
-                    voiceWhileMuted: state.voiceWhileMuted,
+                    recState: pkt.recState,
+                    recSeconds: pkt.recSeconds,
+                    streamDropWarn: pkt.streamDropWarn,
+                    voiceWhileMuted: pkt.voiceWhileMuted,
                     osMicMutedDrift: state.osMicMutedDrift,
                     lowDiskWarnLevel: state.lowDiskWarnLevel,
                     lowDiskMb: state.lowDiskMb,
                     deadMicWarn: state.deadMicWarn,
-                    isStandby: (dParts[1] = "1" || dParts[1] = "true"),
-                    timerState: dParts[3],
-                    timerRemainingSec: IsInteger(dParts[4]) ? Integer(dParts[4]) : state.timerRemainingSec,
-                    timerPresetSec: IsInteger(dParts[5]) ? Integer(dParts[5]) : state.timerPresetSec,
-                    activeScene: (dParts.Length >= 6 && dParts[6] != "") ? dParts[6] : state.activeScene
+                    isStandby: pkt.isStandby,
+                    timerState: (pkt.timerState != "" ? pkt.timerState : state.timerState),
+                    timerRemainingSec: pkt.timerRemainingSec,
+                    timerPresetSec: pkt.timerPresetSec,
+                    activeScene: (pkt.activeScene != "" ? pkt.activeScene : state.activeScene),
+                    scenes: pkt.scenes
                 })
+                UpdateRemoteLocalRecTimer(state)
+            }
+        } else if (pkt.cmd = "dir_state") {
+            if (pkt.hasMutedField)
+                SyncRemoteMuteState(cfg, state, !!pkt.isMuted)
+            if (pkt.hasTelemetry) {
+                SyncRemoteBridgeTelemetry(cfg, state, {
+                    recState: pkt.recState,
+                    recSeconds: pkt.recSeconds,
+                    streamDropWarn: pkt.streamDropWarn,
+                    voiceWhileMuted: pkt.voiceWhileMuted,
+                    osMicMutedDrift: state.osMicMutedDrift,
+                    lowDiskWarnLevel: state.lowDiskWarnLevel,
+                    lowDiskMb: state.lowDiskMb,
+                    deadMicWarn: state.deadMicWarn,
+                    isStandby: pkt.isStandby,
+                    timerState: (pkt.timerState != "" ? pkt.timerState : state.timerState),
+                    timerRemainingSec: pkt.timerRemainingSec,
+                    timerPresetSec: pkt.timerPresetSec,
+                    activeScene: (pkt.activeScene != "" ? pkt.activeScene : state.activeScene),
+                    scenes: pkt.scenes
+                })
+                UpdateRemoteLocalRecTimer(state)
+            } else {
+                parsedDir := ParseDirStatePayload(pkt.data, state)
+                if (IsObject(parsedDir)) {
+                    SyncRemoteBridgeTelemetry(cfg, state, {
+                        recState: parsedDir.recState,
+                        recSeconds: parsedDir.recSeconds,
+                        streamDropWarn: parsedDir.streamDropWarn,
+                        voiceWhileMuted: parsedDir.voiceWhileMuted,
+                        osMicMutedDrift: state.osMicMutedDrift,
+                        lowDiskWarnLevel: state.lowDiskWarnLevel,
+                        lowDiskMb: state.lowDiskMb,
+                        deadMicWarn: state.deadMicWarn,
+                        isStandby: parsedDir.isStandby,
+                        timerState: parsedDir.timerState,
+                        timerRemainingSec: parsedDir.timerRemainingSec,
+                        timerPresetSec: parsedDir.timerPresetSec,
+                        activeScene: parsedDir.activeScene,
+                        scenes: parsedDir.scenes
+                    })
+                    UpdateRemoteLocalRecTimer(state)
+                }
             }
         } else if (pkt.cmd = "nudge") {
             nSep := InStr(pkt.data, ";")
@@ -1136,9 +1202,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
     if (IsRemoteUsingInternetChannel(cfg, state)) {
         if RegExMatch(msg, '"event"\s*:\s*"open"') {
             topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-            authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
             mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-            PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
+            PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", "sync_req", "0"), GetEffectiveRelayBaseUrl(cfg), mockWs)
         }
         return
     }
@@ -1506,9 +1571,8 @@ VerifyOrReconnectRemote(cfg, state, reason := "wake") {
         SendRemotePingWithWatchdog(cfg, state, "bridge")
     } else if (IsRemoteUsingInternetChannel(cfg, state)) {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-        PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
+        PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", "sync_req", "0"), GetEffectiveRelayBaseUrl(cfg), mockWs)
     } else {
         SendRemotePingWithWatchdog(cfg, state, "obs")
     }
@@ -1554,9 +1618,8 @@ RemoteHeartbeatTick(cfg, state) {
     }
     if (IsRemoteUsingInternetChannel(cfg, state)) {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-        PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", authTok), "https://ntfy.sh", mockWs)
+        PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", "sync_req", "0"), GetEffectiveRelayBaseUrl(cfg), mockWs)
         return
     }
     ; Lightweight request to keep TCP session alive + verify response within 2500ms
@@ -1660,9 +1723,8 @@ _SendRemoteRelayAction(cfg, state, cmd, data := "1") {
     if (!IsRemoteUsingInternetChannel(cfg, state))
         return false
     topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-    authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
     mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-    return PublishInternetRelayPacket(topic, FormatRelayPacket("remote", cmd, data, authTok), "https://ntfy.sh", mockWs)
+    return PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", cmd, data), GetEffectiveRelayBaseUrl(cfg), mockWs)
 }
 
 SendRemoteBridgeDeckCommand(cfg, state, actionType) {
@@ -3064,6 +3126,14 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     Theme.RegisterControl(dlg, editPair, "Edit")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
+    lblRelayUrl := dlg.Add("Text", "xm w360 y+8", "Relay Server URL (ntfy, default https://ntfy.sh):")
+    Theme.RegisterControl(dlg, lblRelayUrl, "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    editRelayUrl := dlg.Add("Edit", "xm w360", GetEffectiveRelayBaseUrl(cfg))
+    Theme.RegisterControl(dlg, editRelayUrl, "Edit")
+    DllCall("SendMessage", "Ptr", editRelayUrl.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "https://ntfy.sh")
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
     lblHost := dlg.Add("Text", "xm w360 y+8", "LAN Host Address (e.g. STUDIO-PC.local, 192.168.1.50):")
     Theme.RegisterControl(dlg, lblHost, "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
@@ -3258,7 +3328,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     }
     btnPasteUri.OnEvent("Click", PastePairingUriAction)
 
-    btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt, (ddlNetMode.Value == 2 ? "Internet" : "LAN"), editPair.Value))
+    btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt, (ddlNetMode.Value == 2 ? "Internet" : "LAN"), editPair.Value, editRelayUrl.Value))
     btnGuide.OnEvent("Click", (*) => ShowRemoteHelpUI(cfg, state))
 
     btnSave := dlg.Add("Button", "xm w360 h32 y+12 Default", isInitialBoot ? "Connect & Start" : "Save & Reconnect")
@@ -3346,6 +3416,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         cfg.SessionToken := (sessVal = "") ? "" : ((NormalizePairingCode(sessVal) = NormalizePairingCode(dlg._pairedCode)) ? dlg._pairedToken : "")
         cfg.PairedHostUuid := dlg._pairedHostUuid
         cfg.InternetPairingCode := pairVal
+        cfg.RelayBaseUrl := NormalizeRelayBaseUrl(editRelayUrl.Value)
         cfg.HostAddress := h
         cfg.HostPort := String(Integer(p))
         cfg.ObsPassword := editPw.Value
@@ -3397,7 +3468,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     return dlg
 }
 
-TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode := "LAN", pairingCode := "") {
+TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode := "LAN", pairingCode := "", relayBaseUrl := "https://ntfy.sh") {
     if (dlg._closed || !WinExist("ahk_id " dlg.Hwnd))
         return
 
@@ -3442,9 +3513,10 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
             return
         }
         btnTest.Enabled := false
+        normRelayBase := NormalizeRelayBaseUrl(relayBaseUrl)
         statusLabel.Value := "Testing Internet Relay (" pairClean ")..."
         topic := GetInternetRelayTopic(pairClean)
-        wsUrl := "wss://ntfy.sh/" topic "/ws"
+        wsUrl := BuildRelayWsUrl(normRelayBase, topic)
         expectedTok := GetInternetRelayAuthToken(pairClean, pwStr)
 
         OnRelayTimeout() {
@@ -3457,12 +3529,19 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
                 return
             }
             msg := (Type(raw) == "Buffer") ? StrGet(raw, "UTF-8") : String(raw)
-            pkt := ParseRelayPacket(msg)
-            if IsObject(pkt) && pkt.src = "host" {
-                if (pkt.cmd = "auth_error" || pkt.auth != expectedTok) {
-                    FinishTest("✕ Auth failed on Internet Relay (Check OBS Password)")
-                } else if (pkt.cmd = "state") {
-                    FinishTest("✓ Connected to Primary Host via Internet Relay (" pairClean ")!")
+            pkt := ParseRelayEnvelope(msg, pairClean, pwStr, "", true)
+            if (IsObject(pkt)) {
+                if (!pkt.ok) {
+                    if (pkt.authError)
+                        FinishTest("✕ Auth/Encryption mismatch on Internet Relay (Check OBS Password)")
+                    return
+                }
+                if (pkt.src = "host") {
+                    if (pkt.cmd = "auth_error" || pkt.auth != expectedTok) {
+                        FinishTest("✕ Auth failed on Internet Relay (Check OBS Password)")
+                    } else if (pkt.cmd = "state") {
+                        FinishTest("✓ Connected to Primary Host via Internet Relay (" pairClean ")!")
+                    }
                 }
             }
         }
@@ -3480,7 +3559,10 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
                 message: OnRelayTestMsg,
                 close: OnRelayTestClose
             }, true, "", 3000)
-            PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "sync_req", "0", expectedTok))
+            syncPkt := FormatEncryptedRelayPacket("remote", "sync_req", "0", pairClean, pwStr)
+            if (syncPkt = "")
+                syncPkt := FormatRelayPacket("remote", "sync_req", "0", expectedTok)
+            PublishInternetRelayPacket(topic, syncPkt, normRelayBase)
         } catch {
             FinishTest("✕ Could not reach Internet Relay (Check internet / HTTPS firewall)")
         }

@@ -13,6 +13,7 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 interface RelaySessionCallbacks {
     fun onRelayConnected()
@@ -27,6 +28,7 @@ interface RelaySessionCallbacks {
         timerPresetSec: Int,
         activeScene: String
     ) {}
+    fun onRelayTelemetryState(telemetry: RelayTelemetryState) {}
     fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {}
     fun onCloseRemoteSignal()
     fun onRelayDisconnected(reason: String)
@@ -38,19 +40,40 @@ class RelayClient(
     private val password: String,
     private val callbacks: RelaySessionCallbacks,
     private val httpBaseUrl: String = AppConstants.NTFY_BASE_URL,
-    private val wsBaseUrl: String = AppConstants.NTFY_WS_BASE_URL
+    private val wsBaseUrl: String? = null,
+    private val enableEncryption: Boolean = true
 ) {
     private val topic = RelayCrypto.getInternetRelayTopic(pairingCode)
     private val authToken = RelayCrypto.getInternetRelayAuthToken(pairingCode, password)
+    private val normalizedHttpBase = RelayCrypto.normalizeRelayBaseUrl(httpBaseUrl)
     private val closed = AtomicBoolean(false)
+    private val peerLegacy = AtomicBoolean(false)
+    private val outSeq = AtomicLong(0L)
+    private val sessionId = RelayCrypto.generateSessionId()
+    private val replayGuard = RelayReplayGuard()
     private var webSocket: WebSocket? = null
+
+    fun resolveWsUrl(): String {
+        if (topic.isEmpty()) return ""
+        return if (!wsBaseUrl.isNullOrBlank()) {
+            "${wsBaseUrl.trimEnd('/')}/$topic/ws"
+        } else {
+            RelayCrypto.buildRelayWsUrl(normalizedHttpBase, topic)
+        }
+    }
+
+    fun resolvePublishUrl(): String {
+        if (topic.isEmpty()) return ""
+        return RelayCrypto.buildRelayPublishUrl(normalizedHttpBase, topic)
+    }
 
     fun connect() {
         if (topic.isEmpty()) {
             callbacks.onRelayDisconnected("empty_topic")
             return
         }
-        val wsUrl = "${wsBaseUrl.trimEnd('/')}/$topic/ws"
+        replayGuard.reset()
+        val wsUrl = resolveWsUrl()
         val req = Request.Builder().url(wsUrl).build()
         webSocket = httpClient.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -84,35 +107,64 @@ class RelayClient(
     }
 
     internal fun handleRawMessage(rawMsg: String) {
-        val pkt = RelayCrypto.parseRelayPacket(rawMsg)
-        if (pkt != null) {
-            if (pkt.src != "host") return
-            if (pkt.cmd == "auth_error" || pkt.auth != authToken) {
+        val env = RelayCrypto.parseRelayEnvelope(
+            rawMsg = rawMsg,
+            pairingCode = pairingCode,
+            password = password,
+            replayGuard = replayGuard,
+            allowLegacy = true
+        )
+        if (env != null) {
+            if (!env.ok) {
+                // Reject tampered ciphertext/tag or replayed sequence silently without corrupting state
+                return
+            }
+            if (env.src != "host") return
+            if (env.cmd == "auth_error" || env.auth != authToken) {
                 close()
                 callbacks.onRelayAuthFailed()
                 return
             }
-            when (pkt.cmd) {
+            peerLegacy.set(!env.encrypted)
+            when (env.cmd) {
                 "state" -> {
-                    val muted = pkt.data == "1" || pkt.data.equals("true", ignoreCase = true)
+                    val muted = env.telemetry?.isMuted
+                        ?: (env.data == "1" || env.data.equals("true", ignoreCase = true))
                     callbacks.onRelayMuteState(muted)
+                    val tel = env.telemetry
+                    if (tel != null) {
+                        callbacks.onRelayDirectorState(
+                            tel.isStandby,
+                            tel.recState,
+                            tel.timerState,
+                            tel.timerRemainingSec,
+                            tel.timerPresetSec,
+                            tel.activeScene
+                        )
+                        callbacks.onRelayTelemetryState(tel.copy(isMuted = muted))
+                    }
                 }
                 "dir_state" -> {
-                    val parts = pkt.data.split(";")
-                    if (parts.size >= 5) {
-                        val standby = parts[0] == "1" || parts[0].equals("true", ignoreCase = true)
-                        val recSt = parts[1].toIntOrNull() ?: 0
-                        val tState = parts[2].ifBlank { "stopped" }
-                        val tRem = parts[3].toIntOrNull() ?: 600
-                        val tPre = (parts[4].toIntOrNull() ?: 600).coerceAtLeast(60)
-                        val scene = parts.getOrNull(5)?.takeIf { it.isNotBlank() } ?: "Scene"
-                        callbacks.onRelayDirectorState(standby, recSt, tState, tRem, tPre, scene)
+                    val tel = env.telemetry ?: RelayCrypto.parseDirStatePayload(env.data)
+                    if (tel != null) {
+                        if (tel.isMuted != null) {
+                            callbacks.onRelayMuteState(tel.isMuted)
+                        }
+                        callbacks.onRelayDirectorState(
+                            tel.isStandby,
+                            tel.recState,
+                            tel.timerState,
+                            tel.timerRemainingSec,
+                            tel.timerPresetSec,
+                            tel.activeScene
+                        )
+                        callbacks.onRelayTelemetryState(tel)
                     }
                 }
                 "nudge" -> {
-                    val idx = pkt.data.indexOf(';')
-                    val sender = if (idx > 0) pkt.data.substring(0, idx).ifBlank { "Host" } else "Host"
-                    val msg = if (idx >= 0) pkt.data.substring(idx + 1).trim() else pkt.data.trim()
+                    val idx = env.data.indexOf(';')
+                    val sender = if (idx > 0) env.data.substring(0, idx).ifBlank { "Host" } else "Host"
+                    val msg = if (idx >= 0) env.data.substring(idx + 1).trim() else env.data.trim()
                     if (msg.isNotEmpty()) {
                         callbacks.onStageNudgeReceived(msg, sender, "F59E0B")
                     }
@@ -175,8 +227,21 @@ class RelayClient(
 
     private fun publishPacket(cmd: String, data: String): Boolean {
         if (topic.isEmpty() || closed.get()) return false
-        val pktStr = RelayCrypto.formatRelayPacket("remote", cmd, data, authToken)
-        val url = "${httpBaseUrl.trimEnd('/')}/$topic"
+        val pktStr = if (enableEncryption && !peerLegacy.get()) {
+            RelayCrypto.formatEncryptedRelayPacket(
+                src = "remote",
+                cmd = cmd,
+                data = data,
+                pairingCode = pairingCode,
+                password = password,
+                seq = outSeq.incrementAndGet(),
+                ts = System.currentTimeMillis() / 1000L,
+                sid = sessionId
+            )
+        } else {
+            RelayCrypto.formatRelayPacket("remote", cmd, data, authToken)
+        }
+        val url = resolvePublishUrl()
         val req = Request.Builder()
             .url(url)
             .header("Cache-Control", "no-cache")

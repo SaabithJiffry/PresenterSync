@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.6.1"
+    static APP_VERSION := "7.6.2"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1368,6 +1368,8 @@ class Config {
 
     RemoteNetworkMode := "LAN"
     InternetPairingCode := ""
+    RelayBaseUrl := "https://ntfy.sh"
+    EnableRelayEncryption := true
     SessionPairingCode := ""
     HostUuid := ""
     BridgePort := 4456
@@ -1627,6 +1629,9 @@ class Config {
 
         rawNetMode := StrLower(Trim(this.Read("Settings", "RemoteNetworkMode", "LAN")))
         this.RemoteNetworkMode := (rawNetMode = "internet") ? "Internet" : "LAN"
+        rawRelayUrl := Trim(this.Read("Settings", "RelayBaseUrl", "https://ntfy.sh"))
+        this.RelayBaseUrl := IsSet(NormalizeRelayBaseUrl) ? NormalizeRelayBaseUrl(rawRelayUrl) : (rawRelayUrl != "" ? RTrim(rawRelayUrl, "/") : "https://ntfy.sh")
+        this.EnableRelayEncryption := this.ReadBool("Settings", "EnableRelayEncryption", true)
         this.InternetPairingCode := Trim(this.Read("Settings", "InternetPairingCode", ""))
         if (this.InternetPairingCode = "") {
             this.InternetPairingCode := GenerateInternetPairingCode()
@@ -1805,6 +1810,8 @@ class Config {
             { sec: "Settings", key: "OpacityLevel", prop: "OpacityLevel", kind: "int" },
             { sec: "Settings", key: "IndicatorScale", prop: "IndicatorScale", kind: "float" },
             { sec: "Settings", key: "RemoteNetworkMode", prop: "RemoteNetworkMode", kind: "str" },
+            { sec: "Settings", key: "RelayBaseUrl", prop: "RelayBaseUrl", kind: "str" },
+            { sec: "Settings", key: "EnableRelayEncryption", prop: "EnableRelayEncryption", kind: "bool" },
             { sec: "Settings", key: "EnableRemoteConnections", prop: "EnableRemoteConnections", kind: "bool" },
             { sec: "Settings", key: "RemoteInfoHotkey", prop: "RemoteInfoHotkey", kind: "str" },
             { sec: "Settings", key: "HwMuteHotkey", prop: "HwMuteHotkey", kind: "str" },
@@ -1950,6 +1957,11 @@ class OverlayState {
     obsConnected := false
     relayWs := ""
     relayConnected := false
+    _activeRelayWsUrl := ""
+    relayReplayGuard := ""
+    _relayOutSeq := 0
+    _relaySessionId := ""
+    _relayPeerLegacy := false
     zoomConnected := false
     meetBgTabWarn := false
     detectedConfApp := ""

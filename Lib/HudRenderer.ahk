@@ -256,8 +256,12 @@ SyncStreamState(cfg, state, newState, congestion := 0.0, skippedFrames := -1, re
 
     prevWarn := (prevState == 2)
     currWarn := (effectiveState == 2)
-    if (prevWarn != currWarn)
+    state.streamDropWarn := currWarn
+    if (prevWarn != currWarn) {
         HostBridgeBroadcastMuteState(cfg, state)
+        if (IsSet(BroadcastHostRelayDirectorState))
+            try BroadcastHostRelayDirectorState(cfg, state)
+    }
 
     if (stateChanged) {
         oldW := state.streamW
@@ -370,6 +374,8 @@ SyncSceneState(cfg, state, sceneName) {
         }
         if (IsSet(HostBridgeBroadcastMuteState))
             try HostBridgeBroadcastMuteState(cfg, state)
+        if (IsSet(BroadcastHostRelayDirectorState))
+            try BroadcastHostRelayDirectorState(cfg, state)
         if (IsSet(SessionTimeline) && (cfg is Config))
             SessionTimeline.Record("Scene", "Scene -> " sceneName, state, (state.HasOwnProp("obsConnected") && state.obsConnected) ? "OBS Program" : "")
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
@@ -487,8 +493,11 @@ RecTimerTick(cfg, state) {
         state.obsRecElapsedSec += 1
     if (state.HasOwnProp("confRecState") && state.confRecState == 1)
         state.confRecElapsedSec += 1
-    if (Mod(state.recElapsedSec, 5) == 0)
+    if (Mod(state.recElapsedSec, 5) == 0) {
         HostBridgeBroadcastMuteState(cfg, state)
+        if (IsSet(BroadcastHostRelayDirectorState))
+            try BroadcastHostRelayDirectorState(cfg, state)
+    }
     if (cfg.ShowIndicator && cfg.ShowExtraHuds && (!cfg.HasOwnProp("ShowRecTimer") || cfg.ShowRecTimer) && !state.isDraggingHud && IsGuiValid(state.RecGui)) {
         if (cfg.ShowText) {
             oldW := state.recW
@@ -589,6 +598,8 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1, source := "obs") {
             SessionTimeline.Record("Recording", recEvt, state)
         }
         HostBridgeBroadcastMuteState(cfg, state)
+        if (IsSet(BroadcastHostRelayDirectorState))
+            try BroadcastHostRelayDirectorState(cfg, state)
         oldW := state.HasOwnProp("recW") ? state.recW : 0
         if (state.HasMethod("ComputeDimensions"))
             state.ComputeDimensions(cfg)
@@ -1133,6 +1144,8 @@ UpdateMutedVoiceMonitorTimer(cfg, state) {
             state.mutedVoiceAboveSince := 0
             state.mutedVoiceQuietSince := 0
             HostBridgeBroadcastMuteState(cfg, state)
+            if (IsSet(BroadcastHostRelayDirectorState))
+                try BroadcastHostRelayDirectorState(cfg, state)
         }
     }
 }
@@ -1142,16 +1155,22 @@ MutedVoiceMonitorTick(cfg, state, readerFn := "") {
     if (!IsObject(state) || !state.isMuted || !alertEnabled) {
         if (IsObject(state) && state.HasOwnProp("mutedVoiceTimerFn") && state.mutedVoiceTimerFn)
             SetTimer(state.mutedVoiceTimerFn, 0)
-        if (EvaluateMutedVoiceAlert(cfg, state, 0.0))
+        if (EvaluateMutedVoiceAlert(cfg, state, 0.0)) {
             HostBridgeBroadcastMuteState(cfg, state)
+            if (IsSet(BroadcastHostRelayDirectorState))
+                try BroadcastHostRelayDirectorState(cfg, state)
+        }
         return
     }
-    if (!IsObject(readerFn) && GetHostBridgeStatusSummary().connectedCount <= 0)
+    if (!IsObject(readerFn) && GetHostBridgeStatusSummary().connectedCount <= 0 && (!state.HasOwnProp("relayConnected") || !state.relayConnected))
         return
     newPeak := IsObject(readerFn) ? Float(readerFn.Call()) : AudioMeter.GetPeak()
     newPeak := Min(1.0, Max(0.0, newPeak))
-    if (EvaluateMutedVoiceAlert(cfg, state, newPeak))
+    if (EvaluateMutedVoiceAlert(cfg, state, newPeak)) {
         HostBridgeBroadcastMuteState(cfg, state)
+        if (IsSet(BroadcastHostRelayDirectorState))
+            try BroadcastHostRelayDirectorState(cfg, state)
+    }
 }
 
 EvaluateOsMicDrift(cfg, state, osMuted, nowTick := "") {
@@ -1361,6 +1380,8 @@ EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick := "") {
             ShowStageNudgeBanner(msg, accent, 5500, "Disk Guard")
         if (IsSet(HostBridgeBroadcastMuteState))
             try HostBridgeBroadcastMuteState(cfg, state)
+        if (IsSet(BroadcastHostRelayDirectorState))
+            try BroadcastHostRelayDirectorState(cfg, state)
     } else if (newLevel != prevLevel && IsSet(HostBridgeBroadcastMuteState)) {
         try HostBridgeBroadcastMuteState(cfg, state)
     }

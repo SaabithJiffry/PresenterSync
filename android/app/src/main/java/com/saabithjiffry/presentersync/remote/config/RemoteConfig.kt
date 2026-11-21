@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.saabithjiffry.presentersync.remote.input.BubbleGestureAction
 import com.saabithjiffry.presentersync.remote.input.BubbleGestureConfig
+import com.saabithjiffry.presentersync.remote.network.RelayCrypto
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,6 +47,7 @@ data class SavedHostProfile(
     val bridgePort: Int = AppConstants.DEFAULT_BRIDGE_PORT,
     val obsPassword: String = "",
     val internetPairingCode: String = "",
+    val relayBaseUrl: String = AppConstants.NTFY_BASE_URL,
     val sessionToken: String = "",
     val sessionPairingCode: String = "",
     val pairedHostUuid: String = "",
@@ -66,6 +68,7 @@ object SavedHostProfileCodec {
                 .put("bridgePort", p.bridgePort)
                 .put("obsPassword", p.obsPassword)
                 .put("internetPairingCode", p.internetPairingCode)
+                .put("relayBaseUrl", RelayCrypto.normalizeRelayBaseUrl(p.relayBaseUrl))
                 .put("sessionToken", p.sessionToken)
                 .put("sessionPairingCode", p.sessionPairingCode)
                 .put("pairedHostUuid", p.pairedHostUuid)
@@ -102,6 +105,7 @@ object SavedHostProfileCodec {
                         bridgePort = bPort,
                         obsPassword = obj.optString("obsPassword", ""),
                         internetPairingCode = obj.optString("internetPairingCode", "").trim(),
+                        relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(obj.optString("relayBaseUrl", AppConstants.NTFY_BASE_URL)),
                         sessionToken = obj.optString("sessionToken", "").trim(),
                         sessionPairingCode = obj.optString("sessionPairingCode", "").trim(),
                         pairedHostUuid = obj.optString("pairedHostUuid", "").trim(),
@@ -120,6 +124,8 @@ data class RemoteConfig(
     val networkMode: NetworkMode = NetworkMode.LAN,
     val enableRelayFallback: Boolean = true,
     val internetPairingCode: String = "",
+    val relayBaseUrl: String = AppConstants.NTFY_BASE_URL,
+    val enableRelayEncryption: Boolean = true,
     val sessionPairingCode: String = "",
     val sessionToken: String = "",
     val pairedHostUuid: String = "",
@@ -259,6 +265,8 @@ class RemoteConfigStore(context: Context) {
             networkMode = NetworkMode.fromRaw(prefs.getString("networkMode", "LAN")),
             enableRelayFallback = prefs.getBoolean("enableRelayFallback", true),
             internetPairingCode = prefs.getString("internetPairingCode", "").orEmpty().trim(),
+            relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(prefs.getString("relayBaseUrl", AppConstants.NTFY_BASE_URL)),
+            enableRelayEncryption = prefs.getBoolean("enableRelayEncryption", true),
             sessionPairingCode = prefs.getString("sessionPairingCode", "").orEmpty().trim(),
             sessionToken = prefs.getString("sessionToken", "").orEmpty().trim(),
             pairedHostUuid = prefs.getString("pairedHostUuid", "").orEmpty().trim(),
@@ -462,6 +470,7 @@ class RemoteConfigStore(context: Context) {
             bridgePort = prev.bridgePort,
             obsPassword = prev.obsPassword,
             internetPairingCode = prev.internetPairingCode,
+            relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(prev.relayBaseUrl),
             sessionToken = prev.sessionToken,
             sessionPairingCode = prev.sessionPairingCode,
             pairedHostUuid = prev.pairedHostUuid,
@@ -489,6 +498,7 @@ class RemoteConfigStore(context: Context) {
                 bridgePort = target.bridgePort,
                 obsPassword = target.obsPassword,
                 internetPairingCode = target.internetPairingCode,
+                relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(target.relayBaseUrl),
                 sessionToken = target.sessionToken,
                 sessionPairingCode = target.sessionPairingCode,
                 pairedHostUuid = target.pairedHostUuid,
@@ -516,6 +526,8 @@ class RemoteConfigStore(context: Context) {
             .putString("networkMode", c.networkMode.label)
             .putBoolean("enableRelayFallback", c.enableRelayFallback)
             .putString("internetPairingCode", c.internetPairingCode)
+            .putString("relayBaseUrl", RelayCrypto.normalizeRelayBaseUrl(c.relayBaseUrl))
+            .putBoolean("enableRelayEncryption", c.enableRelayEncryption)
             .putString("sessionPairingCode", c.sessionPairingCode)
             .putString("sessionToken", c.sessionToken)
             .putString("pairedHostUuid", c.pairedHostUuid)

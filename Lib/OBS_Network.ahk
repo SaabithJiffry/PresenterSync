@@ -753,9 +753,9 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
     valStr := targetMuted ? "1" : "0"
     if (IsRemoteUsingInternetChannel(cfg, state)) {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+        pktStr := BuildOutboundRelayPacket(cfg, state, "remote", "set_mute", valStr)
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-        if (!PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "set_mute", valStr, authTok), "https://ntfy.sh", mockWs)) {
+        if (!PublishInternetRelayPacket(topic, pktStr, GetEffectiveRelayBaseUrl(cfg), mockWs)) {
             ToolTip "PresenterSync Remote: Internet Relay unreachable"
             SetTimer () => ToolTip(), -2000
             return false
@@ -791,9 +791,9 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
 DispatchRemoteMuteToggle(cfg, state) {
     if (IsRemoteUsingInternetChannel(cfg, state)) {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-        authTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
+        pktStr := BuildOutboundRelayPacket(cfg, state, "remote", "toggle_mute", "1")
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-        if (!PublishInternetRelayPacket(topic, FormatRelayPacket("remote", "toggle_mute", "1", authTok), "https://ntfy.sh", mockWs)) {
+        if (!PublishInternetRelayPacket(topic, pktStr, GetEffectiveRelayBaseUrl(cfg), mockWs)) {
             ToolTip "PresenterSync Remote: Internet Relay unreachable"
             SetTimer () => ToolTip(), -2000
             return false
@@ -972,6 +972,331 @@ GenerateInternetPairingCode() {
     return "PS-" p1 "-" p2
 }
 
+NormalizeRelayBaseUrl(rawUrl := "") {
+    clean := Trim(String(rawUrl))
+    if (clean = "")
+        return "https://ntfy.sh"
+    if (RegExMatch(clean, "i)^wss://(.+)$", &m))
+        clean := "https://" m[1]
+    else if (RegExMatch(clean, "i)^ws://(.+)$", &m))
+        clean := "http://" m[1]
+    else if (!RegExMatch(clean, "i)^https?://"))
+        clean := "https://" clean
+    clean := RTrim(clean, "/")
+    if (RegExMatch(clean, "[\s`r`n`t]") || !RegExMatch(clean, "i)^https?://[^\s/?#]+"))
+        return "https://ntfy.sh"
+    return clean
+}
+
+BuildRelayWsUrl(baseUrl, topic) {
+    cleanTopic := Trim(String(topic), " /`t`r`n")
+    if (cleanTopic = "")
+        return ""
+    httpBase := NormalizeRelayBaseUrl(baseUrl)
+    if (RegExMatch(httpBase, "i)^https://(.+)$", &m))
+        wsBase := "wss://" m[1]
+    else if (RegExMatch(httpBase, "i)^http://(.+)$", &m))
+        wsBase := "ws://" m[1]
+    else
+        wsBase := "wss://ntfy.sh"
+    return wsBase "/" cleanTopic "/ws"
+}
+
+GetEffectiveRelayBaseUrl(cfg) {
+    raw := (IsObject(cfg) && cfg.HasOwnProp("RelayBaseUrl")) ? cfg.RelayBaseUrl : ""
+    return NormalizeRelayBaseUrl(raw)
+}
+
+_GetRelayPassword(cfg) {
+    if (!IsObject(cfg))
+        return ""
+    if (cfg.HasOwnProp("obsPassword"))
+        return String(cfg.obsPassword)
+    if (cfg.HasOwnProp("ObsPassword"))
+        return String(cfg.ObsPassword)
+    return ""
+}
+
+ShouldUseRelayEncryption(cfg, state := "") {
+    if (IsObject(cfg) && cfg.HasOwnProp("EnableRelayEncryption") && !cfg.EnableRelayEncryption)
+        return false
+    if (IsObject(state) && state.HasOwnProp("_relayPeerLegacy") && state._relayPeerLegacy)
+        return false
+    return IsSet(EncryptRelayPayload)
+}
+
+_NextRelaySequence(state := "") {
+    static fallbackSeq := 0
+    if (IsObject(state)) {
+        if (!state.HasOwnProp("_relayOutSeq") || !IsInteger(state._relayOutSeq))
+            state._relayOutSeq := 0
+        state._relayOutSeq += 1
+        return state._relayOutSeq
+    }
+    fallbackSeq += 1
+    return fallbackSeq
+}
+
+_GetRelaySessionId(state := "") {
+    static fallbackSid := ""
+    if (IsObject(state)) {
+        if (!state.HasOwnProp("_relaySessionId") || state._relaySessionId = "")
+            state._relaySessionId := IsSet(GenerateRelaySessionId) ? GenerateRelaySessionId() : Format("{:08x}", Random(1, 0x7FFFFFFF))
+        return state._relaySessionId
+    }
+    if (fallbackSid = "")
+        fallbackSid := IsSet(GenerateRelaySessionId) ? GenerateRelaySessionId() : Format("{:08x}", Random(1, 0x7FFFFFFF))
+    return fallbackSid
+}
+
+_GetHostSceneListForRelay(state) {
+    out := []
+    if (!IsObject(state))
+        return out
+    srcList := ""
+    if (state.HasOwnProp("sceneList") && IsObject(state.sceneList))
+        srcList := state.sceneList
+    else if (state.HasOwnProp("scenes") && IsObject(state.scenes))
+        srcList := state.scenes
+    if (!IsObject(srcList))
+        return out
+    for _, sc in srcList {
+        s := Trim(String(sc))
+        if (s != "") {
+            out.Push(s)
+            if (out.Length >= 24)
+                break
+        }
+    }
+    return out
+}
+
+_BuildLegacyDirStatePayload(state) {
+    standby := (IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby) ? "1" : "0"
+    recSt := (IsObject(state) && state.HasOwnProp("recState") && IsInteger(state.recState)) ? Integer(state.recState) : 0
+    tSt := (IsObject(state) && state.HasOwnProp("timerState") && state.timerState != "") ? String(state.timerState) : "stopped"
+    tRem := (IsObject(state) && state.HasOwnProp("timerRemainingSec") && IsInteger(state.timerRemainingSec)) ? Integer(state.timerRemainingSec) : 600
+    tPre := (IsObject(state) && state.HasOwnProp("timerPresetSec") && IsInteger(state.timerPresetSec)) ? Max(60, Integer(state.timerPresetSec)) : 600
+    scene := (IsObject(state) && state.HasOwnProp("currentSceneName") && state.currentSceneName != "") ? StrReplace(StrReplace(String(state.currentSceneName), "|", "/"), ";", ",") : "Scene"
+    recSec := (IsObject(state) && state.HasOwnProp("recElapsedSec") && IsInteger(state.recElapsedSec)) ? Max(0, Integer(state.recElapsedSec))
+        : ((IsObject(state) && state.HasOwnProp("recSeconds") && IsInteger(state.recSeconds)) ? Max(0, Integer(state.recSeconds)) : 0)
+    streamDrop := (IsObject(state) && ((state.HasOwnProp("streamDropWarn") && state.streamDropWarn) || (state.HasOwnProp("streamState") && state.streamState == 2))) ? "1" : "0"
+    voiceMuted := (IsObject(state) && state.HasOwnProp("voiceWhileMuted") && state.voiceWhileMuted) ? "1" : "0"
+    scenesCsv := ""
+    for idx, scName in _GetHostSceneListForRelay(state) {
+        cleanSc := StrReplace(StrReplace(StrReplace(scName, "|", "/"), ";", " "), ",", " ")
+        scenesCsv .= (idx > 1 ? "," : "") cleanSc
+    }
+    return standby ";" recSt ";" tSt ";" tRem ";" tPre ";" scene ";" recSec ";" streamDrop ";" voiceMuted ";" scenesCsv
+}
+
+ParseDirStatePayload(dataStr, fallbackState := "") {
+    dParts := StrSplit(String(dataStr), ";")
+    if (dParts.Length < 5)
+        return ""
+    fbRecSt := (IsObject(fallbackState) && fallbackState.HasOwnProp("recState")) ? Integer(fallbackState.recState) : 0
+    fbRecSec := (IsObject(fallbackState) && fallbackState.HasOwnProp("recSeconds")) ? Integer(fallbackState.recSeconds) : 0
+    fbDrop := (IsObject(fallbackState) && fallbackState.HasOwnProp("streamDropWarn")) ? !!fallbackState.streamDropWarn : false
+    fbVoice := (IsObject(fallbackState) && fallbackState.HasOwnProp("voiceWhileMuted")) ? !!fallbackState.voiceWhileMuted : false
+    fbRem := (IsObject(fallbackState) && fallbackState.HasOwnProp("timerRemainingSec")) ? Integer(fallbackState.timerRemainingSec) : 600
+    fbPre := (IsObject(fallbackState) && fallbackState.HasOwnProp("timerPresetSec")) ? Integer(fallbackState.timerPresetSec) : 600
+    fbScene := (IsObject(fallbackState) && fallbackState.HasOwnProp("activeScene")) ? String(fallbackState.activeScene) : "Scene"
+
+    scenesArr := []
+    if (dParts.Length >= 10 && Trim(dParts[10]) != "") {
+        for _, scItem in StrSplit(dParts[10], ",") {
+            scTrim := Trim(scItem)
+            if (scTrim != "")
+                scenesArr.Push(scTrim)
+        }
+    }
+    return {
+        isStandby: (dParts[1] = "1" || StrLower(dParts[1]) = "true"),
+        recState: IsInteger(dParts[2]) ? Integer(dParts[2]) : fbRecSt,
+        timerState: (dParts[3] != "" ? dParts[3] : "stopped"),
+        timerRemainingSec: IsInteger(dParts[4]) ? Integer(dParts[4]) : fbRem,
+        timerPresetSec: IsInteger(dParts[5]) ? Max(60, Integer(dParts[5])) : fbPre,
+        activeScene: (dParts.Length >= 6 && dParts[6] != "") ? dParts[6] : fbScene,
+        recSeconds: (dParts.Length >= 7 && IsInteger(dParts[7])) ? Max(0, Integer(dParts[7])) : fbRecSec,
+        streamDropWarn: (dParts.Length >= 8) ? (dParts[8] = "1" || StrLower(dParts[8]) = "true") : fbDrop,
+        voiceWhileMuted: (dParts.Length >= 9) ? (dParts[9] = "1" || StrLower(dParts[9]) = "true") : fbVoice,
+        scenes: scenesArr
+    }
+}
+
+FormatRelayStatePayload(cfg, state, cmd := "state", seq := 0, ts := 0, sid := "") {
+    pairCode := StrUpper(Trim((IsObject(cfg) && cfg.HasOwnProp("InternetPairingCode")) ? cfg.InternetPairingCode : ""))
+    auth := GetInternetRelayAuthToken(pairCode, _GetRelayPassword(cfg))
+    isMuted := (IsObject(state) && state.HasOwnProp("isMuted") && state.isMuted) ? true : false
+    isStandby := (IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby) ? true : false
+    recSt := (IsObject(state) && state.HasOwnProp("recState") && IsInteger(state.recState)) ? Integer(state.recState) : 0
+    recSec := (IsObject(state) && state.HasOwnProp("recElapsedSec") && IsInteger(state.recElapsedSec)) ? Max(0, Integer(state.recElapsedSec))
+        : ((IsObject(state) && state.HasOwnProp("recSeconds") && IsInteger(state.recSeconds)) ? Max(0, Integer(state.recSeconds)) : 0)
+    streamDrop := (IsObject(state) && ((state.HasOwnProp("streamDropWarn") && state.streamDropWarn) || (state.HasOwnProp("streamState") && state.streamState == 2))) ? true : false
+    voiceMuted := (IsObject(state) && state.HasOwnProp("voiceWhileMuted") && state.voiceWhileMuted) ? true : false
+    tSt := (IsObject(state) && state.HasOwnProp("timerState") && state.timerState != "") ? String(state.timerState) : "stopped"
+    tRem := (IsObject(state) && state.HasOwnProp("timerRemainingSec") && IsInteger(state.timerRemainingSec)) ? Integer(state.timerRemainingSec) : 600
+    tPre := (IsObject(state) && state.HasOwnProp("timerPresetSec") && IsInteger(state.timerPresetSec)) ? Max(60, Integer(state.timerPresetSec)) : 600
+    activeScene := (IsObject(state) && state.HasOwnProp("currentSceneName") && state.currentSceneName != "") ? String(state.currentSceneName) : "Scene"
+
+    scenesJson := "["
+    for idx, scName in _GetHostSceneListForRelay(state)
+        scenesJson .= (idx > 1 ? "," : "") '"' EscapeJsonStr(scName) '"'
+    scenesJson .= "]"
+
+    dataStr := (cmd = "state") ? (isMuted ? "1" : "0") : _BuildLegacyDirStatePayload(state)
+    seqNum := (seq > 0) ? Integer(seq) : _NextRelaySequence(state)
+    tsNum := (ts > 0) ? Integer(ts) : (IsSet(GetCurrentUnixEpochSec) ? GetCurrentUnixEpochSec() : A_TickCount)
+    sidStr := (sid != "") ? String(sid) : _GetRelaySessionId(state)
+
+    return '{"v":1,"src":"host","cmd":"' EscapeJsonStr(cmd) '","data":"' EscapeJsonStr(dataStr) '","seq":' seqNum ',"ts":' tsNum ',"sid":"' EscapeJsonStr(sidStr) '","auth":"' EscapeJsonStr(auth) '"'
+        . ',"isMuted":' (isMuted ? "true" : "false")
+        . ',"isStandby":' (isStandby ? "true" : "false")
+        . ',"recState":' recSt
+        . ',"recSeconds":' recSec
+        . ',"streamDropWarn":' (streamDrop ? "true" : "false")
+        . ',"voiceWhileMuted":' (voiceMuted ? "true" : "false")
+        . ',"timerState":"' EscapeJsonStr(tSt) '"'
+        . ',"timerRemainingSec":' tRem
+        . ',"timerPresetSec":' tPre
+        . ',"activeScene":"' EscapeJsonStr(activeScene) '"'
+        . ',"scenes":' scenesJson '}'
+}
+
+FormatEncryptedRelayPacket(src, cmd, data, pairingCode, password := "", state := "", ivOverride := "") {
+    cleanCode := StrUpper(Trim(String(pairingCode)))
+    auth := GetInternetRelayAuthToken(cleanCode, password)
+    seqNum := _NextRelaySequence(state)
+    tsNum := IsSet(GetCurrentUnixEpochSec) ? GetCurrentUnixEpochSec() : A_TickCount
+    sidStr := _GetRelaySessionId(state)
+    plainJson := '{"v":1,"src":"' EscapeJsonStr(src) '","cmd":"' EscapeJsonStr(cmd) '","data":"' EscapeJsonStr(data) '","seq":' seqNum ',"ts":' tsNum ',"sid":"' EscapeJsonStr(sidStr) '","auth":"' EscapeJsonStr(auth) '"}'
+    return EncryptRelayPayload(plainJson, cleanCode, password, ivOverride)
+}
+
+BuildOutboundRelayPacket(cfg, state, src, cmd, data) {
+    pairCode := (IsObject(cfg) && cfg.HasOwnProp("InternetPairingCode")) ? StrUpper(Trim(cfg.InternetPairingCode)) : ""
+    pw := _GetRelayPassword(cfg)
+    if (ShouldUseRelayEncryption(cfg, state)) {
+        env := FormatEncryptedRelayPacket(src, cmd, data, pairCode, pw, state)
+        if (env != "")
+            return env
+    }
+    authTok := GetInternetRelayAuthToken(pairCode, pw)
+    return FormatRelayPacket(src, cmd, data, authTok)
+}
+
+_RelayJsonExtractStr(jsonStr, key) {
+    if (RegExMatch(jsonStr, '"' key '"\s*:\s*"((?:[^"\\]|\\.)*)"', &m))
+        return UnescapeJsonStr(m[1])
+    return ""
+}
+
+_RelayJsonExtractBool(jsonStr, key, defaultVal := false) {
+    if (RegExMatch(jsonStr, 'i)"' key '"\s*:\s*(true|false)', &m))
+        return (StrLower(m[1]) = "true")
+    return defaultVal
+}
+
+_RelayJsonExtractInt(jsonStr, key, defaultVal := 0) {
+    if (RegExMatch(jsonStr, '"' key '"\s*:\s*(-?\d+)', &m))
+        return Integer(m[1])
+    return defaultVal
+}
+
+_RelayJsonExtractStrArray(jsonStr, key) {
+    arr := []
+    if (!RegExMatch(jsonStr, '"' key '"\s*:\s*\[([^\]]*)\]', &mArr))
+        return arr
+    body := mArr[1]
+    pos := 1
+    while (pos := RegExMatch(body, '"((?:[^"\\]|\\.)*)"', &mItem, pos)) {
+        item := UnescapeJsonStr(mItem[1])
+        if (item != "")
+            arr.Push(item)
+        pos += StrLen(mItem[0])
+    }
+    return arr
+}
+
+ParseRelayEnvelope(rawMsg, pairingCode := "", password := "", replayGuard := "", allowLegacy := true, nowEpochSec := "") {
+    msg := (Type(rawMsg) == "Buffer") ? StrGet(rawMsg, "UTF-8") : String(rawMsg)
+    if (InStr(msg, "PSGCM1|") && IsSet(DecryptRelayPayload)) {
+        decOk := false
+        plain := DecryptRelayPayload(msg, StrUpper(Trim(String(pairingCode))), password, &decOk)
+        if (!decOk || plain = "")
+            return { ok: false, encrypted: true, authError: true, replayRejected: false, error: "decrypt_failed" }
+
+        src := _RelayJsonExtractStr(plain, "src")
+        cmd := _RelayJsonExtractStr(plain, "cmd")
+        data := _RelayJsonExtractStr(plain, "data")
+        auth := _RelayJsonExtractStr(plain, "auth")
+        sid := _RelayJsonExtractStr(plain, "sid")
+        seq := _RelayJsonExtractInt(plain, "seq", 0)
+        ts := _RelayJsonExtractInt(plain, "ts", 0)
+
+        if (src = "" || cmd = "")
+            return { ok: false, encrypted: true, authError: true, replayRejected: false, error: "malformed_json" }
+
+        if (IsObject(replayGuard)) {
+            senderKey := src (sid != "" ? (":" sid) : "")
+            if (!replayGuard.Accept(senderKey, seq, ts, nowEpochSec))
+                return { ok: false, encrypted: true, authError: false, replayRejected: true, error: "replay_rejected", src: src, cmd: cmd, seq: seq }
+        }
+
+        hasTelemetry := (InStr(plain, '"recSeconds"') || InStr(plain, '"streamDropWarn"') || InStr(plain, '"voiceWhileMuted"') || InStr(plain, '"scenes"') || InStr(plain, '"activeScene"'))
+        hasMutedField := (InStr(plain, '"isMuted"') != 0)
+        return {
+            ok: true,
+            encrypted: true,
+            authError: false,
+            replayRejected: false,
+            src: src,
+            cmd: cmd,
+            data: data,
+            auth: auth,
+            seq: seq,
+            ts: ts,
+            sid: sid,
+            hasMutedField: hasMutedField,
+            isMuted: hasMutedField ? _RelayJsonExtractBool(plain, "isMuted", false) : (data = "1" || StrLower(data) = "true"),
+            hasTelemetry: hasTelemetry,
+            isStandby: _RelayJsonExtractBool(plain, "isStandby", false),
+            recState: _RelayJsonExtractInt(plain, "recState", 0),
+            recSeconds: Max(0, _RelayJsonExtractInt(plain, "recSeconds", 0)),
+            streamDropWarn: _RelayJsonExtractBool(plain, "streamDropWarn", false),
+            voiceWhileMuted: _RelayJsonExtractBool(plain, "voiceWhileMuted", false),
+            timerState: _RelayJsonExtractStr(plain, "timerState"),
+            timerRemainingSec: _RelayJsonExtractInt(plain, "timerRemainingSec", 600),
+            timerPresetSec: Max(60, _RelayJsonExtractInt(plain, "timerPresetSec", 600)),
+            activeScene: _RelayJsonExtractStr(plain, "activeScene"),
+            scenes: _RelayJsonExtractStrArray(plain, "scenes")
+        }
+    }
+
+    if (!allowLegacy)
+        return ""
+    pkt := ParseRelayPacket(msg)
+    if (!IsObject(pkt))
+        return ""
+    return {
+        ok: true,
+        encrypted: false,
+        authError: false,
+        replayRejected: false,
+        src: pkt.src,
+        cmd: pkt.cmd,
+        data: pkt.data,
+        auth: pkt.auth,
+        seq: 0,
+        ts: 0,
+        sid: "",
+        hasMutedField: (pkt.cmd = "state"),
+        isMuted: (pkt.data = "1" || StrLower(pkt.data) = "true"),
+        hasTelemetry: false,
+        scenes: []
+    }
+}
+
 GetInternetRelayTopic(pairingCode) {
     clean := StrUpper(Trim(pairingCode))
     if (clean = "")
@@ -1006,7 +1331,7 @@ PublishInternetRelayPacket(topic, packetStr, relayBaseUrl := "https://ntfy.sh", 
     if IsObject(mockTargetWs)
         return TrySendWsText(mockTargetWs, packetStr)
     try {
-        baseUrl := RTrim(relayBaseUrl != "" ? relayBaseUrl : "https://ntfy.sh", "/")
+        baseUrl := NormalizeRelayBaseUrl(relayBaseUrl)
         whr := ComObject("WinHttp.WinHttpRequest.5.1")
         whr.Open("POST", baseUrl "/" topic, true)
         whr.SetRequestHeader("Cache-Control", "no-cache")
@@ -1025,20 +1350,22 @@ BroadcastHostRelayDirectorState(cfg, state) {
         return false
     if (!ShouldEnableHostInternetRelay(cfg))
         return false
-    topic := GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : "")
+    pairCode := cfg.HasOwnProp("InternetPairingCode") ? StrUpper(Trim(cfg.InternetPairingCode)) : ""
+    topic := GetInternetRelayTopic(pairCode)
     if (topic = "")
         return false
-    auth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
-    standby := (state.HasOwnProp("isStandby") && state.isStandby) ? "1" : "0"
-    recSt := state.HasOwnProp("recState") ? Integer(state.recState) : 0
-    tSt := state.HasOwnProp("timerState") ? String(state.timerState) : "stopped"
-    tRem := state.HasOwnProp("timerRemainingSec") ? Integer(state.timerRemainingSec) : 600
-    tPre := state.HasOwnProp("timerPresetSec") ? Integer(state.timerPresetSec) : 600
-    scene := state.HasOwnProp("currentSceneName") ? StrReplace(StrReplace(String(state.currentSceneName), "|", "/"), ";", ",") : "Scene"
-    payload := standby ";" recSt ";" tSt ";" tRem ";" tPre ";" scene
-    pkt := FormatRelayPacket("host", "dir_state", payload, auth)
+    pw := _GetRelayPassword(cfg)
+    if (ShouldUseRelayEncryption(cfg, state)) {
+        jsonPayload := FormatRelayStatePayload(cfg, state, "dir_state")
+        pkt := EncryptRelayPayload(jsonPayload, pairCode, pw)
+        if (pkt = "")
+            return false
+    } else {
+        auth := GetInternetRelayAuthToken(pairCode, pw)
+        pkt := FormatRelayPacket("host", "dir_state", _BuildLegacyDirStatePayload(state), auth)
+    }
     mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-    return PublishInternetRelayPacket(topic, pkt, "https://ntfy.sh", mockWs)
+    return PublishInternetRelayPacket(topic, pkt, GetEffectiveRelayBaseUrl(cfg), mockWs)
 }
 
 BroadcastHostRelayMuteState(cfg, state) {
@@ -1047,13 +1374,22 @@ BroadcastHostRelayMuteState(cfg, state) {
     HostBridgeBroadcastMuteState(cfg, state)
     if (!ShouldEnableHostInternetRelay(cfg))
         return false
-    topic := GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : "")
+    pairCode := cfg.HasOwnProp("InternetPairingCode") ? StrUpper(Trim(cfg.InternetPairingCode)) : ""
+    topic := GetInternetRelayTopic(pairCode)
     if (topic = "")
         return false
-    auth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
-    pkt := FormatRelayPacket("host", "state", state.isMuted ? "1" : "0", auth)
+    pw := _GetRelayPassword(cfg)
+    if (ShouldUseRelayEncryption(cfg, state)) {
+        jsonPayload := FormatRelayStatePayload(cfg, state, "state")
+        pkt := EncryptRelayPayload(jsonPayload, pairCode, pw)
+        if (pkt = "")
+            return false
+    } else {
+        auth := GetInternetRelayAuthToken(pairCode, pw)
+        pkt := FormatRelayPacket("host", "state", state.isMuted ? "1" : "0", auth)
+    }
     mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-    return PublishInternetRelayPacket(topic, pkt, "https://ntfy.sh", mockWs)
+    return PublishInternetRelayPacket(topic, pkt, GetEffectiveRelayBaseUrl(cfg), mockWs)
 }
 
 UpdateHostInternetRelay(cfg, state) {
@@ -1062,10 +1398,21 @@ UpdateHostInternetRelay(cfg, state) {
     if (state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
         SetTimer state.relayTimerFn, 0
     if (ShouldEnableHostInternetRelay(cfg)) {
+        desiredWsUrl := BuildRelayWsUrl(GetEffectiveRelayBaseUrl(cfg), GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : ""))
+        urlChanged := (state.HasOwnProp("_activeRelayWsUrl") && state._activeRelayWsUrl != "" && desiredWsUrl != "" && state._activeRelayWsUrl != desiredWsUrl)
+        if (urlChanged) {
+            state.relayConnected := false
+            state._activeRelayWsUrl := ""
+            if IsObject(state.relayWs) {
+                try state.relayWs.shutdown()
+                state.relayWs := ""
+            }
+        }
         if (!state.relayConnected && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
             SetTimer state.relayTimerFn, -80
     } else {
         state.relayConnected := false
+        state._activeRelayWsUrl := ""
         if IsObject(state.relayWs) {
             try state.relayWs.shutdown()
             state.relayWs := ""
@@ -1085,7 +1432,10 @@ ConnectHostInternetRelay(cfg, state) {
         try state.relayWs.shutdown()
         state.relayWs := ""
     }
-    wsUrl := "wss://ntfy.sh/" topic "/ws"
+    wsUrl := BuildRelayWsUrl(GetEffectiveRelayBaseUrl(cfg), topic)
+    if (wsUrl = "")
+        return
+    state._activeRelayWsUrl := wsUrl
     try {
         state.relayWs := WebSocket(wsUrl, {
             message: HandleHostRelayMessage.Bind(cfg, state),
@@ -1093,6 +1443,7 @@ ConnectHostInternetRelay(cfg, state) {
         }, true, "", 4000)
     } catch {
         state.relayWs := ""
+        state._activeRelayWsUrl := ""
         if (ShouldEnableHostInternetRelay(cfg) && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
             SetTimer state.relayTimerFn, -3000
     }
@@ -1106,6 +1457,7 @@ HandleHostRelayClose(cfg, state, ws, status, reason) {
     if (state.relayWs == ws)
         state.relayWs := ""
     state.relayConnected := false
+    state._activeRelayWsUrl := ""
     if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
         try state.refreshHelpFn.Call()
     if (ShouldEnableHostInternetRelay(cfg) && state.HasOwnProp("relayTimerFn") && state.relayTimerFn)
@@ -1123,25 +1475,46 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
             try state.refreshHelpFn.Call()
         return
     }
-    pkt := ParseRelayPacket(msg)
-    if (!IsObject(pkt) || pkt.src != "remote")
+
+    if (!state.HasOwnProp("relayReplayGuard") || !IsObject(state.relayReplayGuard)) {
+        if (IsSet(RelayReplayGuard))
+            state.relayReplayGuard := RelayReplayGuard()
+    }
+    guard := (state.HasOwnProp("relayReplayGuard") && IsObject(state.relayReplayGuard)) ? state.relayReplayGuard : ""
+    pw := _GetRelayPassword(cfg)
+    pkt := ParseRelayEnvelope(msg, cfg.InternetPairingCode, pw, guard, true)
+    if (!IsObject(pkt))
+        return
+    if (!pkt.ok) {
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Relay", pkt.replayRejected ? "ReplayRejected" : "DecryptRejected", pkt.error)
+        return
+    }
+    if (pkt.src != "remote")
         return
 
     topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-    expectedAuth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
+    expectedAuth := GetInternetRelayAuthToken(cfg.InternetPairingCode, pw)
     mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
     if (pkt.auth != expectedAuth) {
-        PublishInternetRelayPacket(topic, FormatRelayPacket("host", "auth_error", "0", "none"), "https://ntfy.sh", mockWs)
+        PublishInternetRelayPacket(topic, FormatRelayPacket("host", "auth_error", "0", "none"), GetEffectiveRelayBaseUrl(cfg), mockWs)
         return
     }
 
+    state._relayPeerLegacy := !pkt.encrypted
+
     if (pkt.cmd = "sync_req") {
         BroadcastHostRelayMuteState(cfg, state)
-        hasDirActivity := (state.HasOwnProp("isStandby") && state.isStandby)
-            || (state.HasOwnProp("timerState") && state.timerState != "stopped")
-            || (state.HasOwnProp("recState") && state.recState > 0)
-        if (hasDirActivity)
-            BroadcastHostRelayDirectorState(cfg, state)
+        if (state._relayPeerLegacy) {
+            hasDirActivity := (state.HasOwnProp("isStandby") && state.isStandby)
+                || (state.HasOwnProp("timerState") && state.timerState != "stopped")
+                || (state.HasOwnProp("recState") && state.recState > 0)
+                || (state.HasOwnProp("streamDropWarn") && state.streamDropWarn)
+                || (state.HasOwnProp("voiceWhileMuted") && state.voiceWhileMuted)
+                || (_GetHostSceneListForRelay(state).Length > 0)
+            if (hasDirActivity)
+                BroadcastHostRelayDirectorState(cfg, state)
+        }
     } else if (pkt.cmd = "toggle_mute") {
         ExecuteHostRemoteToggleMute(cfg, state)
     } else if (pkt.cmd = "set_mute") {
@@ -1512,12 +1885,11 @@ BroadcastHostStageNudge(cfg, state, message, sender := "Stage", accentHex := "F5
     if (ShouldEnableHostInternetRelay(cfg)) {
         topic := GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : "")
         if (topic != "") {
-            auth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
             safeMsg := StrReplace(StrReplace(msgClean, "|", "/"), ";", ",")
             safeSender := StrReplace(StrReplace(senderClean, "|", "/"), ";", ",")
-            pkt := FormatRelayPacket("host", "nudge", safeSender ";" safeMsg, auth)
+            pkt := BuildOutboundRelayPacket(cfg, state, "host", "nudge", safeSender ";" safeMsg)
             mockWs := (IsObject(state) && state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-            PublishInternetRelayPacket(topic, pkt, "https://ntfy.sh", mockWs)
+            PublishInternetRelayPacket(topic, pkt, GetEffectiveRelayBaseUrl(cfg), mockWs)
         }
     }
     return true
@@ -1680,10 +2052,9 @@ SendCloseRemoteSignal(cfg, state) {
     ; 2. Also dispatch over Internet Relay if Internet Pairing Code is configured
     if (IsObject(cfg) && cfg.HasOwnProp("InternetPairingCode") && cfg.InternetPairingCode != "") {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-        auth := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.obsPassword)
         mockWs := (IsObject(state) && state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
         if (topic != "")
-            sentWan := PublishInternetRelayPacket(topic, FormatRelayPacket("host", "close_remote", "1", auth), "https://ntfy.sh", mockWs)
+            sentWan := PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "host", "close_remote", "1"), GetEffectiveRelayBaseUrl(cfg), mockWs)
     }
 
     return (sentLan || sentWan || sentBridge)
@@ -1975,10 +2346,13 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         }
         else if (InStr(msg, '"eventType":"SceneListChanged"') || InStr(msg, '"eventType": "SceneListChanged"')) {
             parsedScenes := ParseObsSceneList(msg)
-            if (parsedScenes.Length > 0)
+            if (parsedScenes.Length > 0) {
                 state.sceneList := parsedScenes
-            else if IsObject(ws)
+                HostBridgeBroadcastMuteState(cfg, state)
+                BroadcastHostRelayDirectorState(cfg, state)
+            } else if IsObject(ws) {
                 SendObsRequest(ws, "GetSceneList", "InitSceneList")
+            }
         }
     }
     else if (opCode == 7) {
@@ -2058,6 +2432,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             if (parsedScenes.Length > 0) {
                 state.sceneList := parsedScenes
                 HostBridgeBroadcastMuteState(cfg, state)
+                BroadcastHostRelayDirectorState(cfg, state)
             }
         }
         else if (InStr(msg, '"requestId":"InitInputList"') || InStr(msg, '"requestId": "InitInputList"')) {

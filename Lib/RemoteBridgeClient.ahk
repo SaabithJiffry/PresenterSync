@@ -1025,6 +1025,10 @@ SaveRemoteConnectionSettingsToIni(cfg) {
         return
     cfg.Write("Connection", "NetworkMode", cfg.NetworkMode)
     cfg.Write("Connection", "InternetPairingCode", cfg.InternetPairingCode)
+    if (cfg.HasOwnProp("RelayBaseUrl"))
+        cfg.Write("Connection", "RelayBaseUrl", IsSet(NormalizeRelayBaseUrl) ? NormalizeRelayBaseUrl(cfg.RelayBaseUrl) : cfg.RelayBaseUrl)
+    if (cfg.HasOwnProp("EnableRelayEncryption"))
+        cfg.WriteBool("Connection", "EnableRelayEncryption", !!cfg.EnableRelayEncryption)
     cfg.Write("Connection", "HostAddress", cfg.HostAddress)
     cfg.Write("Connection", "HostPort", cfg.HostPort)
     cfg.Write("Connection", "BridgePort", cfg.BridgePort)

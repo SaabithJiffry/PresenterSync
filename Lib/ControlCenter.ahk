@@ -1866,6 +1866,15 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.RemoteNetworkMode := rMode
             cfg.Write("Settings", "RemoteNetworkMode", rMode)
         }
+        if vals.HasOwnProp("RelayBaseUrl") {
+            rUrl := IsSet(NormalizeRelayBaseUrl) ? NormalizeRelayBaseUrl(vals.RelayBaseUrl) : (Trim(String(vals.RelayBaseUrl)) != "" ? RTrim(Trim(String(vals.RelayBaseUrl)), "/") : "https://ntfy.sh")
+            cfg.RelayBaseUrl := rUrl
+            cfg.Write("Settings", "RelayBaseUrl", rUrl)
+        }
+        if vals.HasOwnProp("EnableRelayEncryption") {
+            cfg.EnableRelayEncryption := !!vals.EnableRelayEncryption
+            cfg.WriteBool("Settings", "EnableRelayEncryption", cfg.EnableRelayEncryption)
+        }
         if vals.HasOwnProp("EnableRemoteConnections") {
             cfg.EnableRemoteConnections := !!vals.EnableRemoteConnections
             cfg.WriteBool("Settings", "EnableRemoteConnections", cfg.EnableRemoteConnections)
@@ -2318,30 +2327,40 @@ ShowControlCenterWindow(cfg, state := "", *) {
         edPairCode.Value := cfg.InternetPairingCode,
         IsObject(state) ? UpdateHostInternetRelay(cfg, state) : 0
     ))
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y178 w210", "Relay Server URL (ntfy):"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edRelayBaseUrl := ccGui.Add("Edit", "x250 y174 w320 h26", cfg.HasOwnProp("RelayBaseUrl") && cfg.RelayBaseUrl != "" ? cfg.RelayBaseUrl : "https://ntfy.sh")
+    Theme.RegisterControl(ccGui, edRelayBaseUrl, "Edit")
+    DllCall("SendMessage", "Ptr", edRelayBaseUrl.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "https://ntfy.sh")
+    btnResetRelayUrl := ccGui.Add("Button", "x580 y172 w100 h28", "Default")
+    Theme.RegisterControl(ccGui, btnResetRelayUrl, "Button", "tabButton")
+    btnResetRelayUrl.OnEvent("Click", (*) => (edRelayBaseUrl.Value := "https://ntfy.sh"))
+
     endpoints := GetLocalNetworkEndpoints()
     universalLanStr := A_ComputerName ".local"
     for ep in endpoints.ips
         universalLanStr .= ", " ep
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y178 w210", "Universal LAN String:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y218 w210", "Universal LAN String:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edLanStr := ccGui.Add("Edit", "x250 y174 w320 h26 ReadOnly", universalLanStr)
+    edLanStr := ccGui.Add("Edit", "x250 y214 w320 h26 ReadOnly", universalLanStr)
     Theme.RegisterControl(ccGui, edLanStr, "Edit")
-    btnCopyLan := ccGui.Add("Button", "x580 y172 w100 h28", "Copy LAN")
+    btnCopyLan := ccGui.Add("Button", "x580 y212 w100 h28", "Copy LAN")
     Theme.RegisterControl(ccGui, btnCopyLan, "Button", "tabButton")
     btnCopyLan.OnEvent("Click", (*) => (A_Clipboard := edLanStr.Value, TrayTip("Copied LAN String: " edLanStr.Value, "PresenterSync", 1)))
 
-    remNote := "Note: PresenterSync Remote stays a dedicated 1-tier Mic HUD on your secondary device. It works both with OBS Studio (LAN/Internet) and in Conferencing-Only Mode (Zoom/Teams/Meet) via the Companion Relay Bridge."
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y218 w648 h42", remNote), "Text", "tabMuted")
+    remNote := "Note: PresenterSync Remote stays a dedicated 1-tier Mic HUD on your secondary device. WAN Relay payloads are AES-256-GCM encrypted and work with https://ntfy.sh or a self-hosted ntfy server."
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y258 w648 h42", remNote), "Text", "tabMuted")
 
-    btnRemDetails := ccGui.Add("Button", "x32 y272 w310 h32", "Open Full Remote Connection Dialog...")
-    btnCloseRem := ccGui.Add("Button", "x360 y272 w320 h32", "Close Remote Companion on Secondary PC...")
+    btnRemDetails := ccGui.Add("Button", "x32 y310 w310 h32", "Open Full Remote Connection Dialog...")
+    btnCloseRem := ccGui.Add("Button", "x360 y310 w320 h32", "Close Remote Companion on Secondary PC...")
     Theme.RegisterControl(ccGui, btnRemDetails, "Button", "tabButton")
     Theme.RegisterControl(ccGui, btnCloseRem, "Button", "tabButton")
     btnRemDetails.OnEvent("Click", (*) => ShowRemoteCompanionInfo(cfg, state))
     btnCloseRem.OnEvent("Click", (*) => PromptCloseRemoteCompanion(cfg, state))
 
-    chkEnableRemoteConn := ccGui.Add("Checkbox", "x32 y316 w648 h24" (cfg.EnableRemoteConnections ? " Checked" : ""), "Allow Remote Companion Connections (Uncheck for Standalone Cutoff Mode)")
+    chkEnableRemoteConn := ccGui.Add("Checkbox", "x32 y354 w648 h24" (cfg.EnableRemoteConnections ? " Checked" : ""), "Allow Remote Companion Connections (Uncheck for Standalone Cutoff Mode)")
     Theme.RegisterControl(ccGui, chkEnableRemoteConn, "Checkbox", "tabText")
 
     ; ==========================================================================
@@ -2497,6 +2516,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
         chkExcludeSecCapture.Value := cfg.ExcludeSecondaryFromCapture ? 1 : 0
         ddlRemoteNet.Choose((cfg.RemoteNetworkMode = "Internet") ? 2 : 1)
         edPairCode.Value := cfg.InternetPairingCode
+        edRelayBaseUrl.Value := (cfg.HasOwnProp("RelayBaseUrl") && cfg.RelayBaseUrl != "") ? cfg.RelayBaseUrl : "https://ntfy.sh"
         chkEnableRemoteConn.Value := cfg.EnableRemoteConnections ? 1 : 0
         edHkPpt.Value := cfg.PptHotkey
         edHkWs.Value := cfg.WsHotkey
@@ -2608,6 +2628,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ExcludeFromCapture: chkExcludeCapture.Value,
             ExcludeSecondaryFromCapture: chkExcludeSecCapture.Value,
             RemoteNetworkMode: (ddlRemoteNet.Value == 2) ? "Internet" : "LAN",
+            RelayBaseUrl: edRelayBaseUrl.Value,
             EnableRemoteConnections: chkEnableRemoteConn.Value,
             PptHotkey: edHkPpt.Value,
             WsHotkey: edHkWs.Value,

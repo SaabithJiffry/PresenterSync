@@ -925,6 +925,8 @@ class ConnectionManager(
             httpClient = httpClient,
             pairingCode = cfg.internetPairingCode,
             password = cfg.obsPassword,
+            httpBaseUrl = cfg.relayBaseUrl,
+            enableEncryption = cfg.enableRelayEncryption,
             callbacks = object : RelaySessionCallbacks {
                 override fun onRelayConnected() {
                     if (gen != generation.get()) return
@@ -973,33 +975,26 @@ class ConnectionManager(
                     applyNewMuteState(muted)
                 }
 
-                override fun onRelayDirectorState(
-                    isStandby: Boolean,
-                    recState: Int,
-                    timerState: String,
-                    timerRemainingSec: Int,
-                    timerPresetSec: Int,
-                    activeScene: String
-                ) {
+                override fun onRelayTelemetryState(telemetry: RelayTelemetryState) {
                     if (gen != generation.get()) return
                     applyBridgeTelemetry(
                         gen,
                         BridgeTelemetryState(
-                            recState = recState,
-                            recSeconds = _uiState.value.recSeconds,
-                            streamDropWarn = _uiState.value.streamDropWarn,
-                            voiceWhileMuted = _uiState.value.voiceWhileMuted,
+                            recState = telemetry.recState,
+                            recSeconds = telemetry.recSeconds,
+                            streamDropWarn = telemetry.streamDropWarn,
+                            voiceWhileMuted = telemetry.voiceWhileMuted,
                             osMicMutedDrift = _uiState.value.osMicMutedDrift,
                             lowDiskWarnLevel = _uiState.value.lowDiskWarnLevel,
                             lowDiskMb = _uiState.value.lowDiskMb,
                             deadMicWarn = _uiState.value.deadMicWarn,
-                            activeScene = activeScene,
-                            scenes = _uiState.value.scenes,
-                            isStandby = isStandby,
+                            activeScene = telemetry.activeScene.ifBlank { _uiState.value.activeScene },
+                            scenes = telemetry.scenes.ifEmpty { _uiState.value.scenes },
+                            isStandby = telemetry.isStandby,
                             standbyScene = _uiState.value.standbyScene,
-                            timerState = timerState,
-                            timerRemainingSec = timerRemainingSec,
-                            timerPresetSec = timerPresetSec
+                            timerState = telemetry.timerState,
+                            timerRemainingSec = telemetry.timerRemainingSec,
+                            timerPresetSec = telemetry.timerPresetSec
                         )
                     )
                 }
@@ -1687,23 +1682,35 @@ class ConnectionManager(
         portStr: String,
         password: String,
         pairingCode: String,
-        onProgress: (String) -> Unit
+        onProgress: (String) -> Unit,
+        relayBaseUrl: String = configStore.current.relayBaseUrl
     ): String = withContext(Dispatchers.IO) {
         if (networkMode == NetworkMode.INTERNET) {
             val cleanPair = pairingCode.trim()
             if (cleanPair.isEmpty()) return@withContext "Error: Please enter your Internet Pairing Code."
+            val normBase = RelayCrypto.normalizeRelayBaseUrl(relayBaseUrl)
             onProgress("Testing Internet Relay ($cleanPair)...")
             val topic = RelayCrypto.getInternetRelayTopic(cleanPair)
             val expectedTok = RelayCrypto.getInternetRelayAuthToken(cleanPair, password)
-            val wsUrl = "${AppConstants.NTFY_WS_BASE_URL}/$topic/ws"
+            val wsUrl = RelayCrypto.buildRelayWsUrl(normBase, topic)
+            val pubUrl = RelayCrypto.buildRelayPublishUrl(normBase, topic)
             val result = kotlinx.coroutines.CompletableDeferred<String>()
             var testWs: WebSocket? = null
             try {
                 testWs = httpClient.newWebSocket(Request.Builder().url(wsUrl).build(), object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
-                        val pkt = RelayCrypto.formatRelayPacket("remote", "sync_req", "0", expectedTok)
+                        val pkt = RelayCrypto.formatEncryptedRelayPacket(
+                            src = "remote",
+                            cmd = "sync_req",
+                            data = "0",
+                            pairingCode = cleanPair,
+                            password = password,
+                            seq = 1L,
+                            ts = System.currentTimeMillis() / 1000L,
+                            sid = RelayCrypto.generateSessionId()
+                        )
                         val req = Request.Builder()
-                            .url("${AppConstants.NTFY_BASE_URL}/$topic")
+                            .url(pubUrl)
                             .header("Cache-Control", "no-cache")
                             .post(pkt.toRequestBodyCompat())
                             .build()
@@ -1714,12 +1721,26 @@ class ConnectionManager(
                     }
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        val pkt = RelayCrypto.parseRelayPacket(text)
-                        if (pkt != null && pkt.src == "host") {
-                            if (pkt.cmd == "auth_error" || pkt.auth != expectedTok) {
-                                result.complete("✕ Auth failed on Internet Relay (Check OBS Password)")
-                            } else if (pkt.cmd == "state") {
-                                result.complete("✓ Connected to Primary Host via Internet Relay ($cleanPair)!")
+                        val pkt = RelayCrypto.parseRelayEnvelope(
+                            rawMsg = text,
+                            pairingCode = cleanPair,
+                            password = password,
+                            replayGuard = null,
+                            allowLegacy = true
+                        )
+                        if (pkt != null) {
+                            if (!pkt.ok) {
+                                if (pkt.authError) {
+                                    result.complete("✕ Auth/Encryption mismatch on Internet Relay (Check OBS Password)")
+                                }
+                                return
+                            }
+                            if (pkt.src == "host") {
+                                if (pkt.cmd == "auth_error" || pkt.auth != expectedTok) {
+                                    result.complete("✕ Auth failed on Internet Relay (Check OBS Password)")
+                                } else if (pkt.cmd == "state") {
+                                    result.complete("✓ Connected to Primary Host via Internet Relay ($cleanPair)!")
+                                }
                             }
                         }
                     }

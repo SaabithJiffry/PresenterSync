@@ -64,15 +64,15 @@ class RelayClientTest {
                 }
                 if (path == "/$topic" && request.method == "POST") {
                     val body = request.body.readUtf8()
-                    val pkt = RelayCrypto.parseRelayPacket(body)
-                    if (pkt != null && pkt.auth == auth) {
+                    val pkt = RelayCrypto.parseRelayEnvelope(body, code, pass, allowLegacy = true)
+                    if (pkt != null && pkt.ok && pkt.auth == auth) {
                         if (pkt.cmd == "sync_req") {
                             syncPostLatch.countDown()
-                            val reply = RelayCrypto.formatRelayPacket("host", "state", "1", auth)
+                            val reply = RelayCrypto.formatEncryptedRelayPacket("host", "state", "1", code, pass, seq = 1L)
                             wsRef.get()?.send("""{"event":"message","message":"$reply"}""")
                         } else if (pkt.cmd == "toggle_mute") {
                             togglePostLatch.countDown()
-                            val closePkt = RelayCrypto.formatRelayPacket("host", "close_remote", "1", auth)
+                            val closePkt = RelayCrypto.formatEncryptedRelayPacket("host", "close_remote", "1", code, pass, seq = 2L)
                             wsRef.get()?.send("""{"event":"message","message":"$closePkt"}""")
                         } else if (pkt.cmd == "set_mute" && pkt.data == "1") {
                             setMuteTrueLatch.countDown()
