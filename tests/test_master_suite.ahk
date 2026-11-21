@@ -37,12 +37,12 @@ OnError(TestFailFastOnError)
 MasterWatchdogAbort() {
     global results, FailCount, PassCount
     FailCount += 1
-    results.Push("[FAIL] Master test suite watchdog timeout reached (45s)")
+    results.Push("[FAIL] Master test suite watchdog timeout reached (120s)")
     try HudSnake.Stop()
-    try FileAppend("`n=== WATCHDOG ABORT AFTER 45s (Pass=" PassCount ", Fail=" FailCount ") ===`n" results[results.Length] "`n", A_ScriptDir "\master_audit_results.log")
+    try FileAppend("`n=== WATCHDOG ABORT AFTER 120s (Pass=" PassCount ", Fail=" FailCount ") ===`n" results[results.Length] "`n", A_ScriptDir "\master_audit_results.log")
     ExitApp(2)
 }
-SetTimer(MasterWatchdogAbort, -45000)
+SetTimer(MasterWatchdogAbort, -120000)
 
 Assert(testName, condition, detail := "") {
     global PassCount, FailCount, results

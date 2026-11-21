@@ -40,8 +40,23 @@ EnforceHostSingleInstance() {
         for _, hwnd in WinGetList("PresenterSync_HostIpcMsg ahk_class AutoHotkeyGUI") {
             pid := WinGetPID(hwnd)
             if (pid && pid != myPid) {
-                try ProcessClose(pid)
-                Sleep(150)
+                try {
+                    msgBytes := Buffer(StrPut("__exit__", "UTF-8"), 0)
+                    StrPut("__exit__", msgBytes, "UTF-8")
+                    cds := Buffer(A_PtrSize * 3, 0)
+                    NumPut("UPtr", 0x5053434C, cds, 0)
+                    NumPut("UInt", msgBytes.Size, cds, A_PtrSize)
+                    NumPut("Ptr", msgBytes.Ptr, cds, A_PtrSize * 2)
+                    SendMessage(0x004A, 0, cds.Ptr, , "ahk_id " hwnd, , , , 1500)
+                }
+                deadline := A_TickCount + 800
+                while (ProcessExist(pid) && A_TickCount < deadline) {
+                    Sleep(50)
+                }
+                if (ProcessExist(pid)) {
+                    try ProcessClose(pid)
+                    Sleep(150)
+                }
             }
         }
     }
@@ -315,8 +330,8 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Configuration Profiles", ProfileMenu)
 
     SettingsMenu.Add()
-    SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI.Bind(cfg))
-    SettingsMenu.Add("Change Zoom Shortcuts", ChangeZoomShortcutsUI.Bind(cfg))
+    SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI.Bind(cfg, state))
+    SettingsMenu.Add("Change Zoom Shortcuts", ChangeZoomShortcutsUI.Bind(cfg, state))
     SettingsMenu.Add()
     RemoteNetMenu := Menu()
     RemoteNetMenu.Add("Same Router (LAN)", SetRemoteNetworkMode.Bind(cfg, state, "LAN"))
@@ -329,7 +344,7 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Remote Companion Info...", (*) => ShowRemoteCompanionInfo(cfg, state))
     SettingsMenu.Add("Close Remote Companion...", PromptCloseRemoteCompanion.Bind(cfg, state))
     SettingsMenu.Add()
-    SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI.Bind(cfg))
+    SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI.Bind(cfg, state))
     SettingsMenu.Add("Change Pointer OBS Transition Button...", ChangeHwTransitionHotkeyUI.Bind(cfg, state))
     SettingsMenu.Add("Enable Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state))
     if (cfg.EnablePushToMute)
@@ -337,10 +352,10 @@ BuildTrayMenu(cfg, state) {
     SettingsMenu.Add("Enable Push-to-Talk (Hold to Unmute)", TogglePushToTalk.Bind(cfg, state))
     if (cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk)
         SettingsMenu.Check("Enable Push-to-Talk (Hold to Unmute)")
-    SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI.Bind(cfg))
+    SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI.Bind(cfg, state))
     SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
     SettingsMenu.Add()
-    SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI.Bind(cfg))
+    SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI.Bind(cfg, state))
     SettingsMenu.Add()
     SettingsMenu.Add("Start with Windows", ToggleStartWithWindows.Bind(cfg, state))
     if (cfg.StartWithWindows)
@@ -437,6 +452,7 @@ TogglePPT(cfg, state := "", *) {
     }
 
     cfg.WriteBool("Settings", "EnablePPT", cfg.EnablePPT)
+    RebindAllHostHotkeys(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -458,6 +474,7 @@ ToggleMicOnly(cfg, state := "", *) {
     }
 
     cfg.WriteBool("Settings", "EnableMicOnly", cfg.EnableMicOnly)
+    RebindAllHostHotkeys(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -497,6 +514,7 @@ CyclePointerMode(cfg, state := "", *) {
         ToolTip "Pointer Mode: Full PPT + Mute"
     }
 
+    RebindAllHostHotkeys(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -709,6 +727,11 @@ BindPptInterceptHotkeys(cfg, state := "") {
     }
     BoundPptHotkeys := []
 
+    if (!cfg.EnablePPT) {
+        HotIf
+        return
+    }
+
     pptBindings := [
         { key: "Down", send: "{Down}" },
         { key: "Up", send: "{Up}" },
@@ -805,9 +828,14 @@ BindHwMuteHotkey(cfg, state) {
         try Hotkey(BoundHwMuteHotkey, "Off")
         BoundHwMuteHotkey := ""
     }
-    if (cfg.HwMuteHotkey != "" && cfg.HwMuteHotkey != "None") {
-        try Hotkey(cfg.HwMuteHotkey, (*) => TriggerMute(cfg, state), "On")
-        BoundHwMuteHotkey := cfg.HwMuteHotkey
+    if (!(cfg.EnablePPT || cfg.EnableMicOnly) || cfg.HwMuteHotkey = "" || cfg.HwMuteHotkey = "None") {
+        HotIf
+        return
+    }
+    hk := "$" RegExReplace(Trim(cfg.HwMuteHotkey), "^[~*$]+")
+    try {
+        Hotkey(hk, (*) => TriggerMute(cfg, state), "On")
+        BoundHwMuteHotkey := hk
     }
     HotIf
 }
@@ -826,9 +854,14 @@ BindHwTransitionHotkey(cfg, state) {
         try Hotkey(BoundHwTransitionHotkey, "Off")
         BoundHwTransitionHotkey := ""
     }
-    if (cfg.HwTransitionHotkey != "" && cfg.HwTransitionHotkey != "None") {
-        try Hotkey(cfg.HwTransitionHotkey, (*) => TriggerObsSceneTransition(cfg, state), "On")
-        BoundHwTransitionHotkey := cfg.HwTransitionHotkey
+    if (!cfg.EnablePointerTransition || cfg.HwTransitionHotkey = "" || cfg.HwTransitionHotkey = "None") {
+        HotIf
+        return
+    }
+    hk := "$" RegExReplace(Trim(cfg.HwTransitionHotkey), "^[~*$]+")
+    try {
+        Hotkey(hk, (*) => TriggerObsSceneTransition(cfg, state), "On")
+        BoundHwTransitionHotkey := hk
     }
     HotIf
 }

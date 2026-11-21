@@ -410,9 +410,9 @@ ShowHelpWindow(cfg, state := "", *) {
     Theme.RegisterControl(helpGui, btnObsHk, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnZoomHk, "Button", "tabButton")
     Theme.RegisterControl(helpGui, btnTesterSc, "Button", "tabButton")
-    btnAppHk.OnEvent("Click", (*) => ChangeAppHotkeysUI(cfg))
-    btnObsHk.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg))
-    btnZoomHk.OnEvent("Click", (*) => ChangeZoomShortcutsUI(cfg))
+    btnAppHk.OnEvent("Click", (*) => ChangeAppHotkeysUI(cfg, state))
+    btnObsHk.OnEvent("Click", (*) => ChangeObsSettingsUI(cfg, state))
+    btnZoomHk.OnEvent("Click", (*) => ChangeZoomShortcutsUI(cfg, state))
     btnTesterSc.OnEvent("Click", (*) => ShowPointerTester())
 
     ; =========================================================================
@@ -531,8 +531,8 @@ ShowHelpWindow(cfg, state := "", *) {
     btnExportDiag.OnEvent("Click", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
     btnOpenAbout.OnEvent("Click", (*) => ShowAboutWindow(cfg, state))
     btnStatusWizard.OnEvent("Click", (*) => PromptForSetup(cfg, false))
-    btnStatusMuteKey.OnEvent("Click", (*) => ChangeHwMuteHotkeyUI(cfg))
-    btnStatusIntercepts.OnEvent("Click", (*) => ConfigurePointerKeysUI(cfg))
+    btnStatusMuteKey.OnEvent("Click", (*) => ChangeHwMuteHotkeyUI(cfg, state))
+    btnStatusIntercepts.OnEvent("Click", (*) => ConfigurePointerKeysUI(cfg, state))
 
     tabs.UseTab()
 
@@ -644,15 +644,40 @@ ShowAboutWindow(cfg := "", state := "", *) {
     return aboutGui
 }
 
-ChangeAppHotkeysUI(cfg, *) {
-    SaveAppHk(values, ctrls, dlg) {
-        cfg.Write("Settings", "PptHotkey", values["ppt"])
-        cfg.Write("Settings", "WsHotkey", values["ws"])
-        cfg.Write("Settings", "ZoomHotkey", values["zoom"])
-        cfg.Write("Settings", "IndHotkey", values["ind"])
-        cfg.Write("Settings", "SuspendHotkey", values["susp"])
-        cfg.Write("Settings", "ExitHotkey", values["exit"])
+_ApplyLiveHotkeyRebindOrReload(state, dlg := "") {
+    hasLiveRebind := (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+    if (!hasLiveRebind) {
         Reload()
+        return
+    }
+    if (IsObject(dlg)) {
+        if (dlg.HasOwnProp("_releaseState"))
+            dlg._releaseState.Call()
+        try dlg.Destroy()
+    }
+    try state.rebindHotkeysFn.Call()
+    if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+        try state.rebuildTrayFn.Call()
+    if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
+}
+
+ChangeAppHotkeysUI(cfg, state := "", *) {
+    hasLiveRebind := (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+    SaveAppHk(values, ctrls, dlg) {
+        cfg.PptHotkey := values["ppt"]
+        cfg.WsHotkey := values["ws"]
+        cfg.ZoomHotkey := values["zoom"]
+        cfg.IndHotkey := values["ind"]
+        cfg.SuspendHotkey := values["susp"]
+        cfg.ExitHotkey := values["exit"]
+        cfg.Write("Settings", "PptHotkey", cfg.PptHotkey)
+        cfg.Write("Settings", "WsHotkey", cfg.WsHotkey)
+        cfg.Write("Settings", "ZoomHotkey", cfg.ZoomHotkey)
+        cfg.Write("Settings", "IndHotkey", cfg.IndHotkey)
+        cfg.Write("Settings", "SuspendHotkey", cfg.SuspendHotkey)
+        cfg.Write("Settings", "ExitHotkey", cfg.ExitHotkey)
+        _ApplyLiveHotkeyRebindOrReload(state, dlg)
     }
 
     elements := [
@@ -671,7 +696,7 @@ ChangeAppHotkeysUI(cfg, *) {
     ]
 
     return BuildSettingsWindow("Edit App Shortcuts", elements, SaveAppHk, {
-        saveBtnText: "Save & Restart",
+        saveBtnText: hasLiveRebind ? "Save & Apply" : "Save & Restart",
         saveBtnOpts: "xm w335 h32 Default y+16"
     })
 }
@@ -692,16 +717,24 @@ SetConferencingApp(cfg, state, appName, *) {
     return norm
 }
 
-ChangeZoomShortcutsUI(cfg, *) {
+ChangeZoomShortcutsUI(cfg, state := "", *) {
+    hasLiveRebind := (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
     SaveZoomHk(values, ctrls, dlg) {
-        cfg.Write("Settings", "ZoomMuteHotkey", values["mute"])
-        if (values.Has("teamsMute") && values["teamsMute"] != "")
-            cfg.Write("Settings", "TeamsMuteHotkey", values["teamsMute"])
-        if (values.Has("meetMute") && values["meetMute"] != "")
-            cfg.Write("Settings", "MeetMuteHotkey", values["meetMute"])
-        cfg.Write("Settings", "ZoomRecHotkey", values["rec"] != "" ? values["rec"] : "!r")
-        cfg.Write("Settings", "ZoomPauseHotkey", values["pause"] != "" ? values["pause"] : "!p")
-        Reload()
+        cfg.ZoomMuteHotkey := values["mute"]
+        cfg.Write("Settings", "ZoomMuteHotkey", cfg.ZoomMuteHotkey)
+        if (values.Has("teamsMute") && values["teamsMute"] != "") {
+            cfg.TeamsMuteHotkey := values["teamsMute"]
+            cfg.Write("Settings", "TeamsMuteHotkey", cfg.TeamsMuteHotkey)
+        }
+        if (values.Has("meetMute") && values["meetMute"] != "") {
+            cfg.MeetMuteHotkey := values["meetMute"]
+            cfg.Write("Settings", "MeetMuteHotkey", cfg.MeetMuteHotkey)
+        }
+        cfg.ZoomRecHotkey := (values["rec"] != "") ? values["rec"] : "!r"
+        cfg.ZoomPauseHotkey := (values["pause"] != "") ? values["pause"] : "!p"
+        cfg.Write("Settings", "ZoomRecHotkey", cfg.ZoomRecHotkey)
+        cfg.Write("Settings", "ZoomPauseHotkey", cfg.ZoomPauseHotkey)
+        _ApplyLiveHotkeyRebindOrReload(state, dlg)
     }
 
     elements := [
@@ -718,7 +751,7 @@ ChangeZoomShortcutsUI(cfg, *) {
     ]
 
     return BuildSettingsWindow("Edit Conferencing Shortcuts", elements, SaveZoomHk, {
-        saveBtnText: "Save & Restart",
+        saveBtnText: hasLiveRebind ? "Save & Apply" : "Save & Restart",
         saveBtnOpts: "w300 h32 Default y+14"
     })
 }
@@ -734,16 +767,24 @@ SetRoutingMode(cfg, mode, *) {
     Reload()
 }
 
-ChangeObsSettingsUI(cfg, *) {
+ChangeObsSettingsUI(cfg, state := "", *) {
+    hasLiveRebind := (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
     SaveObsSettings(values, ctrls, dlg) {
-        cfg.Write("Settings", "ObsHotkey", values["mute"] != "" ? values["mute"] : "None")
-        cfg.Write("Settings", "ObsRecHotkey", values["rec"] != "" ? values["rec"] : "^F9")
-        cfg.Write("Settings", "ObsPauseHotkey", values["pause"] != "" ? values["pause"] : "^F10")
-        cfg.Write("Settings", "ObsTransitionHotkey", values["transition"] != "" ? values["transition"] : "None")
-        cfg.Write("Settings", "TargetMicName", values["mic"])
-        if (values.Has("pw"))
-            cfg.Write("Settings", "ObsPassword", values["pw"])
-        Reload()
+        cfg.ObsMuteHotkey := (values["mute"] != "") ? values["mute"] : "None"
+        cfg.ObsRecHotkey := (values["rec"] != "") ? values["rec"] : "^F9"
+        cfg.ObsPauseHotkey := (values["pause"] != "") ? values["pause"] : "^F10"
+        cfg.ObsTransitionHotkey := (values["transition"] != "") ? values["transition"] : "None"
+        cfg.targetMicName := values["mic"]
+        cfg.Write("Settings", "ObsHotkey", cfg.ObsMuteHotkey)
+        cfg.Write("Settings", "ObsRecHotkey", cfg.ObsRecHotkey)
+        cfg.Write("Settings", "ObsPauseHotkey", cfg.ObsPauseHotkey)
+        cfg.Write("Settings", "ObsTransitionHotkey", cfg.ObsTransitionHotkey)
+        cfg.Write("Settings", "TargetMicName", cfg.targetMicName)
+        if (values.Has("pw")) {
+            cfg.obsPassword := values["pw"]
+            cfg.Write("Settings", "ObsPassword", cfg.obsPassword)
+        }
+        _ApplyLiveHotkeyRebindOrReload(state, dlg)
     }
 
     elements := [
@@ -762,7 +803,7 @@ ChangeObsSettingsUI(cfg, *) {
     ]
 
     return BuildSettingsWindow("OBS Settings", elements, SaveObsSettings, {
-        saveBtnText: "Save & Restart",
+        saveBtnText: hasLiveRebind ? "Save & Apply" : "Save & Restart",
         saveBtnOpts: "w280 h32 Default y+15"
     })
 }
@@ -893,11 +934,13 @@ OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply) {
     return dlg
 }
 
-ChangeHwMuteHotkeyUI(cfg, *) {
-    return OpenPointerKeyCaptureDialog(cfg.HwMuteHotkey, "Save & Restart", (val) => (
+ChangeHwMuteHotkeyUI(cfg, state := "", *) {
+    hasLiveRebind := (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+    btnLabel := hasLiveRebind ? "Save & Apply" : "Save & Restart"
+    return OpenPointerKeyCaptureDialog(cfg.HwMuteHotkey, btnLabel, (val) => (
         cfg.HwMuteHotkey := val,
         cfg.Write("Settings", "HwMuteHotkey", val),
-        Reload()
+        _ApplyLiveHotkeyRebindOrReload(state)
     ))
 }
 
@@ -907,22 +950,26 @@ ChangeHwTransitionHotkeyUI(cfg, state := "", *) {
     return OpenPointerKeyCaptureDialog(cfg.HwTransitionHotkey, btnLabel, (val) => (
         cfg.HwTransitionHotkey := val,
         cfg.Write("Settings", "HwTransitionHotkey", val),
-        hasLiveRebind ? (
-            state.rebindHotkeysFn.Call(),
-            (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn) ? state.rebuildTrayFn.Call() : 0
-        ) : Reload()
+        _ApplyLiveHotkeyRebindOrReload(state)
     ))
 }
 
-ConfigurePointerKeysUI(cfg, *) {
+ConfigurePointerKeysUI(cfg, state := "", *) {
+    hasLiveRebind := (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
     SavePointerKeys(values, ctrls, dlg) {
+        cfg.CatchArrows := !!values["arrows"]
+        cfg.CatchPg := !!values["pg"]
+        cfg.CatchSpace := !!values["space"]
+        cfg.CatchEnter := !!values["enter"]
+        cfg.CatchTab := !!values["tab"]
+        cfg.CatchEsc := !!values["esc"]
         cfg.Write("Pointer", "CatchArrows", values["arrows"])
         cfg.Write("Pointer", "CatchPg", values["pg"])
         cfg.Write("Pointer", "CatchSpace", values["space"])
         cfg.Write("Pointer", "CatchEnter", values["enter"])
         cfg.Write("Pointer", "CatchTab", values["tab"])
         cfg.Write("Pointer", "CatchEsc", values["esc"])
-        Reload()
+        _ApplyLiveHotkeyRebindOrReload(state, dlg)
     }
 
     elements := [
@@ -936,7 +983,7 @@ ConfigurePointerKeysUI(cfg, *) {
     ]
 
     return BuildSettingsWindow("Configure Pointer Intercepts", elements, SavePointerKeys, {
-        saveBtnText: "Save & Restart",
+        saveBtnText: hasLiveRebind ? "Save & Apply" : "Save & Restart",
         saveBtnOpts: "w260 h32 Default y+15"
     })
 }

@@ -72,7 +72,7 @@ IsPptKeyAllowed(cfg, pptKey) {
                 return false
     }
 
-    for _, prop in ["HwMuteHotkey", "ObsMuteHotkey", "HwTransitionHotkey", "ObsTransitionHotkey"] {
+    for _, prop in ["HwMuteHotkey", "ObsMuteHotkey", "HwTransitionHotkey", "ObsTransitionHotkey", "ZoomMuteHotkey", "TeamsMuteHotkey", "MeetMuteHotkey", "ObsRecHotkey", "ZoomRecHotkey", "ObsPauseHotkey", "ZoomPauseHotkey"] {
         if (cfg.HasOwnProp(prop) && _DoHotkeysCollide(cleanPpt, cfg.%prop%))
             return false
     }
@@ -420,6 +420,12 @@ DispatchCliCommandString(cmdStr, cfg, state) {
         case "split":
             ExecuteHostSplitRecord(cfg, state)
             return true
+        case "__exit__":
+            if (IsObject(state) && state.HasOwnProp("cliExitFn") && IsObject(state.cliExitFn))
+                state.cliExitFn.Call()
+            else
+                SetTimer(() => ExitApp(0), -10)
+            return true
     }
     if (SubStr(cmdLow, 1, 6) = "nudge:") {
         txt := Trim(SubStr(cmd, 7))
@@ -649,9 +655,9 @@ DispatchHostMuteToggle(cfg, state) {
             SoundPlay "*16"
             return false
         }
-        SetKeyDelay -1, 30
+        SetKeyDelay -1, 10
         try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
-        SetKeyDelay 50, 50
+        SetKeyDelay -1, -1
     } else if (cfg.AudioRoutingMode == 2) {
         if (!zoomOpen || confHk = "" || confHk = "None") {
             if (TryCoreAudioFallbackMute(cfg, state, !state.isMuted, "HostToggleMode2"))
@@ -659,9 +665,9 @@ DispatchHostMuteToggle(cfg, state) {
             SoundPlay "*16"
             return false
         }
-        SetKeyDelay -1, 30
+        SetKeyDelay -1, 10
         try ControlSend FormatSendKey(confHk), , confSpec
-        SetKeyDelay 50, 50
+        SetKeyDelay -1, -1
     } else if (cfg.AudioRoutingMode == 3) {
         if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
             return true
@@ -676,12 +682,12 @@ DispatchHostMuteToggle(cfg, state) {
         state.IsSyncing := true
         if (state.HasOwnProp("syncSource"))
             state.syncSource := "manual"
-        SetKeyDelay -1, 30
+        SetKeyDelay -1, 10
         if (obsCanSend)
             try ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
         if (confCanSend)
             try ControlSend FormatSendKey(confHk), , confSpec
-        SetKeyDelay 50, 50
+        SetKeyDelay -1, -1
         SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
     } else {
         if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
@@ -1204,9 +1210,9 @@ ExecuteHostToggleRecord(cfg, state) {
         return SendObsRequest(state.obsWs, "ToggleRecord", "ClickToggleRec")
     } else if (cfg.EnableZoom && state.zoomConnected && cfg.HasOwnProp("ZoomRecHotkey") && cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") {
         confSpec := GetConferencingWindowSpec(cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom")
-        SetKeyDelay -1, 30
+        SetKeyDelay -1, 10
         try ControlSend(FormatSendKey(cfg.ZoomRecHotkey), , confSpec)
-        SetKeyDelay 50, 50
+        SetKeyDelay -1, -1
         state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
         SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
         return true
@@ -1284,7 +1290,8 @@ TriggerObsSceneTransition(cfg, state, fromHudClick := false) {
                 detail := "ws:SetCurrentProgramScene:" targetScene
             }
         }
-    } else if (WinExist("ahk_exe obs64.exe") && cfg.HasOwnProp("ObsTransitionHotkey") && cfg.ObsTransitionHotkey != "None" && cfg.ObsTransitionHotkey != "") {
+    }
+    if (!dispatched && WinExist("ahk_exe obs64.exe") && cfg.HasOwnProp("ObsTransitionHotkey") && cfg.ObsTransitionHotkey != "None" && cfg.ObsTransitionHotkey != "") {
         SetKeyDelay -1, 0
         try ControlSend FormatSendKey(cfg.ObsTransitionHotkey), , "ahk_exe obs64.exe"
         SetKeyDelay -1, -1
@@ -1316,9 +1323,9 @@ ExecuteHostPauseRecord(cfg, state) {
     }
     if (cfg.EnableZoom && state.zoomConnected && cfg.HasOwnProp("ZoomPauseHotkey") && cfg.ZoomPauseHotkey != "" && cfg.ZoomPauseHotkey != "None") {
         confSpec := GetConferencingWindowSpec(cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom")
-        SetKeyDelay -1, 30
+        SetKeyDelay -1, 10
         try ControlSend(FormatSendKey(cfg.ZoomPauseHotkey), , confSpec)
-        SetKeyDelay 50, 50
+        SetKeyDelay -1, -1
         state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
         if (state.recState == 1 || state.recState == 2)
             SyncRecState(cfg, state, state.recState == 1 ? 2 : 1)
@@ -1555,20 +1562,20 @@ _DispatchHostRemoteControlSend(cfg, state, nextMuted) {
             SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
     }
     if (obsCanSend) {
-        SetKeyDelay -1, 30
+        SetKeyDelay -1, 10
         try {
             ControlSend FormatSendKey(cfg.ObsMuteHotkey), , "ahk_exe obs64.exe"
             sentObs := true
         }
-        SetKeyDelay 50, 50
+        SetKeyDelay -1, -1
     }
     if (confCanSend) {
-        SetKeyDelay -1, 30
+        SetKeyDelay -1, 10
         try {
             ControlSend FormatSendKey(confHk), , confSpec
             sentConf := true
         }
-        SetKeyDelay 50, 50
+        SetKeyDelay -1, -1
     }
     if (!sentObs && !sentConf && TryCoreAudioFallbackMute(cfg, state, nextMuted, "HostRemoteControlSend"))
         return true
@@ -2093,9 +2100,9 @@ PushObsMuteToZoom(cfg, state, obsIsMuted, mockZoomState := "", sendFn := "") {
     if (IsObject(sendFn)) {
         sendFn.Call(FormatSendKey(confHk), targetWin)
     } else {
-        SetKeyDelay -1, 30
+        SetKeyDelay -1, 10
         try ControlSend FormatSendKey(confHk),, targetWin
-        SetKeyDelay 50, 50
+        SetKeyDelay -1, -1
     }
     if (state.HasOwnProp("releaseSyncTimerFn") && state.releaseSyncTimerFn)
         SetTimer state.releaseSyncTimerFn, -UIConstants.SYNC_LOCK_TIMEOUT_MS
@@ -2237,9 +2244,9 @@ ZoomStateMonitor(cfg, state) {
             if (cfg.EnableWS && state.obsConnected)
                 sentObs := SendObsSetInputMuteGroup(cfg, state.obsWs, zoomInfo.muted)
             if (!sentObs && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "" && WinExist("ahk_exe obs64.exe")) {
-                SetKeyDelay -1, 30
+                SetKeyDelay -1, 10
                 try ControlSend FormatSendKey(cfg.ObsMuteHotkey),, "ahk_exe obs64.exe"
-                SetKeyDelay 50, 50
+                SetKeyDelay -1, -1
                 sentObs := true
             }
             if (sentObs) {
