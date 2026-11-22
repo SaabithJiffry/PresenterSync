@@ -17,6 +17,7 @@ def write_stress_ahk(ahk_path: str, obs_port: int, result_path: str) -> None:
 #SingleInstance Off
 global g_IsTestMode := true
 SetTimer(() => ExitApp(124), -45000)
+OnError((err, mode) => (FileAppend("ERR: " err.Message " (" err.What ") at " err.File ":" err.Line "`n", "*"), ExitApp(1)))
 #Include "{lib}\\WebSocket.ahk"
 #Include "{lib}\\Crypto.ahk"
 #Include "{lib}\\Gdip.ahk"
@@ -46,10 +47,10 @@ Sleep(150)
 ; 1. Sleep/Wake staleness + dead client reap
 bridge := StartHostCompanionBridge(cfg, st, 0, 0)
 fakeCli := {{
-    sock: 0, kind: "ws", authenticated: true, deviceId: "wake-dev-1",
+    sock: 0, key: "fake-wake", kind: "ws", authenticated: true, deviceId: "wake-dev-1",
     deviceName: "WakeTab", platform: "Android",
     createdTick: A_TickCount - 120000, lastRxTick: A_TickCount - 70000,
-    lastPingSentTick: 0, sendQueue: [], closeAfterSend: false
+    lastPingTick: 0, sendBuf: Buffer(0), sendLen: 0, closeAfterSend: false
 }}
 bridge.clients["fake-wake"] := fakeCli
 bridge._OnMaintenanceTick()

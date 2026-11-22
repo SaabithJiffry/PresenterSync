@@ -17,6 +17,7 @@ def write_ptt_ahk(ahk_path: str, result_path: str) -> None:
 #SingleInstance Off
 global g_IsTestMode := true
 SetTimer(() => ExitApp(124), -25000)
+OnError((err, mode) => (FileAppend("ERR: " err.Message " (" err.What ") at " err.File ":" err.Line "`n", "*"), ExitApp(1)))
 #Include "{lib}\\WebSocket.ahk"
 #Include "{lib}\\Crypto.ahk"
 #Include "{lib}\\Gdip.ahk"
@@ -44,22 +45,23 @@ cfg.EnablePushToTalk := true
 cfg.EnablePushToMute := false
 st.isMuted := false
 callsLive := 0
-st.triggerMuteFn := (*) => (callsLive += 1)
-pttLiveRes := HandlePushToTalkRelease(cfg, st, 500, (*) => false)
+pttLiveRes := ExecutePushToTalkHoldCycle(cfg, st, (m) => (callsLive += 1), "b", (k, opt) => true)
 liveGuarded := (callsLive = 0 && pttLiveRes = false)
 
-; 3. < 300ms short click / Double-Tap preservation (no accidental hold-mute/PTT)
-st.isMuted := true
-callsShort := 0
-st.triggerMuteFn := (*) => (callsShort += 1)
-pttShortRes := HandlePushToTalkRelease(cfg, st, 120, (*) => false)
-shortPreserved := (callsShort = 0)
+; 3. < 350ms short click / Double-Tap preservation (WaitPushToMuteRelease returns false if released before hold threshold)
+cfg.EnablePushToTalk := false
+cfg.EnablePushToMute := true
+shortRes := WaitPushToMuteRelease(cfg, "b", (k, opt) => true) ; key released before T0.350 -> true => not a hold
+longRes := WaitPushToMuteRelease(cfg, "b", (k, opt) => (InStr(opt, "T0.") ? false : true)) ; held past T0.350, then released
+shortPreserved := (shortRes = false && longRes = true)
 
-; 4. >= 300ms PTT hold while muted -> unmutes on hold & re-mutes on release
+; 4. PTT hold while muted -> unmutes on press & re-mutes on release
+cfg.EnablePushToMute := false
+cfg.EnablePushToTalk := true
+st.isMuted := true
 callsHold := []
-st.triggerMuteFn := (*) => (st.isMuted := !st.isMuted, callsHold.Push(st.isMuted))
-pttHoldRes := HandlePushToTalkRelease(cfg, st, 450, (*) => false)
-holdOk := (pttHoldRes = true && callsHold.Length = 2 && st.isMuted = true)
+pttHoldRes := ExecutePushToTalkHoldCycle(cfg, st, (m) => (st.isMuted := m, callsHold.Push(m)), "b", (k, opt) => true)
+holdOk := (pttHoldRes = true && callsHold.Length = 2 && callsHold[1] = false && callsHold[2] = true && st.isMuted = true)
 
 out := '{{"ex1":' (ex1 ? "true" : "false")
     . ',"ex2":' (ex2 ? "true" : "false")

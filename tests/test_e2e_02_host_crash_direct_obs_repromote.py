@@ -10,12 +10,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 import _e2e_common as ec
 
 
-def write_fixed_port_host_runner(ahk_path: str, ready_path: str, bridge_port: int) -> None:
+def write_fixed_port_host_runner(ahk_path: str, ini_path: str, ready_path: str, bridge_port: int) -> None:
     lib = os.path.join(ec.REPO_DIR, "Lib")
     script = f'''#Requires AutoHotkey v2.0
 #SingleInstance Off
 global g_IsTestMode := true
 SetTimer(() => ExitApp(124), -35000)
+OnError((err, mode) => (FileAppend("ERR: " err.Message " (" err.What ") at " err.File ":" err.Line "`n", "*"), ExitApp(1)))
 #Include "{lib}\\WebSocket.ahk"
 #Include "{lib}\\Crypto.ahk"
 #Include "{lib}\\Gdip.ahk"
@@ -26,11 +27,12 @@ SetTimer(() => ExitApp(124), -35000)
 Gdip.Startup()
 OnExit((*) => (StopHostCompanionBridge(), Theme.Shutdown(), UIA.Shutdown(), Gdip.Shutdown()))
 
-cfg := Config("{ahk_path}.ini")
+cfg := Config("{ini_path}")
 cfg.SessionPairingCode := "FAIL-202"
 cfg.ObsPassword := ""
 cfg.EnableRemoteConnections := true
 cfg.AudioRoutingMode := 2
+cfg.Write("Bridge", "HostUuid", EnsureHostUuid(cfg))
 
 st := OverlayState(cfg)
 st.suppressNudgeBanners := true
@@ -50,9 +52,10 @@ def main() -> int:
     remote_ahk = os.path.join(ec.REPO_DIR, "PresenterSync_Remote.ahk")
     with ec.TempWorkspace("psync_e2e_02_") as tmp, ec.MockObsWsServer(studio_mode=True) as mock_obs:
         bridge_port = ec.find_free_loopback_port()
+        host_ini = tmp.join("host_shared.ini")
         host_ahk_1 = tmp.join("host1.ahk")
         ready_1 = tmp.join("ready1.json")
-        write_fixed_port_host_runner(host_ahk_1, ready_1, bridge_port)
+        write_fixed_port_host_runner(host_ahk_1, host_ini, ready_1, bridge_port)
 
         remote_ini = tmp.join("remote_e2e2.ini")
         ec.write_remote_ini(remote_ini, bridge_port, mock_obs.port, "FAIL-202", "e2e2_rem")
@@ -89,20 +92,19 @@ def main() -> int:
                 )
                 print("[PASS] Direct OBS v5 InputMuteStateChanged propagated to Remote (IsMuted=1)")
 
-                # 4. Restart Host Bridge #2 on same bridge_port -> verify auto-repromotion
+                # 4. Restart Host Bridge #2 on same bridge_port + shared HostUuid -> verify auto-repromotion
                 host_ahk_2 = tmp.join("host2.ahk")
                 ready_2 = tmp.join("ready2.json")
-                write_fixed_port_host_runner(host_ahk_2, ready_2, bridge_port)
+                write_fixed_port_host_runner(host_ahk_2, host_ini, ready_2, bridge_port)
                 with ec.ManagedSubprocess([ec.AHK_EXE, "/ErrorStdOut=UTF-8", host_ahk_2]):
                     ec.wait_for_condition("Host Bridge #2 ready", lambda: os.path.exists(ready_2), timeout=8.0)
                     ec.wait_for_condition(
-                        "Remote auto-repromoted back to Host Bridge #2",
-                        lambda: ec.http_json("GET", f"http://127.0.0.1:{bridge_port}/health")[0] == 200
-                        and ec.read_ini_val(remote_ini, "Connection", "SessionToken") != "",
-                        timeout=12.0,
+                        "Remote auto-repromoted back to Host Bridge #2 (left Direct OBS)",
+                        lambda: mock_obs.client_count() == 0
+                        and ec.http_json("GET", f"http://127.0.0.1:{bridge_port}/health")[0] == 200,
+                        timeout=14.0,
                     )
-                    # Verify Bridge #2 is alive and Remote didn't stay stuck
-                    print("[PASS] Host Bridge #2 restarted & Remote auto-repromoted")
+                    print("[PASS] Host Bridge #2 restarted & Remote auto-repromoted (left Direct OBS)")
         finally:
             host1.terminate()
 

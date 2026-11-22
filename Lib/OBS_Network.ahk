@@ -499,7 +499,7 @@ OnHostCopyData(cfg, state, wParam, lParam, msg, hwnd) {
     if (!lpData || cbData == 0)
         return 0
     cmdStr := StrGet(lpData, cbData // 2, "UTF-16")
-    cmdStr := RTrim(cmdStr, "`0")
+    cmdStr := RTrim(cmdStr, Chr(0))
     return DispatchCliCommandString(cmdStr, cfg, state) ? 1 : 0
 }
 

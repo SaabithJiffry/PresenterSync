@@ -17,6 +17,7 @@ def write_cutoff_host_ahk(ahk_path: str, ready_path: str, cmd_path: str, port: i
 #SingleInstance Off
 global g_IsTestMode := true
 SetTimer(() => ExitApp(124), -35000)
+OnError((err, mode) => (FileAppend("ERR: " err.Message " (" err.What ") at " err.File ":" err.Line "`n", "*"), ExitApp(1)))
 #Include "{lib}\\WebSocket.ahk"
 #Include "{lib}\\Crypto.ahk"
 #Include "{lib}\\Gdip.ahk"

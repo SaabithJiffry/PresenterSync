@@ -18,6 +18,7 @@ def write_ipc_receiver_ahk(ahk_path: str, ready_path: str, log_path: str) -> Non
 #SingleInstance Off
 global g_IsTestMode := true
 SetTimer(() => ExitApp(124), -25000)
+OnError((err, mode) => (FileAppend("ERR: " err.Message " (" err.What ") at " err.File ":" err.Line "`n", "*"), ExitApp(1)))
 #Include "{lib}\\WebSocket.ahk"
 #Include "{lib}\\Crypto.ahk"
 #Include "{lib}\\Gdip.ahk"
@@ -42,11 +43,11 @@ OnHostCopyDataMsg(wP, lP, msg, hwnd) {{
         return 0
     dw := NumGet(lP, 0, "UPtr")
     cb := NumGet(lP, A_PtrSize, "UInt")
-    lp := NumGet(lP, A_PtrSize * 2, "Ptr")
-    cmd := (dw = 0x5053434C && cb > 0 && lp) ? StrGet(lp, cb, "UTF-8") : ""
-    ok := DispatchCliCommandString(cmd, cfg, st)
-    FileAppend(cmd ":" (ok ? "1" : "0") "`n", "{log_path}", "UTF-8")
-    return ok ? 1 : 0
+    dataPtr := NumGet(lP, A_PtrSize * 2, "Ptr")
+    cmd := (dw = 0x5053434C && cb > 0 && dataPtr) ? RTrim(StrGet(dataPtr, cb // 2, "UTF-16"), Chr(0)) : ""
+    res := OnHostCopyData(cfg, st, wP, lP, msg, hwnd)
+    FileAppend(cmd ":" res "`n", "{log_path}", "UTF-8")
+    return res
 }}
 OnMessage(0x004A, OnHostCopyDataMsg)
 FileAppend('{{"hwnd":' ipcGui.Hwnd '}}', "{ready_path}", "UTF-8")
@@ -60,9 +61,15 @@ def write_cli_sender_ahk(ahk_path: str) -> None:
     lib = os.path.join(ec.REPO_DIR, "Lib")
     script = f'''#Requires AutoHotkey v2.0
 #SingleInstance Off
+global g_IsTestMode := true
+SetTimer(() => ExitApp(124), -8000)
+OnError((err, mode) => (FileAppend("ERR: " err.Message " (" err.What ") at " err.File ":" err.Line "`n", "*"), ExitApp(1)))
 #Include "{lib}\\WebSocket.ahk"
 #Include "{lib}\\Crypto.ahk"
+#Include "{lib}\\Gdip.ahk"
+#Include "{lib}\\UIA.ahk"
 #Include "{lib}\\OBS_Network.ahk"
+#Include "{lib}\\GUI_Config.ahk"
 cmd := ParseHostCliArgs(A_Args)
 ok := SendHostCliCopyData(cmd)
 ExitApp(ok ? 0 : 1)
@@ -77,6 +84,7 @@ def write_diag_watchdog_render_ahk(ahk_path: str, tmp_log_dir: str, res_path: st
 #SingleInstance Off
 global g_IsTestMode := true
 SetTimer(() => ExitApp(124), -25000)
+OnError((err, mode) => (FileAppend("ERR: " err.Message " (" err.What ") at " err.File ":" err.Line "`n", "*"), ExitApp(1)))
 #Include "{lib}\\WebSocket.ahk"
 #Include "{lib}\\Crypto.ahk"
 #Include "{lib}\\Gdip.ahk"
@@ -93,6 +101,7 @@ cfg.obsPassword := "TopSecretObs99!"
 cfg.InternetPairingCode := "PS-PRIV-999"
 cfg.SessionPairingCode := "SEC-999"
 st := OverlayState(cfg)
+st.suppressNudgeBanners := true
 DiagnosticLogger.Init("PresenterSyncTest", cfg, st)
 
 ; 1. 50-event breadcrumb ring + secret redaction + PERF_LAG
@@ -112,13 +121,18 @@ aff1 := ApplyWindowCaptureAffinity(g.Hwnd, true)
 aff0 := ApplyWindowCaptureAffinity(g.Hwnd, false)
 g.Destroy()
 
-; 3. Watchdogs
+; 3. Watchdogs (Low-Disk, Dead-Mic, Speaking-While-Muted)
 cfg.EnableLowDiskWatchdog := true
 cfg.EnableDeadMicWatchdog := true
-diskRes := EvaluateLowDiskSpace(200)
-deadRes := EvaluateDeadMic(st, true, 0.0, 20000)
-voiceRes := EvaluateMutedVoiceAlert(cfg, st, 0.25, 2000)
-wdOk := (diskRes = 2) && (deadRes != 0) && (voiceRes = true)
+cfg.EnableVoiceWhileMutedAlert := true
+diskRes := EvaluateLowDiskWatchdog(cfg, st, 200, 100000)
+st.isMuted := false
+EvaluateDeadMicWatchdog(cfg, st, 0.0, true, 100000)
+deadRes := EvaluateDeadMicWatchdog(cfg, st, 0.0, true, 146000)
+st.isMuted := true
+EvaluateMutedVoiceAlert(cfg, st, 0.25, 100000)
+voiceRes := EvaluateMutedVoiceAlert(cfg, st, 0.25, 102000)
+wdOk := (diskRes = 2) && (deadRes = true) && (st.deadMicWarn = true) && (voiceRes = true) && (st.voiceWhileMuted = true)
 
 ; 4. Smart Board 0.5x - 5.0x scale bounds
 scaleOk := true
