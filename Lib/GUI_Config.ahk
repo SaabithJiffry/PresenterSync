@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "7.6.2"
+    static APP_VERSION := "7.6.3"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -1369,6 +1369,7 @@ class Config {
     RemoteNetworkMode := "LAN"
     InternetPairingCode := ""
     RelayBaseUrl := "https://ntfy.sh"
+    QuickNudgePresets := "2 min left|Wrap up|Check Mic|Q&A"
     EnableRelayEncryption := true
     SessionPairingCode := ""
     HostUuid := ""
@@ -1630,6 +1631,7 @@ class Config {
         rawNetMode := StrLower(Trim(this.Read("Settings", "RemoteNetworkMode", "LAN")))
         this.RemoteNetworkMode := (rawNetMode = "internet") ? "Internet" : "LAN"
         rawRelayUrl := Trim(this.Read("Settings", "RelayBaseUrl", "https://ntfy.sh"))
+        this.QuickNudgePresets := this.Read("Settings", "QuickNudgePresets", "2 min left|Wrap up|Check Mic|Q&A")
         this.RelayBaseUrl := IsSet(NormalizeRelayBaseUrl) ? NormalizeRelayBaseUrl(rawRelayUrl) : (rawRelayUrl != "" ? RTrim(rawRelayUrl, "/") : "https://ntfy.sh")
         this.EnableRelayEncryption := this.ReadBool("Settings", "EnableRelayEncryption", true)
         this.InternetPairingCode := Trim(this.Read("Settings", "InternetPairingCode", ""))
@@ -1811,6 +1813,7 @@ class Config {
             { sec: "Settings", key: "IndicatorScale", prop: "IndicatorScale", kind: "float" },
             { sec: "Settings", key: "RemoteNetworkMode", prop: "RemoteNetworkMode", kind: "str" },
             { sec: "Settings", key: "RelayBaseUrl", prop: "RelayBaseUrl", kind: "str" },
+            { sec: "Settings", key: "QuickNudgePresets", prop: "QuickNudgePresets", kind: "str" },
             { sec: "Settings", key: "EnableRelayEncryption", prop: "EnableRelayEncryption", kind: "bool" },
             { sec: "Settings", key: "EnableRemoteConnections", prop: "EnableRemoteConnections", kind: "bool" },
             { sec: "Settings", key: "RemoteInfoHotkey", prop: "RemoteInfoHotkey", kind: "str" },
@@ -1950,6 +1953,23 @@ class Config {
         }
         return true
     }
+}
+
+ParseQuickNudgePresets(rawStr, maxCount := 6) {
+    out := []
+    seen := Map()
+    for _, part in StrSplit(String(rawStr), ["|", ","]) {
+        clean := Trim(part)
+        if (clean != "" && !seen.Has(clean)) {
+            seen[clean] := true
+            out.Push(clean)
+            if (out.Length >= maxCount)
+                break
+        }
+    }
+    if (out.Length == 0)
+        return ["2 min left", "Wrap up", "Check Mic", "Q&A"]
+    return out
 }
 
 class OverlayState {
@@ -2295,6 +2315,160 @@ SetTrayCheck(itemText, enabled) {
         A_TrayMenu.Check(itemText)
     else
         A_TrayMenu.Uncheck(itemText)
+}
+
+_BundleJsonUnescape(s) {
+    s := StrReplace(s, '\"', '"')
+    s := StrReplace(s, "\/", "/")
+    s := StrReplace(s, "\r", "`r")
+    s := StrReplace(s, "\n", "`n")
+    s := StrReplace(s, "\t", "`t")
+    s := StrReplace(s, "\\", "\")
+    return s
+}
+
+_IsBundleSecretProp(prop) {
+    pLow := StrLower(String(prop))
+    return (pLow = "obspassword" || pLow = "bridgetoken" || pLow = "sessionpairingcode" || pLow = "internetpairingcode")
+}
+
+ExportPortableSettingsBundle(cfg, targetPath, includeSecrets := false) {
+    if (!IsObject(cfg) || targetPath = "")
+        return { ok: false, path: targetPath, count: 0, error: "Invalid config or target path." }
+    specs := cfg.GetProfileFieldSpecs()
+    isIni := (StrLower(SubStr(targetPath, -3)) = ".ini")
+    count := 0
+    try {
+        try FileDelete(targetPath)
+        if (isIni) {
+            IniWrite("PresenterSyncBundle_v1", targetPath, "Bundle", "Schema")
+            IniWrite(UIConstants.APP_VERSION, targetPath, "Bundle", "AppVersion")
+            for spec in specs {
+                if (!includeSecrets && _IsBundleSecretProp(spec.prop))
+                    continue
+                if (!cfg.HasOwnProp(spec.prop))
+                    continue
+                val := cfg.%spec.prop%
+                if (spec.kind = "bool")
+                    val := val ? 1 : 0
+                IniWrite(String(val), targetPath, spec.sec, spec.key)
+                count += 1
+            }
+        } else {
+            utc := FormatTime(A_NowUTC, "yyyy-MM-ddTHH:mm:ssZ")
+            settingsJson := ""
+            for spec in specs {
+                if (!includeSecrets && _IsBundleSecretProp(spec.prop))
+                    continue
+                if (!cfg.HasOwnProp(spec.prop))
+                    continue
+                rawVal := cfg.%spec.prop%
+                if (spec.kind = "bool")
+                    valToken := rawVal ? "true" : "false"
+                else if (spec.kind = "int")
+                    valToken := String(IsInteger(rawVal) ? Integer(rawVal) : 0)
+                else if (spec.kind = "float")
+                    valToken := String(IsNumber(rawVal) ? Number(rawVal) : 0.0)
+                else
+                    valToken := '"' EscapeJsonStr(String(rawVal)) '"'
+                settingsJson .= (count > 0 ? "," : "") . '`r`n    "' EscapeJsonStr(spec.prop) '": ' valToken
+                count += 1
+            }
+            payload := '{"schema": "PresenterSyncBundle_v1", "appVersion": "' EscapeJsonStr(UIConstants.APP_VERSION) '", "exportedUtc": "' utc '", "settings": {' settingsJson '`r`n  }`r`n}'
+            FileAppend(payload, targetPath, "UTF-8")
+        }
+        return { ok: true, path: targetPath, count: count, error: "" }
+    } catch as err {
+        return { ok: false, path: targetPath, count: 0, error: err.Message }
+    }
+}
+
+ImportPortableSettingsBundle(cfg, state, sourcePath) {
+    if (!IsObject(cfg) || sourcePath = "" || !FileExist(sourcePath))
+        return { ok: false, appliedCount: 0, error: "Bundle file not found." }
+    specs := cfg.GetProfileFieldSpecs()
+    applied := 0
+    try {
+        raw := FileRead(sourcePath, "UTF-8")
+        isIni := (StrLower(SubStr(sourcePath, -3)) = ".ini") || RegExMatch(LTrim(raw), "^\[")
+        if (isIni) {
+            for spec in specs {
+                if (_IsBundleSecretProp(spec.prop))
+                    continue
+                v := IniRead(sourcePath, spec.sec, spec.key, "__MISSING__")
+                if (v = "__MISSING__")
+                    continue
+                if (spec.kind = "bool") {
+                    b := (StrLower(Trim(v)) = "1" || StrLower(Trim(v)) = "true" || StrLower(Trim(v)) = "yes")
+                    cfg.%spec.prop% := b
+                    cfg.WriteBool(spec.sec, spec.key, b)
+                } else if (spec.kind = "int") {
+                    if (!IsInteger(v))
+                        continue
+                    iv := Integer(v)
+                    cfg.%spec.prop% := iv
+                    cfg.Write(spec.sec, spec.key, iv)
+                } else if (spec.kind = "float") {
+                    if (!IsNumber(v))
+                        continue
+                    fv := Number(v)
+                    cfg.%spec.prop% := fv
+                    cfg.Write(spec.sec, spec.key, fv)
+                } else {
+                    cfg.%spec.prop% := v
+                    cfg.Write(spec.sec, spec.key, v)
+                }
+                applied += 1
+            }
+        } else {
+            if (!InStr(raw, "PresenterSyncBundle_v1") || !InStr(raw, '"settings"'))
+                return { ok: false, appliedCount: 0, error: "Invalid bundle schema." }
+            for spec in specs {
+                if (_IsBundleSecretProp(spec.prop))
+                    continue
+                patKey := '"' spec.prop '"\s*:\s*'
+                if (spec.kind = "bool") {
+                    if (RegExMatch(raw, patKey '(true|false|1|0)', &m)) {
+                        b := (m[1] = "true" || m[1] = "1")
+                        cfg.%spec.prop% := b
+                        cfg.WriteBool(spec.sec, spec.key, b)
+                        applied += 1
+                    }
+                } else if (spec.kind = "int") {
+                    if (RegExMatch(raw, patKey '(-?\d+)', &m)) {
+                        iv := Integer(m[1])
+                        cfg.%spec.prop% := iv
+                        cfg.Write(spec.sec, spec.key, iv)
+                        applied += 1
+                    }
+                } else if (spec.kind = "float") {
+                    if (RegExMatch(raw, patKey '(-?\d+(?:\.\d+)?)', &m)) {
+                        fv := Number(m[1])
+                        cfg.%spec.prop% := fv
+                        cfg.Write(spec.sec, spec.key, fv)
+                        applied += 1
+                    }
+                } else {
+                    if (RegExMatch(raw, patKey '"((?:[^"\\]|\\.)*)"', &m)) {
+                        sv := _BundleJsonUnescape(m[1])
+                        cfg.%spec.prop% := sv
+                        cfg.Write(spec.sec, spec.key, sv)
+                        applied += 1
+                    }
+                }
+            }
+        }
+        try cfg.BackupToFile(true)
+        if (IsObject(state)) {
+            if (state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+                try state.rebindHotkeysFn.Call()
+            if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+                try state.rebuildTrayFn.Call()
+        }
+        return { ok: true, appliedCount: applied, error: "" }
+    } catch as err {
+        return { ok: false, appliedCount: 0, error: err.Message }
+    }
 }
 #Include "%A_LineFile%\..\HudRenderer.ahk"
 #Include "%A_LineFile%\..\SetupWizard.ahk"

@@ -20,6 +20,7 @@ data class BridgeTelemetryState(
     val deadMicWarn: Boolean = false,
     val activeScene: String = "Scene",
     val scenes: List<String> = emptyList(),
+    val quickNudges: List<String> = emptyList(),
     val isStandby: Boolean = false,
     val standbyScene: String = "BRB",
     val timerState: String = "stopped",
@@ -141,6 +142,15 @@ class HostBridgeClient(
                                 if (s.isNotEmpty()) add(s)
                             }
                         }
+                        val quickNudgesList = buildList {
+                            val arr = obj.optJSONArray("quickNudges")
+                            if (arr != null) {
+                                for (i in 0 until arr.length()) {
+                                    val q = arr.optString(i).trim()
+                                    if (q.isNotEmpty()) add(q)
+                                }
+                            }
+                        }
                         val telemetry = BridgeTelemetryState(
                             recState = obj.optInt("recState", 0),
                             recSeconds = obj.optInt("recSeconds", 0).coerceAtLeast(0),
@@ -152,6 +162,7 @@ class HostBridgeClient(
                             deadMicWarn = obj.optBoolean("deadMicWarn", false),
                             activeScene = obj.optString("activeScene", "Scene").ifBlank { "Scene" },
                             scenes = scenesList,
+                            quickNudges = quickNudgesList,
                             isStandby = obj.optBoolean("isStandby", false),
                             standbyScene = obj.optString("standbyScene", "BRB").ifBlank { "BRB" },
                             timerState = obj.optString("timerState", "stopped").ifBlank { "stopped" },

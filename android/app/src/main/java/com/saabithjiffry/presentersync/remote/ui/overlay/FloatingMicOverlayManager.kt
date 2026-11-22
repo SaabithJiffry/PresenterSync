@@ -1051,7 +1051,7 @@ class FloatingMicOverlayManager(
                     val pad = (6 * density).roundToInt()
                     setPadding(pad, (3 * density).roundToInt(), pad, pad)
                 }
-                for (nudgeMsg in listOf("2 min left", "Wrap up", "Check Mic")) {
+                for (nudgeMsg in com.saabithjiffry.presentersync.remote.config.QuickNudgePresetHelper.resolve(currentConfig.quickNudgePresets, currentConn.quickNudges, 3)) {
                     addRowButton(nudgeRow, nudgeMsg, btnSurface, textColor, closeAfter = true) {
                         connectionManager.sendStageNudge(nudgeMsg)
                     }

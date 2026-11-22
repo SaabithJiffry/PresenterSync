@@ -951,3 +951,173 @@ ShowGuidedSetupWizard(cfg, state := "", *) {
     return wGui
 }
 
+_PreFlightOv(overrides, prop, defaultVal) {
+    if (IsObject(overrides) && overrides.HasOwnProp(prop))
+        return overrides.%prop%
+    return defaultVal
+}
+
+RunPreFlightRehearsalChecks(cfg, state := "", overrides := "") {
+    checks := []
+
+    ; 1. OBS :4455, Transition & Audio Input
+    obsOk := !!_PreFlightOv(overrides, "obsConnected", IsObject(state) && state.HasOwnProp("obsConnected") ? state.obsConnected : false)
+    studioOn := !!_PreFlightOv(overrides, "studioModeActive", IsObject(state) && state.HasOwnProp("studioModeActive") ? state.studioModeActive : false)
+    transHk := _PreFlightOv(overrides, "obsTransitionHotkey", IsObject(cfg) && cfg.HasOwnProp("ObsTransitionHotkey") ? cfg.ObsTransitionHotkey : "None")
+    targetMic := _PreFlightOv(overrides, "targetMicName", IsObject(cfg) && cfg.HasOwnProp("targetMicName") ? cfg.targetMicName : "")
+    inputsList := _PreFlightOv(overrides, "obsAudioInputs", IsObject(state) && state.HasOwnProp("obsAudioInputs") ? state.obsAudioInputs : (IsObject(state) && state.HasOwnProp("obsInputs") ? state.obsInputs : ""))
+    micFound := true
+    if (IsObject(inputsList) && inputsList.Length > 0 && targetMic != "") {
+        micFound := false
+        for _, inp in inputsList {
+            if (StrLower(String(inp)) = StrLower(String(targetMic))) {
+                micFound := true
+                break
+            }
+        }
+    }
+    transReady := studioOn || (transHk != "" && transHk != "None")
+    if (!obsOk)
+        checks.Push({ name: "OBS :4455, Transition & Audio Input", status: "FAIL", detail: "OBS WebSocket (:4455) is not connected." })
+    else if (!micFound)
+        checks.Push({ name: "OBS :4455, Transition & Audio Input", status: "WARN", detail: "OBS connected, but target mic '" targetMic "' was not found in inputs." })
+    else if (!transReady)
+        checks.Push({ name: "OBS :4455, Transition & Audio Input", status: "WARN", detail: "OBS connected, but Studio Mode & ObsTransitionHotkey are not configured." })
+    else
+        checks.Push({ name: "OBS :4455, Transition & Audio Input", status: "PASS", detail: "OBS :4455 connected, transition & audio input ready." })
+
+    ; 2. Physical Mic Signal (> 5%)
+    defaultPeak := (IsObject(state) && state.HasOwnProp("voicePeak")) ? Number(state.voicePeak) : (IsSet(AudioMeter) && AudioMeter.HasMethod("GetPeakLevel") ? Number(AudioMeter.GetPeakLevel()) : 0.0)
+    micPeak := Number(_PreFlightOv(overrides, "micPeak", defaultPeak))
+    if (micPeak >= 0.05)
+        checks.Push({ name: "Physical Mic Signal (> 5%)", status: "PASS", detail: Format("Live mic peak {:.0f}% detected.", micPeak * 100) })
+    else
+        checks.Push({ name: "Physical Mic Signal (> 5%)", status: "WARN", detail: Format("Mic peak {:.0f}% (<= 5%). Speak into mic to verify.", micPeak * 100) })
+
+    ; 3. Conferencing Window
+    enZoom := !!_PreFlightOv(overrides, "enableZoom", IsObject(cfg) && cfg.HasOwnProp("EnableZoom") ? cfg.EnableZoom : false)
+    defaultConf := (IsObject(state) && state.HasOwnProp("zoomConnected") && state.zoomConnected)
+        || WinExist("ahk_exe Zoom.exe") || WinExist("ahk_exe ms-teams.exe") || WinExist("ahk_exe Teams.exe")
+    confOpen := !!_PreFlightOv(overrides, "confOpen", defaultConf)
+    if (!enZoom)
+        checks.Push({ name: "Conferencing Window", status: "WARN", detail: "Conferencing monitor (EnableZoom) is currently OFF." })
+    else if (confOpen)
+        checks.Push({ name: "Conferencing Window", status: "PASS", detail: "Conferencing monitor active & window detected." })
+    else
+        checks.Push({ name: "Conferencing Window", status: "WARN", detail: "Conferencing monitor ON; waiting for Zoom/Teams/Meet window." })
+
+    ; 4. Host Bridge & Paired Remotes
+    defaultBrRun := IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasOwnProp("running") ? !!g_HostCompanionBridge.running : false
+    defaultBrPort := IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasOwnProp("boundTcpPort") ? g_HostCompanionBridge.boundTcpPort : 4456
+    defaultPaired := (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasOwnProp("pairedDevices") && IsObject(g_HostCompanionBridge.pairedDevices)) ? g_HostCompanionBridge.pairedDevices.Count : 0
+    brRun := !!_PreFlightOv(overrides, "bridgeRunning", defaultBrRun)
+    brPort := Integer(_PreFlightOv(overrides, "bridgePort", defaultBrPort))
+    pCount := Integer(_PreFlightOv(overrides, "pairedCount", defaultPaired))
+    if (!brRun)
+        checks.Push({ name: "Host Bridge & Paired Remotes", status: "FAIL", detail: "Host Companion Bridge is not running." })
+    else if (pCount <= 0)
+        checks.Push({ name: "Host Bridge & Paired Remotes", status: "WARN", detail: "Bridge active on :" brPort ", 0 paired remotes connected." })
+    else
+        checks.Push({ name: "Host Bridge & Paired Remotes", status: "PASS", detail: "Bridge active on :" brPort " (" pCount " paired remote(s))." })
+
+    ; 5. Recording Disk Space
+    freeMB := Number(_PreFlightOv(overrides, "freeMB", -1))
+    if (freeMB < 0) {
+        try freeMB := Number(DriveGetSpaceFree(SubStr(A_ScriptDir, 1, 3)))
+        catch
+            freeMB := 0
+    }
+    if (freeMB < 512)
+        checks.Push({ name: "Recording Disk Space", status: "FAIL", detail: Format("Critical low disk space: {} MB free (< 512 MB).", Round(freeMB)) })
+    else if (freeMB < 2048)
+        checks.Push({ name: "Recording Disk Space", status: "WARN", detail: Format("Low disk space: {} MB free (< 2048 MB).", Round(freeMB)) })
+    else
+        checks.Push({ name: "Recording Disk Space", status: "PASS", detail: Format("Sufficient disk space: {} MB free.", Round(freeMB)) })
+
+    passCount := 0, warnCount := 0, failCount := 0
+    for _, chk in checks {
+        if (chk.status = "PASS")
+            passCount += 1
+        else if (chk.status = "WARN")
+            warnCount += 1
+        else
+            failCount += 1
+    }
+    return {
+        ok: (failCount == 0),
+        passCount: passCount,
+        warnCount: warnCount,
+        failCount: failCount,
+        checks: checks
+    }
+}
+
+ShowPreFlightRehearsalDialog(cfg, state := "", overrides := "") {
+    res := RunPreFlightRehearsalChecks(cfg, state, overrides)
+    if (IsSet(g_IsTestMode) && g_IsTestMode)
+        return { shown: false, testMode: true, result: res }
+
+    winTitle := "Go Live — 10-Second Rehearsal Pre-Flight"
+    existing := Theme.FocusExistingWindow(winTitle)
+    if (IsObject(existing))
+        return { shown: true, testMode: false, result: res, gui: existing }
+
+    Theme.AcquireSuspend()
+    pfGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", winTitle)
+    pfGui._closed := false
+    pfGui.MarginX := 18
+    pfGui.MarginY := 14
+    Theme.ApplyToWindow(pfGui)
+    Theme.NamedWindows[winTitle] := pfGui
+
+    pfGui.SetFont("s10 w700", Theme.UiFont)
+    Theme.RegisterControl(pfGui, pfGui.Add("Text", "xm w480", "10-Second Pre-Flight Rehearsal Check"), "Text")
+    pfGui.SetFont("s9 w400", Theme.UiFont)
+    lblSub := pfGui.Add("Text", "xm y+2 w480", "Verify OBS, mic signal, conferencing, paired remotes, and recording disk space before going live:")
+    Theme.RegisterControl(pfGui, lblSub, "Text", "muted")
+
+    rowCtrls := []
+    Loop 5 {
+        pfGui.SetFont("s9.5 w700", Theme.UiFont)
+        lblT := pfGui.Add("Text", "xm y+10 w480", "")
+        Theme.RegisterControl(pfGui, lblT, "Text")
+        pfGui.SetFont("s8.5 w400", Theme.UiFont)
+        lblD := pfGui.Add("Text", "xm+14 y+2 w466", "")
+        Theme.RegisterControl(pfGui, lblD, "Text", "muted")
+        rowCtrls.Push({ title: lblT, detail: lblD })
+    }
+
+    lblSummary := pfGui.Add("Text", "xm y+12 w480", "")
+    Theme.RegisterControl(pfGui, lblSummary, "Text", "accent")
+
+    RenderPreFlight(r) {
+        for idx, chk in r.checks {
+            rowCtrls[idx].title.Value := "[" chk.status "] " chk.name
+            rowCtrls[idx].detail.Value := chk.detail
+        }
+        lblSummary.Value := Format("Result: {} PASS | {} WARN | {} FAIL  —  {}", r.passCount, r.warnCount, r.failCount, r.ok ? "READY TO GO LIVE" : "ACTION REQUIRED")
+    }
+    RenderPreFlight(res)
+
+    btnRerun := pfGui.Add("Button", "xm y+14 w170 h32", "Re-Run 10s Check")
+    btnClose := pfGui.Add("Button", "x+10 yp w120 h32 Default", "Close")
+    Theme.RegisterControl(pfGui, btnRerun, "Button", "accent")
+    Theme.RegisterControl(pfGui, btnClose, "Button")
+
+    ClosePf(*) {
+        if (pfGui._closed)
+            return
+        pfGui._closed := true
+        Theme.UnregisterWindow(pfGui, winTitle)
+        Theme.ReleaseSuspend()
+        pfGui.Destroy()
+    }
+    btnRerun.OnEvent("Click", (*) => RenderPreFlight(RunPreFlightRehearsalChecks(cfg, state, overrides)))
+    btnClose.OnEvent("Click", ClosePf)
+    pfGui.OnEvent("Close", ClosePf)
+    pfGui.OnEvent("Escape", ClosePf)
+
+    pfGui.Show("AutoSize Center")
+    return { shown: true, testMode: false, result: res, gui: pfGui }
+}
+

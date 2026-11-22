@@ -1871,6 +1871,11 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.RelayBaseUrl := rUrl
             cfg.Write("Settings", "RelayBaseUrl", rUrl)
         }
+        if vals.HasOwnProp("QuickNudgePresets") {
+            qn := Trim(String(vals.QuickNudgePresets))
+            cfg.QuickNudgePresets := (qn != "") ? qn : "2 min left|Wrap up|Check Mic|Q&A"
+            cfg.Write("Settings", "QuickNudgePresets", cfg.QuickNudgePresets)
+        }
         if vals.HasOwnProp("EnableRelayEncryption") {
             cfg.EnableRelayEncryption := !!vals.EnableRelayEncryption
             cfg.WriteBool("Settings", "EnableRelayEncryption", cfg.EnableRelayEncryption)
@@ -2352,15 +2357,20 @@ ShowControlCenterWindow(cfg, state := "", *) {
 
     remNote := "Note: PresenterSync Remote stays a dedicated 1-tier Mic HUD on your secondary device. WAN Relay payloads are AES-256-GCM encrypted and work with https://ntfy.sh or a self-hosted ntfy server."
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y258 w648 h42", remNote), "Text", "tabMuted")
+    ccGui.SetFont("s9 w600 norm", Theme.UiFont)
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y310 w210", "Quick Nudge Presets (|):"), "Text", "tabText")
+    ccGui.SetFont("s9 w400 norm", Theme.UiFont)
+    edQuickNudgePresets := ccGui.Add("Edit", "x250 y306 w430 h26", cfg.HasOwnProp("QuickNudgePresets") && cfg.QuickNudgePresets != "" ? cfg.QuickNudgePresets : "2 min left|Wrap up|Check Mic|Q&A")
+    Theme.RegisterControl(ccGui, edQuickNudgePresets, "Edit")
 
-    btnRemDetails := ccGui.Add("Button", "x32 y310 w310 h32", "Open Full Remote Connection Dialog...")
-    btnCloseRem := ccGui.Add("Button", "x360 y310 w320 h32", "Close Remote Companion on Secondary PC...")
+    btnRemDetails := ccGui.Add("Button", "x32 y346 w310 h32", "Open Full Remote Connection Dialog...")
+    btnCloseRem := ccGui.Add("Button", "x360 y346 w320 h32", "Close Remote Companion on Secondary PC...")
     Theme.RegisterControl(ccGui, btnRemDetails, "Button", "tabButton")
     Theme.RegisterControl(ccGui, btnCloseRem, "Button", "tabButton")
     btnRemDetails.OnEvent("Click", (*) => ShowRemoteCompanionInfo(cfg, state))
     btnCloseRem.OnEvent("Click", (*) => PromptCloseRemoteCompanion(cfg, state))
 
-    chkEnableRemoteConn := ccGui.Add("Checkbox", "x32 y354 w648 h24" (cfg.EnableRemoteConnections ? " Checked" : ""), "Allow Remote Companion Connections (Uncheck for Standalone Cutoff Mode)")
+    chkEnableRemoteConn := ccGui.Add("Checkbox", "x32 y390 w648 h24" (cfg.EnableRemoteConnections ? " Checked" : ""), "Allow Remote Companion Connections (Uncheck for Standalone Cutoff Mode)")
     Theme.RegisterControl(ccGui, chkEnableRemoteConn, "Checkbox", "tabText")
 
     ; ==========================================================================
@@ -2421,6 +2431,17 @@ ShowControlCenterWindow(cfg, state := "", *) {
     btnExportDiagCC := ccGui.Add("Button", "x430 y318 w250 h30", "Export Sanitized Diagnostics...")
     Theme.RegisterControl(ccGui, btnExportDiagCC, "Button", "tabButton")
     btnExportDiagCC.OnEvent("Click", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
+
+    btnPreFlightCC := ccGui.Add("Button", "x430 y354 w250 h30", "Go Live 10-Second Rehearsal...")
+    Theme.RegisterControl(ccGui, btnPreFlightCC, "Button", "tabButton")
+    btnPreFlightCC.OnEvent("Click", (*) => ShowPreFlightRehearsalDialog(cfg, state))
+
+    btnExportBundleCC := ccGui.Add("Button", "x430 y390 w122 h30", "Export Bundle...")
+    btnImportBundleCC := ccGui.Add("Button", "x558 y390 w122 h30", "Import Bundle...")
+    Theme.RegisterControl(ccGui, btnExportBundleCC, "Button", "tabButton")
+    Theme.RegisterControl(ccGui, btnImportBundleCC, "Button", "tabButton")
+    btnExportBundleCC.OnEvent("Click", (*) => ExportPortableSettingsBundleUI(cfg))
+    btnImportBundleCC.OnEvent("Click", (*) => ImportPortableSettingsBundleUI(cfg, state))
 
     tabs.UseTab()
 
@@ -2517,6 +2538,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
         ddlRemoteNet.Choose((cfg.RemoteNetworkMode = "Internet") ? 2 : 1)
         edPairCode.Value := cfg.InternetPairingCode
         edRelayBaseUrl.Value := (cfg.HasOwnProp("RelayBaseUrl") && cfg.RelayBaseUrl != "") ? cfg.RelayBaseUrl : "https://ntfy.sh"
+        edQuickNudgePresets.Value := (cfg.HasOwnProp("QuickNudgePresets") && cfg.QuickNudgePresets != "") ? cfg.QuickNudgePresets : "2 min left|Wrap up|Check Mic|Q&A"
         chkEnableRemoteConn.Value := cfg.EnableRemoteConnections ? 1 : 0
         edHkPpt.Value := cfg.PptHotkey
         edHkWs.Value := cfg.WsHotkey
@@ -2629,6 +2651,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ExcludeSecondaryFromCapture: chkExcludeSecCapture.Value,
             RemoteNetworkMode: (ddlRemoteNet.Value == 2) ? "Internet" : "LAN",
             RelayBaseUrl: edRelayBaseUrl.Value,
+            QuickNudgePresets: edQuickNudgePresets.Value,
             EnableRemoteConnections: chkEnableRemoteConn.Value,
             PptHotkey: edHkPpt.Value,
             WsHotkey: edHkWs.Value,
@@ -2672,6 +2695,34 @@ ShowControlCenterWindow(cfg, state := "", *) {
 
     ccGui.Show("w720 h556")
     return ccGui
+}
+
+ExportPortableSettingsBundleUI(cfg, *) {
+    if (IsSet(g_IsTestMode) && g_IsTestMode)
+        return { ok: false, testMode: true }
+    target := FileSelect("S16", A_ScriptDir "\PresenterSync_Bundle.json", "Export Portable Settings Bundle", "Settings Bundle (*.json; *.ini)")
+    if (target = "")
+        return { ok: false, cancelled: true }
+    res := ExportPortableSettingsBundle(cfg, target, false)
+    if (res.ok)
+        TrayTip("Exported " res.count " settings to:`n" res.path, "PresenterSync Bundle", 1)
+    else
+        MsgBox("Export failed: " res.error, "PresenterSync Bundle", 16)
+    return res
+}
+
+ImportPortableSettingsBundleUI(cfg, state := "", *) {
+    if (IsSet(g_IsTestMode) && g_IsTestMode)
+        return { ok: false, testMode: true }
+    src := FileSelect(3, A_ScriptDir, "Import Portable Settings Bundle", "Settings Bundle (*.json; *.ini)")
+    if (src = "")
+        return { ok: false, cancelled: true }
+    res := ImportPortableSettingsBundle(cfg, state, src)
+    if (res.ok)
+        TrayTip("Imported " res.appliedCount " settings from bundle.", "PresenterSync Bundle", 1)
+    else
+        MsgBox("Import failed: " res.error, "PresenterSync Bundle", 16)
+    return res
 }
 
 

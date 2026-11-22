@@ -400,7 +400,7 @@ fun PodiumDeckScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        for (nudge in listOf("2 min left", "Wrap up", "Q&A")) {
+                        for (nudge in com.saabithjiffry.presentersync.remote.config.QuickNudgePresetHelper.resolve("", conn.quickNudges, 4)) {
                             FilledTonalButton(
                                 onClick = { app.connectionManager.sendStageNudge(nudge) },
                                 enabled = conn.connected && (conn.usingBridge || conn.usingRelayFallback)

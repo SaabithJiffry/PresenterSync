@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.6.2
+; Version: 7.6.3
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.6.2.0
+;@Ahk2Exe-SetVersion 7.6.3.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -51,6 +51,7 @@ class RemoteConfig {
     EnableRelayFallback := true
     InternetPairingCode := ""
     RelayBaseUrl := "https://ntfy.sh"
+    QuickNudgePresets := "2 min left|Wrap up|Check Mic|Q&A"
     EnableRelayEncryption := true
     HostAddress := "127.0.0.1"
     HostPort := "4455"
@@ -347,6 +348,7 @@ class RemoteState {
     previewScene := ""
     previousProgramScene := ""
     scenes := []
+    quickNudges := []
     isStandby := false
     standbyScene := "BRB"
     standbySnapshot := ""
@@ -1681,6 +1683,8 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
         state.activeScene := ev.activeScene
     if (ev.HasOwnProp("scenes") && IsObject(ev.scenes) && ev.scenes.Length > 0)
         state.scenes := ev.scenes
+    if (ev.HasOwnProp("quickNudges") && IsObject(ev.quickNudges) && ev.quickNudges.Length > 0)
+        state.quickNudges := ev.quickNudges
     if (ev.HasOwnProp("isStandby"))
         state.isStandby := !!ev.isStandby
     if (ev.HasOwnProp("standbyScene") && ev.standbyScene != "")

@@ -48,6 +48,7 @@ data class SavedHostProfile(
     val obsPassword: String = "",
     val internetPairingCode: String = "",
     val relayBaseUrl: String = AppConstants.NTFY_BASE_URL,
+    val quickNudgePresets: String = "",
     val sessionToken: String = "",
     val sessionPairingCode: String = "",
     val pairedHostUuid: String = "",
@@ -125,6 +126,7 @@ data class RemoteConfig(
     val enableRelayFallback: Boolean = true,
     val internetPairingCode: String = "",
     val relayBaseUrl: String = AppConstants.NTFY_BASE_URL,
+    val quickNudgePresets: String = "",
     val enableRelayEncryption: Boolean = true,
     val sessionPairingCode: String = "",
     val sessionToken: String = "",
@@ -527,6 +529,7 @@ class RemoteConfigStore(context: Context) {
             .putBoolean("enableRelayFallback", c.enableRelayFallback)
             .putString("internetPairingCode", c.internetPairingCode)
             .putString("relayBaseUrl", RelayCrypto.normalizeRelayBaseUrl(c.relayBaseUrl))
+            .putString("quickNudgePresets", c.quickNudgePresets)
             .putBoolean("enableRelayEncryption", c.enableRelayEncryption)
             .putString("sessionPairingCode", c.sessionPairingCode)
             .putString("sessionToken", c.sessionToken)

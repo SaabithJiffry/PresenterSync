@@ -1643,6 +1643,12 @@ class HostCompanionBridge {
         lowDiskLvl := this.state.HasOwnProp("lowDiskWarnLevel") ? Integer(this.state.lowDiskWarnLevel) : 0
         lowDiskMbVal := this.state.HasOwnProp("lowDiskMb") ? Integer(this.state.lowDiskMb) : -1
         deadMicStr := (this.state.HasOwnProp("deadMicWarn") && this.state.deadMicWarn) ? "true" : "false"
+        rawQn := (IsObject(this.cfg) && this.cfg.HasOwnProp("QuickNudgePresets")) ? this.cfg.QuickNudgePresets : "2 min left|Wrap up|Check Mic|Q&A"
+        qnList := IsSet(ParseQuickNudgePresets) ? ParseQuickNudgePresets(rawQn, 6) : ["2 min left", "Wrap up", "Check Mic", "Q&A"]
+        qnJson := "["
+        for idx, qItem in qnList
+            qnJson .= (idx > 1 ? "," : "") '"' _HB_JsonEscape(qItem) '"'
+        qnJson .= "]"
         obsConnStr := (this.state.HasOwnProp("obsConnected") && this.state.obsConnected) ? "true" : "false"
         activeScene := this.state.HasOwnProp("currentSceneName") ? String(this.state.currentSceneName) : "Scene"
         scenesJson := "["
@@ -1658,7 +1664,7 @@ class HostCompanionBridge {
         tRem := this.state.HasOwnProp("timerRemainingSec") ? Integer(this.state.timerRemainingSec) : 600
         tPre := this.state.HasOwnProp("timerPresetSec") ? Integer(this.state.timerPresetSec) : 600
         hostUuid := EnsureHostUuid(this.cfg)
-        return '"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount
+        return '"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"quickNudges":' qnJson ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount
     }
 
     _BuildMuteStateJson() {

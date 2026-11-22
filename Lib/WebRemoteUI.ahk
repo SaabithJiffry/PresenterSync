@@ -48,7 +48,7 @@ BuildWebRemoteHtml(appVersion := "", activePort := 4456) {
         . '<div class="card"><div class="hdr" style="margin-bottom:8px"><b id="tmrTxt">Timer: 10:00 (stopped)</b><button id="brbBtn" onclick="sendCmd(\x27toggle_standby\x27)">BRB</button></div>'
         . '<div class="row"><button class="grow" onclick="sendTimer(\x27timer_start\x27,300)">5m</button><button class="grow" onclick="sendTimer(\x27timer_start\x27,600)">10m</button><button class="grow" onclick="sendTimer(\x27timer_start\x27,900)">15m</button><button class="grow" onclick="sendTimer(\x27timer_pause\x27,0)">Pause</button><button class="grow" onclick="sendTimer(\x27timer_reset\x27,0)">Reset</button></div></div>'
         . '<div class="card"><div class="hdr" style="margin-bottom:8px"><b>Stage Nudge</b></div>'
-        . '<div class="row" style="margin-bottom:8px"><button class="grow" onclick="sendNudge(\x272 min left\x27)">2 min left</button><button class="grow" onclick="sendNudge(\x27Wrap up\x27)">Wrap up</button><button class="grow" onclick="sendNudge(\x27Q&amp;A\x27)">Q&amp;A</button></div>'
+        . '<div class="row" id="nudgeChips" style="margin-bottom:8px"><button class="grow" onclick="sendNudge(\x272 min left\x27)">2 min left</button><button class="grow" onclick="sendNudge(\x27Wrap up\x27)">Wrap up</button><button class="grow" onclick="sendNudge(\x27Q&amp;A\x27)">Q&amp;A</button></div>'
         . '<div class="row"><input id="nudgeIn" placeholder="Custom stage message..."><button class="act" onclick="sendCustomNudge()">Send</button></div></div>'
         . '</div></div><script>'
         . 'const qs=id=>document.getElementById(id);'

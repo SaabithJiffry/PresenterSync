@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.6.2
+; Version: 7.6.3
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.6.2.0
+;@Ahk2Exe-SetVersion 7.6.3.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -366,6 +366,7 @@ BuildTrayMenu(cfg, state) {
     A_TrayMenu.Add("Settings", SettingsMenu)
 
     ; 5. HELP, SAFETY & EXIT
+    A_TrayMenu.Add("Go Live 10-Second Rehearsal...", (*) => ShowPreFlightRehearsalDialog(cfg, state))
     A_TrayMenu.Add("Guided Setup Wizard...", (*) => ShowGuidedSetupWizard(cfg, state))
     A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg, state))
     A_TrayMenu.Add("View Error && Diagnostic Log...", (*) => DiagnosticLogger.ShowLogViewerWindow(cfg, state))
