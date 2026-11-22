@@ -112,17 +112,18 @@ class Gdip {
         return pPath
     }
 
-    static CreateTypographicFormat(hAlign := 1, vAlign := 1, trimming := 0) {
+    static CreateTypographicFormat(hAlign := 1, vAlign := 1, trimming := 0, extraFlags := 0) {
         pGeneric := 0
         pFormat := 0
+        flags := 0x5000 | extraFlags
         DllCall("gdiplus\GdipStringFormatGetGenericTypographic", "Ptr*", &pGeneric)
         if (pGeneric)
             DllCall("gdiplus\GdipCloneStringFormat", "Ptr", pGeneric, "Ptr*", &pFormat)
         if (!pFormat)
-            DllCall("gdiplus\GdipCreateStringFormat", "Int", 0x5000, "UShort", 0, "Ptr*", &pFormat)
+            DllCall("gdiplus\GdipCreateStringFormat", "Int", flags, "UShort", 0, "Ptr*", &pFormat)
         if (pFormat) {
-            ; 0x1000 = StringFormatFlagsNoWrap, 0x4000 = StringFormatFlagsNoClip
-            DllCall("gdiplus\GdipSetStringFormatFlags", "Ptr", pFormat, "Int", 0x5000)
+            ; 0x1000 = StringFormatFlagsNoWrap, 0x4000 = NoClip, optional 0x0800 = MeasureTrailingSpaces
+            DllCall("gdiplus\GdipSetStringFormatFlags", "Ptr", pFormat, "Int", flags)
             DllCall("gdiplus\GdipSetStringFormatAlign", "Ptr", pFormat, "Int", hAlign)
             DllCall("gdiplus\GdipSetStringFormatLineAlign", "Ptr", pFormat, "Int", vAlign)
             DllCall("gdiplus\GdipSetStringFormatTrimming", "Ptr", pFormat, "Int", trimming)
@@ -130,34 +131,36 @@ class Gdip {
         return pFormat
     }
 
-    static MeasureTextWidth(textStr, fontName := "Segoe UI", ptSize := 9, fontStyle := 1) {
+    static _MeasureTextWidthRaw(textStr, fontName := "Segoe UI", ptSize := 9, fontStyle := 1, extraFlags := 0, antiAlias := false) {
         if (textStr = "")
-            return 0
+            return 0.0
         if (!this._token)
             this.Startup()
 
         hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
         if (!hdcScreen)
-            return 0
+            return 0.0
         pGraphics := 0
         pFont := 0
         pFormat := 0
-        measuredW := 0
+        measuredW := 0.0
         try {
             DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcScreen, "Ptr*", &pGraphics)
             if (!pGraphics)
-                return 0
+                return 0.0
+            if (antiAlias)
+                DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGraphics, "Int", 4)
 
             pFamily := this.GetFontFamily(fontName)
             if (pFamily) {
                 pxSize := Float(ptSize) * (96.0 / 72.0)
                 DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", pxSize, "Int", fontStyle, "Int", 2, "Ptr*", &pFont)
                 if (pFont) {
-                    pFormat := this.CreateTypographicFormat(0, 1, 0)
+                    pFormat := this.CreateTypographicFormat(0, 1, 0, extraFlags)
                     NumPut("Float", 0.0, "Float", 0.0, "Float", 4000.0, "Float", 400.0, this._layoutRect, 0)
                     NumPut("Float", 0.0, "Float", 0.0, "Float", 0.0, "Float", 0.0, this._boundRect, 0)
                     DllCall("gdiplus\GdipMeasureString", "Ptr", pGraphics, "WStr", textStr, "Int", -1, "Ptr", pFont, "Ptr", this._layoutRect, "Ptr", pFormat, "Ptr", this._boundRect, "Ptr", 0, "Ptr", 0)
-                    measuredW := Ceil(NumGet(this._boundRect, 8, "Float"))
+                    measuredW := Float(NumGet(this._boundRect, 8, "Float"))
                 }
             }
             return measuredW
@@ -169,6 +172,139 @@ class Gdip {
             if (pGraphics)
                 DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
             DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcScreen)
+        }
+    }
+
+    static MeasureTextWidth(textStr, fontName := "Segoe UI", ptSize := 9, fontStyle := 1) {
+        return Ceil(this._MeasureTextWidthRaw(textStr, fontName, ptSize, fontStyle, 0, false))
+    }
+
+    static MeasureTextWidthFloat(textStr, fontName := "Segoe UI", ptSize := 9, fontStyle := 1, includeTrailingSpaces := true) {
+        return this._MeasureTextWidthRaw(textStr, fontName, ptSize, fontStyle, includeTrailingSpaces ? 0x0800 : 0, true)
+    }
+
+    static DrawRoundedRectPerimeterProgress(pGraphics, x, y, w, h, radius, progress, argb, strokeW := 2.5) {
+        p := Min(1.0, Max(0.0, Float(progress)))
+        if (!pGraphics || p <= 0.001 || w <= 2 || h <= 2)
+            return false
+
+        ins := (Float(strokeW) / 2.0) + 1.0
+        rx := Float(x) + ins
+        ry := Float(y) + ins
+        rw := Max(2.0, Float(w) - 2.0 * ins)
+        rh := Max(2.0, Float(h) - 2.0 * ins)
+        r := Max(0.0, Min(Float(radius), rw / 2.0, rh / 2.0))
+        d := r * 2.0
+
+        topHalf := Max(0.0, (rw - d) / 2.0)
+        sideH := Max(0.0, rh - d)
+        botW := Max(0.0, rw - d)
+        arcLen := (r > 0.05) ? (1.5707963267948966 * r) : 0.0
+        totalP := 2.0 * (rw - d) + 2.0 * (rh - d) + 4.0 * arcLen
+        if (totalP <= 0.001)
+            return false
+
+        pPath := 0
+        pPen := 0
+        try {
+            DllCall("gdiplus\GdipCreatePath", "Int", 0, "Ptr*", &pPath)
+            if (!pPath)
+                return false
+
+            rem := totalP * p
+            cx := rx + rw / 2.0
+            hasSeg := false
+
+            ; 1. Top-right half edge: (cx, ry) -> (rx + rw - r, ry)
+            if (rem > 0.0001 && topHalf > 0.001) {
+                seg := Min(rem, topHalf)
+                DllCall("gdiplus\GdipAddPathLine", "Ptr", pPath, "Float", cx, "Float", ry, "Float", cx + seg, "Float", ry)
+                rem -= seg
+                hasSeg := true
+            }
+            ; 2. Top-Right 90 deg arc (-90 -> 0)
+            if (rem > 0.0001 && r > 0.05 && arcLen > 0.001) {
+                seg := Min(rem, arcLen)
+                sweep := 90.0 * (seg / arcLen)
+                DllCall("gdiplus\GdipAddPathArc", "Ptr", pPath, "Float", rx + rw - d, "Float", ry, "Float", d, "Float", d, "Float", -90.0, "Float", sweep)
+                rem -= seg
+                hasSeg := true
+            }
+            ; 3. Right edge
+            if (rem > 0.0001 && sideH > 0.001) {
+                seg := Min(rem, sideH)
+                DllCall("gdiplus\GdipAddPathLine", "Ptr", pPath, "Float", rx + rw, "Float", ry + r, "Float", rx + rw, "Float", ry + r + seg)
+                rem -= seg
+                hasSeg := true
+            }
+            ; 4. Bottom-Right 90 deg arc (0 -> 90)
+            if (rem > 0.0001 && r > 0.05 && arcLen > 0.001) {
+                seg := Min(rem, arcLen)
+                sweep := 90.0 * (seg / arcLen)
+                DllCall("gdiplus\GdipAddPathArc", "Ptr", pPath, "Float", rx + rw - d, "Float", ry + rh - d, "Float", d, "Float", d, "Float", 0.0, "Float", sweep)
+                rem -= seg
+                hasSeg := true
+            }
+            ; 5. Bottom edge
+            if (rem > 0.0001 && botW > 0.001) {
+                seg := Min(rem, botW)
+                DllCall("gdiplus\GdipAddPathLine", "Ptr", pPath, "Float", rx + rw - r, "Float", ry + rh, "Float", rx + rw - r - seg, "Float", ry + rh)
+                rem -= seg
+                hasSeg := true
+            }
+            ; 6. Bottom-Left 90 deg arc (90 -> 180)
+            if (rem > 0.0001 && r > 0.05 && arcLen > 0.001) {
+                seg := Min(rem, arcLen)
+                sweep := 90.0 * (seg / arcLen)
+                DllCall("gdiplus\GdipAddPathArc", "Ptr", pPath, "Float", rx, "Float", ry + rh - d, "Float", d, "Float", d, "Float", 90.0, "Float", sweep)
+                rem -= seg
+                hasSeg := true
+            }
+            ; 7. Left edge
+            if (rem > 0.0001 && sideH > 0.001) {
+                seg := Min(rem, sideH)
+                DllCall("gdiplus\GdipAddPathLine", "Ptr", pPath, "Float", rx, "Float", ry + rh - r, "Float", rx, "Float", ry + rh - r - seg)
+                rem -= seg
+                hasSeg := true
+            }
+            ; 8. Top-Left 90 deg arc (180 -> 270)
+            if (rem > 0.0001 && r > 0.05 && arcLen > 0.001) {
+                seg := Min(rem, arcLen)
+                sweep := 90.0 * (seg / arcLen)
+                DllCall("gdiplus\GdipAddPathArc", "Ptr", pPath, "Float", rx, "Float", ry, "Float", d, "Float", d, "Float", 180.0, "Float", sweep)
+                rem -= seg
+                hasSeg := true
+            }
+            ; 9. Top-left half edge
+            if (rem > 0.0001 && topHalf > 0.001) {
+                seg := Min(rem, topHalf)
+                DllCall("gdiplus\GdipAddPathLine", "Ptr", pPath, "Float", rx + r, "Float", ry, "Float", rx + r + seg, "Float", ry)
+                hasSeg := true
+            }
+            if (!hasSeg)
+                return false
+            if (p >= 0.999)
+                DllCall("gdiplus\GdipClosePathFigure", "Ptr", pPath)
+
+            glowAlpha := Integer(((argb >> 24) & 0xFF) * 0.35) & 0xFF
+            glowArgb := (glowAlpha << 24) | (argb & 0x00FFFFFF)
+            for _, pass in [{ color: glowArgb, width: Float(strokeW) + 2.5 }, { color: argb, width: Float(strokeW) }] {
+                DllCall("gdiplus\GdipCreatePen1", "UInt", pass.color, "Float", pass.width, "Int", 2, "Ptr*", &pPen)
+                if (pPen) {
+                    DllCall("gdiplus\GdipSetPenStartCap", "Ptr", pPen, "Int", 2)
+                    DllCall("gdiplus\GdipSetPenEndCap", "Ptr", pPen, "Int", 2)
+                    DllCall("gdiplus\GdipSetPenLineJoin", "Ptr", pPen, "Int", 2)
+                    DllCall("gdiplus\GdipDrawPath", "Ptr", pGraphics, "Ptr", pPen, "Ptr", pPath)
+                    DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
+                    pPen := 0
+                }
+            }
+            return true
+        } finally {
+            if (pPen)
+                DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
+            if (pPath)
+                DllCall("gdiplus\GdipDeletePath", "Ptr", pPath)
         }
     }
 
@@ -228,7 +364,7 @@ class Gdip {
         return DllCall("UpdateLayeredWindow", "Ptr", hwnd, "Ptr", 0, "Ptr", 0, "Ptr", 0, "Ptr", 0, "Ptr", 0, "UInt", 0, "Ptr", this._blend, "UInt", 2, "Int")
     }
 
-    static RenderPill(hwnd, x, y, w, h, bgArgb, borderArgb, alpha, radius, iconCfg := "", labelCfg := "", meterLevel := 0.0, meterArgb := 0) {
+    static RenderPill(hwnd, x, y, w, h, bgArgb, borderArgb, alpha, radius, iconCfg := "", labelCfg := "", meterLevel := 0.0, meterArgb := 0, holdProgress := 0.0, holdArgb := 0) {
         if (!this._token)
             this.Startup()
         if (!hwnd || w <= 0 || h <= 0)
@@ -302,21 +438,38 @@ class Gdip {
                     pPath := 0
                 }
 
+                if (Float(holdProgress) > 0.001) {
+                    holdCol := holdArgb ? holdArgb : 0xFFF59E0B
+                    holdStroke := Max(2.0, Min(4.0, Float(h) * 0.08))
+                    this.DrawRoundedRectPerimeterProgress(pGraphics, 0, 0, w, h, radius, holdProgress, holdCol, holdStroke)
+                }
+
                 if (IsObject(iconCfg) && iconCfg.text != "") {
                     this.DrawText(pGraphics, iconCfg.text, iconCfg.font, iconCfg.size, 0, iconCfg.color, iconCfg.x, 0, iconCfg.w, h, 1, 1)
                 }
-                if (IsObject(labelCfg) && labelCfg.text != "") {
-                    style := labelCfg.HasOwnProp("bold") && labelCfg.bold ? 1 : 0
-                    align := labelCfg.HasOwnProp("align") ? labelCfg.align : 0
-                    autoFit := labelCfg.HasOwnProp("autoFit") ? labelCfg.autoFit : true
-                    hasClip := labelCfg.HasOwnProp("clipW") && labelCfg.clipW > 0
-                    if (hasClip) {
-                        clipX := labelCfg.HasOwnProp("clipX") ? Float(labelCfg.clipX) : Float(labelCfg.x)
-                        DllCall("gdiplus\GdipSetClipRect", "Ptr", pGraphics, "Float", clipX, "Float", 0.0, "Float", Float(labelCfg.clipW), "Float", Float(h), "Int", 0)
-                    }
-                    this.DrawText(pGraphics, labelCfg.text, "Segoe UI", labelCfg.size, style, labelCfg.color, labelCfg.x, 0, labelCfg.w, h, align, 1, 0, autoFit)
-                    if (hasClip) {
-                        DllCall("gdiplus\GdipResetClip", "Ptr", pGraphics)
+                if (IsObject(labelCfg)) {
+                    hasDraws := labelCfg.HasOwnProp("draws") && IsObject(labelCfg.draws) && labelCfg.draws.Length > 0
+                    hasText := labelCfg.HasOwnProp("text") && labelCfg.text != ""
+                    if (hasDraws || hasText) {
+                        style := labelCfg.HasOwnProp("bold") && labelCfg.bold ? 1 : 0
+                        align := labelCfg.HasOwnProp("align") ? labelCfg.align : 0
+                        autoFit := labelCfg.HasOwnProp("autoFit") ? labelCfg.autoFit : true
+                        hasClip := labelCfg.HasOwnProp("clipW") && labelCfg.clipW > 0
+                        if (hasClip) {
+                            clipX := labelCfg.HasOwnProp("clipX") ? Float(labelCfg.clipX) : Float(labelCfg.x)
+                            DllCall("gdiplus\GdipSetClipRect", "Ptr", pGraphics, "Float", clipX, "Float", 0.0, "Float", Float(labelCfg.clipW), "Float", Float(h), "Int", 0)
+                        }
+                        if (hasDraws) {
+                            for _, dItem in labelCfg.draws {
+                                if (IsObject(dItem) && dItem.text != "")
+                                    this.DrawText(pGraphics, dItem.text, "Segoe UI", labelCfg.size, style, labelCfg.color, Float(dItem.x), 0, Float(dItem.w), h, align, 1, 0, false)
+                            }
+                        } else {
+                            this.DrawText(pGraphics, labelCfg.text, "Segoe UI", labelCfg.size, style, labelCfg.color, labelCfg.x, 0, labelCfg.w, h, align, 1, 0, autoFit)
+                        }
+                        if (hasClip) {
+                            DllCall("gdiplus\GdipResetClip", "Ptr", pGraphics)
+                        }
                     }
                 }
 

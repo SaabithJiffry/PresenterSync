@@ -1620,21 +1620,40 @@ ExecuteHostRemoteSetMute(cfg, state, targetMuted) {
     return true
 }
 
-ExecuteHostToggleRecord(cfg, state) {
-    if (!IsObject(cfg) || !IsObject(state))
-        return false
-    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
-        return SendObsRequest(state.obsWs, "ToggleRecord", "ClickToggleRec")
-    } else if (cfg.EnableZoom && state.zoomConnected && cfg.HasOwnProp("ZoomRecHotkey") && cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") {
+_DispatchZoomOrLocalRecordState(cfg, state, targetState) {
+    if (cfg.EnableZoom && state.zoomConnected && cfg.HasOwnProp("ZoomRecHotkey") && cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") {
         confSpec := GetConferencingWindowSpec(cfg.HasOwnProp("ConferencingApp") ? cfg.ConferencingApp : "Zoom")
         ControlSendFast(cfg.ZoomRecHotkey, confSpec)
         state.zoomRecGraceUntil := A_TickCount + UIConstants.ZOOM_REC_GRACE_MS
-        SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
-        return true
-    } else {
-        SyncRecState(cfg, state, state.recState == 0 ? 1 : 0)
-        return true
     }
+    SyncRecState(cfg, state, targetState)
+    return true
+}
+
+ExecuteHostToggleRecord(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+        return SendObsRequest(state.obsWs, "ToggleRecord", "ClickToggleRec")
+    return _DispatchZoomOrLocalRecordState(cfg, state, state.recState == 0 ? 1 : 0)
+}
+
+ExecuteHostStartRecord(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+        return SendObsRequest(state.obsWs, "StartRecord", "ClickStartRec")
+    if (state.HasOwnProp("recState") && state.recState != 0)
+        return false
+    return _DispatchZoomOrLocalRecordState(cfg, state, 1)
+}
+
+ExecuteHostStopRecord(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+        return SendObsRequest(state.obsWs, "StopRecord", "HoldStopRec")
+    return _DispatchZoomOrLocalRecordState(cfg, state, 0)
 }
 
 ExecuteHostSwitchScene(cfg, state, sceneName) {
@@ -1714,7 +1733,8 @@ ExecuteHostPauseRecord(cfg, state) {
         return true
     }
     if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
-        ok := SendObsRequest(state.obsWs, "ToggleRecordPause", "HostPauseRec")
+        reqName := (state.recState == 1) ? "PauseRecord" : ((state.recState == 2) ? "ResumeRecord" : "ToggleRecordPause")
+        ok := SendObsRequest(state.obsWs, reqName, "HostPauseRec")
         if (ok && (state.recState == 1 || state.recState == 2))
             SyncRecState(cfg, state, state.recState == 1 ? 2 : 1)
         return ok

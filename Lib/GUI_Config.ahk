@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "8.0.2"
+    static APP_VERSION := "8.0.3"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -91,6 +91,7 @@ class UIConstants {
     static OBS_INIT_DELAY_MS := 100
     static TOOLTIP_DURATION_MS := 2000
     static STUDIO_LONG_PRESS_MS := 600
+    static REC_STOP_LONG_PRESS_MS := 900
     static STOP_RECORD_CONFIRM_WINDOW_MS := 3000
 
     ; --- Opacity Presets & Corner Constants ---
@@ -2273,6 +2274,9 @@ class OverlayState {
         this.currentAlpha := cfg.OpacityLevel
         this.secondaryCurrentAlpha := cfg.OpacityLevel
         this._breathStepAlpha := cfg.OpacityLevel
+        this.recHoldProgress := 0.0
+        this.studioHoldProgress := 0.0
+        this.sceneMarqueeLastTick := 0
         this.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
 
         osBuild := Integer(StrSplit(A_OSVersion, ".")[3])

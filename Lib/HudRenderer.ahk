@@ -190,6 +190,17 @@ SyncStudioState(cfg, state, isEnabled) {
     }
 }
 
+_LerpArgb(argbA, argbB, t) {
+    k := Min(1.0, Max(0.0, Float(t)))
+    a1 := (argbA >> 24) & 0xFF, r1 := (argbA >> 16) & 0xFF, g1 := (argbA >> 8) & 0xFF, b1 := argbA & 0xFF
+    a2 := (argbB >> 24) & 0xFF, r2 := (argbB >> 16) & 0xFF, g2 := (argbB >> 8) & 0xFF, b2 := argbB & 0xFF
+    a := Integer(Round(a1 + (a2 - a1) * k)) & 0xFF
+    r := Integer(Round(r1 + (r2 - r1) * k)) & 0xFF
+    g := Integer(Round(g1 + (g2 - g1) * k)) & 0xFF
+    b := Integer(Round(b1 + (b2 - b1) * k)) & 0xFF
+    return (a << 24) | (r << 16) | (g << 8) | b
+}
+
 ApplyStudioAppearance(cfg, state) {
     if (!IsObject(state) || !state.HasOwnProp("StudioGui") || !IsGuiValid(state.StudioGui))
         return false
@@ -216,7 +227,8 @@ ApplyStudioAppearance(cfg, state) {
         labelCfg := ""
     }
 
-    return Gdip.RenderPill(state.StudioGui.Hwnd, pos.studioX, pos.studioY, pos.studioW, pos.studioH, Gdip.HexToArgb(bg), Gdip.BgrToArgb(brd), state.baseAlpha, GetCornerRadius(cfg, pos.studioH), iconCfg, labelCfg)
+    studioHold := state.HasOwnProp("studioHoldProgress") ? Float(state.studioHoldProgress) : 0.0
+    return Gdip.RenderPill(state.StudioGui.Hwnd, pos.studioX, pos.studioY, pos.studioW, pos.studioH, Gdip.HexToArgb(bg), Gdip.BgrToArgb(brd), state.baseAlpha, GetCornerRadius(cfg, pos.studioH), iconCfg, labelCfg, 0.0, 0, studioHold, 0xFFA78BFA)
 }
 
 ToggleStreamHud(cfg, state := "", *) {
@@ -409,18 +421,18 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
 
     fitFontPt := Float(state.miniTextSize)
     minFontPt := Max(6.5, Round(7.5 * cfg.IndicatorScale, 1))
-    fullW := Gdip.MeasureTextWidth(state.currentSceneName, "Segoe UI", fitFontPt, 1)
-    while (fullW > availW && fitFontPt > minFontPt) {
+    fullW := Gdip.MeasureTextWidthFloat(state.currentSceneName, "Segoe UI", fitFontPt, 1, false)
+    while (fullW > Float(availW) && fitFontPt > minFontPt) {
         fitFontPt := Max(minFontPt, Round(fitFontPt - 0.5, 1))
-        fullW := Gdip.MeasureTextWidth(state.currentSceneName, "Segoe UI", fitFontPt, 1)
+        fullW := Gdip.MeasureTextWidthFloat(state.currentSceneName, "Segoe UI", fitFontPt, 1, false)
     }
 
     sceneTextArgb := Gdip.HexToArgb(state.colors.HasOwnProp("sceneText") ? state.colors.sceneText : "FFFFFF")
-    if (fullW <= availW) {
+    if (fullW <= Float(availW)) {
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
-        state.sceneMarqueeMaxOffset := 0
-        state.sceneMarqueeOffset := 0
+        state.sceneMarqueeMaxOffset := 0.0
+        state.sceneMarqueeOffset := 0.0
         labelCfg := {
             text: state.currentSceneName,
             size: fitFontPt,
@@ -433,33 +445,40 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
         }
     } else {
         marqueeFontPt := Max(7.0, Round(8.0 * cfg.IndicatorScale, 1))
-        textW := Gdip.MeasureTextWidth(state.currentSceneName, "Segoe UI", marqueeFontPt, 1)
+        nameW := Gdip.MeasureTextWidthFloat(state.currentSceneName, "Segoe UI", marqueeFontPt, 1, false)
+        dotChar := Chr(0x2022)
+        dotW := Gdip.MeasureTextWidthFloat(dotChar, "Segoe UI", marqueeFontPt, 1, false)
+        sepGapPx := 28.0 * Float(cfg.IndicatorScale)
+        singleSpan := nameW + sepGapPx
         state.sceneMarqueeFontPt := marqueeFontPt
-        state.sceneMarqueeTextW := textW
-        state.sceneMarqueeMaxOffset := Max(0, textW - availW)
-        ; Seamless loop: "<name>   •   <name>"; one span = name + separator.
-        marqueeSep := "   " Chr(0x2022) "   "
-        singleSpan := Gdip.MeasureTextWidth(state.currentSceneName . marqueeSep, "Segoe UI", marqueeFontPt, 1)
+        state.sceneMarqueeTextW := nameW
+        state.sceneMarqueeSepGap := sepGapPx
         state.sceneMarqueeSpan := singleSpan
+        state.sceneMarqueeMaxOffset := Max(0.0, nameW - Float(availW))
         if (!fromMarqueeTick) {
-            state.sceneMarqueeOffset := 0
+            state.sceneMarqueeOffset := 0.0
             state.sceneMarqueePhase := "pause_start"
             state.sceneMarqueeTicks := 0
+            state.sceneMarqueeLastTick := 0
             if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds && cfg.EnableWS && state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
-                SetTimer(state.sceneMarqueeTimerFn, 30)
+                SetTimer(state.sceneMarqueeTimerFn, 25)
         }
-        drawX := scPad - Round(state.sceneMarqueeOffset)
+        x1 := Float(scPad) - Float(state.sceneMarqueeOffset)
+        xDot := x1 + nameW + (sepGapPx - dotW) / 2.0
+        x2 := x1 + singleSpan
         labelCfg := {
-            text: state.currentSceneName . marqueeSep . state.currentSceneName,
             size: marqueeFontPt,
             bold: true,
             color: sceneTextArgb,
-            x: drawX,
-            w: singleSpan + textW + 12,
             align: 0,
             autoFit: false,
             clipX: scPad,
-            clipW: availW
+            clipW: availW,
+            draws: [
+                { text: state.currentSceneName, x: x1, w: nameW + 8.0 },
+                { text: dotChar, x: xDot, w: dotW + 8.0 },
+                { text: state.currentSceneName, x: x2, w: nameW + 8.0 }
+            ]
         }
     }
     return Gdip.RenderPill(state.SceneGui.Hwnd, pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH, Gdip.HexToArgb(state.colors.scene), Gdip.BgrToArgb(state.colors.sceneBorder), state.baseAlpha, GetCornerRadius(cfg, pos.sceneH), "", labelCfg)
@@ -474,17 +493,23 @@ SceneMarqueeTick(cfg, state) {
     if (state.isDraggingHud)
         return
 
-    stepPx := Max(1.0, 1.2 * cfg.IndicatorScale)
-    ; Initial ~1.0s pause (33 x 30ms) after a scene change, then continuous seamless loop.
+    ; Initial 1.5s pause (60 x 25ms) after a scene change, then calm 16*scale px/s loop.
     if (state.sceneMarqueePhase = "pause_start") {
         state.sceneMarqueeTicks += 1
-        if (state.sceneMarqueeTicks < 33)
+        if (state.sceneMarqueeTicks < 60)
             return
         state.sceneMarqueeTicks := 0
         state.sceneMarqueePhase := "scroll_left"
+        state.sceneMarqueeLastTick := A_TickCount
+        return
     }
-    singleSpan := (state.HasOwnProp("sceneMarqueeSpan") && state.sceneMarqueeSpan > 0) ? state.sceneMarqueeSpan : Max(1.0, state.sceneMarqueeTextW)
-    state.sceneMarqueeOffset := Mod(state.sceneMarqueeOffset + stepPx, singleSpan)
+    nowTick := A_TickCount
+    dtMs := (state.HasOwnProp("sceneMarqueeLastTick") && state.sceneMarqueeLastTick > 0) ? (nowTick - state.sceneMarqueeLastTick) : 0
+    state.sceneMarqueeLastTick := nowTick
+    dtSec := (dtMs > 0) ? Min(0.05, dtMs / 1000.0) : 0.025
+    stepPx := 16.0 * Float(cfg.IndicatorScale) * dtSec
+    singleSpan := (state.HasOwnProp("sceneMarqueeSpan") && state.sceneMarqueeSpan > 0) ? Float(state.sceneMarqueeSpan) : Max(1.0, Float(state.sceneMarqueeTextW) + 28.0 * Float(cfg.IndicatorScale))
+    state.sceneMarqueeOffset := Mod(Float(state.sceneMarqueeOffset) + stepPx, singleSpan)
     ApplySceneAppearance(cfg, state, true)
 }
 
@@ -658,7 +683,9 @@ ApplyRecAppearance(cfg, state) {
         labelCfg := ""
     }
 
-    return Gdip.RenderPill(state.RecGui.Hwnd, pos.recX, pos.recY, pos.recW, pos.recH, Gdip.HexToArgb(bg), Gdip.BgrToArgb(brd), state.baseAlpha, GetCornerRadius(cfg, pos.recH), iconCfg, labelCfg)
+    recHold := state.HasOwnProp("recHoldProgress") ? Float(state.recHoldProgress) : 0.0
+    holdCol := (recHold > 0.001) ? _LerpArgb(0xFFF59E0B, 0xFFEF4444, recHold) : 0
+    return Gdip.RenderPill(state.RecGui.Hwnd, pos.recX, pos.recY, pos.recW, pos.recH, Gdip.HexToArgb(bg), Gdip.BgrToArgb(brd), state.baseAlpha, GetCornerRadius(cfg, pos.recH), iconCfg, labelCfg, 0.0, 0, recHold, holdCol)
 }
 
 GetMuteAudioCueTones(isMuted) {
@@ -1915,6 +1942,7 @@ InitHUD(cfg, state, showWindows := true) {
 
     OnMessage(0x0003, WM_HUD_MOVE.Bind(state))
     OnMessage(0x0201, WM_LBUTTONDOWN.Bind(cfg, state))
+    OnMessage(0x0203, WM_LBUTTONDBLCLK.Bind(state))
     OnMessage(0x0205, WM_RBUTTONUP.Bind(state))
     OnMessage(0x02E0, WM_DPICHANGED.Bind(state))
     OnMessage(0x007E, WM_DISPLAYCHANGE.Bind(cfg, state))
@@ -2310,13 +2338,8 @@ BuildSceneSwitcherMenu(cfg, state, onSelectFn := "") {
 }
 
 SelectObsSceneFromPopup(cfg, state, sceneName, *) {
-    ; Studio Mode ON -> set Preview (then transition on left-click); OFF -> set Program directly.
     if (sceneName = "")
         return false
-    if (state.studioModeActive && cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
-        esc := EscapeJsonStr(sceneName)
-        return SendObsRequest(state.obsWs, "SetCurrentPreviewScene", "ClickSetPreviewScene", '{"sceneName":"' esc '"}')
-    }
     return SwitchObsScene(cfg, state, sceneName)
 }
 
@@ -2370,14 +2393,19 @@ HandleHudPillClick(cfg, state, hwnd) {
         return isSecMic ? "secondary_mic" : "mic"
     }
     if (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd) {
-        if (!TryConfirmStopRecording(cfg, state))
-            return "rec_confirm"
-        ExecuteHostToggleRecord(cfg, state)
-        if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && cfg.HasOwnProp("EnableZoom") && cfg.EnableZoom) {
+        wasRecState := state.recState
+        if (wasRecState == 1 || wasRecState == 2) {
+            ExecuteHostPauseRecord(cfg, state)
+            retTag := (wasRecState == 1) ? "rec_pause" : "rec_resume"
+        } else {
+            ExecuteHostStartRecord(cfg, state)
+            retTag := "rec"
+        }
+        if ((!IsSet(g_IsTestMode) || !g_IsTestMode) && cfg.HasOwnProp("EnableWS") && cfg.EnableWS && cfg.HasOwnProp("EnableZoom") && cfg.EnableZoom) {
             ToolTip(GetRecBreakdownText(state))
             SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
         }
-        return "rec"
+        return retTag
     }
     if (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd) {
         nextStudio := !state.studioModeActive
@@ -2401,14 +2429,16 @@ HandleHudPillClick(cfg, state, hwnd) {
         return "vcam"
     }
     if (IsObject(state.StreamGui) && hwnd == state.StreamGui.Hwnd) {
-        statusLbl := (state.streamState == 2) ? "WARN" : ((state.streamState == 1) ? "LIVE" : "OFF")
-        congPct := Round((state.HasOwnProp("streamCongestion") ? state.streamCongestion : 0.0) * 100, 1)
-        skp := state.HasOwnProp("streamSkippedFrames") ? state.streamSkippedFrames : 0
-        reconnStr := (state.HasOwnProp("streamReconnecting") && state.streamReconnecting) ? " (Reconnecting)" : ""
-        tip := Format("Stream: {}{} | Congestion: {}% | Skipped Frames: {}", statusLbl, reconnStr, congPct, skp)
-        ToolTip(tip)
-        SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
-        return "stream"
+        if (!IsSet(g_IsTestMode) || !g_IsTestMode) {
+            statusLbl := (state.streamState == 2) ? "WARN" : ((state.streamState == 1) ? "LIVE" : "OFF")
+            congPct := Round((state.HasOwnProp("streamCongestion") ? state.streamCongestion : 0.0) * 100, 1)
+            skp := state.HasOwnProp("streamSkippedFrames") ? state.streamSkippedFrames : 0
+            reconnStr := (state.HasOwnProp("streamReconnecting") && state.streamReconnecting) ? " (Reconnecting)" : ""
+            tip := Format("Stream: {}{} | Congestion: {}% | Skipped Frames: {}", statusLbl, reconnStr, congPct, skp)
+            ToolTip(tip)
+            SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+        }
+        return "stream_readonly"
     }
     if (IsObject(state.ChatGui) && hwnd == state.ChatGui.Hwnd) {
         SyncChatState(cfg, state, 0)
@@ -2437,20 +2467,50 @@ ApplyDraggedSecondaryPosition(cfg, state, rawX, rawY) {
     return pos
 }
 
-WaitStudioLongPress(startMX, startMY, downTick) {
-    ; Returns "drag" (cursor moved > 4px), "toggle" (held still >= STUDIO_LONG_PRESS_MS; release consumed),
-    ; or "tap" (released early without moving). Expects Mouse CoordMode "Screen".
-    while (GetKeyState("LButton", "P")) {
-        MouseGetPos(&mx, &my)
-        if (Abs(mx - startMX) > 4 || Abs(my - startMY) > 4)
-            return "drag"
-        if ((A_TickCount - downTick) >= UIConstants.STUDIO_LONG_PRESS_MS) {
-            KeyWait "LButton"
-            return "toggle"
+WaitPillLongPressWithProgress(startMX, startMY, downTick, holdMs, visualDelayMs, tapMaxMs, onProgressFn := "") {
+    ; Shared 16ms long-press tracker with drag break (>4px) and guaranteed 0.0 reset in finally.
+    lastProg := -1.0
+    try {
+        while (GetKeyState("LButton", "P")) {
+            MouseGetPos(&mx, &my)
+            if (Abs(mx - startMX) > 4 || Abs(my - startMY) > 4)
+                return { verdict: "drag", elapsedMs: A_TickCount - downTick }
+            elapsed := A_TickCount - downTick
+            if (elapsed >= holdMs) {
+                if (IsObject(onProgressFn))
+                    onProgressFn.Call(1.0)
+                KeyWait "LButton"
+                return { verdict: "hold", elapsedMs: elapsed }
+            }
+            if (elapsed >= visualDelayMs && IsObject(onProgressFn)) {
+                prog := Min(0.99, Max(0.0, (elapsed - visualDelayMs) / Float(Max(1, holdMs - visualDelayMs))))
+                if (Abs(prog - lastProg) >= 0.015) {
+                    lastProg := prog
+                    onProgressFn.Call(prog)
+                }
+            }
+            Sleep(16)
         }
-        Sleep(10)
+        elapsed := A_TickCount - downTick
+        return { verdict: (elapsed < tapMaxMs ? "tap" : "cancel"), elapsedMs: elapsed }
+    } finally {
+        if (IsObject(onProgressFn))
+            onProgressFn.Call(0.0)
     }
+}
+
+WaitStudioLongPress(startMX, startMY, downTick, onProgressFn := "") {
+    res := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.STUDIO_LONG_PRESS_MS, 80, 350, onProgressFn)
+    if (res.verdict = "hold")
+        return "toggle"
+    if (res.verdict = "drag")
+        return "drag"
     return "tap"
+}
+
+WM_LBUTTONDBLCLK(state, wParam, lParam, msg, hwnd) {
+    if (IsObject(state) && state.HasOwnProp("StreamGui") && IsObject(state.StreamGui) && hwnd == state.StreamGui.Hwnd)
+        return 0
 }
 
 WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
@@ -2498,8 +2558,17 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         return
     }
 
-    if (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd) {
-        verdict := WaitStudioLongPress(startMX, startMY, downTick)
+    dragInitiated := false
+    clickActionsEnabled := !cfg.HasOwnProp("EnableHudClickActions") || cfg.EnableHudClickActions
+
+    if (clickActionsEnabled && IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd) {
+        UpdateStudioHold(p) {
+            if (p != state.studioHoldProgress) {
+                state.studioHoldProgress := p
+                ApplyStudioAppearance(cfg, state)
+            }
+        }
+        verdict := WaitStudioLongPress(startMX, startMY, downTick, UpdateStudioHold)
         if (verdict != "drag") {
             CoordMode("Mouse", prevMouseMode)
             if (verdict = "toggle") {
@@ -2514,6 +2583,30 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
             }
             return
         }
+        dragInitiated := true
+    }
+
+    if (clickActionsEnabled && IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd && (state.recState == 1 || state.recState == 2)) {
+        UpdateRecHold(p) {
+            if (p != state.recHoldProgress) {
+                state.recHoldProgress := p
+                ApplyRecAppearance(cfg, state)
+            }
+        }
+        recRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.REC_STOP_LONG_PRESS_MS, 120, 350, UpdateRecHold)
+        if (recRes.verdict != "drag") {
+            CoordMode("Mouse", prevMouseMode)
+            if (recRes.verdict = "hold") {
+                ExecuteHostStopRecord(cfg, state)
+            } else if (recRes.verdict = "tap") {
+                ExecuteHostPauseRecord(cfg, state)
+            } else {
+                ToolTip("Hold longer to stop recording")
+                SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+            }
+            return
+        }
+        dragInitiated := true
     }
 
     prevX := state.savedX
@@ -2562,7 +2655,7 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     if (IsAnyMicHudVisible(cfg) && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 
-    if (isShortClick)
+    if (isShortClick && !dragInitiated)
         HandleHudPillClick(cfg, state, hwnd)
 }
 

@@ -468,8 +468,8 @@ Assert("SceneGui width locked within baseWidth in Label Mode on long scene name"
 Assert("Long scene name activates horizontal marquee scroll state",
     stScene.sceneMarqueeMaxOffset > 0 && stScene.sceneMarqueePhase == "pause_start")
 
-; Advance past initial pause_start (30 ticks) into scroll_left
-Loop 35
+; Advance past initial pause_start (60 ticks @ 25ms) into scroll_left
+Loop 65
     SceneMarqueeTick(cfgScene, stScene)
 Assert("SceneMarqueeTick smoothly advances sceneMarqueeOffset during scroll_left",
     stScene.sceneMarqueePhase == "scroll_left" && stScene.sceneMarqueeOffset > 0)
@@ -981,17 +981,18 @@ Assert("SwitchObsScene sends SetCurrentProgramScene with escaped scene name",
 
 Assert("HandleHudPillClick MicGui invokes triggerMuteFn",
     HandleHudPillClick(cfgClick, stClick, stClick.MicGui.Hwnd) == "mic" && clickCb.trig == 1)
-Assert("HandleHudPillClick RecGui sends ToggleRecord when OBS connected",
-    HandleHudPillClick(cfgClick, stClick, stClick.RecGui.Hwnd) == "rec" && InStr(mockWs7.sent[3], '"ToggleRecord"'))
+Assert("HandleHudPillClick RecGui sends StartRecord when OBS connected & recState=0",
+    HandleHudPillClick(cfgClick, stClick, stClick.RecGui.Hwnd) == "rec" && InStr(mockWs7.sent[3], '"StartRecord"'))
 Assert("HandleHudPillClick StudioGui sends SetStudioModeEnabled",
     HandleHudPillClick(cfgClick, stClick, stClick.StudioGui.Hwnd) == "studio" && InStr(mockWs7.sent[4], '"SetStudioModeEnabled"'))
 Assert("HandleHudPillClick VCamGui sends ToggleVirtualCam",
     HandleHudPillClick(cfgClick, stClick, stClick.VCamGui.Hwnd) == "vcam" && InStr(mockWs7.sent[5], '"ToggleVirtualCam"'))
 
 stClick.unreadChatCount := 3
-Assert("HandleHudPillClick ChatGui clears unreadChatCount & StreamGui shows status tooltip",
+Assert("HandleHudPillClick ChatGui clears unreadChatCount & StreamGui is strictly read-only",
     HandleHudPillClick(cfgClick, stClick, stClick.ChatGui.Hwnd) == "chat" && stClick.unreadChatCount == 0
-    && HandleHudPillClick(cfgClick, stClick, stClick.StreamGui.Hwnd) == "stream")
+    && HandleHudPillClick(cfgClick, stClick, stClick.StreamGui.Hwnd) == "stream_readonly"
+    && mockWs7.sent.Length == 5)
 ToolTip()
 
 cfgClick.EnableWS := false
