@@ -11,6 +11,7 @@ import com.saabithjiffry.presentersync.remote.config.HudColorPalettes
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
 import com.saabithjiffry.presentersync.remote.config.ResolvedFormFactor
+import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeOverlayHost
 import kotlin.math.roundToInt
 
 class HudSnakeOverlayManager(
@@ -95,10 +96,7 @@ class HudSnakeOverlayManager(
         )
 
         // Focusable (FLAG_NOT_FOCUSABLE intentionally omitted) while active so external Keyboard / D-Pad / Back key deliver directly
-        var flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-        if (cfg.keepScreenOn) {
-            flags = flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        }
+        val flags = ArcadeOverlayHost.computeWindowFlags(cfg.hideFromScreenCapture, cfg.keepScreenOn)
 
         val params = WindowManager.LayoutParams(
             bounds.width,
@@ -128,8 +126,18 @@ class HudSnakeOverlayManager(
     }
 
     fun updateConfig(cfg: RemoteConfig) {
+        val prevHide = currentConfig.hideFromScreenCapture
+        val prevKeep = currentConfig.keepScreenOn
         currentConfig = cfg
         if (!attached) return
+        if (prevHide != cfg.hideFromScreenCapture || prevKeep != cfg.keepScreenOn) {
+            val view = overlayView
+            val lp = (view?.layoutParams as? WindowManager.LayoutParams)
+            if (lp != null) {
+                lp.flags = ArcadeOverlayHost.computeWindowFlags(cfg.hideFromScreenCapture, cfg.keepScreenOn)
+                runCatching { windowManager.updateViewLayout(view, lp) }
+            }
+        }
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
         val density = context.resources.displayMetrics.density.coerceAtLeast(0.75f)
         val formFactor = resolveFormFactor()

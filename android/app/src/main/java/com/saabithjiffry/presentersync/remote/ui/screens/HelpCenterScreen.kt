@@ -181,9 +181,9 @@ private val HELP_TOPICS = listOf(
     ),
     HelpTopic(
         "Floating HUD",
-        "Double-Tap Quick Menu Surprise (Try at Your Own Risk)",
-        "Hidden only inside the Quick Menu — taps intentionally do nothing mid-lecture.",
-        "Open the floating Quick Menu (double-tap pill by default) and notice the quiet 'Try at your own risk' row near the bottom. Tapping it does nothing so Smart Boards stay 100% safe during presentations—but holding it for 5 full seconds reveals something playful on top of Android. Swipe, or steer with keyboard Arrows/WASD or hardware D-Pad."
+        "Sector Z Subsystem — Locked [0 Credits]",
+        "Dormant diagnostic channel on the floating badge and About hardware info.",
+        "PresenterSync contains an unadvertised Sector Z subsystem that stays strictly locked (0 Credits) during classes and Smart Board sessions. Single taps inside the Quick Menu intentionally do nothing mid-lecture; curious operators sometimes inspect the About dialog header & telemetry pulse for diagnostic prompts."
     ),
     HelpTopic(
         "Pointer & Clicker",

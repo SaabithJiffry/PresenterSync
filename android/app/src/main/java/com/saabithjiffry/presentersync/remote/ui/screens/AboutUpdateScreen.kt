@@ -2,8 +2,14 @@ package com.saabithjiffry.presentersync.remote.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,12 +22,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
@@ -32,18 +42,30 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -55,8 +77,11 @@ import com.saabithjiffry.presentersync.remote.config.DeviceProfileMode
 import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
 import com.saabithjiffry.presentersync.remote.network.UpdateCheckResult
 import com.saabithjiffry.presentersync.remote.network.UpdateInstallState
+import com.saabithjiffry.presentersync.remote.service.FloatingHudForegroundService
+import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeVaultManager
 import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadding
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -80,6 +105,26 @@ fun AboutUpdateDialog(
     val cfg by app.configStore.config.collectAsStateWithLifecycle()
     val result by app.apkSelfInstaller.latestCheck.collectAsStateWithLifecycle()
     val installState by app.apkSelfInstaller.installState.collectAsStateWithLifecycle()
+    val vaultUnlocked by ArcadeVaultManager.isUnlocked.collectAsStateWithLifecycle()
+    var showTerminalDialog by remember { mutableStateOf(false) }
+    var versionTapCount by remember { mutableIntStateOf(0) }
+    var lastVersionTapMs by remember { mutableLongStateOf(0L) }
+    var infoHoldPressed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(infoHoldPressed) {
+        if (infoHoldPressed) {
+            delay(3000L)
+            infoHoldPressed = false
+            showTerminalDialog = true
+        }
+    }
+
+    if (showTerminalDialog) {
+        PasscodeTerminalDialog(
+            onDismiss = { showTerminalDialog = false },
+            onUnlocked = { showTerminalDialog = false }
+        )
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -112,7 +157,15 @@ fun AboutUpdateDialog(
                         Icon(
                             imageVector = Icons.Default.Info,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = if (vaultUnlocked) Color(0xFF34D399) else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.pointerInput(Unit) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    infoHoldPressed = true
+                                    waitForUpOrCancellation()
+                                    infoHoldPressed = false
+                                }
+                            }
                         )
                         Column {
                             Text(
@@ -124,7 +177,26 @@ fun AboutUpdateDialog(
                                 text = "Version ${AppConstants.APP_VERSION} • Smart Board Companion",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.clickable {
+                                    val now = System.currentTimeMillis()
+                                    versionTapCount = if (now - lastVersionTapMs <= 2500L) versionTapCount + 1 else 1
+                                    lastVersionTapMs = now
+                                    when {
+                                        versionTapCount in 4..6 -> {
+                                            val rem = 7 - versionTapCount
+                                            Toast.makeText(
+                                                context,
+                                                "$rem step${if (rem == 1) "" else "s"} to Sector Z...",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                        versionTapCount >= 7 -> {
+                                            versionTapCount = 0
+                                            showTerminalDialog = true
+                                        }
+                                    }
+                                }
                             )
                         }
                     }
@@ -315,6 +387,186 @@ fun AboutUpdateDialog(
                                     )
                                 }
                             }
+                        }
+                    }
+
+                    if (vaultUnlocked) {
+                        ExplorerCard(contentPadding = 16) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "ARCADE VAULT [99 CREDITS]",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF10B981)
+                                    )
+                                    OutlinedButton(
+                                        onClick = { ArcadeVaultManager.lock() },
+                                        contentPadding = CompactExplorerButtonPadding
+                                    ) {
+                                        Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Lock Vault", maxLines = 1, softWrap = false)
+                                    }
+                                }
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                for (game in ArcadeVaultManager.games) {
+                                    val bestScore = if (game.id == "snake") {
+                                        maxOf(cfg.snakeHighScore, cfg.arcadeHighScores["snake"] ?: 0)
+                                    } else {
+                                        cfg.arcadeHighScores[game.id] ?: 0
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                            Text(
+                                                text = "${game.title}  •  Best $bestScore",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                text = game.subtitle,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Button(
+                                            onClick = {
+                                                if (!Settings.canDrawOverlays(context)) {
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Grant 'Display over other apps' permission to launch HUD overlays.",
+                                                        Toast.LENGTH_LONG
+                                                    ).show()
+                                                } else if (FloatingHudForegroundService.launchArcadeGame(context, game.id)) {
+                                                    onDismiss()
+                                                }
+                                            },
+                                            contentPadding = CompactExplorerButtonPadding
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Launch", maxLines = 1, softWrap = false)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = if (vaultUnlocked) "Sector Z Active • 99 Credits" else "Cabinet Standby • 0 Credits",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = if (vaultUnlocked) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (!vaultUnlocked) {
+                                    Toast.makeText(context, ArcadeVaultManager.nextClue(), Toast.LENGTH_LONG).show()
+                                }
+                            }
+                            .padding(vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PasscodeTerminalDialog(
+    onDismiss: () -> Unit,
+    onUnlocked: () -> Unit
+) {
+    var codeInput by remember { mutableStateOf("") }
+    var statusText by remember { mutableStateOf("ENTER CABINET CLEARANCE PASSCODE") }
+    var isError by remember { mutableStateOf(false) }
+
+    fun submitAttempt() {
+        if (ArcadeVaultManager.tryUnlock(codeInput)) {
+            onUnlocked()
+        } else {
+            isError = true
+            statusText = "ACCESS DENIED // INVALID TOKEN"
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 420.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = Color(0xFF070B14),
+            border = BorderStroke(1.5.dp, Color(0xFF38BDF8))
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "SECTOR Z // TERMINAL",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF38BDF8)
+                )
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (isError) Color(0xFFF87171) else Color(0xFF94A3B8)
+                )
+                OutlinedTextField(
+                    value = codeInput,
+                    onValueChange = {
+                        codeInput = it
+                        if (isError) {
+                            isError = false
+                            statusText = "ENTER CABINET CLEARANCE PASSCODE"
+                        }
+                    },
+                    singleLine = true,
+                    label = { Text("Passcode", fontFamily = FontFamily.Monospace) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submitAttempt() }),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color(0xFFF8FAFC),
+                        unfocusedTextColor = Color(0xFFE2E8F0),
+                        focusedBorderColor = Color(0xFF38BDF8),
+                        unfocusedBorderColor = Color(0xFF334155),
+                        focusedLabelColor = Color(0xFF38BDF8),
+                        unfocusedLabelColor = Color(0xFF94A3B8)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = {
+                        isError = false
+                        statusText = ArcadeVaultManager.nextClue()
+                    }) {
+                        Text("Hint", fontFamily = FontFamily.Monospace, color = Color(0xFF60CDFF))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = onDismiss) {
+                            Text("Cancel", color = Color(0xFF94A3B8))
+                        }
+                        Button(onClick = { submitAttempt() }) {
+                            Text("Submit")
                         }
                     }
                 }

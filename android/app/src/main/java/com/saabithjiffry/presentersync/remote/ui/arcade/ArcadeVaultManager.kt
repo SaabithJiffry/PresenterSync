@@ -1,0 +1,89 @@
+package com.saabithjiffry.presentersync.remote.ui.arcade
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.Locale
+import java.util.concurrent.CopyOnWriteArrayList
+
+data class ArcadeGameEntry(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val badge: String
+)
+
+/**
+ * Process-scoped RAM-only vault controller ("Sector Z").
+ * Intentionally never writes unlock state to SharedPreferences or any file so the vault
+ * always relocks cleanly on cold start, explicit Lock action, or host disconnect.
+ */
+object ArcadeVaultManager {
+    private const val VAULT_TOKEN = "INSERTCOIN"
+
+    val games: List<ArcadeGameEntry> = listOf(
+        ArcadeGameEntry(
+            id = "snake",
+            title = "HUD Snake",
+            subtitle = "Glowing matte-glass ribbon over Smart Board & Phone overlays",
+            badge = "SECTOR Z-01"
+        ),
+        ArcadeGameEntry(
+            id = "asteroids",
+            title = "Asteroid Blaster",
+            subtitle = "Vector thruster shooter with UFO saucers, power-ups & Mic Pill bumper",
+            badge = "SECTOR Z-02"
+        )
+    )
+
+    private val clues = listOf(
+        "SECTOR Z // CLEARANCE REQUIRED — Cabinet Bus at 0 Credits.",
+        "Inspect the About screen header icon or build telemetry pulse.",
+        "Coin-op legend: classic twin-word cabinet start command.",
+        "Desktop hosts listen for the Sector Z chord when no dialog is focused."
+    )
+
+    private val _isUnlocked = MutableStateFlow(false)
+    val isUnlocked: StateFlow<Boolean> = _isUnlocked.asStateFlow()
+
+    private val lockListeners = CopyOnWriteArrayList<() -> Unit>()
+    private var clueCursor = 0
+
+    fun normalizePasscode(raw: String): String {
+        return raw.uppercase(Locale.US).replace(Regex("[^A-Z0-9]"), "")
+    }
+
+    fun validatePasscode(raw: String): Boolean {
+        return normalizePasscode(raw) == VAULT_TOKEN
+    }
+
+    fun tryUnlock(raw: String): Boolean {
+        if (!validatePasscode(raw)) return false
+        _isUnlocked.value = true
+        return true
+    }
+
+    fun lock() {
+        _isUnlocked.value = false
+        for (listener in lockListeners) {
+            runCatching { listener() }
+        }
+    }
+
+    fun registerLockListener(listener: () -> Unit) {
+        if (!lockListeners.contains(listener)) {
+            lockListeners.add(listener)
+        }
+    }
+
+    fun unregisterLockListener(listener: () -> Unit) {
+        lockListeners.remove(listener)
+    }
+
+    @Synchronized
+    fun nextClue(): String {
+        val text = clues[clueCursor % clues.size]
+        clueCursor = (clueCursor + 1) % clues.size
+        return text
+    }
+}

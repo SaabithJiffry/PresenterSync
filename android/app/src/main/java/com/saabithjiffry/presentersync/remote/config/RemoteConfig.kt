@@ -194,7 +194,8 @@ data class RemoteConfig(
     val savedY: Int = -1,
     val savedXRatio: Float = -1f,
     val savedYRatio: Float = -1f,
-    val snakeHighScore: Int = 0
+    val snakeHighScore: Int = 0,
+    val arcadeHighScores: Map<String, Int> = emptyMap()
 ) {
     fun toBubbleGestureConfig(): BubbleGestureConfig = BubbleGestureConfig(
         enabled = enableHudClickActions,
@@ -335,7 +336,8 @@ class RemoteConfigStore(context: Context) {
             savedY = prefs.getInt("savedY", -1),
             savedXRatio = prefs.getFloat("savedXRatio", -1f).let { if (it in 0f..1f) it else -1f },
             savedYRatio = prefs.getFloat("savedYRatio", -1f).let { if (it in 0f..1f) it else -1f },
-            snakeHighScore = prefs.getInt("snakeHighScore", 0).coerceAtLeast(0)
+            snakeHighScore = prefs.getInt("snakeHighScore", 0).coerceAtLeast(0),
+            arcadeHighScores = ArcadeHighScoresCodec.fromJsonString(prefs.getString("arcadeHighScoresJson", null))
         )
     }
 
@@ -352,8 +354,20 @@ class RemoteConfigStore(context: Context) {
         it.copy(savedX = -1, savedY = -1, savedXRatio = -1f, savedYRatio = -1f)
     }
 
-    fun updateSnakeHighScore(score: Int): RemoteConfig = update { prev ->
-        if (score > prev.snakeHighScore) prev.copy(snakeHighScore = score) else prev
+    fun updateSnakeHighScore(score: Int): RemoteConfig = updateArcadeHighScore("snake", score)
+
+    fun updateArcadeHighScore(gameId: String, score: Int): RemoteConfig = update { prev ->
+        val cleanId = gameId.trim().lowercase()
+        if (cleanId.isEmpty() || score <= 0) return@update prev
+        val existing = prev.arcadeHighScores[cleanId] ?: 0
+        val nextScore = maxOf(existing, score)
+        val nextSnake = if (cleanId == "snake") maxOf(prev.snakeHighScore, nextScore) else prev.snakeHighScore
+        if (nextScore == existing && nextSnake == prev.snakeHighScore) {
+            prev
+        } else {
+            val nextMap = prev.arcadeHighScores.toMutableMap().apply { put(cleanId, nextScore) }
+            prev.copy(snakeHighScore = nextSnake, arcadeHighScores = nextMap)
+        }
     }
 
     fun setHudWasActive(active: Boolean) {
@@ -602,6 +616,40 @@ class RemoteConfigStore(context: Context) {
             .putFloat("savedXRatio", c.savedXRatio)
             .putFloat("savedYRatio", c.savedYRatio)
             .putInt("snakeHighScore", c.snakeHighScore)
+            .putString("arcadeHighScoresJson", ArcadeHighScoresCodec.toJsonString(c.arcadeHighScores))
             .apply()
+    }
+}
+
+internal object ArcadeHighScoresCodec {
+    fun fromJsonString(raw: String?): Map<String, Int> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return try {
+            val obj = JSONObject(raw)
+            val result = linkedMapOf<String, Int>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next().trim().lowercase()
+                if (k.isNotEmpty()) {
+                    val v = obj.optInt(k, 0)
+                    if (v > 0) result[k] = v
+                }
+            }
+            result
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun toJsonString(scores: Map<String, Int>): String {
+        if (scores.isEmpty()) return "{}"
+        val obj = JSONObject()
+        for ((k, v) in scores) {
+            val clean = k.trim().lowercase()
+            if (clean.isNotEmpty() && v > 0) {
+                obj.put(clean, v)
+            }
+        }
+        return obj.toString()
     }
 }

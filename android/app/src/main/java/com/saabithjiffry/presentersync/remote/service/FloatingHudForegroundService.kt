@@ -11,7 +11,10 @@ import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.view.KeyEvent
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -22,9 +25,14 @@ import com.saabithjiffry.presentersync.remote.R
 import com.saabithjiffry.presentersync.remote.audio.AudioCuePlayer
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.input.BubbleGestureAction
+import com.saabithjiffry.presentersync.remote.input.ClickerDecision
+import com.saabithjiffry.presentersync.remote.input.ClickerMuteController
+import com.saabithjiffry.presentersync.remote.input.KeyAction
 import com.saabithjiffry.presentersync.remote.network.ConnStatus
 import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
 import com.saabithjiffry.presentersync.remote.network.RemoteEvent
+import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeOverlayHost
+import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeVaultManager
 import com.saabithjiffry.presentersync.remote.ui.overlay.FloatingMicOverlayManager
 import com.saabithjiffry.presentersync.remote.ui.overlay.FloatingToastBannerManager
 import com.saabithjiffry.presentersync.remote.ui.overlay.HudSnakeOverlayManager
@@ -36,6 +44,19 @@ class FloatingHudForegroundService : LifecycleService() {
     private lateinit var app: PresenterSyncRemoteApp
     private lateinit var overlayManager: FloatingMicOverlayManager
     private lateinit var hudSnakeOverlayManager: HudSnakeOverlayManager
+    private lateinit var arcadeOverlayHost: ArcadeOverlayHost
+    private val overlayMuteController = ClickerMuteController()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val vaultLockListener: () -> Unit = {
+        mainHandler.post {
+            if (::hudSnakeOverlayManager.isInitialized) {
+                hudSnakeOverlayManager.stop()
+            }
+            if (::arcadeOverlayHost.isInitialized) {
+                arcadeOverlayHost.stop()
+            }
+        }
+    }
     private lateinit var toastBannerManager: FloatingToastBannerManager
     private lateinit var audioCuePlayer: AudioCuePlayer
     private lateinit var hapticAlertPlayer: HapticAlertPlayer
@@ -52,33 +73,107 @@ class FloatingHudForegroundService : LifecycleService() {
             if (::hudSnakeOverlayManager.isInitialized) {
                 hudSnakeOverlayManager.onDisplayConfigurationChanged()
             }
+            if (::arcadeOverlayHost.isInitialized) {
+                arcadeOverlayHost.onDisplayConfigurationChanged()
+            }
             app.connectionManager.onScreenWakeOrNetworkChanged()
         }
     }
 
-    override fun onCreate() {
-        super.onCreate()
-        app = application as PresenterSyncRemoteApp
-        hudSnakeOverlayManager = HudSnakeOverlayManager(this, app.configStore) { active ->
-            if (::overlayManager.isInitialized) {
-                overlayManager.setHiddenForEasterEgg(active)
+    private fun syncPillVisibilityForArcade() {
+        if (!::overlayManager.isInitialized) return
+        val anyArcade = (::hudSnakeOverlayManager.isInitialized && hudSnakeOverlayManager.isActive) ||
+            (::arcadeOverlayHost.isInitialized && arcadeOverlayHost.isActive)
+        overlayManager.setHiddenForEasterEgg(anyArcade)
+    }
+
+    private fun handleOverlayMuteKeyEvent(event: KeyEvent): Boolean {
+        val cfg = app.configStore.current
+        val action = if (event.action == KeyEvent.ACTION_DOWN) KeyAction.DOWN else KeyAction.UP
+        val keyName = KeyEvent.keyCodeToString(event.keyCode)
+        val decision = overlayMuteController.onKeyEvent(
+            keyCodeName = keyName,
+            action = action,
+            isCtrl = event.isCtrlPressed,
+            isAlt = event.isAltPressed,
+            isShift = event.isShiftPressed,
+            repeatCount = event.repeatCount,
+            config = cfg,
+            isMuted = app.connectionManager.uiState.value.isMuted
+        )
+        return when (decision) {
+            ClickerDecision.CONSUME_TOGGLE,
+            ClickerDecision.TRIGGER_TOGGLE_SHORTCUT -> {
+                app.connectionManager.toggleMuteFromClicker()
+                true
             }
+            ClickerDecision.CONSUME_COUGH_HOLD_MUTE,
+            ClickerDecision.CONSUME_PTT_RELEASE_MUTE -> {
+                app.connectionManager.setMuteFromClicker(true)
+                true
+            }
+            ClickerDecision.CONSUME_COUGH_RELEASE_UNMUTE,
+            ClickerDecision.CONSUME_PTT_HOLD_UNMUTE -> {
+                app.connectionManager.setMuteFromClicker(false)
+                true
+            }
+            ClickerDecision.TRIGGER_EXIT_SHORTCUT -> {
+                stopRemoteCleanly()
+                true
+            }
+            ClickerDecision.CONSUME_NOOP -> true
+            ClickerDecision.PASS_THROUGH -> false
         }
-        overlayManager = FloatingMicOverlayManager(
-            context = this,
-            configStore = app.configStore,
-            connectionManager = app.connectionManager,
-            onLaunchEasterSnake = {
-                val rect = overlayManager.currentPillRectPx()
+    }
+
+    private fun launchArcadeGameById(gameId: String) {
+        if (!ArcadeVaultManager.isUnlocked.value) return
+        val rect = overlayManager.currentPillRectPx()
+        val cfg = app.configStore.current
+        val isMuted = app.connectionManager.uiState.value.isMuted
+        when (gameId.trim().lowercase()) {
+            "snake" -> {
+                if (::arcadeOverlayHost.isInitialized) arcadeOverlayHost.stop()
                 hudSnakeOverlayManager.start(
-                    cfg = app.configStore.current,
-                    isMuted = app.connectionManager.uiState.value.isMuted,
+                    cfg = cfg,
+                    isMuted = isMuted,
                     pillLeftScreenPx = rect.left,
                     pillTopScreenPx = rect.top,
                     pillWidthPx = rect.width(),
                     pillHeightPx = rect.height()
                 )
             }
+            else -> {
+                if (::hudSnakeOverlayManager.isInitialized) hudSnakeOverlayManager.stop()
+                arcadeOverlayHost.startGame(
+                    gameId = gameId,
+                    cfg = cfg,
+                    isMuted = isMuted,
+                    pillRectPx = rect
+                )
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        app = application as PresenterSyncRemoteApp
+        ArcadeVaultManager.registerLockListener(vaultLockListener)
+        hudSnakeOverlayManager = HudSnakeOverlayManager(this, app.configStore) { _ ->
+            syncPillVisibilityForArcade()
+        }
+        arcadeOverlayHost = ArcadeOverlayHost(
+            context = this,
+            configStore = app.configStore,
+            onActiveChanged = { _ -> syncPillVisibilityForArcade() },
+            onMuteKeyEvent = { ev -> handleOverlayMuteKeyEvent(ev) }
+        )
+        overlayManager = FloatingMicOverlayManager(
+            context = this,
+            configStore = app.configStore,
+            connectionManager = app.connectionManager,
+            onLaunchEasterSnake = { launchArcadeGameById("snake") },
+            onLaunchArcadeGame = { gameId -> launchArcadeGameById(gameId) }
         )
         toastBannerManager = FloatingToastBannerManager(this)
         audioCuePlayer = AudioCuePlayer()
@@ -107,6 +202,7 @@ class FloatingHudForegroundService : LifecycleService() {
             }.collect { (cfg, conn) ->
                 overlayManager.showOrUpdate(cfg, conn)
                 hudSnakeOverlayManager.updateConfig(cfg)
+                arcadeOverlayHost.updateState(cfg, conn.isMuted)
                 backgroundMediaClickerController.update(cfg)
                 updateNotification(cfg, conn)
                 QuickToggleTileService.requestRefresh(this@FloatingHudForegroundService)
@@ -205,6 +301,10 @@ class FloatingHudForegroundService : LifecycleService() {
             ACTION_DISABLE_CLICK_THROUGH -> {
                 app.configStore.update { it.copy(hudClickThrough = false) }
             }
+            ACTION_LAUNCH_ARCADE -> {
+                val gameId = intent.getStringExtra(EXTRA_ARCADE_GAME_ID) ?: "snake"
+                launchArcadeGameById(gameId)
+            }
             ACTION_RECONNECT -> app.connectionManager.reconnectNow()
             ACTION_STOP -> stopRemoteCleanly()
         }
@@ -214,8 +314,12 @@ class FloatingHudForegroundService : LifecycleService() {
     private fun stopRemoteCleanly() {
         unregisterWakeReceiver()
         app.configStore.setHudWasActive(false)
+        ArcadeVaultManager.lock()
         if (::hudSnakeOverlayManager.isInitialized) {
             hudSnakeOverlayManager.stop()
+        }
+        if (::arcadeOverlayHost.isInitialized) {
+            arcadeOverlayHost.stop()
         }
         toastBannerManager.hide()
         overlayManager.hide()
@@ -239,12 +343,19 @@ class FloatingHudForegroundService : LifecycleService() {
         if (::hudSnakeOverlayManager.isInitialized) {
             hudSnakeOverlayManager.onDisplayConfigurationChanged()
         }
+        if (::arcadeOverlayHost.isInitialized) {
+            arcadeOverlayHost.onDisplayConfigurationChanged()
+        }
     }
 
     override fun onDestroy() {
         unregisterWakeReceiver()
+        ArcadeVaultManager.unregisterLockListener(vaultLockListener)
         if (::hudSnakeOverlayManager.isInitialized) {
             hudSnakeOverlayManager.stop()
+        }
+        if (::arcadeOverlayHost.isInitialized) {
+            arcadeOverlayHost.destroy()
         }
         toastBannerManager.hide()
         overlayManager.hide()
@@ -414,7 +525,21 @@ class FloatingHudForegroundService : LifecycleService() {
         const val ACTION_TOGGLE_MUTE = "com.saabithjiffry.presentersync.remote.TOGGLE_MUTE"
         const val ACTION_TOGGLE_INDICATOR = "com.saabithjiffry.presentersync.remote.TOGGLE_INDICATOR"
         const val ACTION_DISABLE_CLICK_THROUGH = "com.saabithjiffry.presentersync.remote.DISABLE_CLICK_THROUGH"
+        const val ACTION_LAUNCH_ARCADE = "com.saabithjiffry.presentersync.remote.LAUNCH_ARCADE"
+        const val EXTRA_ARCADE_GAME_ID = "arcade_game_id"
         const val ACTION_RECONNECT = "com.saabithjiffry.presentersync.remote.RECONNECT"
+
+        fun launchArcadeGame(context: Context, gameId: String): Boolean {
+            val intent = Intent(context, FloatingHudForegroundService::class.java)
+                .setAction(ACTION_LAUNCH_ARCADE)
+                .putExtra(EXTRA_ARCADE_GAME_ID, gameId)
+            return try {
+                context.startForegroundService(intent)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
 
         fun startService(context: Context, action: String = ACTION_START): Boolean {
             val intent = Intent(context, FloatingHudForegroundService::class.java).setAction(action)

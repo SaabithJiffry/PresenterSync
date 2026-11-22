@@ -39,6 +39,7 @@ import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
 import com.saabithjiffry.presentersync.remote.config.ThemeMode
 import com.saabithjiffry.presentersync.remote.network.ConnectionManager
 import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
+import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeVaultManager
 import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
 import kotlin.math.abs
 import kotlin.math.max
@@ -50,7 +51,8 @@ class FloatingMicOverlayManager(
     private val context: Context,
     private val configStore: RemoteConfigStore,
     private val connectionManager: ConnectionManager,
-    private val onLaunchEasterSnake: () -> Unit = {}
+    private val onLaunchEasterSnake: () -> Unit = {},
+    private val onLaunchArcadeGame: (String) -> Unit = { _ -> onLaunchEasterSnake() }
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val handler = Handler(Looper.getMainLooper())
@@ -1100,8 +1102,18 @@ class FloatingMicOverlayManager(
             openSettingsActivity()
         }
 
+        if (ArcadeVaultManager.isUnlocked.value) {
+            val vaultDivider = View(context).apply { setBackgroundColor(dividerColor) }
+            container.addView(vaultDivider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
+            for (game in ArcadeVaultManager.games) {
+                addMenuRow("${game.badge}: ${game.title}") {
+                    onLaunchArcadeGame(game.id)
+                }
+            }
+        }
+
         // Hidden-in-plain-sight Easter Egg trigger: single tap is intentionally a strict NO-OP
-        // so Smart Boards remain 100% protected mid-lecture; requires a sustained 5-second hold.
+        // so Smart Boards remain 100% protected mid-lecture; gated by Sector Z Vault clearance.
         val easterDivider = View(context).apply { setBackgroundColor(dividerColor) }
         container.addView(easterDivider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
 
@@ -1174,7 +1186,11 @@ class FloatingMicOverlayManager(
                         cancelSecretHold()
                         v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         dismissQuickMenu()
-                        onLaunchEasterSnake()
+                        if (ArcadeVaultManager.isUnlocked.value) {
+                            onLaunchEasterSnake()
+                        } else {
+                            Toast.makeText(context, ArcadeVaultManager.nextClue(), Toast.LENGTH_LONG).show()
+                        }
                     }
                     val progressRun = object : Runnable {
                         override fun run() {
