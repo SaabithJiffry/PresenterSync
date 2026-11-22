@@ -50,15 +50,16 @@ class HudArcadeBase {
     }
 
     static IsReservedAudioKey(cfg, key) {
-        k := Trim(String(key))
+        k := RegExReplace(Trim(String(key)), "i)\s+up$", "")
+        k := RegExReplace(k, "^[~*$]+")
         if (!IsObject(cfg) || k = "")
             return false
         if (cfg.HasOwnProp("HwMuteHotkey") && cfg.HwMuteHotkey != "" && StrLower(cfg.HwMuteHotkey) != "none") {
-            if (IsSet(_DoHotkeysCollide) ? _DoHotkeysCollide(k, cfg.HwMuteHotkey) : (StrLower(k) = StrLower(cfg.HwMuteHotkey)))
+            if (IsSet(_DoHotkeysCollide) ? _DoHotkeysCollide(k, cfg.HwMuteHotkey) : (StrLower(k) = StrLower(RegExReplace(Trim(cfg.HwMuteHotkey), "^[~*$]+"))))
                 return true
         }
         if (cfg.HasOwnProp("HwTransitionHotkey") && cfg.HwTransitionHotkey != "" && StrLower(cfg.HwTransitionHotkey) != "none") {
-            if (IsSet(_DoHotkeysCollide) ? _DoHotkeysCollide(k, cfg.HwTransitionHotkey) : (StrLower(k) = StrLower(cfg.HwTransitionHotkey)))
+            if (IsSet(_DoHotkeysCollide) ? _DoHotkeysCollide(k, cfg.HwTransitionHotkey) : (StrLower(k) = StrLower(RegExReplace(Trim(cfg.HwTransitionHotkey), "^[~*$]+"))))
                 return true
         }
         return false

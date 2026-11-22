@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 8.3.0
+; Version: 8.3.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 8.3.0.0
+;@Ahk2Exe-SetVersion 8.3.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -27,6 +27,7 @@ ProcessSetPriority "High"
 #Include <ArcadeVault>
 #Include <Arcade\GameAsteroids>
 #Include <Arcade\GamePaddlePack>
+#Include <Arcade\GameClickerFlappy>
 
 g_RemoteCli := ParseRemoteCliArgs(A_Args)
 g_RemoteMutex := AcquireRemoteInstanceMutex(g_RemoteCli.instanceName)
@@ -540,6 +541,7 @@ ArcadeVault.RegisterGame("snake", "HUD Snake", "!^+s", "Ctrl+Alt+Shift+S", (c, s
 ArcadeVault.RegisterGame("asteroids", "Asteroid Blaster", "!^+a", "Ctrl+Alt+Shift+A", (c, s) => GameAsteroids.Toggle(c, s), () => GameAsteroids.Stop())
 ArcadeVault.RegisterGame("brick_breaker", "Brick Breaker", "!^+b", "Ctrl+Alt+Shift+B", (c, s) => GameBrickBreaker.Toggle(c, s), () => GameBrickBreaker.Stop())
 ArcadeVault.RegisterGame("cyber_pong", "Cyber Pong", "!^+h", "Ctrl+Alt+Shift+H", (c, s) => GameCyberPong.Toggle(c, s), () => GameCyberPong.Stop())
+ArcadeVault.RegisterGame("flappy", "Clicker Flappy / Wave", "!^+f", "Ctrl+Alt+Shift+F", (c, s) => GameClickerFlappy.Toggle(c, s), () => GameClickerFlappy.Stop())
 ArcadeVault.BindVaultHotkey(AppConfig, AppState)
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync_Remote.exe")
 

@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 8.3.0
+; Version: 8.3.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -12,7 +12,7 @@
 ;@Ahk2Exe-AddResource *10 assets\PresenterSync.ico, FAVICON_ICO
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 8.3.0.0
+;@Ahk2Exe-SetVersion 8.3.1.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -28,6 +28,7 @@ SetKeyDelay -1, -1
 #Include <ArcadeVault>
 #Include <Arcade\GameAsteroids>
 #Include <Arcade\GamePaddlePack>
+#Include <Arcade\GameClickerFlappy>
 
 if (A_Args.Length > 0) {
     cliCmd := ParseHostCliArgs(A_Args)
@@ -631,6 +632,7 @@ BindSystemHotkeys(cfg, state) {
     ArcadeVault.RegisterGame("asteroids", "Asteroid Blaster", "!^+a", "Ctrl+Alt+Shift+A", (c, s) => GameAsteroids.Toggle(c, s), () => GameAsteroids.Stop())
     ArcadeVault.RegisterGame("brick_breaker", "Brick Breaker", "!^+b", "Ctrl+Alt+Shift+B", (c, s) => GameBrickBreaker.Toggle(c, s), () => GameBrickBreaker.Stop())
     ArcadeVault.RegisterGame("cyber_pong", "Cyber Pong", "!^+h", "Ctrl+Alt+Shift+H", (c, s) => GameCyberPong.Toggle(c, s), () => GameCyberPong.Stop())
+    ArcadeVault.RegisterGame("flappy", "Clicker Flappy / Wave", "!^+f", "Ctrl+Alt+Shift+F", (c, s) => GameClickerFlappy.Toggle(c, s), () => GameClickerFlappy.Stop())
     ArcadeVault.BindVaultHotkey(cfg, state)
 }
 BindSystemHotkeys(AppConfig, AppState)
