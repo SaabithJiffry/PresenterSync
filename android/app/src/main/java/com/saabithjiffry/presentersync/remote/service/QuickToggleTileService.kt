@@ -1,5 +1,6 @@
 package com.saabithjiffry.presentersync.remote.service
 
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -7,6 +8,8 @@ import android.os.Build
 import android.provider.Settings
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
+import androidx.core.service.quicksettings.PendingIntentActivityWrapper
+import androidx.core.service.quicksettings.TileServiceCompat
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
 
@@ -55,18 +58,14 @@ class QuickToggleTileService : TileService() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra(MainActivity.EXTRA_AUTO_START_HUD, true)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val pi = android.app.PendingIntent.getActivity(
-                this,
-                41,
-                intent,
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-            startActivityAndCollapse(pi)
-        } else {
-            @Suppress("DEPRECATION")
-            startActivityAndCollapse(intent)
-        }
+        val wrapper = PendingIntentActivityWrapper(
+            this,
+            41,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT,
+            false
+        )
+        TileServiceCompat.startActivityAndCollapse(this, wrapper)
     }
 
     private fun refreshTile() {

@@ -6,13 +6,20 @@ import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 
 object FailoverPolicy {
 
+    fun hasBridgeCredentials(cfg: RemoteConfig): Boolean =
+        cfg.sessionToken.isNotBlank() || cfg.sessionPairingCode.isNotBlank()
+
+    fun hasWanFallbackConfigured(cfg: RemoteConfig): Boolean =
+        cfg.networkMode == NetworkMode.LAN &&
+            cfg.enableRelayFallback &&
+            cfg.internetPairingCode.isNotBlank()
+
     fun shouldFallbackToWan(
         cfg: RemoteConfig,
         elapsedLanMs: Long,
         budgetMs: Long = AppConstants.LAN_FAILOVER_DEADLINE_MS
     ): Boolean {
-        if (cfg.networkMode != NetworkMode.LAN) return false
-        if (!cfg.enableRelayFallback || cfg.internetPairingCode.isBlank()) return false
+        if (!hasWanFallbackConfigured(cfg)) return false
         return elapsedLanMs >= budgetMs.coerceAtLeast(300L)
     }
 
@@ -29,4 +36,25 @@ object FailoverPolicy {
         if (!usingRelayFallback || cfg.networkMode != NetworkMode.LAN) return false
         return cfg.hostAddress.isNotBlank() || cfg.pairedHostUuid.isNotBlank()
     }
+
+    fun canRepromoteFromFallback(cfg: RemoteConfig, state: ConnectionUiState): Boolean =
+        canRepromoteToLan(
+            cfg,
+            usingRelayFallback = state.usingRelayFallback ||
+                state.usingDirectObsFallback ||
+                cfg.networkMode == NetworkMode.LAN
+        )
+
+    fun isExplicitBridgeRevocation(reason: String): Boolean {
+        val low = reason.lowercase()
+        return low.contains("unpaired") || low.contains("revoked")
+    }
+
+    fun shouldRetryBridgeAuthWithPairingCode(cfg: RemoteConfig, reason: String): Boolean =
+        cfg.sessionToken.isNotBlank() &&
+            cfg.sessionPairingCode.isNotBlank() &&
+            !isExplicitBridgeRevocation(reason)
+
+    fun isWakeConnectionStale(lastRxAtMs: Long, nowMs: Long, wakeStalenessMs: Long): Boolean =
+        lastRxAtMs >= 0L && (nowMs - lastRxAtMs) > wakeStalenessMs
 }

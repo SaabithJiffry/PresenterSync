@@ -45,6 +45,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
+import com.saabithjiffry.presentersync.remote.config.QuickNudgePresetHelper
+import com.saabithjiffry.presentersync.remote.network.ConnectionUiState
+
+private val PodiumOledBlack = Color(0xFF000000)
+private val PodiumOledCard = Color(0xFF0D0D0F)
+private val PodiumOledBorder = Color(0xFF26262A)
+private val PodiumLiveEmerald = Color(0xFF107C10)
+private val PodiumMutedCrimson = Color(0xFFC42B1C)
+private val PodiumAmberAlert = Color(0xFFF59E0B)
 
 private fun Context.findHostActivity(): Activity? {
     var ctx: Context = this
@@ -73,70 +82,15 @@ fun PodiumDeckScreen(
         }
     }
 
-    val oledBlack = Color(0xFF000000)
-    val oledCard = Color(0xFF0D0D0F)
-    val oledBorder = Color(0xFF26262A)
-    val liveEmerald = Color(0xFF107C10)
-    val mutedCrimson = Color(0xFFC42B1C)
-    val amberAlert = Color(0xFFF59E0B)
-
-    val muteCardBg = when {
-        !conn.connected -> Color(0xFF1F2937)
-        conn.isMuted -> mutedCrimson
-        else -> liveEmerald
-    }
-    val muteBorder = if (conn.connected && conn.isMuted && conn.voiceWhileMuted) {
-        amberAlert
-    } else {
-        Color.White.copy(alpha = 0.22f)
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(oledBlack)
+            .background(PodiumOledBlack)
             .safeDrawingPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Top Bar: Status + REC/BRB Badge + Exit Podium
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "PODIUM DECK",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp
-                )
-                val statusSummary = buildString {
-                    append(if (conn.connected) conn.transportName else "Disconnected")
-                    if (conn.recState == 1) append("  •  ● REC ${conn.formattedRecElapsed()}")
-                    else if (conn.recState == 2) append("  •  ❚❚ PAUSED ${conn.formattedRecElapsed()}")
-                    if (conn.isStandby) append("  •  BRB ON")
-                }
-                Text(
-                    text = statusSummary,
-                    color = if (conn.recState == 1) Color(0xFFFCA5A5) else Color(0xFFE2E8F0),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(
-                onClick = onExitPodium,
-                border = BorderStroke(1.dp, Color(0xFF475569)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-            ) {
-                Text("Exit Podium", fontWeight = FontWeight.SemiBold)
-            }
-        }
+        PodiumTopBar(conn = conn, onExitPodium = onExitPodium)
 
         Column(
             modifier = Modifier
@@ -144,51 +98,11 @@ fun PodiumDeckScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // High-Contrast Oversized MUTE / UNMUTE Touch Surface
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(148.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .clickable { app.connectionManager.toggleMuteFromHud() },
-                shape = RoundedCornerShape(18.dp),
-                color = muteCardBg,
-                border = BorderStroke(2.dp, muteBorder)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = when {
-                            !conn.connected -> "OFFLINE"
-                            conn.isMuted -> "MIC MUTED"
-                            else -> "MIC LIVE"
-                        },
-                        color = Color.White,
-                        fontSize = 34.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 1.5.sp
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = when {
-                            !conn.connected -> "Tap to attempt toggle / reconnect from Dashboard"
-                            conn.isMuted && conn.voiceWhileMuted -> "⚠ MIC SIGNAL DETECTED WHILE MUTED — Tap to UNMUTE"
-                            conn.isMuted -> "Tap anywhere here to UNMUTE"
-                            else -> "Tap anywhere here to MUTE"
-                        },
-                        color = Color.White.copy(alpha = 0.90f),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
+            PodiumMuteTouchSurface(
+                conn = conn,
+                onToggleMute = { app.connectionManager.toggleMuteFromHud() }
+            )
 
-            // OBS Scene Transition (Preview <-> Program)
             Button(
                 onClick = { app.connectionManager.sendTransitionScene("podium") },
                 enabled = conn.connected,
@@ -209,205 +123,345 @@ fun PodiumDeckScreen(
                 )
             }
 
-            // Slides & Speaker Notes Section
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = oledCard,
-                border = BorderStroke(1.dp, oledBorder)
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val slideLabel = if (conn.slideIndex > 0) {
-                            "Slide ${conn.slideIndex}" + (if (conn.slideTotal > 0) " / ${conn.slideTotal}" else "")
-                        } else {
-                            "Slideshow"
-                        }
-                        Text(
-                            text = slideLabel,
-                            color = Color(0xFF60CDFF),
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (conn.slideTitle.isNotBlank()) {
-                            Text(
-                                text = conn.slideTitle,
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(start = 10.dp)
-                            )
-                        }
-                    }
+            PodiumSlidesAndNotesCard(
+                conn = conn,
+                onPrevSlide = { app.connectionManager.sendPptPrev("podium") },
+                onNextSlide = { app.connectionManager.sendPptNext("podium") },
+                onStartSlideshow = { app.connectionManager.sendStartSlideshow("podium") }
+            )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilledTonalButton(
-                            onClick = { app.connectionManager.sendPptPrev("podium") },
-                            enabled = conn.connected && conn.usingBridge,
-                            modifier = Modifier.weight(1f).height(48.dp)
-                        ) {
-                            Text("◀ Prev", fontWeight = FontWeight.Bold)
-                        }
-                        FilledTonalButton(
-                            onClick = { app.connectionManager.sendPptNext("podium") },
-                            enabled = conn.connected && conn.usingBridge,
-                            modifier = Modifier.weight(1f).height(48.dp)
-                        ) {
-                            Text("Next ▶", fontWeight = FontWeight.Bold)
-                        }
-                    }
+            PodiumTimerAndStandbyCard(
+                conn = conn,
+                onToggleStandby = { app.connectionManager.sendToggleStandby("podium") },
+                onTimerCommand = { action, sec -> app.connectionManager.sendTimerCommand(action, sec, "podium") }
+            )
 
-                    OutlinedButton(
-                        onClick = { app.connectionManager.sendStartSlideshow("podium") },
-                        enabled = conn.connected && conn.usingBridge,
-                        modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(1.dp, oledBorder),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE2E8F0))
-                    ) {
-                        Text("Start Slideshow (F5)", fontWeight = FontWeight.SemiBold)
-                    }
+            PodiumQuickNudgeCard(
+                conn = conn,
+                onSendNudge = { nudge -> app.connectionManager.sendStageNudge(nudge) }
+            )
+        }
+    }
+}
 
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 76.dp, max = 160.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFF050507),
-                        border = BorderStroke(1.dp, Color(0xFF1E293B))
-                    ) {
-                        val notesScroll = rememberScrollState()
-                        Text(
-                            text = conn.slideNotes.ifBlank { "No speaker notes for current slide." },
-                            color = if (conn.slideNotes.isBlank()) Color(0xFF64748B) else Color(0xFFF1F5F9),
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            modifier = Modifier
-                                .verticalScroll(notesScroll)
-                                .padding(10.dp)
-                        )
-                    }
-                }
+@Composable
+private fun PodiumTopBar(
+    conn: ConnectionUiState,
+    onExitPodium: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "PODIUM DECK",
+                color = Color(0xFF94A3B8),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.2.sp
+            )
+            val statusSummary = buildString {
+                append(if (conn.connected) conn.transportName else "Disconnected")
+                if (conn.recState == 1) append("  •  ● REC ${conn.formattedRecElapsed()}")
+                else if (conn.recState == 2) append("  •  ❚❚ PAUSED ${conn.formattedRecElapsed()}")
+                if (conn.isStandby) append("  •  BRB ON")
             }
+            Text(
+                text = statusSummary,
+                color = if (conn.recState == 1) Color(0xFFFCA5A5) else Color(0xFFE2E8F0),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        OutlinedButton(
+            onClick = onExitPodium,
+            border = BorderStroke(1.dp, Color(0xFF475569)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+        ) {
+            Text("Exit Podium", fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
 
-            // Countdown Timer & Standby (BRB) Controls
-            Surface(
+@Composable
+private fun PodiumMuteTouchSurface(
+    conn: ConnectionUiState,
+    onToggleMute: () -> Unit
+) {
+    val muteCardBg = when {
+        !conn.connected -> Color(0xFF1F2937)
+        conn.isMuted -> PodiumMutedCrimson
+        else -> PodiumLiveEmerald
+    }
+    val muteBorder = if (conn.connected && conn.isMuted && conn.voiceWhileMuted) {
+        PodiumAmberAlert
+    } else {
+        Color.White.copy(alpha = 0.22f)
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(148.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onToggleMute),
+        shape = RoundedCornerShape(18.dp),
+        color = muteCardBg,
+        border = BorderStroke(2.dp, muteBorder)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = when {
+                    !conn.connected -> "OFFLINE"
+                    conn.isMuted -> "MIC MUTED"
+                    else -> "MIC LIVE"
+                },
+                color = Color.White,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 1.5.sp
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = when {
+                    !conn.connected -> "Tap to attempt toggle / reconnect from Dashboard"
+                    conn.isMuted && conn.voiceWhileMuted -> "⚠ MIC SIGNAL DETECTED WHILE MUTED — Tap to UNMUTE"
+                    conn.isMuted -> "Tap anywhere here to UNMUTE"
+                    else -> "Tap anywhere here to MUTE"
+                },
+                color = Color.White.copy(alpha = 0.90f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun PodiumSlidesAndNotesCard(
+    conn: ConnectionUiState,
+    onPrevSlide: () -> Unit,
+    onNextSlide: () -> Unit,
+    onStartSlideshow: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = PodiumOledCard,
+        border = BorderStroke(1.dp, PodiumOledBorder)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = oledCard,
-                border = BorderStroke(1.dp, oledBorder)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val timerColor = when (conn.timerState) {
-                            "overtime" -> Color(0xFFEF4444)
-                            "running" -> Color(0xFF34D399)
-                            "paused" -> Color(0xFFFBBF24)
-                            else -> Color(0xFF94A3B8)
-                        }
-                        Text(
-                            text = "Timer: ${conn.formattedCountdown()} (${conn.timerState})",
-                            color = timerColor,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Button(
-                            onClick = { app.connectionManager.sendToggleStandby("podium") },
-                            enabled = conn.connected,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (conn.isStandby) amberAlert else Color(0xFF1E293B),
-                                contentColor = Color.White
-                            )
-                        ) {
-                            Text(if (conn.isStandby) "Exit BRB" else "BRB", fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        for ((lbl, sec) in listOf("5m" to 300, "10m" to 600, "15m" to 900)) {
-                            OutlinedButton(
-                                onClick = { app.connectionManager.sendTimerCommand("timer_start", sec, "podium") },
-                                enabled = conn.connected,
-                                modifier = Modifier.weight(1f),
-                                border = BorderStroke(1.dp, oledBorder),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                            ) {
-                                Text(lbl, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                        OutlinedButton(
-                            onClick = { app.connectionManager.sendTimerCommand("timer_pause", 0, "podium") },
-                            enabled = conn.connected,
-                            modifier = Modifier.weight(1f),
-                            border = BorderStroke(1.dp, oledBorder),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                        ) {
-                            Text(if (conn.timerState == "paused") "▶" else "❚❚", fontWeight = FontWeight.Bold)
-                        }
-                        OutlinedButton(
-                            onClick = { app.connectionManager.sendTimerCommand("timer_reset", 0, "podium") },
-                            enabled = conn.connected,
-                            modifier = Modifier.weight(1f),
-                            border = BorderStroke(1.dp, oledBorder),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                        ) {
-                            Text("↺", fontWeight = FontWeight.Bold)
-                        }
-                    }
+                val slideLabel = if (conn.slideIndex > 0) {
+                    "Slide ${conn.slideIndex}" + (if (conn.slideTotal > 0) " / ${conn.slideTotal}" else "")
+                } else {
+                    "Slideshow"
                 }
-            }
-
-            // Quick Stage Nudge Chips
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = oledCard,
-                border = BorderStroke(1.dp, oledBorder)
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Text(
+                    text = slideLabel,
+                    color = Color(0xFF60CDFF),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (conn.slideTitle.isNotBlank()) {
                     Text(
-                        text = "Quick Stage Nudge",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        text = conn.slideTitle,
+                        color = Color(0xFFCBD5E1),
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 10.dp)
                     )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilledTonalButton(
+                    onClick = onPrevSlide,
+                    enabled = conn.connected && conn.usingBridge,
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) {
+                    Text("◀ Prev", fontWeight = FontWeight.Bold)
+                }
+                FilledTonalButton(
+                    onClick = onNextSlide,
+                    enabled = conn.connected && conn.usingBridge,
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) {
+                    Text("Next ▶", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            OutlinedButton(
+                onClick = onStartSlideshow,
+                enabled = conn.connected && conn.usingBridge,
+                modifier = Modifier.fillMaxWidth(),
+                border = BorderStroke(1.dp, PodiumOledBorder),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE2E8F0))
+            ) {
+                Text("Start Slideshow (F5)", fontWeight = FontWeight.SemiBold)
+            }
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 76.dp, max = 160.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFF050507),
+                border = BorderStroke(1.dp, Color(0xFF1E293B))
+            ) {
+                val notesScroll = rememberScrollState()
+                Text(
+                    text = conn.slideNotes.ifBlank { "No speaker notes for current slide." },
+                    color = if (conn.slideNotes.isBlank()) Color(0xFF64748B) else Color(0xFFF1F5F9),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    modifier = Modifier
+                        .verticalScroll(notesScroll)
+                        .padding(10.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PodiumTimerAndStandbyCard(
+    conn: ConnectionUiState,
+    onToggleStandby: () -> Unit,
+    onTimerCommand: (String, Int) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = PodiumOledCard,
+        border = BorderStroke(1.dp, PodiumOledBorder)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val timerColor = when (conn.timerState) {
+                    "overtime" -> Color(0xFFEF4444)
+                    "running" -> Color(0xFF34D399)
+                    "paused" -> Color(0xFFFBBF24)
+                    else -> Color(0xFF94A3B8)
+                }
+                Text(
+                    text = "Timer: ${conn.formattedCountdown()} (${conn.timerState})",
+                    color = timerColor,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Button(
+                    onClick = onToggleStandby,
+                    enabled = conn.connected,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (conn.isStandby) PodiumAmberAlert else Color(0xFF1E293B),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(if (conn.isStandby) "Exit BRB" else "BRB", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                for ((lbl, sec) in listOf("5m" to 300, "10m" to 600, "15m" to 900)) {
+                    OutlinedButton(
+                        onClick = { onTimerCommand("timer_start", sec) },
+                        enabled = conn.connected,
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, PodiumOledBorder),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                     ) {
-                        for (nudge in com.saabithjiffry.presentersync.remote.config.QuickNudgePresetHelper.resolve("", conn.quickNudges, 4)) {
-                            FilledTonalButton(
-                                onClick = { app.connectionManager.sendStageNudge(nudge) },
-                                enabled = conn.connected && (conn.usingBridge || conn.usingRelayFallback)
-                            ) {
-                                Text(nudge, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
+                        Text(lbl, fontWeight = FontWeight.Bold)
+                    }
+                }
+                OutlinedButton(
+                    onClick = { onTimerCommand("timer_pause", 0) },
+                    enabled = conn.connected,
+                    modifier = Modifier.weight(1f),
+                    border = BorderStroke(1.dp, PodiumOledBorder),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                ) {
+                    Text(if (conn.timerState == "paused") "▶" else "❚❚", fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick = { onTimerCommand("timer_reset", 0) },
+                    enabled = conn.connected,
+                    modifier = Modifier.weight(1f),
+                    border = BorderStroke(1.dp, PodiumOledBorder),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                ) {
+                    Text("↺", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PodiumQuickNudgeCard(
+    conn: ConnectionUiState,
+    onSendNudge: (String) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = PodiumOledCard,
+        border = BorderStroke(1.dp, PodiumOledBorder)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Quick Stage Nudge",
+                color = Color(0xFF94A3B8),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                for (nudge in QuickNudgePresetHelper.resolve("", conn.quickNudges, 4)) {
+                    FilledTonalButton(
+                        onClick = { onSendNudge(nudge) },
+                        enabled = conn.connected && (conn.usingBridge || conn.usingRelayFallback)
+                    ) {
+                        Text(nudge, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

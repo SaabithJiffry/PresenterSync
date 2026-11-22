@@ -54,7 +54,19 @@ class MicPillCanvasView(context: Context) : View(context) {
         color = Color.parseColor("#F8FAFC")
     }
 
-    // Reusable geometry objects (zero per-frame allocations)
+    // Reusable visual state & geometry objects (zero per-frame allocations)
+    private class PillVisualState {
+        var bgColor: Int = Color.BLACK
+        var borderColor: Int = Color.WHITE
+        var iconColor: Int = Color.WHITE
+        var showSlash: Boolean = false
+        var label: String = "LIVE"
+        var isOffline: Boolean = false
+        var alphaScale: Float = 1f
+        var effectiveAlpha: Int = 255
+    }
+
+    private val visualState = PillVisualState()
     private val pillRect = RectF()
     private val specularRect = RectF()
     private val haloRect = RectF()
@@ -170,51 +182,60 @@ class MicPillCanvasView(context: Context) : View(context) {
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        val density = resources.displayMetrics.density.coerceAtLeast(0.5f)
+        resolveVisualState(visualState)
+        val metrics = computeRenderMetrics(w, h, visualState.label)
+        pillRect.set(metrics.pillLeft, metrics.pillTop, metrics.pillRight, metrics.pillBottom)
+
+        drawPillShellAndBorder(canvas, metrics, visualState)
+        drawForegroundLabel(canvas, metrics, visualState)
+        drawVectorMicrophoneWithSlash(canvas, metrics, visualState)
+        drawOverlaysAndMiniBadges(canvas, metrics, visualState, h)
+    }
+
+    private fun resolveVisualState(out: PillVisualState) {
         val palette = HudColorPalettes.get(config.hudColorPreset, config.customLiveHex, config.customMutedHex)
         val isOffline = overrideMuted == null && !connState.connected
         val muted = overrideMuted ?: connState.isMuted
         val tFrom = transitionFromMuted
         val tTo = transitionToMuted
 
-        val bgColor: Int
-        val borderColor: Int
-        val iconHexColor: Int
-        val showSlash: Boolean
-        val label: String
+        out.isOffline = isOffline
+        out.alphaScale = currentAlpha / 255f
+        out.effectiveAlpha = (255 * out.alphaScale).roundToInt().coerceIn(0, 255)
 
         if (isOffline) {
             val isAuthErr = connState.connStatus == ConnStatus.AUTH_FAILED
-            bgColor = palette.offlineBg
-            borderColor = adjustBorderColor(if (isAuthErr) palette.authErrBorder else palette.offlineBg, isAuthErr)
-            iconHexColor = if (config.monoIcon) palette.offlineIcon else Color.parseColor("#E5E7EB")
-            showSlash = true
-            label = if (isAuthErr) "AUTH ERR" else "OFFLINE"
+            out.bgColor = palette.offlineBg
+            out.borderColor = adjustBorderColor(if (isAuthErr) palette.authErrBorder else palette.offlineBg, isAuthErr)
+            out.iconColor = if (config.monoIcon) palette.offlineIcon else Color.parseColor("#E5E7EB")
+            out.showSlash = true
+            out.label = if (isAuthErr) "AUTH ERR" else "OFFLINE"
         } else if (tFrom != null && tTo != null) {
             val (fromBg, fromBorder, fromIcon) = resolveColorsForMuted(palette, tFrom)
             val (toBg, toBorder, toIcon) = resolveColorsForMuted(palette, tTo)
             val f = transitionFraction.coerceIn(0f, 1f)
-            bgColor = colorEvaluator.evaluate(f, fromBg, toBg) as Int
-            borderColor = colorEvaluator.evaluate(f, fromBorder, toBorder) as Int
-            iconHexColor = colorEvaluator.evaluate(f, fromIcon, toIcon) as Int
+            out.bgColor = colorEvaluator.evaluate(f, fromBg, toBg) as Int
+            out.borderColor = colorEvaluator.evaluate(f, fromBorder, toBorder) as Int
+            out.iconColor = colorEvaluator.evaluate(f, fromIcon, toIcon) as Int
             val displayMuted = if (f < 0.5f) tFrom else tTo
-            showSlash = displayMuted
-            label = if (displayMuted) "MUTED" else "LIVE"
+            out.showSlash = displayMuted
+            out.label = if (displayMuted) "MUTED" else "LIVE"
         } else {
-            val resolved = resolveColorsForMuted(palette, muted)
-            bgColor = resolved.first
-            borderColor = resolved.second
-            iconHexColor = resolved.third
-            showSlash = muted
-            label = if (muted) "MUTED" else "LIVE"
+            val (bg, border, icon) = resolveColorsForMuted(palette, muted)
+            out.bgColor = bg
+            out.borderColor = border
+            out.iconColor = icon
+            out.showSlash = muted
+            out.label = if (muted) "MUTED" else "LIVE"
         }
+    }
 
-        // Compute bounded optical metrics matching live canvas dimensions
-        val effScale = effectiveScale()
-        val metrics = MicPillMetricsCalculator.computeForCanvasBounds(
+    private fun computeRenderMetrics(w: Float, h: Float, label: String): MicPillRenderMetrics {
+        val density = resources.displayMetrics.density.coerceAtLeast(0.5f)
+        return MicPillMetricsCalculator.computeForCanvasBounds(
             canvasWidthPx = w,
             canvasHeightPx = h,
-            effectiveScale = effScale,
+            effectiveScale = effectiveScale(),
             showText = config.showText,
             sleekCorners = config.sleekCorners,
             label = label,
@@ -224,23 +245,28 @@ class MicPillCanvasView(context: Context) : View(context) {
                 textPaint.measureText(text)
             }
         )
+    }
 
-        pillRect.set(metrics.pillLeft, metrics.pillTop, metrics.pillRight, metrics.pillBottom)
+    /**
+     * Draws the outer elevation halo, vertical tonal gradient background, crisp inner specular rim,
+     * and optical/amber-alert border.
+     */
+    private fun drawPillShellAndBorder(canvas: Canvas, metrics: MicPillRenderMetrics, state: PillVisualState) {
+        drawOuterElevationHalo(canvas, metrics, state.alphaScale)
+        drawTonalBackgroundFill(canvas, metrics, state.bgColor, state.effectiveAlpha)
+        drawInnerSpecularRim(canvas, metrics, state.effectiveAlpha)
+        drawOpticalPillBorder(canvas, metrics, state)
+    }
 
-        val alphaScale = currentAlpha / 255f
-        val effectiveAlpha = (255 * alphaScale).roundToInt().coerceIn(0, 255)
-
-        // 1. Soft outer elevation halo inside safe inset bounds (zero shadow-layer GPU penalty)
-        drawOuterElevationHalo(canvas, metrics, alphaScale)
-
-        // 2. High-DPI vertical tonal LinearGradient fill (+6% top highlight to -6% bottom depth)
+    private fun drawTonalBackgroundFill(canvas: Canvas, metrics: MicPillRenderMetrics, bgColor: Int, effectiveAlpha: Int) {
         ensureFillShader(bgColor, pillRect.top, pillRect.bottom)
         bgPaint.color = bgColor
         bgPaint.shader = cachedFillShader
         bgPaint.alpha = effectiveAlpha
         canvas.drawRoundRect(pillRect, metrics.cornerRadiusPx, metrics.cornerRadiusPx, bgPaint)
+    }
 
-        // 3. Crisp inner specular rim (1px-1.5dp) for Fluent glass depth
+    private fun drawInnerSpecularRim(canvas: Canvas, metrics: MicPillRenderMetrics, effectiveAlpha: Int) {
         val specInset = metrics.strokeWidthPx / 2f + metrics.specularStrokeWidthPx / 2f
         specularRect.set(
             pillRect.left + specInset,
@@ -248,59 +274,70 @@ class MicPillCanvasView(context: Context) : View(context) {
             pillRect.right - specInset,
             pillRect.bottom - specInset
         )
-        if (specularRect.width() > 2f && specularRect.height() > 2f) {
-            ensureSpecularShader(specularRect.top, specularRect.bottom)
-            specularRimPaint.strokeWidth = metrics.specularStrokeWidthPx
-            specularRimPaint.shader = cachedSpecularShader
-            specularRimPaint.alpha = effectiveAlpha
-            canvas.drawRoundRect(
-                specularRect,
-                metrics.specularCornerRadiusPx,
-                metrics.specularCornerRadiusPx,
-                specularRimPaint
-            )
-        }
+        if (specularRect.width() <= 2f || specularRect.height() <= 2f) return
+        ensureSpecularShader(specularRect.top, specularRect.bottom)
+        specularRimPaint.strokeWidth = metrics.specularStrokeWidthPx
+        specularRimPaint.shader = cachedSpecularShader
+        specularRimPaint.alpha = effectiveAlpha
+        canvas.drawRoundRect(
+            specularRect,
+            metrics.specularCornerRadiusPx,
+            metrics.specularCornerRadiusPx,
+            specularRimPaint
+        )
+    }
 
-        // 4. Optical sub-linear outer border (strictly <= 3.0dp even at 5.0x)
-        val amberAlert = !isOffline && MicPillMetricsCalculator.shouldShowAmberAlertBorder(connState, config.showPillMiniBadges)
+    private fun drawOpticalPillBorder(canvas: Canvas, metrics: MicPillRenderMetrics, state: PillVisualState) {
+        val amberAlert = !state.isOffline &&
+            MicPillMetricsCalculator.shouldShowAmberAlertBorder(connState, config.showPillMiniBadges)
         borderPaint.strokeWidth = if (amberAlert) metrics.strokeWidthPx * 1.25f else metrics.strokeWidthPx
-        borderPaint.color = if (amberAlert) MicPillMetricsCalculator.AMBER_ALERT_BORDER_ARGB else borderColor
-        borderPaint.alpha = effectiveAlpha
+        borderPaint.color = if (amberAlert) MicPillMetricsCalculator.AMBER_ALERT_BORDER_ARGB else state.borderColor
+        borderPaint.alpha = state.effectiveAlpha
         canvas.drawRoundRect(pillRect, metrics.cornerRadiusPx, metrics.cornerRadiusPx, borderPaint)
+    }
 
-        // 5. Foreground content (precision 24x24 vector mic glyph + optically centered label)
-        contentPaint.color = iconHexColor
-        contentPaint.alpha = effectiveAlpha
-        strokeIconPaint.color = iconHexColor
-        strokeIconPaint.alpha = effectiveAlpha
-        knockoutSlashPaint.color = bgColor
+    private fun drawForegroundLabel(canvas: Canvas, metrics: MicPillRenderMetrics, state: PillVisualState) {
+        if (!config.showText) return
+        textPaint.color = state.iconColor
+        textPaint.alpha = state.effectiveAlpha
+        textPaint.textSize = metrics.textSizePx
+        val fm = textPaint.fontMetrics
+        val textBaseline = metrics.iconCenterYPx - (fm.ascent + fm.descent) / 2f
+        canvas.drawText(state.label, metrics.textStartXPx, textBaseline, textPaint)
+    }
+
+    private fun drawVectorMicrophoneWithSlash(canvas: Canvas, metrics: MicPillRenderMetrics, state: PillVisualState) {
+        contentPaint.color = state.iconColor
+        contentPaint.alpha = state.effectiveAlpha
+        strokeIconPaint.color = state.iconColor
+        strokeIconPaint.alpha = state.effectiveAlpha
+        knockoutSlashPaint.color = state.bgColor
         knockoutSlashPaint.shader = cachedFillShader
-        knockoutSlashPaint.alpha = effectiveAlpha
-
-        if (config.showText) {
-            textPaint.color = iconHexColor
-            textPaint.alpha = effectiveAlpha
-            textPaint.textSize = metrics.textSizePx
-            val fm = textPaint.fontMetrics
-            val textBaseline = metrics.iconCenterYPx - (fm.ascent + fm.descent) / 2f
-            canvas.drawText(label, metrics.textStartXPx, textBaseline, textPaint)
-        }
+        knockoutSlashPaint.alpha = state.effectiveAlpha
 
         drawPrecisionMicrophoneGlyph(
             canvas = canvas,
             iconLeft = metrics.iconLeftPx,
             iconTop = metrics.iconCenterYPx - metrics.iconSizePx / 2f,
             size = metrics.iconSizePx,
-            mutedSlash = showSlash
+            mutedSlash = state.showSlash
         )
+    }
 
-        // 6. Hold-progress ring drawn safely within outer inset padding
+    private fun drawOverlaysAndMiniBadges(
+        canvas: Canvas,
+        metrics: MicPillRenderMetrics,
+        state: PillVisualState,
+        canvasHeightPx: Float
+    ) {
         drawHoldProgressRing(canvas, metrics)
-
-        // 7. Compact bottom-edge mini-badge strip (Timer / BRB / REC) without overlapping main icon+label
-        val badgeText = if (!isOffline) MicPillMetricsCalculator.formatPillMiniBadgeText(connState, config.showPillMiniBadges) else ""
+        val badgeText = if (!state.isOffline) {
+            MicPillMetricsCalculator.formatPillMiniBadgeText(connState, config.showPillMiniBadges)
+        } else {
+            ""
+        }
         if (badgeText.isNotEmpty()) {
-            drawPillMiniBadgeStrip(canvas, metrics, badgeText, effectiveAlpha, h)
+            drawPillMiniBadgeStrip(canvas, metrics, badgeText, state.effectiveAlpha, canvasHeightPx)
         }
     }
 
@@ -393,42 +430,33 @@ class MicPillCanvasView(context: Context) : View(context) {
         // 3 soft concentric halo passes strictly bounded within safeOuterInsetPx
         val spread = metrics.haloSpreadPx.coerceAtMost(metrics.safeOuterInsetPx)
         val yShift = metrics.haloOffsetYPx.coerceAtMost((metrics.safeOuterInsetPx - spread).coerceAtLeast(0f))
-
-        // Outer soft bloom
         haloPaint.color = Color.BLACK
-        haloPaint.alpha = (18 * baseHaloAlpha).roundToInt().coerceIn(0, 255)
-        haloRect.set(
-            pillRect.left - spread,
-            pillRect.top - spread * 0.45f + yShift,
-            pillRect.right + spread,
-            pillRect.bottom + spread + yShift
-        )
-        val rOuter = metrics.cornerRadiusPx + spread * 0.75f
-        canvas.drawRoundRect(haloRect, rOuter, rOuter, haloPaint)
 
-        // Mid ambient shadow
-        val midSpread = spread * 0.62f
-        haloPaint.alpha = (28 * baseHaloAlpha).roundToInt().coerceIn(0, 255)
-        haloRect.set(
-            pillRect.left - midSpread,
-            pillRect.top - midSpread * 0.25f + yShift * 0.75f,
-            pillRect.right + midSpread,
-            pillRect.bottom + midSpread + yShift * 0.75f
-        )
-        val rMid = metrics.cornerRadiusPx + midSpread * 0.65f
-        canvas.drawRoundRect(haloRect, rMid, rMid, haloPaint)
+        drawHaloPass(canvas, metrics.cornerRadiusPx, baseHaloAlpha, 18, spread, spread * 0.45f, yShift, 0.75f)
+        drawHaloPass(canvas, metrics.cornerRadiusPx, baseHaloAlpha, 28, spread * 0.62f, spread * 0.62f * 0.25f, yShift * 0.75f, 0.65f)
+        drawHaloPass(canvas, metrics.cornerRadiusPx, baseHaloAlpha, 36, spread * 0.30f, 0f, yShift * 0.5f, 0.5f, topYShift = yShift * 0.4f)
+    }
 
-        // Tight contact shadow
-        val innerSpread = spread * 0.30f
-        haloPaint.alpha = (36 * baseHaloAlpha).roundToInt().coerceIn(0, 255)
+    private fun drawHaloPass(
+        canvas: Canvas,
+        baseCornerRadius: Float,
+        baseHaloAlpha: Float,
+        alphaWeight: Int,
+        passSpread: Float,
+        topSpread: Float,
+        bottomYShift: Float,
+        radiusFactor: Float,
+        topYShift: Float = bottomYShift
+    ) {
+        haloPaint.alpha = (alphaWeight * baseHaloAlpha).roundToInt().coerceIn(0, 255)
         haloRect.set(
-            pillRect.left - innerSpread,
-            pillRect.top + yShift * 0.4f,
-            pillRect.right + innerSpread,
-            pillRect.bottom + innerSpread + yShift * 0.5f
+            pillRect.left - passSpread,
+            pillRect.top - topSpread + topYShift,
+            pillRect.right + passSpread,
+            pillRect.bottom + passSpread + bottomYShift
         )
-        val rInner = metrics.cornerRadiusPx + innerSpread * 0.5f
-        canvas.drawRoundRect(haloRect, rInner, rInner, haloPaint)
+        val radius = baseCornerRadius + passSpread * radiusFactor
+        canvas.drawRoundRect(haloRect, radius, radius, haloPaint)
     }
 
     private var holdStage: BubbleHoldStage = BubbleHoldStage.IDLE
@@ -550,19 +578,32 @@ class MicPillCanvasView(context: Context) : View(context) {
 
         // 4. Dual-pass knockout mute slash (mask stroke in pill fill underneath foreground slash)
         if (mutedSlash) {
-            val sx = vx(MicVectorSpec24.SLASH_START_X)
-            val sy = vy(MicVectorSpec24.SLASH_START_Y)
-            val ex = vx(MicVectorSpec24.SLASH_END_X)
-            val ey = vy(MicVectorSpec24.SLASH_END_Y)
-
-            // Pass 1: Pill-fill mask stroke creates a crisp visual knockout gap behind the slash
-            knockoutSlashPaint.strokeWidth = glyphStroke * MicVectorSpec24.SLASH_MASK_MULTIPLIER
-            canvas.drawLine(sx, sy, ex, ey, knockoutSlashPaint)
-
-            // Pass 2: Crisp foreground diagonal mute slash
-            strokeIconPaint.strokeWidth = glyphStroke * MicVectorSpec24.SLASH_FG_MULTIPLIER
-            canvas.drawLine(sx, sy, ex, ey, strokeIconPaint)
-            strokeIconPaint.strokeWidth = glyphStroke
+            drawMutedKnockoutSlash(
+                canvas = canvas,
+                sx = vx(MicVectorSpec24.SLASH_START_X),
+                sy = vy(MicVectorSpec24.SLASH_START_Y),
+                ex = vx(MicVectorSpec24.SLASH_END_X),
+                ey = vy(MicVectorSpec24.SLASH_END_Y),
+                glyphStroke = glyphStroke
+            )
         }
+    }
+
+    private fun drawMutedKnockoutSlash(
+        canvas: Canvas,
+        sx: Float,
+        sy: Float,
+        ex: Float,
+        ey: Float,
+        glyphStroke: Float
+    ) {
+        // Pass 1: Pill-fill mask stroke creates a crisp visual knockout gap behind the slash
+        knockoutSlashPaint.strokeWidth = glyphStroke * MicVectorSpec24.SLASH_MASK_MULTIPLIER
+        canvas.drawLine(sx, sy, ex, ey, knockoutSlashPaint)
+
+        // Pass 2: Crisp foreground diagonal mute slash
+        strokeIconPaint.strokeWidth = glyphStroke * MicVectorSpec24.SLASH_FG_MULTIPLIER
+        canvas.drawLine(sx, sy, ex, ey, strokeIconPaint)
+        strokeIconPaint.strokeWidth = glyphStroke
     }
 }

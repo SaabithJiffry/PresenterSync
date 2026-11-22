@@ -131,18 +131,7 @@ class RelayClient(
                     val muted = env.telemetry?.isMuted
                         ?: (env.data == "1" || env.data.equals("true", ignoreCase = true))
                     callbacks.onRelayMuteState(muted)
-                    val tel = env.telemetry
-                    if (tel != null) {
-                        callbacks.onRelayDirectorState(
-                            tel.isStandby,
-                            tel.recState,
-                            tel.timerState,
-                            tel.timerRemainingSec,
-                            tel.timerPresetSec,
-                            tel.activeScene
-                        )
-                        callbacks.onRelayTelemetryState(tel.copy(isMuted = muted))
-                    }
+                    env.telemetry?.let { dispatchRelayTelemetry(it.copy(isMuted = muted)) }
                 }
                 "dir_state" -> {
                     val tel = env.telemetry ?: RelayCrypto.parseDirStatePayload(env.data)
@@ -150,15 +139,7 @@ class RelayClient(
                         if (tel.isMuted != null) {
                             callbacks.onRelayMuteState(tel.isMuted)
                         }
-                        callbacks.onRelayDirectorState(
-                            tel.isStandby,
-                            tel.recState,
-                            tel.timerState,
-                            tel.timerRemainingSec,
-                            tel.timerPresetSec,
-                            tel.activeScene
-                        )
-                        callbacks.onRelayTelemetryState(tel)
+                        dispatchRelayTelemetry(tel)
                     }
                 }
                 "nudge" -> {
@@ -260,19 +241,30 @@ class RelayClient(
         }
     }
 
-    fun closeDead() {
-        if (closed.getAndSet(true)) return
-        try {
-            webSocket?.cancel()
-        } catch (_: Exception) {
-        }
-        webSocket = null
+    private fun dispatchRelayTelemetry(tel: RelayTelemetryState) {
+        callbacks.onRelayDirectorState(
+            tel.isStandby,
+            tel.recState,
+            tel.timerState,
+            tel.timerRemainingSec,
+            tel.timerPresetSec,
+            tel.activeScene
+        )
+        callbacks.onRelayTelemetryState(tel)
     }
 
-    fun close() {
+    fun closeDead() = shutdownSocket(forceCancel = true)
+
+    fun close() = shutdownSocket(forceCancel = false)
+
+    private fun shutdownSocket(forceCancel: Boolean) {
         if (closed.getAndSet(true)) return
         try {
-            webSocket?.close(1000, "Relay shutdown")
+            if (forceCancel) {
+                webSocket?.cancel()
+            } else {
+                webSocket?.close(1000, "Relay shutdown")
+            }
         } catch (_: Exception) {
         }
         webSocket = null

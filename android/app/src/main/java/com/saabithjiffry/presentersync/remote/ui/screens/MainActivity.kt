@@ -1,5 +1,6 @@
 package com.saabithjiffry.presentersync.remote.ui.screens
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -13,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
+import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.input.CapturedKeyEvent
 import com.saabithjiffry.presentersync.remote.input.ClickerDecision
 import com.saabithjiffry.presentersync.remote.input.ClickerMuteController
@@ -83,86 +85,113 @@ class MainActivity : ComponentActivity() {
         startActivity(intent)
     }
 
+    /**
+     * Intercepts hardware clicker keys before focused Compose/View widgets consume them.
+     *
+     * Note: android.app.Activity.dispatchKeyEvent is a public framework API; androidx.core 1.12.0's
+     * ComponentActivity carries a spurious @RestrictTo(LIBRARY_GROUP_PREFIX) annotation on this
+     * override (AndroidX issue b/266756585), so RestrictedApi is suppressed locally here.
+     */
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val keyName = KeyEvent.keyCodeToString(event.keyCode)
         val navIgnored = event.keyCode == KeyEvent.KEYCODE_BACK ||
             event.keyCode == KeyEvent.KEYCODE_HOME ||
             event.keyCode == KeyEvent.KEYCODE_POWER
-        val app = application as PresenterSyncRemoteApp
-        val cfg = app.configStore.current
-        if (!navIgnored && (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)) {
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && InAppKeyMonitor.captureNextKeyMode.getAndSet(false)) {
-                InAppKeyMonitor.recordUiCapturedEvent(
-                    CapturedKeyEvent(
-                        seq = System.nanoTime(),
-                        keyCode = event.keyCode,
-                        keyCodeName = keyName,
-                        displayName = ClickerMuteController.friendlyKeyLabel(keyName),
-                        scanCode = event.scanCode,
-                        deviceName = event.device?.name ?: "Focused Window",
-                        action = "DOWN",
-                        decisionLabel = "Captured New Mute Key (Window)",
-                        consumed = true,
-                        timestampMs = System.currentTimeMillis()
-                    )
-                )
+        val isKeyEdge = event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP
+        if (!navIgnored && isKeyEdge) {
+            val keyName = KeyEvent.keyCodeToString(event.keyCode)
+            val app = application as PresenterSyncRemoteApp
+            val cfg = app.configStore.current
+            if (handleCaptureNextKey(event, keyName)) return true
+            if (InAppKeyMonitor.testerMode.get()) {
+                handleKeyTesterPreview(event, keyName, cfg)
+            } else if (handleFocusedClickerKey(event, keyName, app, cfg)) {
                 return true
-            }
-            if (InAppKeyMonitor.testerMode.get() && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                val matched = ClickerMuteController.normalizeKeyCodeName(cfg.hwMuteHotkey) ==
-                    ClickerMuteController.normalizeKeyCodeName(keyName)
-                InAppKeyMonitor.recordUiCapturedEvent(
-                    CapturedKeyEvent(
-                        seq = System.nanoTime(),
-                        keyCode = event.keyCode,
-                        keyCodeName = keyName,
-                        displayName = ClickerMuteController.friendlyKeyLabel(keyName),
-                        scanCode = event.scanCode,
-                        deviceName = event.device?.name ?: "Focused Window",
-                        action = "DOWN",
-                        decisionLabel = if (matched) "Matched Mute Button (Preview)" else "Other Key (Pass Through)",
-                        consumed = matched,
-                        timestampMs = System.currentTimeMillis()
-                    )
-                )
-            } else {
-                val action = if (event.action == KeyEvent.ACTION_DOWN) KeyAction.DOWN else KeyAction.UP
-                val decision = focusedKeyController.onKeyEvent(
-                    keyCodeName = keyName,
-                    action = action,
-                    isCtrl = event.isCtrlPressed,
-                    isAlt = event.isAltPressed,
-                    isShift = event.isShiftPressed,
-                    repeatCount = event.repeatCount,
-                    config = cfg,
-                    isMuted = app.connectionManager.uiState.value.isMuted
-                )
-                when (decision) {
-                    ClickerDecision.CONSUME_TOGGLE,
-                    ClickerDecision.TRIGGER_TOGGLE_SHORTCUT -> {
-                        app.connectionManager.toggleMuteFromClicker()
-                        return true
-                    }
-                    ClickerDecision.CONSUME_COUGH_HOLD_MUTE,
-                    ClickerDecision.CONSUME_PTT_RELEASE_MUTE -> {
-                        app.connectionManager.setMuteFromClicker(true)
-                        return true
-                    }
-                    ClickerDecision.CONSUME_COUGH_RELEASE_UNMUTE,
-                    ClickerDecision.CONSUME_PTT_HOLD_UNMUTE -> {
-                        app.connectionManager.setMuteFromClicker(false)
-                        return true
-                    }
-                    ClickerDecision.TRIGGER_EXIT_SHORTCUT -> {
-                        FloatingHudForegroundService.startService(this, FloatingHudForegroundService.ACTION_STOP)
-                        return true
-                    }
-                    ClickerDecision.CONSUME_NOOP -> return true
-                    ClickerDecision.PASS_THROUGH -> Unit
-                }
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun handleCaptureNextKey(event: KeyEvent, keyName: String): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return false
+        if (!InAppKeyMonitor.captureNextKeyMode.getAndSet(false)) return false
+        InAppKeyMonitor.recordUiCapturedEvent(
+            CapturedKeyEvent(
+                seq = System.nanoTime(),
+                keyCode = event.keyCode,
+                keyCodeName = keyName,
+                displayName = ClickerMuteController.friendlyKeyLabel(keyName),
+                scanCode = event.scanCode,
+                deviceName = event.device?.name ?: "Focused Window",
+                action = "DOWN",
+                decisionLabel = "Captured New Mute Key (Window)",
+                consumed = true,
+                timestampMs = System.currentTimeMillis()
+            )
+        )
+        return true
+    }
+
+    private fun handleKeyTesterPreview(event: KeyEvent, keyName: String, cfg: RemoteConfig) {
+        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return
+        val matched = ClickerMuteController.normalizeKeyCodeName(cfg.hwMuteHotkey) ==
+            ClickerMuteController.normalizeKeyCodeName(keyName)
+        InAppKeyMonitor.recordUiCapturedEvent(
+            CapturedKeyEvent(
+                seq = System.nanoTime(),
+                keyCode = event.keyCode,
+                keyCodeName = keyName,
+                displayName = ClickerMuteController.friendlyKeyLabel(keyName),
+                scanCode = event.scanCode,
+                deviceName = event.device?.name ?: "Focused Window",
+                action = "DOWN",
+                decisionLabel = if (matched) "Matched Mute Button (Preview)" else "Other Key (Pass Through)",
+                consumed = matched,
+                timestampMs = System.currentTimeMillis()
+            )
+        )
+    }
+
+    private fun handleFocusedClickerKey(
+        event: KeyEvent,
+        keyName: String,
+        app: PresenterSyncRemoteApp,
+        cfg: RemoteConfig
+    ): Boolean {
+        val action = if (event.action == KeyEvent.ACTION_DOWN) KeyAction.DOWN else KeyAction.UP
+        val decision = focusedKeyController.onKeyEvent(
+            keyCodeName = keyName,
+            action = action,
+            isCtrl = event.isCtrlPressed,
+            isAlt = event.isAltPressed,
+            isShift = event.isShiftPressed,
+            repeatCount = event.repeatCount,
+            config = cfg,
+            isMuted = app.connectionManager.uiState.value.isMuted
+        )
+        return when (decision) {
+            ClickerDecision.CONSUME_TOGGLE,
+            ClickerDecision.TRIGGER_TOGGLE_SHORTCUT -> {
+                app.connectionManager.toggleMuteFromClicker()
+                true
+            }
+            ClickerDecision.CONSUME_COUGH_HOLD_MUTE,
+            ClickerDecision.CONSUME_PTT_RELEASE_MUTE -> {
+                app.connectionManager.setMuteFromClicker(true)
+                true
+            }
+            ClickerDecision.CONSUME_COUGH_RELEASE_UNMUTE,
+            ClickerDecision.CONSUME_PTT_HOLD_UNMUTE -> {
+                app.connectionManager.setMuteFromClicker(false)
+                true
+            }
+            ClickerDecision.TRIGGER_EXIT_SHORTCUT -> {
+                FloatingHudForegroundService.startService(this, FloatingHudForegroundService.ACTION_STOP)
+                true
+            }
+            ClickerDecision.CONSUME_NOOP -> true
+            ClickerDecision.PASS_THROUGH -> false
+        }
     }
 }
 

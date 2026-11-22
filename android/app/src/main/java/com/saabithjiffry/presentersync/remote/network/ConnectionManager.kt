@@ -273,9 +273,8 @@ class ConnectionManager(
             }
             return
         }
-        val lastRx = lastRxAtMs
-        if (lastRx >= 0L && (nowMs - lastRx) > wakeStalenessMs) {
-            logInfo("Screen wake / network change detected stale connection (idle=${nowMs - lastRx}ms > ${wakeStalenessMs}ms); forcing reconnectNow()")
+        if (FailoverPolicy.isWakeConnectionStale(lastRxAtMs, nowMs, wakeStalenessMs)) {
+            logInfo("Screen wake / network change detected stale connection (idle=${nowMs - lastRxAtMs}ms > ${wakeStalenessMs}ms); forcing reconnectNow()")
             lastWakeReconnectAtMs = nowMs
             markSocketDeadAndClose()
             reconnectNow()
@@ -307,126 +306,171 @@ class ConnectionManager(
 
     fun stop() {
         generation.incrementAndGet()
-        networkDebounceJob?.cancel()
-        connectLoopJob?.cancel()
-        heartbeatJob?.cancel()
-        pongWatchdogJob?.cancel()
-        pongWatchdogJob = null
-        recTickerJob?.cancel()
-        presenterTimerJob?.cancel()
-        lanRepromoteJob?.cancel()
+        cancelSessionJobs(
+            includeConnectLoop = true,
+            includeNetworkDebounce = true,
+            includePresenterTimer = true
+        )
         lastRxAtMs = -1L
         closeActiveClients()
         unregisterNetworkCallback()
-        _uiState.value = _uiState.value.copy(
-            connected = false,
-            connStatus = ConnStatus.SEARCHING,
-            activeHost = "",
-            usingRelayFallback = false,
-            usingBridge = false,
-            usingDirectObsFallback = false,
-            studioModeActive = false,
-            previewScene = "",
-            serviceRunning = false,
-            recState = 0,
-            recSeconds = 0,
-            streamDropWarn = false,
-            voiceWhileMuted = false,
-            isStandby = false,
-            timerState = "stopped",
-            scenes = emptyList()
-        )
+        transitionToDisconnected(clearSessionTelemetry = true, stopService = true)
     }
 
     fun reconnectNow() {
         val gen = generation.incrementAndGet()
-        connectLoopJob?.cancel()
-        heartbeatJob?.cancel()
-        pongWatchdogJob?.cancel()
-        pongWatchdogJob = null
-        recTickerJob?.cancel()
-        lanRepromoteJob?.cancel()
+        cancelSessionJobs(includeConnectLoop = true)
         lastRxAtMs = -1L
         closeActiveClients()
-        _uiState.value = _uiState.value.copy(
-            connected = false,
-            connStatus = ConnStatus.SEARCHING,
-            activeHost = "",
-            usingRelayFallback = false,
-            usingBridge = false,
-            usingDirectObsFallback = false,
-            recState = 0,
-            recSeconds = 0,
-            streamDropWarn = false,
-            voiceWhileMuted = false
-        )
+        transitionToDisconnected()
         connectLoopJob = scope.launch {
             runConnectLoop(gen)
         }
     }
 
-    private fun closeActiveClients() {
-        bridgeClient?.close()
+    private fun cancelSessionJobs(
+        includeConnectLoop: Boolean = false,
+        includeNetworkDebounce: Boolean = false,
+        includePresenterTimer: Boolean = false,
+        includeRecTicker: Boolean = true,
+        includeRepromote: Boolean = true
+    ) {
+        if (includeNetworkDebounce) networkDebounceJob?.cancel()
+        if (includeConnectLoop) connectLoopJob?.cancel()
+        heartbeatJob?.cancel()
+        pongWatchdogJob?.cancel()
+        pongWatchdogJob = null
+        if (includeRecTicker) recTickerJob?.cancel()
+        if (includePresenterTimer) presenterTimerJob?.cancel()
+        if (includeRepromote) lanRepromoteJob?.cancel()
+    }
+
+    private fun transitionToConnected(
+        channel: ChannelType,
+        activeHost: String,
+        isFallback: Boolean = false
+    ) {
+        _uiState.value = _uiState.value.copy(
+            connected = true,
+            connStatus = ConnStatus.CONNECTED,
+            activeHost = activeHost,
+            usingBridge = channel == ChannelType.HOST_BRIDGE,
+            usingDirectObsFallback = channel == ChannelType.DIRECT_OBS && isFallback,
+            usingRelayFallback = channel == ChannelType.WAN_RELAY && isFallback
+        )
+    }
+
+    private fun transitionToDisconnected(
+        clearSessionTelemetry: Boolean = false,
+        stopService: Boolean = false,
+        preserveAuthFailed: Boolean = false
+    ) {
+        val cur = _uiState.value
+        if (preserveAuthFailed && cur.connStatus == ConnStatus.AUTH_FAILED) return
+        _uiState.value = cur.copy(
+            connected = false,
+            connStatus = ConnStatus.SEARCHING,
+            activeHost = "",
+            usingRelayFallback = false,
+            usingBridge = false,
+            usingDirectObsFallback = false,
+            studioModeActive = if (stopService) false else cur.studioModeActive,
+            previewScene = if (stopService) "" else cur.previewScene,
+            serviceRunning = if (stopService) false else cur.serviceRunning,
+            recState = 0,
+            recSeconds = 0,
+            streamDropWarn = false,
+            voiceWhileMuted = false,
+            isStandby = if (clearSessionTelemetry) false else cur.isStandby,
+            timerState = if (clearSessionTelemetry) "stopped" else cur.timerState,
+            scenes = if (clearSessionTelemetry) emptyList() else cur.scenes
+        )
+    }
+
+    private fun transitionToAuthFailed(toastMessage: String? = null) {
+        _uiState.value = _uiState.value.copy(
+            connected = false,
+            connStatus = ConnStatus.AUTH_FAILED,
+            activeHost = "",
+            usingRelayFallback = false,
+            usingBridge = false,
+            usingDirectObsFallback = false
+        )
+        if (!toastMessage.isNullOrEmpty()) {
+            _events.tryEmit(RemoteEvent.ToastMessage(toastMessage))
+        }
+    }
+
+    private fun updateProgramSceneState(sceneName: String) {
+        val cur = _uiState.value
+        val prevProg = if (cur.activeScene.isNotBlank() && cur.activeScene != "Scene" && cur.activeScene != sceneName) {
+            cur.activeScene
+        } else {
+            cur.previousProgramScene
+        }
+        _uiState.value = cur.copy(
+            previousProgramScene = prevProg,
+            activeScene = sceneName
+        )
+    }
+
+    private fun teardownAllTransports(forceDead: Boolean) {
+        if (forceDead) {
+            bridgeClient?.closeDead()
+            obsClient?.closeDead()
+            relayClient?.closeDead()
+        } else {
+            bridgeClient?.close()
+            obsClient?.close()
+            relayClient?.close()
+        }
         bridgeClient = null
-        obsClient?.close()
         obsClient = null
-        relayClient?.close()
         relayClient = null
     }
+
+    private fun closeActiveClients() = teardownAllTransports(forceDead = false)
 
     private fun markSocketDeadAndClose() {
         pongWatchdogJob?.cancel()
         pongWatchdogJob = null
-        bridgeClient?.closeDead()
-        bridgeClient = null
-        obsClient?.closeDead()
-        obsClient = null
-        relayClient?.closeDead()
-        relayClient = null
+        teardownAllTransports(forceDead = true)
     }
 
     internal fun sendPingWithPongWatchdog(expectedGen: Int = generation.get()): Boolean {
         val st = _uiState.value
         if (!st.serviceRunning || !st.connected || expectedGen != generation.get()) return false
 
-        val bridge = bridgeClient
-        if (bridge != null) {
-            val rxSeqBefore = rxSeq.get()
-            val rxAtBefore = lastRxAtMs
-            val ok = bridge.sendPing()
-            if (!ok) {
-                logWarn("Host Bridge ping send failed; closing dead socket and reconnecting")
-                markSocketDeadAndClose()
-                reconnectNow()
-                return false
-            }
-            schedulePongWatchdog(expectedGen, rxSeqBefore, rxAtBefore)
-            return true
+        bridgeClient?.let { bridge ->
+            return dispatchPingWithWatchdog(expectedGen, "Host Bridge ping") { bridge.sendPing() }
         }
-
-        val obs = obsClient
-        if (obs != null) {
-            val rxSeqBefore = rxSeq.get()
-            val rxAtBefore = lastRxAtMs
-            val ok = obs.sendHeartbeat()
-            if (!ok) {
-                logWarn("OBS WebSocket heartbeat send failed; closing dead socket and reconnecting")
-                markSocketDeadAndClose()
-                reconnectNow()
-                return false
-            }
-            schedulePongWatchdog(expectedGen, rxSeqBefore, rxAtBefore)
-            return true
+        obsClient?.let { obs ->
+            return dispatchPingWithWatchdog(expectedGen, "OBS WebSocket heartbeat") { obs.sendHeartbeat() }
         }
-
-        val relay = relayClient
-        if (relay != null) {
+        relayClient?.let { relay ->
             relay.sendSyncRequest()
             return true
         }
 
         reconnectNow()
         return false
+    }
+
+    private fun dispatchPingWithWatchdog(
+        expectedGen: Int,
+        transportLabel: String,
+        sendProbe: () -> Boolean
+    ): Boolean {
+        val rxSeqBefore = rxSeq.get()
+        val rxAtBefore = lastRxAtMs
+        if (!sendProbe()) {
+            logWarn("$transportLabel send failed; closing dead socket and reconnecting")
+            markSocketDeadAndClose()
+            reconnectNow()
+            return false
+        }
+        schedulePongWatchdog(expectedGen, rxSeqBefore, rxAtBefore)
+        return true
     }
 
     private fun schedulePongWatchdog(expectedGen: Int, rxSeqBefore: Long, rxAtBefore: Long) {
@@ -442,6 +486,37 @@ class ConnectionManager(
                 markSocketDeadAndClose()
                 reconnectNow()
             }
+        }
+    }
+
+    private suspend fun refreshConfigForHostUuidShift(cfg: RemoteConfig, logShift: Boolean): RemoteConfig {
+        if (cfg.pairedHostUuid.isBlank()) return cfg
+        val beacons = UdpHostDiscoveryClient.scanClassroomHosts(
+            context = context,
+            discoverPort = discoverPortOverride,
+            timeoutMs = 450L
+        )
+        val shift = UdpHostDiscoveryClient.followHostUuidIpShift(
+            currentHostsCsv = cfg.hostAddress,
+            pairedHostUuid = cfg.pairedHostUuid,
+            beacons = beacons,
+            currentBridgePort = cfg.bridgePort
+        ) ?: return cfg
+        configStore.update { prev ->
+            prev.copy(hostAddress = shift.first, bridgePort = shift.second)
+        }
+        if (logShift) {
+            logInfo("Auto-followed HostUuid DHCP shift -> ${shift.first}:${shift.second}")
+        }
+        return configStore.current
+    }
+
+    private suspend fun resolveCandidateHost(host: String, mdnsTimeoutMs: Long?): String {
+        if (!host.endsWith(".local", ignoreCase = true)) return host
+        return if (mdnsTimeoutMs != null) {
+            withTimeoutOrNull(mdnsTimeoutMs) { mdnsResolver.resolveHost(host) } ?: host
+        } else {
+            mdnsResolver.resolveHost(host)
         }
     }
 
@@ -461,33 +536,12 @@ class ConnectionManager(
 
             // Auto-follow DHCP IP shift on paired HostUuid before cycling LAN endpoints
             val lanCycleStartMs = System.currentTimeMillis()
-            var effectiveCfg = cfg
-            if (effectiveCfg.pairedHostUuid.isNotBlank()) {
-                val beacons = UdpHostDiscoveryClient.scanClassroomHosts(
-                    context = context,
-                    discoverPort = discoverPortOverride,
-                    timeoutMs = 450L
-                )
-                val shift = UdpHostDiscoveryClient.followHostUuidIpShift(
-                    currentHostsCsv = effectiveCfg.hostAddress,
-                    pairedHostUuid = effectiveCfg.pairedHostUuid,
-                    beacons = beacons,
-                    currentBridgePort = effectiveCfg.bridgePort
-                )
-                if (shift != null) {
-                    configStore.update { prev ->
-                        prev.copy(hostAddress = shift.first, bridgePort = shift.second)
-                    }
-                    effectiveCfg = configStore.current
-                    logInfo("Auto-followed HostUuid DHCP shift -> ${shift.first}:${shift.second}")
-                }
-            }
+            var effectiveCfg = refreshConfigForHostUuidShift(cfg, logShift = true)
 
             // LAN Multi-candidate failover loop (bounded <= failoverBudgetMs when WAN Relay fallback is ready)
-            val hasWanFallback = effectiveCfg.enableRelayFallback && effectiveCfg.internetPairingCode.isNotBlank()
+            val hasWanFallback = FailoverPolicy.hasWanFallbackConfigured(effectiveCfg)
             val candidates = EndpointParser.parseCandidateEndpoints(effectiveCfg.hostAddress, effectiveCfg.hostPort)
-            var authFailed = false
-            var succeededOrStopped = false
+            var stopConnectLoop = false
 
             for (cand in candidates) {
                 if (gen != generation.get()) return
@@ -497,95 +551,102 @@ class ConnectionManager(
                     break
                 }
 
-                val remBudgetMs = FailoverPolicy.perCandidateBudgetRemainingMs(lanCycleStartMs, System.currentTimeMillis(), failoverBudgetMs)
-                val resolvedHost = if (cand.host.endsWith(".local", ignoreCase = true)) {
-                    kotlinx.coroutines.withTimeoutOrNull(minOf(1100L, remBudgetMs.coerceAtLeast(350L))) {
-                        mdnsResolver.resolveHost(cand.host)
-                    } ?: cand.host
-                } else {
-                    cand.host
-                }
-
-                // Prefer Primary Host Companion Bridge (4456) when Session Code or Token is present
-                var bridgeAuthRejected = false
-                val hadBridgeCredentials = effectiveCfg.sessionToken.isNotBlank() || effectiveCfg.sessionPairingCode.isNotBlank()
-                if (hadBridgeCredentials) {
-                    val bridgeUrl = "ws://$resolvedHost:${effectiveCfg.bridgePort}/ws"
-                    logInfo("Attempting Host Bridge WebSocket: $bridgeUrl (hasToken=${effectiveCfg.sessionToken.isNotBlank()})")
-                    var bridgeAttempt = attemptBridgeSession(gen, effectiveCfg, "${cand.host}:${effectiveCfg.bridgePort}", bridgeUrl)
-                    if (bridgeAttempt.outcome == SessionOutcome.AUTH_FAILED &&
-                        gen == generation.get() &&
-                        shouldRetryBridgeAuthWithPairingCode(effectiveCfg, bridgeAttempt.authErrorReason)
-                    ) {
-                        logInfo("Host Bridge rejected stale sessionToken (${bridgeAttempt.authErrorReason}); retrying auth with saved sessionPairingCode")
-                        configStore.update { prev -> prev.copy(sessionToken = "") }
-                        effectiveCfg = configStore.current
-                        bridgeAttempt = attemptBridgeSession(gen, effectiveCfg, "${cand.host}:${effectiveCfg.bridgePort}", bridgeUrl)
-                    }
-                    when (bridgeAttempt.outcome) {
-                        SessionOutcome.CANCELLED -> {
-                            succeededOrStopped = true
-                            break
-                        }
-                        SessionOutcome.AUTH_FAILED -> {
-                            bridgeAuthRejected = true
-                        }
-                        SessionOutcome.DISCONNECTED -> {
-                            DiagnosticLogger.recordBreadcrumb(
-                                "Failover",
-                                "BridgeToDirectObsFallback",
-                                "Bridge ${cand.host}:${effectiveCfg.bridgePort} unreachable/closed -> falling back to Direct OBS :${cand.port}"
-                            )
-                        }
-                    }
-                }
-                if (gen != generation.get()) return
-                if (hasWanFallback && FailoverPolicy.shouldFallbackToWan(
-                        effectiveCfg,
-                        System.currentTimeMillis() - lanCycleStartMs,
-                        failoverBudgetMs
-                    )
-                ) {
-                    break
-                }
-
-                val effectiveUrl = "${cand.scheme}://$resolvedHost:${cand.port}${cand.path}"
-                val outcome = attemptObsSession(gen, effectiveCfg, cand.raw, effectiveUrl, isBridgeFallback = true)
-                when (outcome) {
-                    SessionOutcome.AUTH_FAILED -> {
-                        authFailed = true
+                val step = attemptLanCandidate(gen, effectiveCfg, cand, lanCycleStartMs, hasWanFallback)
+                effectiveCfg = step.updatedConfig
+                when (step.outcome) {
+                    LanCandidateOutcome.STOP_LOOP -> {
+                        stopConnectLoop = true
                         break
                     }
-                    SessionOutcome.CANCELLED -> {
-                        succeededOrStopped = true
-                        break
-                    }
-                    SessionOutcome.DISCONNECTED -> {
-                        if (bridgeAuthRejected && effectiveCfg.obsPassword.isBlank()) {
-                            _uiState.value = _uiState.value.copy(
-                                connected = false,
-                                connStatus = ConnStatus.AUTH_FAILED,
-                                activeHost = "",
-                                usingRelayFallback = false,
-                                usingBridge = false,
-                                usingDirectObsFallback = false
-                            )
-                            authFailed = true
-                            break
-                        }
-                    }
+                    LanCandidateOutcome.SWITCH_TO_WAN -> break
+                    LanCandidateOutcome.NEXT_CANDIDATE -> Unit
                 }
             }
 
-            if (authFailed || succeededOrStopped || gen != generation.get()) return
+            if (stopConnectLoop || gen != generation.get()) return
 
             // Fallback to Internet Relay if configured (matching ShouldRemoteFallbackToRelay)
-            if (effectiveCfg.enableRelayFallback && effectiveCfg.internetPairingCode.isNotBlank()) {
+            if (FailoverPolicy.hasWanFallbackConfigured(effectiveCfg)) {
                 val relayOutcome = attemptRelaySession(gen, effectiveCfg, isFallback = true)
                 if (relayOutcome == SessionOutcome.AUTH_FAILED || gen != generation.get()) return
             }
 
             delay(AppConstants.RECONNECT_DELAY_MS)
+        }
+    }
+
+    private enum class LanCandidateOutcome { NEXT_CANDIDATE, SWITCH_TO_WAN, STOP_LOOP }
+
+    private data class LanCandidateStep(
+        val outcome: LanCandidateOutcome,
+        val updatedConfig: RemoteConfig
+    )
+
+    private suspend fun attemptLanCandidate(
+        gen: Int,
+        initialCfg: RemoteConfig,
+        cand: CandidateEndpoint,
+        lanCycleStartMs: Long,
+        hasWanFallback: Boolean
+    ): LanCandidateStep {
+        var effectiveCfg = initialCfg
+        val remBudgetMs = FailoverPolicy.perCandidateBudgetRemainingMs(
+            lanCycleStartMs,
+            System.currentTimeMillis(),
+            failoverBudgetMs
+        )
+        val resolvedHost = resolveCandidateHost(cand.host, minOf(1100L, remBudgetMs.coerceAtLeast(350L)))
+
+        // Prefer Primary Host Companion Bridge (4456) when Session Code or Token is present
+        var bridgeAuthRejected = false
+        if (FailoverPolicy.hasBridgeCredentials(effectiveCfg)) {
+            val bridgeUrl = "ws://$resolvedHost:${effectiveCfg.bridgePort}/ws"
+            logInfo("Attempting Host Bridge WebSocket: $bridgeUrl (hasToken=${effectiveCfg.sessionToken.isNotBlank()})")
+            var bridgeAttempt = attemptBridgeSession(gen, effectiveCfg, "${cand.host}:${effectiveCfg.bridgePort}", bridgeUrl)
+            if (bridgeAttempt.outcome == SessionOutcome.AUTH_FAILED &&
+                gen == generation.get() &&
+                shouldRetryBridgeAuthWithPairingCode(effectiveCfg, bridgeAttempt.authErrorReason)
+            ) {
+                logInfo("Host Bridge rejected stale sessionToken (${bridgeAttempt.authErrorReason}); retrying auth with saved sessionPairingCode")
+                configStore.update { prev -> prev.copy(sessionToken = "") }
+                effectiveCfg = configStore.current
+                bridgeAttempt = attemptBridgeSession(gen, effectiveCfg, "${cand.host}:${effectiveCfg.bridgePort}", bridgeUrl)
+            }
+            when (bridgeAttempt.outcome) {
+                SessionOutcome.CANCELLED -> return LanCandidateStep(LanCandidateOutcome.STOP_LOOP, effectiveCfg)
+                SessionOutcome.AUTH_FAILED -> bridgeAuthRejected = true
+                SessionOutcome.DISCONNECTED -> {
+                    DiagnosticLogger.recordBreadcrumb(
+                        "Failover",
+                        "BridgeToDirectObsFallback",
+                        "Bridge ${cand.host}:${effectiveCfg.bridgePort} unreachable/closed -> falling back to Direct OBS :${cand.port}"
+                    )
+                }
+            }
+        }
+        if (gen != generation.get()) return LanCandidateStep(LanCandidateOutcome.STOP_LOOP, effectiveCfg)
+        if (hasWanFallback && FailoverPolicy.shouldFallbackToWan(
+                effectiveCfg,
+                System.currentTimeMillis() - lanCycleStartMs,
+                failoverBudgetMs
+            )
+        ) {
+            return LanCandidateStep(LanCandidateOutcome.SWITCH_TO_WAN, effectiveCfg)
+        }
+
+        // Direct OBS :4455 WebSocket fallback
+        val effectiveUrl = "${cand.scheme}://$resolvedHost:${cand.port}${cand.path}"
+        return when (attemptObsSession(gen, effectiveCfg, cand.raw, effectiveUrl, isBridgeFallback = true)) {
+            SessionOutcome.AUTH_FAILED,
+            SessionOutcome.CANCELLED -> LanCandidateStep(LanCandidateOutcome.STOP_LOOP, effectiveCfg)
+            SessionOutcome.DISCONNECTED -> {
+                if (bridgeAuthRejected && effectiveCfg.obsPassword.isBlank()) {
+                    transitionToAuthFailed()
+                    LanCandidateStep(LanCandidateOutcome.STOP_LOOP, effectiveCfg)
+                } else {
+                    LanCandidateStep(LanCandidateOutcome.NEXT_CANDIDATE, effectiveCfg)
+                }
+            }
         }
     }
 
@@ -596,16 +657,11 @@ class ConnectionManager(
         val authErrorReason: String = ""
     )
 
-    internal fun isExplicitBridgeRevocation(reason: String): Boolean {
-        val low = reason.lowercase()
-        return low.contains("unpaired") || low.contains("revoked")
-    }
+    internal fun isExplicitBridgeRevocation(reason: String): Boolean =
+        FailoverPolicy.isExplicitBridgeRevocation(reason)
 
-    internal fun shouldRetryBridgeAuthWithPairingCode(cfg: RemoteConfig, reason: String): Boolean {
-        return cfg.sessionToken.isNotBlank() &&
-            cfg.sessionPairingCode.isNotBlank() &&
-            !isExplicitBridgeRevocation(reason)
-    }
+    internal fun shouldRetryBridgeAuthWithPairingCode(cfg: RemoteConfig, reason: String): Boolean =
+        FailoverPolicy.shouldRetryBridgeAuthWithPairingCode(cfg, reason)
 
     private suspend fun attemptBridgeSession(
         gen: Int,
@@ -633,14 +689,7 @@ class ConnectionManager(
                     if (gen != generation.get()) return
                     handshakeTimeoutJob?.cancel()
                     markRxActivity()
-                    _uiState.value = _uiState.value.copy(
-                        connected = true,
-                        connStatus = ConnStatus.CONNECTED,
-                        activeHost = "$hostName ($displayRaw)",
-                        usingRelayFallback = false,
-                        usingBridge = true,
-                        usingDirectObsFallback = false
-                    )
+                    transitionToConnected(ChannelType.HOST_BRIDGE, "$hostName ($displayRaw)")
                     DiagnosticLogger.recordBreadcrumb("Connection", "HostBridgeConnected", "$hostName ($displayRaw)")
                     startHeartbeat(gen, cfg.heartbeatSeconds)
                 }
@@ -705,25 +754,9 @@ class ConnectionManager(
                     handshakeTimeoutJob?.cancel()
                     logWarn("Host Bridge disconnected ($wsUrl): $reason")
                     DiagnosticLogger.recordBreadcrumb("Connection", "HostBridgeDisconnected", "$wsUrl | $reason")
-                    pongWatchdogJob?.cancel()
-                    heartbeatJob?.cancel()
-                    recTickerJob?.cancel()
-                    presenterTimerJob?.cancel()
-                    if (gen == generation.get() && _uiState.value.connStatus != ConnStatus.AUTH_FAILED) {
-                        _uiState.value = _uiState.value.copy(
-                            connected = false,
-                            connStatus = ConnStatus.SEARCHING,
-                            activeHost = "",
-                            usingBridge = false,
-                            usingDirectObsFallback = false,
-                            recState = 0,
-                            recSeconds = 0,
-                            streamDropWarn = false,
-                            voiceWhileMuted = false,
-                            isStandby = false,
-                            timerState = "stopped",
-                            scenes = emptyList()
-                        )
+                    cancelSessionJobs(includePresenterTimer = true, includeRepromote = false)
+                    if (gen == generation.get()) {
+                        transitionToDisconnected(clearSessionTelemetry = true, preserveAuthFailed = true)
                     }
                     done.complete(BridgeAttemptResult(SessionOutcome.DISCONNECTED))
                 }
@@ -731,7 +764,7 @@ class ConnectionManager(
         )
         bridgeClient = client
         client.connect()
-        handshakeTimeoutJob = scope.launch {
+        val timeoutJob = scope.launch {
             delay(timeoutMs)
             if (!done.isCompleted && (!_uiState.value.connected || !_uiState.value.usingBridge)) {
                 logWarn("Host Bridge connect timeout (${timeoutMs}ms) on $wsUrl; failing over to Direct OBS :4455")
@@ -740,13 +773,13 @@ class ConnectionManager(
                 done.complete(BridgeAttemptResult(SessionOutcome.DISCONNECTED, "timeout"))
             }
         }
+        handshakeTimeoutJob = timeoutJob
 
         return try {
             done.await()
         } finally {
-            handshakeTimeoutJob?.cancel()
-            pongWatchdogJob?.cancel()
-            heartbeatJob?.cancel()
+            timeoutJob.cancel()
+            cancelSessionJobs(includeRecTicker = false, includeRepromote = false)
             client.close()
             if (bridgeClient === client) bridgeClient = null
         }
@@ -769,21 +802,14 @@ class ConnectionManager(
                 override fun onIdentified() {
                     if (gen != generation.get()) return
                     markRxActivity()
-                    _uiState.value = _uiState.value.copy(
-                        connected = true,
-                        connStatus = ConnStatus.CONNECTED,
-                        activeHost = displayRaw,
-                        usingRelayFallback = false,
-                        usingBridge = false,
-                        usingDirectObsFallback = isBridgeFallback
-                    )
+                    transitionToConnected(ChannelType.DIRECT_OBS, displayRaw, isFallback = isBridgeFallback)
                     DiagnosticLogger.recordBreadcrumb(
                         "Failover",
                         "DirectObsFallbackConnected",
                         "host=$displayRaw | fallback=$isBridgeFallback"
                     )
                     startHeartbeat(gen, cfg.heartbeatSeconds)
-                    if (cfg.sessionToken.isNotBlank() || cfg.sessionPairingCode.isNotBlank()) {
+                    if (FailoverPolicy.hasBridgeCredentials(cfg)) {
                         startLanRepromotionMonitor(gen)
                     }
                 }
@@ -796,15 +822,7 @@ class ConnectionManager(
 
                 override fun onAuthFailed() {
                     if (gen == generation.get()) {
-                        _uiState.value = _uiState.value.copy(
-                            connected = false,
-                            connStatus = ConnStatus.AUTH_FAILED,
-                            activeHost = "",
-                            usingRelayFallback = false,
-                            usingBridge = false,
-                            usingDirectObsFallback = false
-                        )
-                        _events.tryEmit(RemoteEvent.ToastMessage("OBS authentication failed (4009). Check password."))
+                        transitionToAuthFailed("OBS authentication failed (4009). Check password.")
                     }
                     done.complete(SessionOutcome.AUTH_FAILED)
                 }
@@ -834,16 +852,7 @@ class ConnectionManager(
 
                 override fun onProgramSceneChanged(sceneName: String) {
                     if (gen != generation.get() || sceneName.isBlank()) return
-                    val cur = _uiState.value
-                    val prevProg = if (cur.activeScene.isNotBlank() && cur.activeScene != "Scene" && cur.activeScene != sceneName) {
-                        cur.activeScene
-                    } else {
-                        cur.previousProgramScene
-                    }
-                    _uiState.value = cur.copy(
-                        previousProgramScene = prevProg,
-                        activeScene = sceneName
-                    )
+                    updateProgramSceneState(sceneName)
                 }
 
                 override fun onPreviewSceneChanged(sceneName: String) {
@@ -877,24 +886,9 @@ class ConnectionManager(
                 }
 
                 override fun onDisconnected(reason: String) {
-                    pongWatchdogJob?.cancel()
-                    heartbeatJob?.cancel()
-                    recTickerJob?.cancel()
-                    lanRepromoteJob?.cancel()
+                    cancelSessionJobs()
                     if (gen == generation.get()) {
-                        val st = _uiState.value
-                        if (st.connStatus != ConnStatus.AUTH_FAILED) {
-                            _uiState.value = st.copy(
-                                connected = false,
-                                connStatus = ConnStatus.SEARCHING,
-                                activeHost = "",
-                                usingDirectObsFallback = false,
-                                recState = 0,
-                                recSeconds = 0,
-                                streamDropWarn = false,
-                                voiceWhileMuted = false
-                            )
-                        }
+                        transitionToDisconnected(preserveAuthFailed = true)
                     }
                     done.complete(SessionOutcome.DISCONNECTED)
                 }
@@ -906,9 +900,7 @@ class ConnectionManager(
         return try {
             done.await()
         } finally {
-            pongWatchdogJob?.cancel()
-            heartbeatJob?.cancel()
-            lanRepromoteJob?.cancel()
+            cancelSessionJobs(includeRecTicker = false)
             client.close()
             if (obsClient === client) obsClient = null
         }
@@ -932,12 +924,7 @@ class ConnectionManager(
                 override fun onRelayConnected() {
                     if (gen != generation.get()) return
                     markRxActivity()
-                    _uiState.value = _uiState.value.copy(
-                        connected = true,
-                        connStatus = ConnStatus.CONNECTED,
-                        activeHost = display,
-                        usingRelayFallback = isFallback
-                    )
+                    transitionToConnected(ChannelType.WAN_RELAY, display, isFallback = isFallback)
                     startHeartbeat(gen, cfg.heartbeatSeconds)
                     if (FailoverPolicy.canRepromoteToLan(cfg, isFallback)) {
                         startLanRepromotionMonitor(gen)
@@ -952,13 +939,7 @@ class ConnectionManager(
 
                 override fun onRelayAuthFailed() {
                     if (gen == generation.get()) {
-                        _uiState.value = _uiState.value.copy(
-                            connected = false,
-                            connStatus = ConnStatus.AUTH_FAILED,
-                            activeHost = "",
-                            usingRelayFallback = false
-                        )
-                        _events.tryEmit(RemoteEvent.ToastMessage("Internet Relay authentication failed. Check password."))
+                        transitionToAuthFailed("Internet Relay authentication failed. Check password.")
                     }
                     done.complete(SessionOutcome.AUTH_FAILED)
                 }
@@ -966,12 +947,7 @@ class ConnectionManager(
                 override fun onRelayMuteState(muted: Boolean) {
                     if (gen != generation.get()) return
                     if (!_uiState.value.connected) {
-                        _uiState.value = _uiState.value.copy(
-                            connected = true,
-                            connStatus = ConnStatus.CONNECTED,
-                            activeHost = display,
-                            usingRelayFallback = isFallback
-                        )
+                        transitionToConnected(ChannelType.WAN_RELAY, display, isFallback = isFallback)
                     }
                     applyNewMuteState(muted)
                 }
@@ -1011,23 +987,9 @@ class ConnectionManager(
                 }
 
                 override fun onRelayDisconnected(reason: String) {
-                    pongWatchdogJob?.cancel()
-                    heartbeatJob?.cancel()
-                    presenterTimerJob?.cancel()
-                    if (gen == generation.get() && _uiState.value.connStatus != ConnStatus.AUTH_FAILED) {
-                        _uiState.value = _uiState.value.copy(
-                            connected = false,
-                            connStatus = ConnStatus.SEARCHING,
-                            activeHost = "",
-                            usingRelayFallback = false,
-                            recState = 0,
-                            recSeconds = 0,
-                            streamDropWarn = false,
-                            voiceWhileMuted = false,
-                            isStandby = false,
-                            timerState = "stopped",
-                            scenes = emptyList()
-                        )
+                    cancelSessionJobs(includePresenterTimer = true, includeRecTicker = false, includeRepromote = false)
+                    if (gen == generation.get()) {
+                        transitionToDisconnected(clearSessionTelemetry = true, preserveAuthFailed = true)
                     }
                     done.complete(SessionOutcome.DISCONNECTED)
                 }
@@ -1039,9 +1001,7 @@ class ConnectionManager(
         return try {
             done.await()
         } finally {
-            pongWatchdogJob?.cancel()
-            heartbeatJob?.cancel()
-            lanRepromoteJob?.cancel()
+            cancelSessionJobs(includeRecTicker = false)
             client.close()
             if (relayClient === client) relayClient = null
         }
@@ -1061,36 +1021,14 @@ class ConnectionManager(
     internal suspend fun checkAndPromoteLanIfHealthy(gen: Int): Boolean {
         if (gen != generation.get()) return false
         var cfg = configStore.current
-        if (!FailoverPolicy.canRepromoteToLan(cfg, _uiState.value.usingRelayFallback || _uiState.value.usingDirectObsFallback || cfg.networkMode == NetworkMode.LAN)) {
+        if (!FailoverPolicy.canRepromoteFromFallback(cfg, _uiState.value)) {
             return false
         }
-        if (cfg.pairedHostUuid.isNotBlank()) {
-            val beacons = UdpHostDiscoveryClient.scanClassroomHosts(
-                context = context,
-                discoverPort = discoverPortOverride,
-                timeoutMs = 450L
-            )
-            val shift = UdpHostDiscoveryClient.followHostUuidIpShift(
-                currentHostsCsv = cfg.hostAddress,
-                pairedHostUuid = cfg.pairedHostUuid,
-                beacons = beacons,
-                currentBridgePort = cfg.bridgePort
-            )
-            if (shift != null) {
-                configStore.update { prev ->
-                    prev.copy(hostAddress = shift.first, bridgePort = shift.second)
-                }
-                cfg = configStore.current
-            }
-        }
+        cfg = refreshConfigForHostUuidShift(cfg, logShift = false)
         val candidates = EndpointParser.parseCandidateEndpoints(cfg.hostAddress, cfg.hostPort)
         for (cand in candidates) {
             if (gen != generation.get()) return false
-            val host = if (cand.host.endsWith(".local", ignoreCase = true)) {
-                kotlinx.coroutines.withTimeoutOrNull(900L) { mdnsResolver.resolveHost(cand.host) } ?: cand.host
-            } else {
-                cand.host
-            }
+            val host = resolveCandidateHost(cand.host, 900L)
             val healthy = UdpHostDiscoveryClient.probeHostBridgeHealth(
                 httpClient = httpClient,
                 host = host,
@@ -1400,13 +1338,7 @@ class ConnectionManager(
                 val clean = sceneName.trim()
                 val ok = obs.sendSetCurrentProgramScene(clean)
                 if (ok && clean.isNotEmpty()) {
-                    val cur = _uiState.value
-                    val prevProg = if (cur.activeScene.isNotBlank() && cur.activeScene != "Scene" && cur.activeScene != clean) {
-                        cur.activeScene
-                    } else {
-                        cur.previousProgramScene
-                    }
-                    _uiState.value = cur.copy(previousProgramScene = prevProg, activeScene = clean)
+                    updateProgramSceneState(clean)
                 }
                 ok
             },
@@ -1428,12 +1360,7 @@ class ConnectionManager(
                     }
                     if (target.isNotBlank()) {
                         val ok = obs.sendSetCurrentProgramScene(target)
-                        if (ok) {
-                            _uiState.value = cur.copy(
-                                previousProgramScene = if (cur.activeScene.isNotBlank() && cur.activeScene != target) cur.activeScene else cur.previousProgramScene,
-                                activeScene = target
-                            )
-                        }
+                        if (ok) updateProgramSceneState(target)
                         ok
                     } else {
                         false
@@ -1507,49 +1434,35 @@ class ConnectionManager(
 
     fun toggleMuteFromClicker(): Boolean = toggleMuteInternal("clicker")
 
-    private fun toggleMuteInternal(source: String): Boolean {
-        val st = _uiState.value
-        if (!st.connected) {
-            _events.tryEmit(RemoteEvent.ToastMessage("PresenterSync Remote: Not connected to OBS host"))
-            return false
-        }
-        val bridge = bridgeClient
-        if (bridge != null && bridge.sendToggleMute(source)) {
-            return true
-        }
-        val obs = obsClient
-        if (obs != null) {
-            return obs.sendToggleInputMute()
-        }
-        val relay = relayClient
-        if (relay != null) {
-            return relay.sendToggleMute()
-        }
-        return false
-    }
+    private fun toggleMuteInternal(source: String): Boolean = dispatchMuteCommand(
+        bridgeSend = { it.sendToggleMute(source) },
+        obsSend = { it.sendToggleInputMute() },
+        relaySend = { it.sendToggleMute() }
+    )
 
     fun setMuteFromHud(targetMuted: Boolean): Boolean = setMuteInternal(targetMuted)
 
     fun setMuteFromClicker(targetMuted: Boolean): Boolean = setMuteInternal(targetMuted)
 
-    private fun setMuteInternal(targetMuted: Boolean): Boolean {
-        val st = _uiState.value
-        if (!st.connected) {
+    private fun setMuteInternal(targetMuted: Boolean): Boolean = dispatchMuteCommand(
+        bridgeSend = { it.sendSetMute(targetMuted) },
+        obsSend = { it.sendSetInputMute(targetMuted) },
+        relaySend = { it.sendSetMute(targetMuted) }
+    )
+
+    private fun dispatchMuteCommand(
+        bridgeSend: (HostBridgeClient) -> Boolean,
+        obsSend: (ObsWebSocketClient) -> Boolean,
+        relaySend: (RelayClient) -> Boolean
+    ): Boolean {
+        if (!_uiState.value.connected) {
             _events.tryEmit(RemoteEvent.ToastMessage("PresenterSync Remote: Not connected to OBS host"))
             return false
         }
         val bridge = bridgeClient
-        if (bridge != null && bridge.sendSetMute(targetMuted)) {
-            return true
-        }
-        val obs = obsClient
-        if (obs != null) {
-            return obs.sendSetInputMute(targetMuted)
-        }
-        val relay = relayClient
-        if (relay != null) {
-            return relay.sendSetMute(targetMuted)
-        }
+        if (bridge != null && bridgeSend(bridge)) return true
+        obsClient?.let { return obsSend(it) }
+        relayClient?.let { return relaySend(it) }
         return false
     }
 
@@ -1770,11 +1683,7 @@ class ConnectionManager(
         val endpoints = EndpointParser.parseCandidateEndpoints(hostAddress, port)
         endpoints.forEachIndexed { idx, cand ->
             onProgress("Testing ${cand.raw} (${idx + 1}/${endpoints.size})...")
-            val resolved = if (cand.host.endsWith(".local", ignoreCase = true)) {
-                mdnsResolver.resolveHost(cand.host)
-            } else {
-                cand.host
-            }
+            val resolved = resolveCandidateHost(cand.host, mdnsTimeoutMs = null)
             val url = "${cand.scheme}://$resolved:${cand.port}${cand.path}"
             val probe = probeObsCandidate(url, password, cand.raw, idx + 1, endpoints.size)
             if (probe != null) return@withContext probe
