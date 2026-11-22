@@ -523,45 +523,51 @@ class QrCode {
         totalMods := modCount + (quiet * 2)
 
         pBitmap := 0
-        DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", targetSize, "Int", targetSize, "Int", 0, "Int", 0x26200A, "Ptr", 0, "Ptr*", &pBitmap)
-        if (!pBitmap)
-            return { hBitmap: 0, qr: qr }
-
         pGraphics := 0
-        DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", pBitmap, "Ptr*", &pGraphics)
-        if (pGraphics) {
-            DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 0)
-            DllCall("gdiplus\GdipGraphicsClear", "Ptr", pGraphics, "UInt", bgArgb)
+        pBrush := 0
+        hBitmap := 0
+        try {
+            DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", targetSize, "Int", targetSize, "Int", 0, "Int", 0x26200A, "Ptr", 0, "Ptr*", &pBitmap)
+            if (!pBitmap)
+                return { hBitmap: 0, qr: qr }
 
-            cellPx := Floor(targetSize / totalMods)
-            if (cellPx < 1)
-                cellPx := 1
-            drawSpan := cellPx * totalMods
-            offsetPx := Floor((targetSize - drawSpan) / 2)
+            DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", pBitmap, "Ptr*", &pGraphics)
+            if (pGraphics) {
+                DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 0)
+                DllCall("gdiplus\GdipGraphicsClear", "Ptr", pGraphics, "UInt", bgArgb)
 
-            pBrush := 0
-            DllCall("gdiplus\GdipCreateSolidFill", "UInt", fgArgb, "Ptr*", &pBrush)
-            if (pBrush) {
-                Loop modCount {
-                    r := A_Index
-                    rowArr := qr.modules[r]
-                    y := offsetPx + (r - 1 + quiet) * cellPx
+                cellPx := Floor(targetSize / totalMods)
+                if (cellPx < 1)
+                    cellPx := 1
+                drawSpan := cellPx * totalMods
+                offsetPx := Floor((targetSize - drawSpan) / 2)
+
+                DllCall("gdiplus\GdipCreateSolidFill", "UInt", fgArgb, "Ptr*", &pBrush)
+                if (pBrush) {
                     Loop modCount {
-                        col := A_Index
-                        if (rowArr[col] = 1) {
-                            x := offsetPx + (col - 1 + quiet) * cellPx
-                            DllCall("gdiplus\GdipFillRectangleI", "Ptr", pGraphics, "Ptr", pBrush, "Int", x, "Int", y, "Int", cellPx, "Int", cellPx)
+                        r := A_Index
+                        rowArr := qr.modules[r]
+                        y := offsetPx + (r - 1 + quiet) * cellPx
+                        Loop modCount {
+                            col := A_Index
+                            if (rowArr[col] = 1) {
+                                x := offsetPx + (col - 1 + quiet) * cellPx
+                                DllCall("gdiplus\GdipFillRectangleI", "Ptr", pGraphics, "Ptr", pBrush, "Int", x, "Int", y, "Int", cellPx, "Int", cellPx)
+                            }
                         }
                     }
                 }
-                DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
             }
-            DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
-        }
 
-        hBitmap := 0
-        DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", pBitmap, "Ptr*", &hBitmap, "UInt", bgArgb)
-        DllCall("gdiplus\GdipDisposeImage", "Ptr", pBitmap)
-        return { hBitmap: hBitmap, qr: qr }
+            DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", pBitmap, "Ptr*", &hBitmap, "UInt", bgArgb)
+            return { hBitmap: hBitmap, qr: qr }
+        } finally {
+            if (pBrush)
+                DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
+            if (pGraphics)
+                DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
+            if (pBitmap)
+                DllCall("gdiplus\GdipDisposeImage", "Ptr", pBitmap)
+        }
     }
 }

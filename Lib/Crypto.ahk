@@ -13,20 +13,23 @@ _HashCryptRaw(algId, hashLen, stringToHash) {
     if (size > 0)
         StrPut(stringToHash, buf, "UTF-8")
 
+    hashBuf := Buffer(hashLen, 0)
     hAlg := 0
     hHash := 0
-    DllCall("bcrypt\BCryptOpenAlgorithmProvider", "Ptr*", &hAlg, "Str", algId, "Ptr", 0, "UInt", 0)
-    DllCall("bcrypt\BCryptCreateHash", "Ptr", hAlg, "Ptr*", &hHash, "Ptr", 0, "UInt", 0, "Ptr", 0, "UInt", 0, "UInt", 0)
-    if (size > 0)
-        DllCall("bcrypt\BCryptHashData", "Ptr", hHash, "Ptr", buf, "UInt", size, "UInt", 0)
-
-    hashBuf := Buffer(hashLen, 0)
-    DllCall("bcrypt\BCryptFinishHash", "Ptr", hHash, "Ptr", hashBuf, "UInt", hashLen, "UInt", 0)
-
-    if (hHash)
-        DllCall("bcrypt\BCryptDestroyHash", "Ptr", hHash)
-    if (hAlg)
-        DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+    try {
+        if (DllCall("bcrypt\BCryptOpenAlgorithmProvider", "Ptr*", &hAlg, "Str", algId, "Ptr", 0, "UInt", 0, "Int") != 0)
+            return hashBuf
+        if (DllCall("bcrypt\BCryptCreateHash", "Ptr", hAlg, "Ptr*", &hHash, "Ptr", 0, "UInt", 0, "Ptr", 0, "UInt", 0, "UInt", 0, "Int") != 0)
+            return hashBuf
+        if (size > 0)
+            DllCall("bcrypt\BCryptHashData", "Ptr", hHash, "Ptr", buf, "UInt", size, "UInt", 0, "Int")
+        DllCall("bcrypt\BCryptFinishHash", "Ptr", hHash, "Ptr", hashBuf, "UInt", hashLen, "UInt", 0, "Int")
+    } finally {
+        if (hHash)
+            try DllCall("bcrypt\BCryptDestroyHash", "Ptr", hHash)
+        if (hAlg)
+            try DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+    }
 
     return hashBuf
 }

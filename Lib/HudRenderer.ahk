@@ -225,6 +225,28 @@ ToggleStreamHud(cfg, state := "", *) {
         try state.refreshHudFn.Call()
 }
 
+_NotifyHostTelemetryChanged(cfg, state, includeRelayDirector := false) {
+    if (IsSet(HostBridgeBroadcastMuteState))
+        try HostBridgeBroadcastMuteState(cfg, state)
+    if (includeRelayDirector && IsSet(BroadcastHostRelayDirectorState))
+        try BroadcastHostRelayDirectorState(cfg, state)
+}
+
+_EmitWatchdogAlert(cfg, state, diagCat, diagEvt, diagDetail, timelineMsg, bannerMsg, accentHex := "F59E0B", durationMs := 5500, sender := "Safety Guard") {
+    if (IsSet(DiagnosticLogger))
+        try DiagnosticLogger.RecordBreadcrumb(diagCat, diagEvt, diagDetail)
+    if (IsSet(SessionTimeline) && (cfg is Config))
+        try SessionTimeline.Record("Alert", timelineMsg, state)
+    if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+        ShowStageNudgeBanner(bannerMsg, accentHex, durationMs, sender)
+}
+
+_GetHudGuiPropNames(includeSecondary := true) {
+    return includeSecondary
+        ? ["MicGui", "SecondaryMicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"]
+        : ["MicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"]
+}
+
 SyncStreamState(cfg, state, newState, congestion := 0.0, skippedFrames := -1, reconnecting := false) {
     prevState := state.streamState
     if (newState == 0) {
@@ -257,11 +279,8 @@ SyncStreamState(cfg, state, newState, congestion := 0.0, skippedFrames := -1, re
     prevWarn := (prevState == 2)
     currWarn := (effectiveState == 2)
     state.streamDropWarn := currWarn
-    if (prevWarn != currWarn) {
-        HostBridgeBroadcastMuteState(cfg, state)
-        if (IsSet(BroadcastHostRelayDirectorState))
-            try BroadcastHostRelayDirectorState(cfg, state)
-    }
+    if (prevWarn != currWarn)
+        _NotifyHostTelemetryChanged(cfg, state, true)
 
     if (stateChanged) {
         oldW := state.streamW
@@ -372,10 +391,7 @@ SyncSceneState(cfg, state, sceneName) {
             UpdateHudLayout(state, state.savedX, state.savedY)
             ApplySceneAppearance(cfg, state)
         }
-        if (IsSet(HostBridgeBroadcastMuteState))
-            try HostBridgeBroadcastMuteState(cfg, state)
-        if (IsSet(BroadcastHostRelayDirectorState))
-            try BroadcastHostRelayDirectorState(cfg, state)
+        _NotifyHostTelemetryChanged(cfg, state, true)
         if (IsSet(SessionTimeline) && (cfg is Config))
             SessionTimeline.Record("Scene", "Scene -> " sceneName, state, (state.HasOwnProp("obsConnected") && state.obsConnected) ? "OBS Program" : "")
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
@@ -493,11 +509,8 @@ RecTimerTick(cfg, state) {
         state.obsRecElapsedSec += 1
     if (state.HasOwnProp("confRecState") && state.confRecState == 1)
         state.confRecElapsedSec += 1
-    if (Mod(state.recElapsedSec, 5) == 0) {
-        HostBridgeBroadcastMuteState(cfg, state)
-        if (IsSet(BroadcastHostRelayDirectorState))
-            try BroadcastHostRelayDirectorState(cfg, state)
-    }
+    if (Mod(state.recElapsedSec, 5) == 0)
+        _NotifyHostTelemetryChanged(cfg, state, true)
     if (cfg.ShowIndicator && cfg.ShowExtraHuds && (!cfg.HasOwnProp("ShowRecTimer") || cfg.ShowRecTimer) && !state.isDraggingHud && IsGuiValid(state.RecGui)) {
         if (cfg.ShowText) {
             oldW := state.recW
@@ -597,9 +610,7 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1, source := "obs") {
                 : ((newState == 2) ? "Recording Paused" : "Recording Stopped")
             SessionTimeline.Record("Recording", recEvt, state)
         }
-        HostBridgeBroadcastMuteState(cfg, state)
-        if (IsSet(BroadcastHostRelayDirectorState))
-            try BroadcastHostRelayDirectorState(cfg, state)
+        _NotifyHostTelemetryChanged(cfg, state, true)
         oldW := state.HasOwnProp("recW") ? state.recW : 0
         if (state.HasMethod("ComputeDimensions"))
             state.ComputeDimensions(cfg)
@@ -737,7 +748,11 @@ global g_StageNudgeGui := ""
 global g_StageNudgeHideFn := ""
 
 HideStageNudgeBanner(*) {
-    global g_StageNudgeGui
+    global g_StageNudgeGui, g_StageNudgeHideFn
+    if (IsObject(g_StageNudgeHideFn)) {
+        try SetTimer(g_StageNudgeHideFn, 0)
+        g_StageNudgeHideFn := ""
+    }
     if (IsObject(g_StageNudgeGui)) {
         try g_StageNudgeGui.Destroy()
     }
@@ -753,6 +768,7 @@ ShowStageNudgeBanner(message, accentHex := "F59E0B", durationMs := 4500, sender 
     fullText := (senderTxt != "") ? (senderTxt ": " msgText) : msgText
     HideStageNudgeBanner()
 
+    nGui := ""
     try {
         nGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20", "PresenterSyncStageBanner")
         ApplyWindowCaptureAffinity(nGui.Hwnd, true)
@@ -776,13 +792,13 @@ ShowStageNudgeBanner(message, accentHex := "F59E0B", durationMs := 4500, sender 
         WinSetAlwaysOnTop(1, "ahk_id " nGui.Hwnd)
         g_StageNudgeGui := nGui
         if (durationMs > 0) {
-            if (IsObject(g_StageNudgeHideFn))
-                SetTimer(g_StageNudgeHideFn, 0)
             g_StageNudgeHideFn := HideStageNudgeBanner
             SetTimer(g_StageNudgeHideFn, -Integer(durationMs))
         }
         return true
     } catch {
+        if (IsObject(nGui))
+            try nGui.Destroy()
         return false
     }
 }
@@ -1143,9 +1159,7 @@ UpdateMutedVoiceMonitorTimer(cfg, state) {
             state.voiceWhileMuted := false
             state.mutedVoiceAboveSince := 0
             state.mutedVoiceQuietSince := 0
-            HostBridgeBroadcastMuteState(cfg, state)
-            if (IsSet(BroadcastHostRelayDirectorState))
-                try BroadcastHostRelayDirectorState(cfg, state)
+            _NotifyHostTelemetryChanged(cfg, state, true)
         }
     }
 }
@@ -1155,22 +1169,16 @@ MutedVoiceMonitorTick(cfg, state, readerFn := "") {
     if (!IsObject(state) || !state.isMuted || !alertEnabled) {
         if (IsObject(state) && state.HasOwnProp("mutedVoiceTimerFn") && state.mutedVoiceTimerFn)
             SetTimer(state.mutedVoiceTimerFn, 0)
-        if (EvaluateMutedVoiceAlert(cfg, state, 0.0)) {
-            HostBridgeBroadcastMuteState(cfg, state)
-            if (IsSet(BroadcastHostRelayDirectorState))
-                try BroadcastHostRelayDirectorState(cfg, state)
-        }
+        if (EvaluateMutedVoiceAlert(cfg, state, 0.0))
+            _NotifyHostTelemetryChanged(cfg, state, true)
         return
     }
     if (!IsObject(readerFn) && GetHostBridgeStatusSummary().connectedCount <= 0 && (!state.HasOwnProp("relayConnected") || !state.relayConnected))
         return
     newPeak := IsObject(readerFn) ? Float(readerFn.Call()) : AudioMeter.GetPeak()
     newPeak := Min(1.0, Max(0.0, newPeak))
-    if (EvaluateMutedVoiceAlert(cfg, state, newPeak)) {
-        HostBridgeBroadcastMuteState(cfg, state)
-        if (IsSet(BroadcastHostRelayDirectorState))
-            try BroadcastHostRelayDirectorState(cfg, state)
-    }
+    if (EvaluateMutedVoiceAlert(cfg, state, newPeak))
+        _NotifyHostTelemetryChanged(cfg, state, true)
 }
 
 EvaluateOsMicDrift(cfg, state, osMuted, nowTick := "") {
@@ -1189,8 +1197,8 @@ EvaluateOsMicDrift(cfg, state, osMuted, nowTick := "") {
 
     if (!watchdogEnabled || appMuted || osMuted != true) {
         state.osMicMutedDrift := false
-        if (wasDrift && IsSet(HostBridgeBroadcastMuteState))
-            try HostBridgeBroadcastMuteState(cfg, state)
+        if (wasDrift)
+            _NotifyHostTelemetryChanged(cfg, state)
         return false
     }
 
@@ -1199,15 +1207,12 @@ EvaluateOsMicDrift(cfg, state, osMuted, nowTick := "") {
     if (state.lastOsDriftWarnTick = 0 || (nowTick - state.lastOsDriftWarnTick) >= 60000) {
         state.lastOsDriftWarnTick := nowTick
         nudgeTriggered := true
-        if (IsSet(DiagnosticLogger))
-            try DiagnosticLogger.RecordBreadcrumb("Audio", "OsMicDriftDetected", "Windows OS capture mic muted while LIVE")
-        if (IsSet(SessionTimeline) && (cfg is Config))
-            try SessionTimeline.Record("Alert", "OS Mic Hardware/Privacy Mute Drift", state)
-        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
-            ShowStageNudgeBanner("OS Mic Muted — Windows hardware/privacy switch is muting your mic while LIVE", "F59E0B", 5500, "Mic Guard")
+        _EmitWatchdogAlert(cfg, state, "Audio", "OsMicDriftDetected", "Windows OS capture mic muted while LIVE",
+            "OS Mic Hardware/Privacy Mute Drift",
+            "OS Mic Muted — Windows hardware/privacy switch is muting your mic while LIVE", "F59E0B", 5500, "Mic Guard")
     }
-    if ((!wasDrift || nudgeTriggered) && IsSet(HostBridgeBroadcastMuteState))
-        try HostBridgeBroadcastMuteState(cfg, state)
+    if (!wasDrift || nudgeTriggered)
+        _NotifyHostTelemetryChanged(cfg, state)
     return true
 }
 
@@ -1265,12 +1270,9 @@ EvaluateForgottenRecordWatchdog(cfg, state, isSlideshowActive, nowTick := "") {
 
     if (state._lastForgotRecWarnTick = 0 || (nowTick - state._lastForgotRecWarnTick) >= 120000) {
         state._lastForgotRecWarnTick := nowTick
-        if (IsSet(DiagnosticLogger))
-            try DiagnosticLogger.RecordBreadcrumb("Safety", "ForgottenRecordWarn", "Slideshow LIVE >=15s without OBS recording")
-        if (IsSet(SessionTimeline) && (cfg is Config))
-            try SessionTimeline.Record("Alert", "Forgotten Recording Reminder", state)
-        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
-            ShowStageNudgeBanner("Slideshow LIVE without OBS Recording — Press Record if you meant to capture", "F59E0B", 5500, "Safety Guard")
+        _EmitWatchdogAlert(cfg, state, "Safety", "ForgottenRecordWarn", "Slideshow LIVE >=15s without OBS recording",
+            "Forgotten Recording Reminder",
+            "Slideshow LIVE without OBS Recording — Press Record if you meant to capture", "F59E0B", 5500, "Safety Guard")
         return true
     }
     return false
@@ -1299,8 +1301,8 @@ EvaluateStreamDropWatchdog(cfg, state, nowTick := "") {
         state._streamDropBackupTriggered := false
         if (wasWatchdogActive) {
             state.streamDropWarn := false
-            if (wasWarn && IsSet(HostBridgeBroadcastMuteState))
-                try HostBridgeBroadcastMuteState(cfg, state)
+            if (wasWarn)
+                _NotifyHostTelemetryChanged(cfg, state)
         }
         return false
     }
@@ -1319,14 +1321,10 @@ EvaluateStreamDropWatchdog(cfg, state, nowTick := "") {
     sent := (state.HasOwnProp("obsWs") && IsObject(state.obsWs)) ? SendObsRequest(state.obsWs, "StartRecord", "AutoBackupRecord") : false
     state._streamDropBackupTriggered := true
     state.streamDropWarn := true
-    if (IsSet(DiagnosticLogger))
-        try DiagnosticLogger.RecordBreadcrumb("Safety", "StreamDropAutoBackup", "sent=" (sent ? "1" : "0"))
-    if (IsSet(SessionTimeline) && (cfg is Config))
-        try SessionTimeline.Record("Alert", "Stream-Drop Auto-Backup Recording Triggered", state)
-    if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
-        ShowStageNudgeBanner("Stream unstable — Auto-started local OBS backup recording", "F59E0B", 5500, "Safety Guard")
-    if (IsSet(HostBridgeBroadcastMuteState))
-        try HostBridgeBroadcastMuteState(cfg, state)
+    _EmitWatchdogAlert(cfg, state, "Safety", "StreamDropAutoBackup", "sent=" (sent ? "1" : "0"),
+        "Stream-Drop Auto-Backup Recording Triggered",
+        "Stream unstable — Auto-started local OBS backup recording", "F59E0B", 5500, "Safety Guard")
+    _NotifyHostTelemetryChanged(cfg, state)
     return true
 }
 
@@ -1348,8 +1346,8 @@ EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick := "") {
     if (!enabled || !IsNumber(freeMb) || Float(freeMb) < 0) {
         state.lowDiskMb := -1
         state.lowDiskWarnLevel := 0
-        if (prevLevel != 0 && IsSet(HostBridgeBroadcastMuteState))
-            try HostBridgeBroadcastMuteState(cfg, state)
+        if (prevLevel != 0)
+            _NotifyHostTelemetryChanged(cfg, state)
         return 0
     }
 
@@ -1359,8 +1357,8 @@ EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick := "") {
     state.lowDiskWarnLevel := newLevel
 
     if (newLevel == 0) {
-        if (prevLevel != 0 && IsSet(HostBridgeBroadcastMuteState))
-            try HostBridgeBroadcastMuteState(cfg, state)
+        if (prevLevel != 0)
+            _NotifyHostTelemetryChanged(cfg, state)
         return 0
     }
 
@@ -1372,18 +1370,10 @@ EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick := "") {
             ? ("CRITICAL Low Disk Space (" mb " MB free) — Recording drive nearly full!")
             : ("Low Disk Space (" mb " MB free) — Recording drive below 2 GB")
         accent := (newLevel == 2) ? "EF4444" : "F59E0B"
-        if (IsSet(DiagnosticLogger))
-            try DiagnosticLogger.RecordBreadcrumb("Safety", "LowDiskWarn", "level=" newLevel " freeMb=" mb)
-        if (IsSet(SessionTimeline) && (cfg is Config))
-            try SessionTimeline.Record("Alert", msg, state)
-        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
-            ShowStageNudgeBanner(msg, accent, 5500, "Disk Guard")
-        if (IsSet(HostBridgeBroadcastMuteState))
-            try HostBridgeBroadcastMuteState(cfg, state)
-        if (IsSet(BroadcastHostRelayDirectorState))
-            try BroadcastHostRelayDirectorState(cfg, state)
-    } else if (newLevel != prevLevel && IsSet(HostBridgeBroadcastMuteState)) {
-        try HostBridgeBroadcastMuteState(cfg, state)
+        _EmitWatchdogAlert(cfg, state, "Safety", "LowDiskWarn", "level=" newLevel " freeMb=" mb, msg, msg, accent, 5500, "Disk Guard")
+        _NotifyHostTelemetryChanged(cfg, state, true)
+    } else if (newLevel != prevLevel) {
+        _NotifyHostTelemetryChanged(cfg, state)
     }
     return newLevel
 }
@@ -1408,8 +1398,8 @@ EvaluateDeadMicWatchdog(cfg, state, peak, isPresenting, nowTick := "") {
     if (!enabled || appMuted || !isPresenting || !silent) {
         state._deadMicSinceTick := 0
         state.deadMicWarn := false
-        if (wasWarn && IsSet(HostBridgeBroadcastMuteState))
-            try HostBridgeBroadcastMuteState(cfg, state)
+        if (wasWarn)
+            _NotifyHostTelemetryChanged(cfg, state)
         return false
     }
 
@@ -1423,15 +1413,12 @@ EvaluateDeadMicWatchdog(cfg, state, peak, isPresenting, nowTick := "") {
     if (state._lastDeadMicWarnTick = 0 || (nowTick - state._lastDeadMicWarnTick) >= 180000) {
         state._lastDeadMicWarnTick := nowTick
         nudgeFired := true
-        if (IsSet(DiagnosticLogger))
-            try DiagnosticLogger.RecordBreadcrumb("Audio", "DeadMicWatchdog", "LIVE mic 0% audio detected for >=45s")
-        if (IsSet(SessionTimeline) && (cfg is Config))
-            try SessionTimeline.Record("Alert", "Dead-Mic Watchdog Alert", state)
-        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
-            ShowStageNudgeBanner("Mic is LIVE but 0% audio detected for 45s — check hardware switch or input", "EF4444", 6000, "Mic Guard")
+        _EmitWatchdogAlert(cfg, state, "Audio", "DeadMicWatchdog", "LIVE mic 0% audio detected for >=45s",
+            "Dead-Mic Watchdog Alert",
+            "Mic is LIVE but 0% audio detected for 45s — check hardware switch or input", "EF4444", 6000, "Mic Guard")
     }
-    if ((!wasWarn || nudgeFired) && IsSet(HostBridgeBroadcastMuteState))
-        try HostBridgeBroadcastMuteState(cfg, state)
+    if (!wasWarn || nudgeFired)
+        _NotifyHostTelemetryChanged(cfg, state)
     return true
 }
 
@@ -1444,8 +1431,8 @@ SafetyWatchdogTick(cfg, state) {
         prevSlideIdx := state.HasOwnProp("slideIndex") ? state.slideIndex : 0
         prevSlideTot := state.HasOwnProp("slideTotal") ? state.slideTotal : 0
         try PollPowerPointSlideTelemetry(state)
-        if ((state.slideIndex != prevSlideIdx || state.slideTotal != prevSlideTot) && IsSet(HostBridgeBroadcastMuteState))
-            try HostBridgeBroadcastMuteState(cfg, state)
+        if (state.slideIndex != prevSlideIdx || state.slideTotal != prevSlideTot)
+            _NotifyHostTelemetryChanged(cfg, state)
     }
     obsConn := (state.HasOwnProp("obsConnected") && state.obsConnected)
 
@@ -1628,10 +1615,7 @@ GetHudGuiList(state, includeSecondary := true) {
     guis := []
     if (!IsObject(state))
         return guis
-    props := includeSecondary
-        ? ["MicGui", "SecondaryMicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"]
-        : ["MicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"]
-    for prop in props {
+    for _, prop in _GetHudGuiPropNames(includeSecondary) {
         if (state.HasOwnProp(prop) && IsGuiValid(state.%prop%))
             guis.Push(state.%prop%)
     }
@@ -1903,10 +1887,8 @@ ApplyHudCaptureExclusion(cfg, state) {
         return
     exclPrim := (IsObject(cfg) && cfg.HasOwnProp("ExcludeFromCapture")) ? !!cfg.ExcludeFromCapture : true
     exclSec := (IsObject(cfg) && cfg.HasOwnProp("ExcludeSecondaryFromCapture")) ? !!cfg.ExcludeSecondaryFromCapture : true
-    for _, key in ["MicGui", "RecGui", "ChatGui", "StudioGui", "SceneGui", "StreamGui", "VCamGui"] {
-        if (state.HasOwnProp(key) && IsGuiValid(state.%key%))
-            ApplyWindowCaptureAffinity(state.%key%.Hwnd, exclPrim)
-    }
+    for _, g in GetHudGuiList(state, false)
+        ApplyWindowCaptureAffinity(g.Hwnd, exclPrim)
     if (state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui))
         ApplyWindowCaptureAffinity(state.SecondaryMicGui.Hwnd, exclSec)
 }
@@ -1916,14 +1898,8 @@ InitHUD(cfg, state, showWindows := true) {
     state.ComputeDimensions(cfg)
 
     ; Create 7 Primary GDI+ WS_EX_LAYERED (+E0x80000) HUD windows + 1 Independent Secondary Mic Pill
-    state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
-    state.SecondaryMicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
-    state.RecGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
-    state.ChatGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
-    state.StudioGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
-    state.SceneGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
-    state.StreamGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
-    state.VCamGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
+    for _, guiKey in _GetHudGuiPropNames(true)
+        state.%guiKey% := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale")
     ApplyHudCaptureExclusion(cfg, state)
 
     RenderAllHudPills(cfg, state)

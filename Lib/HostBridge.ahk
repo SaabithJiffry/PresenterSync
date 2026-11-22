@@ -72,13 +72,22 @@ EnsureHostUuid(cfg := "") {
     return uuid
 }
 
+IsUsableLanIPv4(ipStr) {
+    s := Trim(String(ipStr))
+    if (s = "" || !InStr(s, ".") || InStr(s, ":"))
+        return false
+    if (s = "0.0.0.0" || InStr(s, "127.") == 1 || InStr(s, "169.254.") == 1)
+        return false
+    return RegExMatch(s, "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") != 0
+}
+
 _HB_GetEndpointsSignature(endpoints) {
     if (!IsObject(endpoints) || !endpoints.HasOwnProp("ips"))
         return ""
     ipsCopy := []
     for _, ip in endpoints.ips {
         s := Trim(String(ip))
-        if (s != "")
+        if (IsUsableLanIPv4(s))
             ipsCopy.Push(s)
     }
     if (ipsCopy.Length > 1) {

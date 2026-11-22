@@ -102,11 +102,10 @@ class UIA {
         name := ""
         try {
             ComCall(23, pElem, "ptr*", &bstr) ; get_CurrentName
-            if (bstr) {
+            if (bstr)
                 name := StrGet(bstr, "UTF-16")
-                DllCall("oleaut32\SysFreeString", "ptr", bstr)
-            }
         } catch {
+        } finally {
             if (bstr)
                 DllCall("oleaut32\SysFreeString", "ptr", bstr)
         }
@@ -120,11 +119,10 @@ class UIA {
         name := ""
         try {
             ComCall(55, pElem, "ptr*", &bstr) ; get_CachedName
-            if (bstr) {
+            if (bstr)
                 name := StrGet(bstr, "UTF-16")
-                DllCall("oleaut32\SysFreeString", "ptr", bstr)
-            }
         } catch {
+        } finally {
             if (bstr)
                 DllCall("oleaut32\SysFreeString", "ptr", bstr)
         }
@@ -148,11 +146,11 @@ class UIA {
         if (!pRoot)
             return names
 
-        pCond := buttonsOnly ? this.GetButtonCondition() : this.GetTrueCondition()
-        pCacheReq := this.GetNameCacheRequest()
         pArr := 0
         useCached := false
         try {
+            pCond := buttonsOnly ? this.GetButtonCondition() : this.GetTrueCondition()
+            pCacheReq := this.GetNameCacheRequest()
             if (pCond && pCacheReq) {
                 ComCall(8, pRoot, "int", 4, "ptr", pCond, "ptr", pCacheReq, "ptr*", &pArr) ; FindAllBuildCache(TreeScope_Descendants = 4)
                 useCached := (pArr != 0)
@@ -171,20 +169,21 @@ class UIA {
                             name := useCached ? this.GetCachedElementName(pChild) : this.GetElementName(pChild)
                             if (name != "")
                                 names.Push(name)
-                            ObjRelease(pChild)
                         }
                     } catch {
+                    } finally {
                         if (pChild)
                             ObjRelease(pChild)
                     }
                 }
-                ObjRelease(pArr)
             }
         } catch {
+        } finally {
             if (pArr)
                 ObjRelease(pArr)
+            if (pRoot)
+                ObjRelease(pRoot)
         }
-        ObjRelease(pRoot)
         return names
     }
 }

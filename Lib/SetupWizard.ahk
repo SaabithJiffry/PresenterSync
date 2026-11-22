@@ -229,17 +229,21 @@ GetLocalNetworkEndpoints(includeAdapterNames := true) {
     res := {ips: [], details: []}
     seen := Map()
 
-    if (!includeAdapterNames) {
+    AppendSysLanIps(targetRes, seenMap) {
         try {
             for idx, ipVal in SysGetIPAddresses() {
                 ipStr := Trim(String(ipVal))
-                if (InStr(ipStr, ".") && !seen.Has(ipStr) && ipStr != "127.0.0.1" && ipStr != "0.0.0.0" && !RegExMatch(ipStr, "^169\.254\.")) {
-                    seen[ipStr] := true
-                    res.ips.Push(ipStr)
-                    res.details.Push({name: "Adapter " idx, ip: ipStr, isVirtual: false})
+                if (IsUsableLanIPv4(ipStr) && !seenMap.Has(ipStr)) {
+                    seenMap[ipStr] := true
+                    targetRes.ips.Push(ipStr)
+                    targetRes.details.Push({name: "Adapter " idx, ip: ipStr, isVirtual: false})
                 }
             }
         }
+    }
+
+    if (!includeAdapterNames) {
+        AppendSysLanIps(res, seen)
         cachedFast := res
         cachedFastTick := now
         return res
@@ -254,8 +258,8 @@ GetLocalNetworkEndpoints(includeAdapterNames := true) {
             desc := String(adapter.Description)
             isVirtual := RegExMatch(desc, "i)(virtual|vmware|vbox|hyper-v|pseudo|loopback|npcap|tap-)")
             for ip in adapter.IPAddress {
-                ipStr := String(ip)
-                if (InStr(ipStr, ".") && !seen.Has(ipStr) && ipStr != "127.0.0.1" && !RegExMatch(ipStr, "^169\.254\.")) {
+                ipStr := Trim(String(ip))
+                if (IsUsableLanIPv4(ipStr) && !seen.Has(ipStr)) {
                     seen[ipStr] := true
                     item := {name: desc, ip: ipStr, isVirtual: isVirtual}
                     if (!isVirtual) {
@@ -269,18 +273,8 @@ GetLocalNetworkEndpoints(includeAdapterNames := true) {
             }
         }
     }
-    if (res.ips.Length == 0) {
-        try {
-            for idx, ipVal in SysGetIPAddresses() {
-                ipStr := Trim(String(ipVal))
-                if (InStr(ipStr, ".") && !seen.Has(ipStr) && ipStr != "127.0.0.1" && ipStr != "0.0.0.0" && !RegExMatch(ipStr, "^169\.254\.")) {
-                    seen[ipStr] := true
-                    res.ips.Push(ipStr)
-                    res.details.Push({name: "Adapter " idx, ip: ipStr, isVirtual: false})
-                }
-            }
-        }
-    }
+    if (res.ips.Length == 0)
+        AppendSysLanIps(res, seen)
     cachedFull := res
     cachedFullTick := now
     return res

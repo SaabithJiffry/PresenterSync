@@ -305,7 +305,8 @@ class DiagnosticLogger {
         try {
             for _, ip in SysGetIPAddresses() {
                 s := Trim(String(ip))
-                if (s != "" && s != "127.0.0.1" && s != "::1")
+                isUsableV4 := IsSet(IsUsableLanIPv4) ? IsUsableLanIPv4(s) : (InStr(s, ".") && s != "127.0.0.1" && s != "0.0.0.0" && !RegExMatch(s, "^169\.254\."))
+                if (isUsableV4 || (InStr(s, ":") && s != "::1"))
                     ips.Push(s)
             }
         }

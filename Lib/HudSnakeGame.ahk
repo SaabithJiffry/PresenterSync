@@ -1002,23 +1002,26 @@ class HudSnake {
         pPath := Gdip.CreateRoundedRectPath(x, y, w, h, radius)
         if (!pPath)
             return
-        if ((fillArgb >>> 24) > 0) {
-            pBrush := 0
-            DllCall("gdiplus\GdipCreateSolidFill", "UInt", fillArgb, "Ptr*", &pBrush)
-            if (pBrush) {
-                DllCall("gdiplus\GdipFillPath", "Ptr", pGfx, "Ptr", pBrush, "Ptr", pPath)
-                DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
+        pBrush := 0
+        pPen := 0
+        try {
+            if ((fillArgb >>> 24) > 0) {
+                DllCall("gdiplus\GdipCreateSolidFill", "UInt", fillArgb, "Ptr*", &pBrush)
+                if (pBrush)
+                    DllCall("gdiplus\GdipFillPath", "Ptr", pGfx, "Ptr", pBrush, "Ptr", pPath)
             }
-        }
-        if ((borderArgb >>> 24) > 0 && borderW > 0) {
-            pPen := 0
-            DllCall("gdiplus\GdipCreatePen1", "UInt", borderArgb, "Float", Float(borderW), "Int", 2, "Ptr*", &pPen)
-            if (pPen) {
-                DllCall("gdiplus\GdipDrawPath", "Ptr", pGfx, "Ptr", pPen, "Ptr", pPath)
+            if ((borderArgb >>> 24) > 0 && borderW > 0) {
+                DllCall("gdiplus\GdipCreatePen1", "UInt", borderArgb, "Float", Float(borderW), "Int", 2, "Ptr*", &pPen)
+                if (pPen)
+                    DllCall("gdiplus\GdipDrawPath", "Ptr", pGfx, "Ptr", pPen, "Ptr", pPath)
+            }
+        } finally {
+            if (pPen)
                 DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
-            }
+            if (pBrush)
+                DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
+            DllCall("gdiplus\GdipDeletePath", "Ptr", pPath)
         }
-        DllCall("gdiplus\GdipDeletePath", "Ptr", pPath)
     }
 
     static _RenderFrame(nowUs := -1) {

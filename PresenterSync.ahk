@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.7.0
+; Version: 7.7.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.7.0.0
+;@Ahk2Exe-SetVersion 7.7.1.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -73,8 +73,35 @@ UnregisterHostWtsNotification(st) {
     if (IsObject(st) && st.HasOwnProp("ipcMsgGui") && IsObject(st.ipcMsgGui))
         try DllCall("Wtsapi32\WTSUnRegisterSessionNotification", "Ptr", st.ipcMsgGui.Hwnd)
 }
-RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0, UnregisterHostWtsNotification(AppState)) : 0, SessionTimeline.ClearAutosave(), StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => ((IsSet(AppState) && IsObject(AppState)) ? (UpdateAutoProfileTimer("", AppState), UpdateCoreAudioWatchdogTimer("", AppState), UpdateSafetyWatchdogTimer("", AppState), (AppState.HasOwnProp("presenterTimerFn") && AppState.presenterTimerFn) ? SetTimer(AppState.presenterTimerFn, 0) : 0, UnregisterHostWtsNotification(AppState)) : 0, SessionTimeline.ClearAutosave(), StopHostCompanionBridge(), HudSnake.Stop(), AudioMeter.Shutdown(), UIA.Shutdown(), Theme.Shutdown(), Gdip.Shutdown()))
+ShutdownHostApp(*) {
+    global AppState
+    if (IsSet(AppState) && IsObject(AppState)) {
+        try AppState.StopAllTimers()
+        try UpdateAutoProfileTimer("", AppState)
+        try UpdateCoreAudioWatchdogTimer("", AppState)
+        try UpdateSafetyWatchdogTimer("", AppState)
+        UnregisterHostWtsNotification(AppState)
+        if (AppState.HasOwnProp("obsWs") && IsObject(AppState.obsWs)) {
+            try AppState.obsWs.shutdown()
+            AppState.obsWs := ""
+        }
+        if (AppState.HasOwnProp("relayWs") && IsObject(AppState.relayWs)) {
+            try AppState.relayWs.shutdown()
+            AppState.relayWs := ""
+        }
+    }
+    if (IsSet(HideStageNudgeBanner))
+        try HideStageNudgeBanner()
+    try SessionTimeline.ClearAutosave()
+    try StopHostCompanionBridge()
+    try HudSnake.Stop()
+    try AudioMeter.Shutdown()
+    try UIA.Shutdown()
+    try Theme.Shutdown()
+    try Gdip.Shutdown()
+}
+RegisterSelfUpdateBeforeRelaunch(ShutdownHostApp)
+OnExit(ShutdownHostApp)
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSync.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSync.ico")
@@ -661,6 +688,14 @@ BoundHwMuteHotkey := ""
 BoundHwTransitionHotkey := ""
 BoundPassthroughHooks := []
 
+_TryRegisterSystemHotkey(hk, handler) {
+    global BoundSystemHotkeys
+    if (hk != "" && hk != "None") {
+        try Hotkey(hk, handler, "On")
+        BoundSystemHotkeys.Push(hk)
+    }
+}
+
 BindSystemHotkeys(cfg, state) {
     global BoundSystemHotkeys
     HotIf()
@@ -668,35 +703,17 @@ BindSystemHotkeys(cfg, state) {
         try Hotkey(oldHk, "Off")
     }
     BoundSystemHotkeys := []
-    if (cfg.PptHotkey != "" && cfg.PptHotkey != "None") {
-        try Hotkey(cfg.PptHotkey, (*) => CyclePointerMode(cfg, state), "On")
-        BoundSystemHotkeys.Push(cfg.PptHotkey)
-    }
-    if (cfg.WsHotkey != "" && cfg.WsHotkey != "None") {
-        try Hotkey(cfg.WsHotkey, (*) => ToggleWS(cfg, state), "On")
-        BoundSystemHotkeys.Push(cfg.WsHotkey)
-    }
-    if (cfg.ZoomHotkey != "" && cfg.ZoomHotkey != "None") {
-        try Hotkey(cfg.ZoomHotkey, (*) => ToggleZoom(cfg, state), "On")
-        BoundSystemHotkeys.Push(cfg.ZoomHotkey)
-    }
-    if (cfg.IndHotkey != "" && cfg.IndHotkey != "None") {
-        try Hotkey(cfg.IndHotkey, (*) => ToggleIndicator(cfg, state), "On")
-        BoundSystemHotkeys.Push(cfg.IndHotkey)
-    }
+    _TryRegisterSystemHotkey(cfg.PptHotkey, (*) => CyclePointerMode(cfg, state))
+    _TryRegisterSystemHotkey(cfg.WsHotkey, (*) => ToggleWS(cfg, state))
+    _TryRegisterSystemHotkey(cfg.ZoomHotkey, (*) => ToggleZoom(cfg, state))
+    _TryRegisterSystemHotkey(cfg.IndHotkey, (*) => ToggleIndicator(cfg, state))
     if (cfg.SuspendHotkey != "" && cfg.SuspendHotkey != "None") {
         try Hotkey(cfg.SuspendHotkey, (*) => ToggleSuspend(), "S")
         try Hotkey(cfg.SuspendHotkey, "On")
         BoundSystemHotkeys.Push(cfg.SuspendHotkey)
     }
-    if (cfg.ExitHotkey != "" && cfg.ExitHotkey != "None") {
-        try Hotkey(cfg.ExitHotkey, (*) => ExitTrayApp(), "On")
-        BoundSystemHotkeys.Push(cfg.ExitHotkey)
-    }
-    if (cfg.RemoteInfoHotkey != "" && cfg.RemoteInfoHotkey != "None") {
-        try Hotkey(cfg.RemoteInfoHotkey, (*) => ShowRemoteCompanionInfo(cfg, state), "On")
-        BoundSystemHotkeys.Push(cfg.RemoteInfoHotkey)
-    }
+    _TryRegisterSystemHotkey(cfg.ExitHotkey, (*) => ExitTrayApp())
+    _TryRegisterSystemHotkey(cfg.RemoteInfoHotkey, (*) => ShowRemoteCompanionInfo(cfg, state))
     ; Secret Easter Egg hotkey (intentionally undocumented in Tray / Control Center)
     try {
         Hotkey("!^+s", (*) => HudSnake.Toggle(cfg, state), "On")
@@ -796,21 +813,21 @@ SendToPPT(cfg, Key) {
         try PollPowerPointSlideTelemetry(AppState)
         if (IsSet(HostBridgeBroadcastMuteState))
             try HostBridgeBroadcastMuteState(cfg, AppState)
-    }
-    else if WinExist("PowerPoint Presenter View ahk_exe POWERPNT.EXE") {
-        try ControlSend Key, , "PowerPoint Presenter View ahk_exe POWERPNT.EXE"
-    }
-    else if WinExist("ahk_class PPTFrameClass ahk_exe POWERPNT.EXE") {
-        try ControlSend Key, , "ahk_class PPTFrameClass ahk_exe POWERPNT.EXE"
-    }
-    else if WinExist("ahk_exe POWERPNT.EXE") {
-        try ControlSend Key, , "ahk_exe POWERPNT.EXE"
-    }
-    else {
-        dir := (Key = "{Up}" || Key = "{Left}" || Key = "{PgUp}") ? "prev" : "next"
-        fb := TryDispatchFallbackSlideKey(dir)
-        if (!fb.handled)
-            SoundPlay "*16"
+    } else {
+        sentFallbackPpt := false
+        for _, winSpec in ["PowerPoint Presenter View ahk_exe POWERPNT.EXE", "ahk_class PPTFrameClass ahk_exe POWERPNT.EXE", "ahk_exe POWERPNT.EXE"] {
+            if WinExist(winSpec) {
+                try ControlSend Key, , winSpec
+                sentFallbackPpt := true
+                break
+            }
+        }
+        if (!sentFallbackPpt) {
+            dir := (Key = "{Up}" || Key = "{Left}" || Key = "{PgUp}") ? "prev" : "next"
+            fb := TryDispatchFallbackSlideKey(dir)
+            if (!fb.handled)
+                SoundPlay "*16"
+        }
     }
     DiagnosticLogger.CheckLatency("Input", "SendToPPT", t0, 120, Key)
 }
@@ -868,6 +885,34 @@ BindHwTransitionHotkey(cfg, state) {
 }
 BindHwTransitionHotkey(AppConfig, AppState)
 
+_RegisterSinglePassthroughHook(rawHk, handler) {
+    global BoundPassthroughHooks
+    if (rawHk = "" || rawHk = "None")
+        return
+    hk := FormatPassthroughHook(rawHk)
+    try Hotkey(hk, handler, "On")
+    BoundPassthroughHooks.Push(hk)
+}
+
+_RegisterPassthroughPair(cfg, state, rawHkA, rawHkB, combinedFn, fnA, fnB) {
+    global BoundPassthroughHooks
+    hookA := (rawHkA != "" && rawHkA != "None") ? FormatPassthroughHook(rawHkA) : ""
+    hookB := (rawHkB != "" && rawHkB != "None") ? FormatPassthroughHook(rawHkB) : ""
+    if (hookA != "" && hookA = hookB) {
+        try Hotkey(hookA, combinedFn.Bind(cfg, state), "On")
+        BoundPassthroughHooks.Push(hookA)
+        return
+    }
+    if (hookA != "") {
+        try Hotkey(hookA, fnA.Bind(cfg, state), "On")
+        BoundPassthroughHooks.Push(hookA)
+    }
+    if (hookB != "") {
+        try Hotkey(hookB, fnB.Bind(cfg, state), "On")
+        BoundPassthroughHooks.Push(hookB)
+    }
+}
+
 ; --- MUTE & TRANSITION PASSTHROUGH CONTROL ---
 RegisterPassthroughHooks(cfg, state) {
     global BoundPassthroughHooks
@@ -877,56 +922,14 @@ RegisterPassthroughHooks(cfg, state) {
     }
     BoundPassthroughHooks := []
 
-    if ((cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3) && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "") {
-        hk := FormatPassthroughHook(cfg.ObsMuteHotkey)
-        try Hotkey(hk, LaptopKeyboardMute.Bind(cfg, state), "On")
-        BoundPassthroughHooks.Push(hk)
-    }
-    if (cfg.ObsTransitionHotkey != "None" && cfg.ObsTransitionHotkey != "") {
-        hk := FormatPassthroughHook(cfg.ObsTransitionHotkey)
-        try Hotkey(hk, LaptopObsTransitionPassthrough.Bind(cfg, state), "On")
-        BoundPassthroughHooks.Push(hk)
-    }
-    if ((cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3)) {
-        confMuteHk := GetActiveConferencingMuteHotkey(cfg)
-        if (confMuteHk != "None" && confMuteHk != "") {
-            hk := FormatPassthroughHook(confMuteHk)
-            try Hotkey(hk, LaptopKeyboardMute.Bind(cfg, state), "On")
-            BoundPassthroughHooks.Push(hk)
-        }
-    }
+    if (cfg.AudioRoutingMode == 1 || cfg.AudioRoutingMode == 3)
+        _RegisterSinglePassthroughHook(cfg.ObsMuteHotkey, LaptopKeyboardMute.Bind(cfg, state))
+    _RegisterSinglePassthroughHook(cfg.ObsTransitionHotkey, LaptopObsTransitionPassthrough.Bind(cfg, state))
+    if (cfg.AudioRoutingMode == 2 || cfg.AudioRoutingMode == 3)
+        _RegisterSinglePassthroughHook(GetActiveConferencingMuteHotkey(cfg), LaptopKeyboardMute.Bind(cfg, state))
 
-    obsRecHook := (cfg.ObsRecHotkey != "" && cfg.ObsRecHotkey != "None") ? FormatPassthroughHook(cfg.ObsRecHotkey) : ""
-    zoomRecHook := (cfg.ZoomRecHotkey != "" && cfg.ZoomRecHotkey != "None") ? FormatPassthroughHook(cfg.ZoomRecHotkey) : ""
-    if (obsRecHook != "" && obsRecHook = zoomRecHook) {
-        try Hotkey(obsRecHook, LaptopCombinedRecToggle.Bind(cfg, state), "On")
-        BoundPassthroughHooks.Push(obsRecHook)
-    } else {
-        if (obsRecHook != "") {
-            try Hotkey(obsRecHook, LaptopObsRecToggle.Bind(cfg, state), "On")
-            BoundPassthroughHooks.Push(obsRecHook)
-        }
-        if (zoomRecHook != "") {
-            try Hotkey(zoomRecHook, LaptopZoomRecToggle.Bind(cfg, state), "On")
-            BoundPassthroughHooks.Push(zoomRecHook)
-        }
-    }
-
-    obsPauseHook := (cfg.ObsPauseHotkey != "" && cfg.ObsPauseHotkey != "None") ? FormatPassthroughHook(cfg.ObsPauseHotkey) : ""
-    zoomPauseHook := (cfg.ZoomPauseHotkey != "" && cfg.ZoomPauseHotkey != "None") ? FormatPassthroughHook(cfg.ZoomPauseHotkey) : ""
-    if (obsPauseHook != "" && obsPauseHook = zoomPauseHook) {
-        try Hotkey(obsPauseHook, LaptopCombinedPauseToggle.Bind(cfg, state), "On")
-        BoundPassthroughHooks.Push(obsPauseHook)
-    } else {
-        if (obsPauseHook != "") {
-            try Hotkey(obsPauseHook, LaptopObsPauseToggle.Bind(cfg, state), "On")
-            BoundPassthroughHooks.Push(obsPauseHook)
-        }
-        if (zoomPauseHook != "") {
-            try Hotkey(zoomPauseHook, LaptopZoomPauseToggle.Bind(cfg, state), "On")
-            BoundPassthroughHooks.Push(zoomPauseHook)
-        }
-    }
+    _RegisterPassthroughPair(cfg, state, cfg.ObsRecHotkey, cfg.ZoomRecHotkey, LaptopCombinedRecToggle, LaptopObsRecToggle, LaptopZoomRecToggle)
+    _RegisterPassthroughPair(cfg, state, cfg.ObsPauseHotkey, cfg.ZoomPauseHotkey, LaptopCombinedPauseToggle, LaptopObsPauseToggle, LaptopZoomPauseToggle)
 }
 RegisterPassthroughHooks(AppConfig, AppState)
 
