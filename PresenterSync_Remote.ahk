@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 8.1.0
+; Version: 8.1.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 8.1.0.0
+;@Ahk2Exe-SetVersion 8.1.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -23,6 +23,8 @@ ProcessSetPriority "High"
 #Include <OBS_Network>
 #Include <GUI_Config>
 #Include <HudSnakeGame>
+#Include <HudArcadeBase>
+#Include <ArcadeVault>
 
 g_RemoteCli := ParseRemoteCliArgs(A_Args)
 g_RemoteMutex := AcquireRemoteInstanceMutex(g_RemoteCli.instanceName)
@@ -45,7 +47,7 @@ ShutdownRemoteApp(*) {
     }
     if (IsSet(HideStageNudgeBanner))
         try HideStageNudgeBanner()
-    try HudSnake.Stop()
+    try HudArcadeBase.StopActiveGame()
     try ReleaseRemoteInstanceMutex(g_RemoteMutex)
     try Theme.Shutdown()
     try Gdip.Shutdown()
@@ -532,7 +534,8 @@ BuildRemoteTrayMenu(AppConfig, AppState)
 RegisterRemotePointerHotkey(AppConfig, AppState)
 RegisterRemoteAppHotkeys(AppConfig, AppState)
 OnMessage(0x0218, OnRemotePowerBroadcast.Bind(AppConfig, AppState))
-try Hotkey("!^+s", (*) => HudSnake.Toggle(AppConfig, AppState), "On")
+ArcadeVault.RegisterGame("snake", "HUD Snake", "!^+s", "Ctrl+Alt+Shift+S", (c, s) => HudSnake.Toggle(c, s), () => HudSnake.Stop())
+ArcadeVault.BindVaultHotkey(AppConfig, AppState)
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync_Remote.exe")
 
 ; === FIRST-RUN / CONNECTION PROMPT ===
@@ -1696,7 +1699,7 @@ RemoveToolTip() {
 }
 
 OnRemoteClickerMute(cfg, state, thisHotkeyOrFromHud := "", *) {
-    if (!cfg.EnablePointerMute || (IsSet(HudSnake) && HudSnake.IsActive))
+    if (!cfg.EnablePointerMute)
         return
 
     fromHudClick := (thisHotkeyOrFromHud == true)
@@ -1732,7 +1735,7 @@ OnRemoteClickerMute(cfg, state, thisHotkeyOrFromHud := "", *) {
 }
 
 CheckRemotePointerEnable(cfg, ThisHotkey) {
-    return cfg.EnablePointerMute && !(IsSet(HudSnake) && HudSnake.IsActive) && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
+    return cfg.EnablePointerMute && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
 _SetRemoteHotkeyState(hk, enabled, handler := "", hotIfFn := "") {
@@ -1777,6 +1780,8 @@ ExitRemoteApp(*) {
 
 RegisterRemoteAppHotkeys(cfg, state) {
     UnregisterRemoteAppHotkeys(cfg, state)
+    if (!state.HasOwnProp("remoteDeckHotIfFn") || !IsObject(state.remoteDeckHotIfFn))
+        state.remoteDeckHotIfFn := (*) => !HudArcadeBase.IsAnyGameActive() && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
     if (_SetRemoteHotkeyState(cfg.PptHotkey, true, ToggleRemotePointerMute.Bind(cfg, state)))
         state.activeToggleMuteHk := cfg.PptHotkey
     if (_SetRemoteHotkeyState(cfg.ExitHotkey, true, ExitRemoteApp))
@@ -1788,22 +1793,23 @@ RegisterRemoteAppHotkeys(cfg, state) {
     ] {
         cfgProp := spec[1], stateProp := spec[2], act := spec[3]
         hkVal := cfg.HasOwnProp(cfgProp) ? cfg.%cfgProp% : ""
-        if (_SetRemoteHotkeyState(hkVal, true, ((a, *) => SendRemoteBridgeDeckCommand(cfg, state, a)).Bind(act)))
+        if (_SetRemoteHotkeyState(hkVal, true, ((a, *) => SendRemoteBridgeDeckCommand(cfg, state, a)).Bind(act), state.remoteDeckHotIfFn))
             state.%stateProp% := hkVal
     }
 }
 
 UnregisterRemoteAppHotkeys(cfg, state) {
     for _, spec in [
-        ["PptHotkey", "activeToggleMuteHk"],
-        ["ExitHotkey", "activeExitHk"],
-        ["RemoteNextSlideKey", "activeRemoteNextSlideHk"],
-        ["RemotePrevSlideKey", "activeRemotePrevSlideHk"],
-        ["RemoteTransitionKey", "activeRemoteTransitionHk"]
+        ["PptHotkey", "activeToggleMuteHk", ""],
+        ["ExitHotkey", "activeExitHk", ""],
+        ["RemoteNextSlideKey", "activeRemoteNextSlideHk", "deck"],
+        ["RemotePrevSlideKey", "activeRemotePrevSlideHk", "deck"],
+        ["RemoteTransitionKey", "activeRemoteTransitionHk", "deck"]
     ] {
-        cfgProp := spec[1], stateProp := spec[2]
+        cfgProp := spec[1], stateProp := spec[2], scope := spec[3]
         hkVal := (state.HasOwnProp(stateProp) && state.%stateProp% != "") ? state.%stateProp% : (cfg.HasOwnProp(cfgProp) ? cfg.%cfgProp% : "")
-        _SetRemoteHotkeyState(hkVal, false)
+        cond := (scope = "deck" && state.HasOwnProp("remoteDeckHotIfFn") && IsObject(state.remoteDeckHotIfFn)) ? state.remoteDeckHotIfFn : ""
+        _SetRemoteHotkeyState(hkVal, false, "", cond)
         state.%stateProp% := ""
     }
 }
@@ -2810,7 +2816,11 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
     else
         helpBtn.Enabled := false
 
-    aboutGui.Show("w470 h524 Center")
+    vaultExtraH := 0
+    if (IsSet(ArcadeVault) && IsObject(cfg))
+        vaultExtraH := ArcadeVault.AttachAboutVaultSection(aboutGui, cfg, state, 20, 514, 430, true)
+
+    aboutGui.Show("w470 h" (524 + vaultExtraH) " Center")
     closeBtn.Focus()
     return aboutGui
 }

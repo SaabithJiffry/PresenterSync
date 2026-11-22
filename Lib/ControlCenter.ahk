@@ -377,7 +377,7 @@ ShowHelpWindow(cfg, state := "", *) {
         . "OBS Mute / Rec / Pause:`n"
         . "OBS Transition Fallback:`n"
         . "Conf Mute / Rec / Pause:`n"
-        . "Undocumented Chord:"
+        . "Sector Z Subsystem:"
     normApp := NormalizeConferencingApp(cfg.ConferencingApp)
     activeConfKey := (normApp = "Teams") ? cfg.TeamsMuteHotkey : ((normApp = "Meet") ? cfg.MeetMuteHotkey : cfg.ZoomMuteHotkey)
     scCol2 := FormatHK(cfg.PptHotkey) "`n"
@@ -391,7 +391,7 @@ ShowHelpWindow(cfg, state := "", *) {
         . FormatHK(cfg.ObsMuteHotkey) "  /  " FormatHK(cfg.ObsRecHotkey) "  /  " FormatHK(cfg.ObsPauseHotkey) "`n"
         . FormatHK(cfg.ObsTransitionHotkey) "`n"
         . FormatHK(activeConfKey) "  /  " FormatHK(cfg.ZoomRecHotkey) "  /  " FormatHK(cfg.ZoomPauseHotkey) "  (" normApp ")`n"
-        . "Alt + Ctrl + Shift + S  (Try at your own risk...)"
+        . "Locked [0 Credits]  (Diagnostic clearance required)"
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y122 w200 h206", scCol1), "Text", "tabMuted")
     Theme.RegisterControl(helpGui, helpGui.Add("Text", "x238 y122 w572 h206", scCol2), "Text", "tabText")
 
@@ -639,7 +639,11 @@ ShowAboutWindow(cfg := "", state := "", *) {
     aboutGui.OnEvent("Close", CloseAbout)
     aboutGui.OnEvent("Escape", CloseAbout)
 
-    aboutGui.Show("w470 h536 Center")
+    vaultExtraH := 0
+    if (IsSet(ArcadeVault) && IsObject(cfg))
+        vaultExtraH := ArcadeVault.AttachAboutVaultSection(aboutGui, cfg, state, 20, 526, 430, false, (c, s) => ShowAboutWindow(c, s))
+
+    aboutGui.Show("w470 h" (536 + vaultExtraH) " Center")
     closeBtn.Focus()
     return aboutGui
 }

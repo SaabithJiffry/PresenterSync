@@ -47,7 +47,7 @@
   * **Smart Board High-DPI Canvas (`MicPillCanvasView` / `MicPillRenderMetrics`):** `0.5x–5.0x` sub-linear optical border scaling, tonal gradient sheen, knockout mute slash, auto-fit label, and timer/`BRB`/`REC`/amber alert mini-badges.
   * **Full-Screen OLED Podium Deck (`PodiumDeckScreen`):** Pure `#000000` lectern mode with `FLAG_KEEP_SCREEN_ON`, oversized Mute/Unmute surface, OBS Transition, Slides (`Prev`/`Next`/`F5` + Speaker Notes), Timer, `BRB`, and Stage Nudge chips.
   * **2x1 Home Screen App Widget (`PresenterSyncWidgetProvider`), Silent Waveform Haptics (`HapticAlertPlayer`), & Background BT Media Clicker (`BackgroundMediaClickerController`):** Native `MediaSession` + `VolumeProvider` clicker capture, Battery Optimization check, Share Pairing QR dialog, Error Log viewer, and dual `:4456`/`:4455` probe.
-* **1-Tap In-App Self-Updaters & HUD Snake Easter Egg:** GitHub Releases + `SHA256SUMS.txt` verification on Windows & Android; `Alt + Ctrl + Shift + S` (or 5s Quick Menu hold on Android) launches translucent HUD Snake.
+* **1-Tap In-App Self-Updaters & Sector Z Diagnostic Vault:** GitHub Releases + `SHA256SUMS.txt` verification on Windows & Android, plus a confidential RAM-locked diagnostic subsystem waiting behind Sector Z clearance.
 
 ---
 
@@ -92,7 +92,7 @@ Allow Private Network inbound **TCP `4455`** (if direct OBS), **TCP `4456`** (Ho
 | **Primary Host** | `Ctrl + Shift + F12` | Show / Hide Primary HUD Stack |
 | **Primary Host** | `Ctrl + Alt + Shift + F12` | Suspend / Resume All Hotkeys |
 | **Primary Host** | `Alt + Shift + F12` | Exit PresenterSync |
-| **Primary + Remote** | `Alt + Ctrl + Shift + S` | Toggle HUD Snake Easter Egg |
+| **Primary + Remote** | `Ctrl + Alt + Shift + Z` | Sector Z Diagnostic Terminal *(0 Credits on boot)* |
 | **Windows Remote** | `Ctrl + F12` | Toggle Pointer Mute Control ON/OFF (HUD stays synced) |
 | **Windows Remote** | `Alt + Shift + F12` | Exit PresenterSync Remote |
 

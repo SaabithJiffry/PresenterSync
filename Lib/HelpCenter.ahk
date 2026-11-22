@@ -576,11 +576,11 @@ GetHelpKnowledgeBase() {
         "EYES-FREE MUTE CONFIRMATION (REMOTE)`r`n`r`n• Mute Audio Cue (Beep): Plays a distinct 2-tone rising chime when LIVE and a soft falling chime when MUTED—non-blocking on the Remote device.`r`n• Mute Status Toast: Displays a crisp 1.5-second cursor tooltip ('MIC MUTED' / 'MIC LIVE') whenever state flips.`r`n• Both default to OFF and live under Remote Tray -> Indicator Appearance.",
         "remote audio cue beep toast eyes free chime tooltip confirmation")
 
-    Add("rfeat-easter-snake", "Features", "Remote Clicker & Ergonomics", "Secret Challenge: Try at Your Own Risk (Remote)",
-        "Undocumented Chord / Quick Menu Hold (No Main UI Button)", "Alt+Ctrl+Shift+S / 5s Quick Menu Hold", "Try at your own risk",
-        "On Windows Remote press Alt+Ctrl+Shift+S; on Android double-tap the pill -> hold 'Try at your own risk' for 5 seconds.",
-        "TRY AT YOUR OWN RISK (REMOTE COMPANION)`r`n`r`n• WINDOWS REMOTE: Press Alt + Ctrl + Shift + S (hidden from Tray & Settings). Use Arrow Keys, WASD, Numpad, or a connected USB/Bluetooth Gamepad D-Pad to steer, P/Space/Start to pause, E/X to toggle WALLS vs WRAP, and Esc/B to restore your live Mic pill.`r`n• ANDROID REMOTE (SMART BOARD & PHONE): Double-tap the floating pill to open Quick Menu, then press and hold 'Try at your own risk' at the bottom for 5 full seconds (short taps intentionally do nothing!). Control via Touch Swipe, USB/Bluetooth Keyboard, or D-Pad/Gamepad.",
-        "remote secret easter egg snake alt ctrl shift s try at your own risk quick menu 5s hold dpad swipe")
+    Add("rfeat-easter-snake", "Features", "Remote Clicker & Ergonomics", "Sector Z Subsystem — Locked [0 Credits]",
+        "Sector Z Clearance Required (About > Diagnostic Standby)", "Clearance Required", "Locked [0 Credits]",
+        "Confidential studio diagnostic layer. Summon via Sector Z clearance and enter the two classic arcade words.",
+        "SECTOR Z DIAGNOSTIC SUBSYSTEM (LOCKED)`r`n`r`n• CLEARANCE: Remains strictly locked in RAM on every launch [0 Credits].`r`n• WINDOWS REMOTE: Summon Sector Z clearance (Ctrl + Alt + Shift + Z) or inspect the About footer, then enter the two classic 1980s arcade words.`r`n• ANDROID REMOTE: Open About -> explore the diagnostic footer (7x version badge or 3s logo hold) -> enter clearance passphrase.",
+        "remote sector z diagnostic locked credits clearance standby cabinet about")
 
     Add("rsc-remote", "Shortcuts", "Remote Companion Shortcuts", "PresenterSync Remote Hotkeys & Clicker Mute Key",
         "Remote Tray > Change App Shortcuts... / Pointer Controls", "Ctrl+F12 / Alt+Shift+F12", "Editable to custom key or 'None'",
@@ -699,11 +699,11 @@ GetHelpKnowledgeBase() {
         "GUIDED SETUP WIZARD & CLASSROOM UDP DISCOVERY`r`n`r`n• 4-Step Windows Setup Probe: Checks OBS WebSocket :4455 reachability, Audio Routing & CoreAudio meter, active HUD window, and Host Bridge :4456 + Classroom UDP Discovery (:4457).`r`n• One-Click Tools: Flash HUD Pill to locate it, open Pairing QR directly, or jump straight into Control Center.",
         "guided setup wizard onboarding checklist udp discovery 4457 classroom lan auto find")
 
-    Add("feat-easter-snake", "Features", "Profiles, Updates & Startup", "Secret Challenge: Alt+Ctrl+Shift+S (Try at Your Own Risk)",
-        "Undocumented Chord Only (No Tray / Control Center Item)", "Alt+Ctrl+Shift+S", "Try at your own risk",
-        "Curiosity beckons—press Alt+Ctrl+Shift+S while PresenterSync is active. Try at your own risk!",
-        "TRY AT YOUR OWN RISK...`r`n`r`n• TRIGGER / ESCAPE:`r`n  Press Alt + Ctrl + Shift + S at any time while PresenterSync is running! There is intentionally NO System Tray or Control Center menu item—only this hidden keyboard chord.`r`n`r`n• WHAT TO EXPECT:`r`n  Your floating HUD detaches into something unexpected right on top of your desktop (no popup window), while your background telemetry and PowerPoint slide intercepts politely pause until you press Esc or Alt + Ctrl + Shift + S to restore normal presenter duty.`r`n`r`n• QUICK KEYS ONCE TRIGGERED:`r`n  - Navigate: Arrow Keys or W / A / S / D`r`n  - Pause / Resume: P or Space`r`n  - Toggle Boundary Rules: E`r`n  - Retry: R, Enter, or Space`r`n  - Exit Back to Live HUD: Esc or Alt + Ctrl + Shift + S",
-        "secret easter egg snake mini game hidden alt ctrl shift s risk curiosity wrap walls")
+    Add("feat-easter-snake", "Features", "Profiles, Updates & Startup", "Sector Z Subsystem — Locked [0 Credits]",
+        "Sector Z Clearance Required (About > Diagnostic Standby)", "Clearance Required", "Locked [0 Credits]",
+        "Confidential studio diagnostic layer. Summon via Sector Z clearance and enter the two classic arcade words.",
+        "SECTOR Z DIAGNOSTIC SUBSYSTEM (LOCKED)`r`n`r`n• STATUS: Cabinet Standby [0 Credits] — never persisted across restarts.`r`n• ACCESS PROTOCOL: Summon the Sector Z Terminal via Ctrl + Alt + Shift + Z or About PresenterSync, then enter what every 1980s arcade cabinet asks before Player 1 starts.`r`n• AUDIO SAFETY: Hardware presenter mute remains LIVE even while Sector Z diagnostics run.",
+        "sector z diagnostic locked credits clearance standby cabinet about secret")
 
     Add("feat-obs-transition", "Features", "Audio Routing & OBS Telemetry", "Native OBS Scene Transition Keystroke & Bounce Filter",
         "Settings > Change Pointer OBS Transition Button / Control Center > OBS & Stream", "HwTransitionHotkey / ObsTransitionHotkey", "25ms bounce shield",
@@ -735,8 +735,8 @@ GetHelpKnowledgeBase() {
     Add("sc-global", "Shortcuts", "Keyboard & Clicker Shortcuts", "Global App Hotkeys (Default Bindings & Conflict Rules)",
         "Settings > Change App Shortcuts / Control Center > Profiles & Sys", "Ctrl+F12 / Alt+F12 / etc.", "Editable live or to 'None'",
         "Reference for all global hotkeys (plus one curious chord), Suspend behavior, and leaving keys unbound.",
-        "DEFAULT HOST HOTKEYS:`r`n• Ctrl + F12 : Cycle Pointer Modes (Full PPT + Mute -> Mute Only -> OFF)`r`n• Alt + F12  : Toggle OBS WebSocket Sync ON/OFF`r`n• Ctrl + Alt + F12 : Toggle Conferencing Monitoring ON/OFF`r`n• Ctrl + Shift + F12 : Show / Hide HUD Overlay Stack`r`n• Ctrl + Alt + Shift + F12 : Suspend All Hotkeys`r`n• Alt + Shift + F12 : Exit PresenterSync`r`n• Alt + Ctrl + Shift + S : Try at your own risk...`r`n`r`nDEFAULT REMOTE COMPANION HOTKEYS:`r`n• Ctrl + F12 : Toggle Pointer Mute Control ON/OFF`r`n• Alt + Shift + F12 : Exit PresenterSync Remote`r`n`r`n• Clear a hotkey box or enter 'None' to disable that shortcut completely.",
-        "shortcuts hotkeys ctrl alt shift f12 suspend exit none disable risk curiosity")
+        "DEFAULT HOST HOTKEYS:`r`n• Ctrl + F12 : Cycle Pointer Modes (Full PPT + Mute -> Mute Only -> OFF)`r`n• Alt + F12  : Toggle OBS WebSocket Sync ON/OFF`r`n• Ctrl + Alt + F12 : Toggle Conferencing Monitoring ON/OFF`r`n• Ctrl + Shift + F12 : Show / Hide HUD Overlay Stack`r`n• Ctrl + Alt + Shift + F12 : Suspend All Hotkeys`r`n• Alt + Shift + F12 : Exit PresenterSync`r`n• Ctrl + Alt + Shift + Z : Sector Z Diagnostic Terminal (0 Credits)`r`n`r`nDEFAULT REMOTE COMPANION HOTKEYS:`r`n• Ctrl + F12 : Toggle Pointer Mute Control ON/OFF`r`n• Alt + Shift + F12 : Exit PresenterSync Remote`r`n`r`n• Clear a hotkey box or enter 'None' to disable that shortcut completely.",
+        "shortcuts hotkeys ctrl alt shift f12 suspend exit none disable sector z")
 
     Add("sc-clicker", "Shortcuts", "Keyboard & Clicker Shortcuts", "Hardware Clicker Mute Button & Collision Prevention",
         "Settings > Change Pointer Mute Button / Configure Pointer Intercepts", "Default: b", "Supports any AHK key",

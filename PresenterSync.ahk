@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 8.1.0
+; Version: 8.1.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -12,7 +12,7 @@
 ;@Ahk2Exe-AddResource *10 assets\PresenterSync.ico, FAVICON_ICO
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 8.1.0.0
+;@Ahk2Exe-SetVersion 8.1.1.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -24,6 +24,8 @@ SetKeyDelay -1, -1
 #Include <OBS_Network>
 #Include <GUI_Config>
 #Include <HudSnakeGame>
+#Include <HudArcadeBase>
+#Include <ArcadeVault>
 
 if (A_Args.Length > 0) {
     cliCmd := ParseHostCliArgs(A_Args)
@@ -94,7 +96,7 @@ ShutdownHostApp(*) {
         try HideStageNudgeBanner()
     try SessionTimeline.ClearAutosave()
     try StopHostCompanionBridge()
-    try HudSnake.Stop()
+    try HudArcadeBase.StopActiveGame()
     try AudioMeter.Shutdown()
     try UIA.Shutdown()
     try Theme.Shutdown()
@@ -623,11 +625,8 @@ BindSystemHotkeys(cfg, state) {
     }
     _TryRegisterSystemHotkey(cfg.ExitHotkey, (*) => ExitTrayApp())
     _TryRegisterSystemHotkey(cfg.RemoteInfoHotkey, (*) => ShowRemoteCompanionInfo(cfg, state))
-    ; Secret Easter Egg hotkey (intentionally undocumented in Tray / Control Center)
-    try {
-        Hotkey("!^+s", (*) => HudSnake.Toggle(cfg, state), "On")
-        BoundSystemHotkeys.Push("!^+s")
-    }
+    ArcadeVault.RegisterGame("snake", "HUD Snake", "!^+s", "Ctrl+Alt+Shift+S", (c, s) => HudSnake.Toggle(c, s), () => HudSnake.Stop())
+    ArcadeVault.BindVaultHotkey(cfg, state)
 }
 BindSystemHotkeys(AppConfig, AppState)
 
@@ -637,7 +636,7 @@ RemoveToolTip() {
 
 ; --- POWERPOINT CONTROLS (PRE-COMPUTED DYNAMIC INTERCEPTION) ---
 IsPptInterceptActive(cfg, ThisHotkey := "") {
-    return cfg.EnablePPT && !HudSnake.IsActive && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
+    return cfg.EnablePPT && !HudArcadeBase.IsAnyGameActive() && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
 IsPptKeyNotMute(cfg, pptKey) {
@@ -744,7 +743,7 @@ SendToPPT(cfg, Key) {
 
 ; --- DYNAMIC HARDWARE MUTE & SCENE TRANSITION TRIGGERS ---
 CheckPointerEnable(cfg, ThisHotkey) {
-    return !HudSnake.IsActive && (cfg.EnablePPT || cfg.EnableMicOnly) && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
+    return (cfg.EnablePPT || cfg.EnableMicOnly) && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
 PointerCondFn := CheckPointerEnable.Bind(AppConfig)
@@ -771,7 +770,7 @@ BindHwMuteHotkey(cfg, state) {
 BindHwMuteHotkey(AppConfig, AppState)
 
 CheckTransitionEnable(cfg, ThisHotkey := "") {
-    return !HudSnake.IsActive && cfg.EnablePointerTransition && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
+    return !HudArcadeBase.IsAnyGameActive() && cfg.EnablePointerTransition && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
 TransitionCondFn := CheckTransitionEnable.Bind(AppConfig)

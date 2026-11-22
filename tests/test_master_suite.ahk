@@ -1919,26 +1919,29 @@ for g in GetHudGuiList(stSnake)
 primSrc := FileRead(A_ScriptDir "\..\PresenterSync.ahk", "UTF-8")
 remSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
 ccSrc := FileRead(A_ScriptDir "\..\Lib\ControlCenter.ahk", "UTF-8")
-trayPart := StrSplit(StrSplit(primSrc, "BuildTrayMenu(cfg, state) {")[2], "NotifyHelpRefresh")[1]
+trayPart := StrSplit(StrSplit(primSrc, "BuildTrayMenu(cfg, state) {")[2], "NotifyHelpRefresh(state)")[1]
 ccPart := StrSplit(ccSrc, "ShowControlCenterWindow(cfg, state := `"`", *) {")[2]
-remTrayPart := StrSplit(StrSplit(remSrc, "BuildRemoteTrayMenu(cfg, state) {")[2], "ShowRemoteHelpUI(")[1]
+remTrayPart := StrSplit(StrSplit(remSrc, "BuildRemoteTrayMenu(cfg, state) {")[2], "ToggleRemoteIndicator(cfg, state")[1]
 
-noUiMenuLeak := !InStr(trayPart, "Snake") && !InStr(trayPart, "Easter")
-    && !InStr(ccPart, "Snake") && !InStr(ccPart, "Easter")
+noUiMenuLeak := !InStr(trayPart, "Snake") && !InStr(trayPart, "Easter") && !InStr(trayPart, "Arcade")
+    && !InStr(ccPart, "Snake") && !InStr(ccPart, "Easter") && !InStr(ccPart, "Arcade")
     && !InStr(remTrayPart, "Snake") && !InStr(remTrayPart, "Easter") && !InStr(remTrayPart, "Try at your own risk")
-secretHkWired := InStr(primSrc, "`"!^+s`"") && InStr(primSrc, "HudSnake.Toggle") && InStr(primSrc, "!HudSnake.IsActive")
-    && InStr(remSrc, "`"!^+s`"") && InStr(remSrc, "HudSnake.Toggle") && InStr(remSrc, "HudSnake.IsActive")
-helpPrimHits := SearchHelpEntries("snake", "All", false)
-helpRemHits := SearchHelpEntries("snake", "All", true)
-Assert("v4.0.1/v6.5.0 Snake remains secret in Tray/CC Menus, bound to !^+s in Primary+Remote & subtle in Help",
-    noUiMenuLeak && secretHkWired && helpPrimHits.Length == 1 && helpPrimHits[1].id == "feat-easter-snake"
-    && helpRemHits.Length == 1 && helpRemHits[1].id == "rfeat-easter-snake",
-    Format("noLeak={} hkWired={} primHits={} remHits={}", noUiMenuLeak, secretHkWired, helpPrimHits.Length, helpRemHits.Length))
+    && !InStr(ccSrc, "Alt + Ctrl + Shift + S")
+vaultGated := InStr(primSrc, "ArcadeVault.RegisterGame") && InStr(primSrc, "ArcadeVault.BindVaultHotkey")
+    && InStr(primSrc, "!HudArcadeBase.IsAnyGameActive()")
+    && InStr(remSrc, "ArcadeVault.RegisterGame") && InStr(remSrc, "ArcadeVault.BindVaultHotkey")
+    && InStr(remSrc, "HudArcadeBase.IsAnyGameActive()")
+helpPrimHits := SearchHelpEntries("sector z", "All", false)
+helpRemHits := SearchHelpEntries("sector z", "All", true)
+Assert("v8.1.1+ Master Arcade Vault gates Snake cleanly with zero menu/chord spoilers",
+    noUiMenuLeak && vaultGated && helpPrimHits.Length >= 1 && helpPrimHits[1].id == "feat-easter-snake"
+    && helpRemHits.Length >= 1 && helpRemHits[1].id == "rfeat-easter-snake",
+    Format("noLeak={} vaultGated={} primHits={} remHits={}", noUiMenuLeak, vaultGated, helpPrimHits.Length, helpRemHits.Length))
 
 ; ==============================================================================
-; SECTION 26: v4.1.0 AUDIT FIXES (SNAKE POINTER GUARD & NON-BLOCKING LOOPBACK)
+; SECTION 26: v4.1.0+ AUDIT FIXES (LIVE MUTE SAFETY & NON-BLOCKING LOOPBACK)
 ; ==============================================================================
-checkPtrLineOk := RegExMatch(primSrc, "CheckPointerEnable\([^\)]*\)\s*\{\s*return\s+!HudSnake\.IsActive\s*&&") != 0
+checkPtrLineOk := RegExMatch(primSrc, "CheckPointerEnable\([^\)]*\)\s*\{\s*return\s+\(cfg\.EnablePPT") != 0
 loopbackHelpersOk := IsLoopbackHost("127.0.0.1") && IsLoopbackHost(" LOCALHOST ") && IsLoopbackHost("[::1]") && !IsLoopbackHost("192.168.1.50")
 tProbe0 := A_TickCount
 deadPortOk := !IsLocalTcpPortListening(59998) && !IsLocalTcpPortListening(0) && !IsLocalTcpPortListening(70000) && IsLocalTcpPortListening("abc")
