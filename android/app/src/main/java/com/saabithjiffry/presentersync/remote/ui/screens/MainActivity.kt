@@ -114,7 +114,25 @@ class MainActivity : ComponentActivity() {
 
     private fun handleCaptureNextKey(event: KeyEvent, keyName: String): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return false
-        if (!InAppKeyMonitor.captureNextKeyMode.getAndSet(false)) return false
+        if (!InAppKeyMonitor.captureNextKeyMode.get()) return false
+        val isModifierOnly = event.keyCode == KeyEvent.KEYCODE_CTRL_LEFT ||
+            event.keyCode == KeyEvent.KEYCODE_CTRL_RIGHT ||
+            event.keyCode == KeyEvent.KEYCODE_ALT_LEFT ||
+            event.keyCode == KeyEvent.KEYCODE_ALT_RIGHT ||
+            event.keyCode == KeyEvent.KEYCODE_SHIFT_LEFT ||
+            event.keyCode == KeyEvent.KEYCODE_SHIFT_RIGHT ||
+            event.keyCode == KeyEvent.KEYCODE_META_LEFT ||
+            event.keyCode == KeyEvent.KEYCODE_META_RIGHT ||
+            event.keyCode == KeyEvent.KEYCODE_SYM ||
+            event.keyCode == KeyEvent.KEYCODE_FUNCTION
+        if (isModifierOnly) return true
+        InAppKeyMonitor.captureNextKeyMode.set(false)
+        val chord = buildString {
+            if (event.isCtrlPressed) append("Ctrl+")
+            if (event.isAltPressed) append("Alt+")
+            if (event.isShiftPressed) append("Shift+")
+            append(keyName.removePrefix("KEYCODE_"))
+        }
         InAppKeyMonitor.recordUiCapturedEvent(
             CapturedKeyEvent(
                 seq = System.nanoTime(),
@@ -124,9 +142,13 @@ class MainActivity : ComponentActivity() {
                 scanCode = event.scanCode,
                 deviceName = event.device?.name ?: "Focused Window",
                 action = "DOWN",
-                decisionLabel = "Captured New Mute Key (Window)",
+                decisionLabel = "Captured Keystroke: $chord",
                 consumed = true,
-                timestampMs = System.currentTimeMillis()
+                timestampMs = System.currentTimeMillis(),
+                isCtrl = event.isCtrlPressed,
+                isAlt = event.isAltPressed,
+                isShift = event.isShiftPressed,
+                shortcutString = chord
             )
         )
         return true

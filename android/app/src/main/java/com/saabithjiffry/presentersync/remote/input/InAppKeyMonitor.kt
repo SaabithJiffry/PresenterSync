@@ -15,7 +15,11 @@ data class CapturedKeyEvent(
     val action: String,
     val decisionLabel: String,
     val consumed: Boolean,
-    val timestampMs: Long
+    val timestampMs: Long,
+    val isCtrl: Boolean = false,
+    val isAlt: Boolean = false,
+    val isShift: Boolean = false,
+    val shortcutString: String = keyCodeName.removePrefix("KEYCODE_")
 )
 
 /**

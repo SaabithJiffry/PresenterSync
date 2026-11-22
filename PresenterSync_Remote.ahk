@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 8.0.4
+; Version: 8.0.5
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 8.0.4.0
+;@Ahk2Exe-SetVersion 8.0.5.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -2568,20 +2568,20 @@ ChangeRemoteAppHotkeysUI(cfg, state, *) {
 
     elements := [
         {type: "Text", opts: "xm w190 h25 +0x200", text: "Toggle Pointer Mute:"},
-        {type: "Hotkey", id: "ppt", opts: "x+10 yp w130 h25", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Shortcut", id: "ppt", opts: "x+10 yp w280 h25", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank.", captureTitle: "Capture Toggle Pointer Mute"},
         {type: "Text", opts: "xm y+8 w190 h25 +0x200", text: "Exit PresenterSync Remote:"},
-        {type: "Hotkey", id: "exit", opts: "x+10 yp w130 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Shortcut", id: "exit", opts: "x+10 yp w280 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank.", captureTitle: "Capture Exit Remote"},
         {type: "Text", opts: "xm y+12 w190 h25 +0x200", text: "Next Slide (Optional):"},
-        {type: "Hotkey", id: "nextSlide", opts: "x+10 yp w130 h25", value: cfg.RemoteNextSlideKey},
+        {type: "Shortcut", id: "nextSlide", opts: "x+10 yp w280 h25", value: cfg.RemoteNextSlideKey, captureTitle: "Capture Next Slide"},
         {type: "Text", opts: "xm y+8 w190 h25 +0x200", text: "Previous Slide (Optional):"},
-        {type: "Hotkey", id: "prevSlide", opts: "x+10 yp w130 h25", value: cfg.RemotePrevSlideKey},
+        {type: "Shortcut", id: "prevSlide", opts: "x+10 yp w280 h25", value: cfg.RemotePrevSlideKey, captureTitle: "Capture Previous Slide"},
         {type: "Text", opts: "xm y+8 w190 h25 +0x200", text: "OBS Transition (Optional):"},
-        {type: "Hotkey", id: "transition", opts: "x+10 yp w130 h25", value: cfg.RemoteTransitionKey}
+        {type: "Shortcut", id: "transition", opts: "x+10 yp w280 h25", value: cfg.RemoteTransitionKey, captureTitle: "Capture Remote OBS Transition"}
     ]
 
     return BuildSettingsWindow("Edit Remote App Shortcuts", elements, SaveRemoteAppHk, {
         saveBtnText: "Save & Apply",
-        saveBtnOpts: "xm w330 h32 Default y+16"
+        saveBtnOpts: "xm w480 h32 Default y+16"
     })
 }
 

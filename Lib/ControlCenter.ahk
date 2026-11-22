@@ -671,6 +671,10 @@ ChangeAppHotkeysUI(cfg, state := "", *) {
         cfg.IndHotkey := values["ind"]
         cfg.SuspendHotkey := values["susp"]
         cfg.ExitHotkey := values["exit"]
+        if (values.Has("remoteInfo")) {
+            cfg.RemoteInfoHotkey := (Trim(values["remoteInfo"]) != "") ? Trim(values["remoteInfo"]) : "None"
+            cfg.Write("Settings", "RemoteInfoHotkey", cfg.RemoteInfoHotkey)
+        }
         cfg.Write("Settings", "PptHotkey", cfg.PptHotkey)
         cfg.Write("Settings", "WsHotkey", cfg.WsHotkey)
         cfg.Write("Settings", "ZoomHotkey", cfg.ZoomHotkey)
@@ -682,22 +686,24 @@ ChangeAppHotkeysUI(cfg, state := "", *) {
 
     elements := [
         {type: "Text", opts: "xm w160 h25 +0x200", text: "Cycle Pointer Mode:"},
-        {type: "Hotkey", id: "ppt", opts: "x+10 yp w165 h25", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Shortcut", id: "ppt", opts: "x+10 yp w310 h25", value: cfg.PptHotkey, required: true, errorMsg: "Shortcuts cannot be left blank.", captureTitle: "Capture Cycle Pointer Mode"},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle OBS WebSocket:"},
-        {type: "Hotkey", id: "ws", opts: "x+10 yp w165 h25", value: cfg.WsHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Shortcut", id: "ws", opts: "x+10 yp w310 h25", value: cfg.WsHotkey, required: true, errorMsg: "Shortcuts cannot be left blank.", captureTitle: "Capture Toggle OBS Sync"},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle Conf Monitor:"},
-        {type: "Hotkey", id: "zoom", opts: "x+10 yp w165 h25", value: cfg.ZoomHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Shortcut", id: "zoom", opts: "x+10 yp w310 h25", value: cfg.ZoomHotkey, required: true, errorMsg: "Shortcuts cannot be left blank.", captureTitle: "Capture Toggle Conf Monitor"},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Toggle Indicator:"},
-        {type: "Hotkey", id: "ind", opts: "x+10 yp w165 h25", value: cfg.IndHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Shortcut", id: "ind", opts: "x+10 yp w310 h25", value: cfg.IndHotkey, required: true, errorMsg: "Shortcuts cannot be left blank.", captureTitle: "Capture Toggle Indicator"},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Suspend Hotkeys:"},
-        {type: "Hotkey", id: "susp", opts: "x+10 yp w165 h25", value: cfg.SuspendHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."},
+        {type: "Shortcut", id: "susp", opts: "x+10 yp w310 h25", value: cfg.SuspendHotkey, required: true, errorMsg: "Shortcuts cannot be left blank.", captureTitle: "Capture Suspend Hotkeys"},
         {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Exit PresenterSync:"},
-        {type: "Hotkey", id: "exit", opts: "x+10 yp w165 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank."}
+        {type: "Shortcut", id: "exit", opts: "x+10 yp w310 h25", value: cfg.ExitHotkey, required: true, errorMsg: "Shortcuts cannot be left blank.", captureTitle: "Capture Exit PresenterSync"},
+        {type: "Text", opts: "xm y+8 w160 h25 +0x200", text: "Remote Setup / QR Info:"},
+        {type: "Shortcut", id: "remoteInfo", opts: "x+10 yp w310 h25", value: cfg.RemoteInfoHotkey, captureTitle: "Capture Remote Setup Shortcut"}
     ]
 
     return BuildSettingsWindow("Edit App Shortcuts", elements, SaveAppHk, {
         saveBtnText: hasLiveRebind ? "Save & Apply" : "Save & Restart",
-        saveBtnOpts: "xm w335 h32 Default y+16"
+        saveBtnOpts: "xm w480 h32 Default y+16"
     })
 }
 
@@ -740,21 +746,21 @@ ChangeZoomShortcutsUI(cfg, state := "", *) {
     }
 
     elements := [
-        {type: "Text", opts: "w300", text: "Zoom Mute Shortcut (Default Alt+A):"},
-        {type: "Hotkey", id: "mute", opts: "w300", value: cfg.ZoomMuteHotkey, required: true, errorMsg: "Zoom Mute shortcut cannot be empty."},
-        {type: "Text", opts: "w300 y+8", text: "Microsoft Teams Mute Shortcut (Default Ctrl+Shift+M):"},
-        {type: "Hotkey", id: "teamsMute", opts: "w300", value: cfg.TeamsMuteHotkey},
-        {type: "Text", opts: "w300 y+8", text: "Google Meet Mute Shortcut (Default Ctrl+D):"},
-        {type: "Hotkey", id: "meetMute", opts: "w300", value: cfg.MeetMuteHotkey},
-        {type: "Text", opts: "w300 y+8", text: "Zoom Start/Stop Recording (Default Alt+R):"},
-        {type: "Hotkey", id: "rec", opts: "w300", value: cfg.ZoomRecHotkey},
-        {type: "Text", opts: "w300 y+8", text: "Zoom Pause/Resume Recording (Default Alt+P):"},
-        {type: "Hotkey", id: "pause", opts: "w300", value: cfg.ZoomPauseHotkey}
+        {type: "Text", opts: "w340", text: "Zoom Mute Shortcut (Default Alt+A):"},
+        {type: "Shortcut", id: "mute", opts: "xm w340 h25", value: cfg.ZoomMuteHotkey, required: true, errorMsg: "Zoom Mute shortcut cannot be empty.", captureTitle: "Capture Zoom Mute Shortcut"},
+        {type: "Text", opts: "xm w340 y+8", text: "Microsoft Teams Mute Shortcut (Default Ctrl+Shift+M):"},
+        {type: "Shortcut", id: "teamsMute", opts: "xm w340 h25", value: cfg.TeamsMuteHotkey, captureTitle: "Capture Teams Mute Shortcut"},
+        {type: "Text", opts: "xm w340 y+8", text: "Google Meet Mute Shortcut (Default Ctrl+D):"},
+        {type: "Shortcut", id: "meetMute", opts: "xm w340 h25", value: cfg.MeetMuteHotkey, captureTitle: "Capture Meet Mute Shortcut"},
+        {type: "Text", opts: "xm w340 y+8", text: "Zoom Start/Stop Recording (Default Alt+R):"},
+        {type: "Shortcut", id: "rec", opts: "xm w340 h25", value: cfg.ZoomRecHotkey, captureTitle: "Capture Zoom Rec Shortcut"},
+        {type: "Text", opts: "xm w340 y+8", text: "Zoom Pause/Resume Recording (Default Alt+P):"},
+        {type: "Shortcut", id: "pause", opts: "xm w340 h25", value: cfg.ZoomPauseHotkey, captureTitle: "Capture Zoom Pause Shortcut"}
     ]
 
     return BuildSettingsWindow("Edit Conferencing Shortcuts", elements, SaveZoomHk, {
         saveBtnText: hasLiveRebind ? "Save & Apply" : "Save & Restart",
-        saveBtnOpts: "w300 h32 Default y+14"
+        saveBtnOpts: "xm w340 h32 Default y+14"
     })
 }
 
@@ -790,23 +796,23 @@ ChangeObsSettingsUI(cfg, state := "", *) {
     }
 
     elements := [
-        {type: "Text", opts: "w280", text: "OBS Mute Shortcut" (cfg.EnableWS ? " (Optional with WebSocket):" : ":")},
-        {type: "Hotkey", id: "mute", opts: "w280", value: (cfg.ObsMuteHotkey != "None") ? cfg.ObsMuteHotkey : "", required: (!cfg.EnableWS && cfg.AudioRoutingMode != 2), errorMsg: "OBS Mute shortcut cannot be empty unless WebSocket Sync is enabled."},
-        {type: "Text", opts: "w280 y+10", text: "Start/Stop Recording Shortcut:"},
-        {type: "Hotkey", id: "rec", opts: "w280", value: cfg.ObsRecHotkey},
-        {type: "Text", opts: "w280 y+10", text: "Pause/Resume Recording Shortcut:"},
-        {type: "Hotkey", id: "pause", opts: "w280", value: cfg.ObsPauseHotkey},
-        {type: "Text", opts: "w280 y+10", text: "OBS Transition Shortcut (Fallback):"},
-        {type: "Hotkey", id: "transition", opts: "w280", value: (cfg.ObsTransitionHotkey != "None") ? cfg.ObsTransitionHotkey : ""},
-        {type: "Text", opts: "w280 y+10", text: "Exact OBS Audio Source Name (e.g., Mic/Aux):"},
-        {type: "Edit", id: "mic", opts: "w280", value: cfg.targetMicName, required: true, errorMsg: "Exact OBS Audio Source Name cannot be empty."},
-        {type: "Text", opts: "w280 y+10", text: "OBS WebSocket Password (Optional):"},
-        {type: "Edit", id: "pw", opts: "w280 Password", value: cfg.obsPassword}
+        {type: "Text", opts: "w340", text: "OBS Mute Shortcut" (cfg.EnableWS ? " (Optional with WebSocket):" : ":")},
+        {type: "Shortcut", id: "mute", opts: "xm w340 h25", value: (cfg.ObsMuteHotkey != "None") ? cfg.ObsMuteHotkey : "", required: (!cfg.EnableWS && cfg.AudioRoutingMode != 2), errorMsg: "OBS Mute shortcut cannot be empty unless WebSocket Sync is enabled.", captureTitle: "Capture OBS Mute Shortcut"},
+        {type: "Text", opts: "xm w340 y+10", text: "Start/Stop Recording Shortcut:"},
+        {type: "Shortcut", id: "rec", opts: "xm w340 h25", value: cfg.ObsRecHotkey, captureTitle: "Capture OBS Rec Shortcut"},
+        {type: "Text", opts: "xm w340 y+10", text: "Pause/Resume Recording Shortcut:"},
+        {type: "Shortcut", id: "pause", opts: "xm w340 h25", value: cfg.ObsPauseHotkey, captureTitle: "Capture OBS Pause Shortcut"},
+        {type: "Text", opts: "xm w340 y+10", text: "OBS Transition Shortcut (Fallback):"},
+        {type: "Shortcut", id: "transition", opts: "xm w340 h25", value: (cfg.ObsTransitionHotkey != "None") ? cfg.ObsTransitionHotkey : "", captureTitle: "Capture OBS Transition Shortcut"},
+        {type: "Text", opts: "xm w340 y+10", text: "Exact OBS Audio Source Name (e.g., Mic/Aux):"},
+        {type: "Edit", id: "mic", opts: "xm w340", value: cfg.targetMicName, required: true, errorMsg: "Exact OBS Audio Source Name cannot be empty."},
+        {type: "Text", opts: "xm w340 y+10", text: "OBS WebSocket Password (Optional):"},
+        {type: "Edit", id: "pw", opts: "xm w340 Password", value: cfg.obsPassword}
     ]
 
     return BuildSettingsWindow("OBS Settings", elements, SaveObsSettings, {
         saveBtnText: hasLiveRebind ? "Save & Apply" : "Save & Restart",
-        saveBtnOpts: "w280 h32 Default y+15"
+        saveBtnOpts: "xm w340 h32 Default y+15"
     })
 }
 
@@ -825,20 +831,24 @@ OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply, dialogTitle := "E
     Theme.NamedWindows[dialogTitle] := dlg
 
     dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w280", headingText), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w306", headingText), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w280 y+4", "Press a button on your clicker, or click the box to type a custom key name:"), "Text", "muted")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w306 y+4", "Press a button on your clicker, or click the box to type a custom key name:"), "Text", "muted")
 
     dlg.SetFont("s12 w700", Theme.UiFont)
-    editKey := dlg.Add("Edit", "xm w280 h32 y+12 Center", currentKey)
+    editKey := dlg.Add("Edit", "xm w180 h32 y+12 Center", currentKey)
     Theme.RegisterControl(dlg, editKey, "Edit", "accent")
 
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    btnCapPtr := dlg.Add("Button", "x+6 yp w120 h32", "Capture Keystroke")
+    Theme.RegisterControl(dlg, btnCapPtr, "Button", "tabButton")
+
     dlg.SetFont("s9 w400", Theme.UiFont)
-    statusTxt := dlg.Add("Text", "xm w280 y+8 Center", "Listening for clicker input...")
+    statusTxt := dlg.Add("Text", "xm w306 y+8 Center", "Listening for clicker input...")
     Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
 
     dlg.SetFont("s10 w400", Theme.UiFont)
-    btnSave := dlg.Add("Button", "xm w280 h34 y+14 Default", saveBtnLabel)
+    btnSave := dlg.Add("Button", "xm w306 h34 y+14 Default", saveBtnLabel)
     Theme.RegisterControl(dlg, btnSave, "Button", "accent")
 
     ih := InputHook("L0")
@@ -867,6 +877,7 @@ OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply, dialogTitle := "E
 
     editKey.OnEvent("Focus", StopCapture)
     editKey.OnEvent("LoseFocus", StartCapture)
+    btnCapPtr.OnEvent("Click", (*) => (btnSave.Focus(), StartCapture()))
 
     OnActivateMsg(wParam, lParam, msg, hwnd) {
         try {
@@ -1934,6 +1945,15 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
     return (invalidCount == 0)
 }
 
+_AddCCCaptureBtn(guiObj, x, y, w, h, btnText, edCtrl, capTitle, allowMods := true) {
+    guiObj.SetFont("s8.5 w600 norm", Theme.UiFont)
+    btn := guiObj.Add("Button", Format("x{} y{} w{} h{}", x, y, w, h), btnText)
+    Theme.RegisterControl(guiObj, btn, "Button", "tabButton")
+    btn.OnEvent("Click", (*) => OpenShortcutCaptureDialog(edCtrl.Value, (newHk) => (edCtrl.Value := newHk), capTitle, allowMods, true))
+    guiObj.SetFont("s9 w400 norm", Theme.UiFont)
+    return btn
+}
+
 ShowControlCenterWindow(cfg, state := "", *) {
     existing := Theme.FocusExistingWindow("PresenterSync - Control Center")
     if IsObject(existing)
@@ -2034,23 +2054,28 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y212 w210", "Zoom / Teams / Meet Mute Keys:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edZoomMute := ccGui.Add("Edit", "x250 y208 w136 h26", cfg.ZoomMuteHotkey)
-    edTeamsMute := ccGui.Add("Edit", "x397 y208 w136 h26", cfg.TeamsMuteHotkey)
-    edMeetMute := ccGui.Add("Edit", "x544 y208 w136 h26", cfg.MeetMuteHotkey)
+    edZoomMute := ccGui.Add("Edit", "x250 y208 w76 h26", cfg.ZoomMuteHotkey)
+    edTeamsMute := ccGui.Add("Edit", "x396 y208 w76 h26", cfg.TeamsMuteHotkey)
+    edMeetMute := ccGui.Add("Edit", "x542 y208 w76 h26", cfg.MeetMuteHotkey)
     Theme.RegisterControl(ccGui, edZoomMute, "Edit")
     Theme.RegisterControl(ccGui, edTeamsMute, "Edit")
     Theme.RegisterControl(ccGui, edMeetMute, "Edit")
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x250 y236 w136", "Zoom (e.g. !a)"), "Text", "tabMuted")
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x397 y236 w136", "Teams (e.g. ^+m)"), "Text", "tabMuted")
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x544 y236 w136", "Meet (e.g. ^d)"), "Text", "tabMuted")
+    _AddCCCaptureBtn(ccGui, 330, 208, 58, 26, "Capture", edZoomMute, "Capture Zoom Mute Shortcut")
+    _AddCCCaptureBtn(ccGui, 476, 208, 58, 26, "Capture", edTeamsMute, "Capture Teams Mute Shortcut")
+    _AddCCCaptureBtn(ccGui, 622, 208, 58, 26, "Capture", edMeetMute, "Capture Meet Mute Shortcut")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x250 y236 w138", "Zoom (e.g. !a)"), "Text", "tabMuted")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x396 y236 w138", "Teams (e.g. ^+m)"), "Text", "tabMuted")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x542 y236 w138", "Meet (e.g. ^d)"), "Text", "tabMuted")
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y268 w210", "Conferencing Rec / Pause Keys:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edZoomRec := ccGui.Add("Edit", "x250 y264 w210 h26", cfg.ZoomRecHotkey)
-    edZoomPause := ccGui.Add("Edit", "x470 y264 w210 h26", cfg.ZoomPauseHotkey)
+    edZoomRec := ccGui.Add("Edit", "x250 y264 w94 h26", cfg.ZoomRecHotkey)
+    edZoomPause := ccGui.Add("Edit", "x470 y264 w94 h26", cfg.ZoomPauseHotkey)
     Theme.RegisterControl(ccGui, edZoomRec, "Edit")
     Theme.RegisterControl(ccGui, edZoomPause, "Edit")
+    _AddCCCaptureBtn(ccGui, 348, 264, 112, 26, "Capture Keystroke", edZoomRec, "Capture Zoom Rec Shortcut")
+    _AddCCCaptureBtn(ccGui, 568, 264, 112, 26, "Capture Keystroke", edZoomPause, "Capture Zoom Pause Shortcut")
 
     chkVoiceMeter := ccGui.Add("Checkbox", "x32 y312 w310 h22" (cfg.ShowVoiceMeter ? " Checked" : ""), "Show Live CoreAudio Voice Activity Bar on LIVE Pill")
     chkAudioCue := ccGui.Add("Checkbox", "x360 y312 w320 h22" (cfg.EnableAudioCue ? " Checked" : ""), "Play Two-Tone Acoustic Chime on Mute / Unmute")
@@ -2113,20 +2138,23 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y228 w210", "OBS Mute Fallback Shortcut:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edObsMute := ccGui.Add("Edit", "x250 y224 w430 h26", cfg.ObsMuteHotkey)
+    edObsMute := ccGui.Add("Edit", "x250 y224 w306 h26", cfg.ObsMuteHotkey)
     Theme.RegisterControl(ccGui, edObsMute, "Edit")
+    _AddCCCaptureBtn(ccGui, 562, 224, 118, 26, "Capture Keystroke", edObsMute, "Capture OBS Mute Shortcut")
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y268 w210", "OBS Start/Stop Rec Shortcut:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edObsRec := ccGui.Add("Edit", "x250 y264 w430 h26", cfg.ObsRecHotkey)
+    edObsRec := ccGui.Add("Edit", "x250 y264 w306 h26", cfg.ObsRecHotkey)
     Theme.RegisterControl(ccGui, edObsRec, "Edit")
+    _AddCCCaptureBtn(ccGui, 562, 264, 118, 26, "Capture Keystroke", edObsRec, "Capture OBS Rec Shortcut")
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y308 w210", "OBS Pause Rec Shortcut:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edObsPause := ccGui.Add("Edit", "x250 y304 w430 h26", cfg.ObsPauseHotkey)
+    edObsPause := ccGui.Add("Edit", "x250 y304 w306 h26", cfg.ObsPauseHotkey)
     Theme.RegisterControl(ccGui, edObsPause, "Edit")
+    _AddCCCaptureBtn(ccGui, 562, 304, 118, 26, "Capture Keystroke", edObsPause, "Capture OBS Pause Shortcut")
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y348 w210", "Standby (BRB) OBS Scene:"), "Text", "tabText")
@@ -2137,8 +2165,9 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y388 w210", "OBS Transition Shortcut (Fallback):"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edObsTransition := ccGui.Add("Edit", "x250 y384 w430 h26", cfg.ObsTransitionHotkey)
+    edObsTransition := ccGui.Add("Edit", "x250 y384 w306 h26", cfg.ObsTransitionHotkey)
     Theme.RegisterControl(ccGui, edObsTransition, "Edit")
+    _AddCCCaptureBtn(ccGui, 562, 384, 118, 26, "Capture Keystroke", edObsTransition, "Capture OBS Transition Shortcut")
 
     chkAutoRecDrop := ccGui.Add("Checkbox", "x32 y428 w310 h24" (cfg.AutoRecordOnStreamDrop ? " Checked" : ""), "Auto-Start Local Backup Recording on Stream Drop")
     chkLowDisk := ccGui.Add("Checkbox", "x360 y428 w320 h24" (cfg.EnableLowDiskWatchdog ? " Checked" : ""), "Warn on Low Disk Space While Recording")
@@ -2164,10 +2193,10 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y138 w210", "Clicker Mute Button Key:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edHwMute := ccGui.Add("Edit", "x250 y134 w200 h26", cfg.HwMuteHotkey)
+    edHwMute := ccGui.Add("Edit", "x250 y134 w192 h26", cfg.HwMuteHotkey)
     Theme.RegisterControl(ccGui, edHwMute, "Edit")
 
-    btnCapMute := ccGui.Add("Button", "x460 y132 w105 h28", "Capture Key")
+    btnCapMute := ccGui.Add("Button", "x448 y132 w122 h28", "Capture Keystroke")
     btnPtrTester := ccGui.Add("Button", "x575 y132 w105 h28", "Clicker Tester")
     Theme.RegisterControl(ccGui, btnCapMute, "Button", "tabButton")
     Theme.RegisterControl(ccGui, btnPtrTester, "Button", "tabButton")
@@ -2199,9 +2228,9 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y388 w210", "Clicker Transition Button Key:"), "Text", "tabText")
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edHwTransition := ccGui.Add("Edit", "x250 y384 w200 h26", cfg.HwTransitionHotkey)
+    edHwTransition := ccGui.Add("Edit", "x250 y384 w306 h26", cfg.HwTransitionHotkey)
     Theme.RegisterControl(ccGui, edHwTransition, "Edit")
-    btnCapTransition := ccGui.Add("Button", "x460 y382 w105 h28", "Capture Key")
+    btnCapTransition := ccGui.Add("Button", "x562 y382 w118 h28", "Capture Keystroke")
     Theme.RegisterControl(ccGui, btnCapTransition, "Button", "tabButton")
     btnCapTransition.OnEvent("Click", (*) => OpenPointerKeyCaptureDialog(edHwTransition.Value, "Use Key", (newKey) => (edHwTransition.Value := newKey), "Edit Pointer OBS Transition Button", "Presentation Clicker OBS Transition Button"))
 
@@ -2401,24 +2430,31 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, btnProfMgr, "Button", "tabButton")
 
     ccGui.SetFont("s9 w600 norm", Theme.UiFont)
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y138 w180", "Cycle Pointer Mode:"), "Text", "tabText")
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y138 w160", "Toggle OBS Sync:"), "Text", "tabText")
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y174 w180", "Toggle Conf Monitor:"), "Text", "tabText")
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y174 w160", "Show / Hide HUD:"), "Text", "tabText")
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y210 w180", "Suspend All Hotkeys:"), "Text", "tabText")
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y210 w160", "Exit Application:"), "Text", "tabText")
-    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y246 w180", "Remote Setup / QR:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y138 w142", "Cycle Pointer Mode:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y138 w140", "Toggle OBS Sync:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y174 w142", "Toggle Conf Monitor:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y174 w140", "Show / Hide HUD:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y210 w142", "Suspend All Hotkeys:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x368 y210 w140", "Exit Application:"), "Text", "tabText")
+    Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y246 w142", "Remote Setup / QR:"), "Text", "tabText")
 
     ccGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edHkPpt := ccGui.Add("Edit", "x214 y134 w134 h26", cfg.PptHotkey)
-    edHkWs := ccGui.Add("Edit", "x534 y134 w146 h26", cfg.WsHotkey)
-    edHkZoom := ccGui.Add("Edit", "x214 y170 w134 h26", cfg.ZoomHotkey)
-    edHkInd := ccGui.Add("Edit", "x534 y170 w146 h26", cfg.IndHotkey)
-    edHkSusp := ccGui.Add("Edit", "x214 y206 w134 h26", cfg.SuspendHotkey)
-    edHkExit := ccGui.Add("Edit", "x534 y206 w146 h26", cfg.ExitHotkey)
-    edHkRemoteInfo := ccGui.Add("Edit", "x214 y242 w134 h26", cfg.RemoteInfoHotkey)
+    edHkPpt := ccGui.Add("Edit", "x176 y134 w100 h26", cfg.PptHotkey)
+    edHkWs := ccGui.Add("Edit", "x512 y134 w92 h26", cfg.WsHotkey)
+    edHkZoom := ccGui.Add("Edit", "x176 y170 w100 h26", cfg.ZoomHotkey)
+    edHkInd := ccGui.Add("Edit", "x512 y170 w92 h26", cfg.IndHotkey)
+    edHkSusp := ccGui.Add("Edit", "x176 y206 w100 h26", cfg.SuspendHotkey)
+    edHkExit := ccGui.Add("Edit", "x512 y206 w92 h26", cfg.ExitHotkey)
+    edHkRemoteInfo := ccGui.Add("Edit", "x176 y242 w100 h26", cfg.RemoteInfoHotkey)
     for hkEd in [edHkPpt, edHkWs, edHkZoom, edHkInd, edHkSusp, edHkExit, edHkRemoteInfo]
         Theme.RegisterControl(ccGui, hkEd, "Edit")
+    _AddCCCaptureBtn(ccGui, 280, 134, 72, 26, "Capture", edHkPpt, "Capture Cycle Pointer Mode")
+    _AddCCCaptureBtn(ccGui, 608, 134, 72, 26, "Capture", edHkWs, "Capture Toggle OBS Sync")
+    _AddCCCaptureBtn(ccGui, 280, 170, 72, 26, "Capture", edHkZoom, "Capture Toggle Conf Monitor")
+    _AddCCCaptureBtn(ccGui, 608, 170, 72, 26, "Capture", edHkInd, "Capture Show / Hide HUD")
+    _AddCCCaptureBtn(ccGui, 280, 206, 72, 26, "Capture", edHkSusp, "Capture Suspend All Hotkeys")
+    _AddCCCaptureBtn(ccGui, 608, 206, 72, 26, "Capture", edHkExit, "Capture Exit Application")
+    _AddCCCaptureBtn(ccGui, 280, 242, 72, 26, "Capture", edHkRemoteInfo, "Capture Remote Setup Shortcut")
 
     chkStartup := ccGui.Add("Checkbox", "x32 y286 w380 h24" (cfg.StartWithWindows ? " Checked" : ""), "Start PresenterSync Automatically with Windows (Default: OFF)")
     Theme.RegisterControl(ccGui, chkStartup, "Checkbox", "tabText")

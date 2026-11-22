@@ -85,6 +85,25 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
         } else if (t = "Checkbox") {
             chkOpt := (val != "") ? (" Checked" val) : ""
             ctrl := dlg.Add("Checkbox", cOpts chkOpt, txt)
+        } else if (t = "Shortcut") {
+            totalW := RegExMatch(cOpts, "i)\bw(\d+)", &wm) ? Integer(wm[1]) : 300
+            ctrlH := RegExMatch(cOpts, "i)\bh(\d+)", &hm) ? Integer(hm[1]) : 25
+            btnW := el.HasOwnProp("btnW") ? Integer(el.btnW) : 122
+            gapPx := 6
+            edW := Max(80, totalW - btnW - gapPx)
+            cleanOpts := Trim(RegExReplace(RegExReplace(cOpts, "i)\bw\d+", ""), "i)\bh\d+", ""))
+            edOpts := (cleanOpts != "" ? cleanOpts " " : "") "w" edW " h" ctrlH
+            ctrl := dlg.Add("Edit", edOpts, val)
+            btnTxt := el.HasOwnProp("btnText") ? el.btnText : "Capture Keystroke"
+            capBtn := dlg.Add("Button", "x+" gapPx " yp w" btnW " h" ctrlH, btnTxt)
+            Theme.RegisterControl(dlg, capBtn, "Button", "tabButton")
+            if (el.HasOwnProp("id") && el.id != "")
+                ctrls[el.id "_btn"] := capBtn
+            allowMods := el.HasOwnProp("allowModifiers") ? el.allowModifiers : true
+            allowClr := el.HasOwnProp("allowClear") ? el.allowClear : true
+            capTitle := el.HasOwnProp("captureTitle") ? el.captureTitle : ("Capture Keystroke - " title)
+            _BindShortcutCaptureBtn(capBtn, ctrl, capTitle, allowMods, allowClr)
+            t := "Edit"
         } else if (t = "Text" || t = "Button") {
             ctrl := dlg.Add(t, cOpts, txt)
         } else {
@@ -127,6 +146,188 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
     return dlg
 }
 
+_BindShortcutCaptureBtn(capBtn, targetCtrl, dTitle, modsOk, clrOk) {
+    OnClick(*) {
+        OpenShortcutCaptureDialog(targetCtrl.Value, (newHk) => (targetCtrl.Value := newHk), dTitle, modsOk, clrOk)
+    }
+    capBtn.OnEvent("Click", OnClick)
+}
+
+FormatAhkHotkeyHuman(hk) {
+    raw := Trim(String(hk))
+    if (raw = "" || StrLower(raw) = "none")
+        return "None"
+    i := 1
+    len := StrLen(raw)
+    hasCtrl := false, hasAlt := false, hasShift := false, hasWin := false
+    while (i <= len) {
+        ch := SubStr(raw, i, 1)
+        if (ch = "^")
+            hasCtrl := true
+        else if (ch = "!")
+            hasAlt := true
+        else if (ch = "+")
+            hasShift := true
+        else if (ch = "#")
+            hasWin := true
+        else if (ch = "*" || ch = "~" || ch = "$") {
+        } else
+            break
+        i += 1
+    }
+    base := Trim(SubStr(raw, i))
+    if (base = "")
+        return raw
+    baseDisp := (StrLen(base) == 1) ? StrUpper(base) : base
+    parts := []
+    if (hasCtrl)
+        parts.Push("Ctrl")
+    if (hasAlt)
+        parts.Push("Alt")
+    if (hasShift)
+        parts.Push("Shift")
+    if (hasWin)
+        parts.Push("Win")
+    parts.Push(baseDisp)
+    out := ""
+    for idx, p in parts
+        out .= (idx > 1 ? " + " : "") p
+    return out
+}
+
+OpenShortcutCaptureDialog(currentHotkey, onApply, dialogTitle := "Capture Keystroke", allowModifiers := true, allowClear := true) {
+    existing := Theme.FocusExistingWindow(dialogTitle)
+    if IsObject(existing)
+        return existing
+
+    Theme.AcquireSuspend()
+
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", dialogTitle)
+    dlg._closed := false
+    dlg.MarginX := 20
+    dlg.MarginY := 16
+    Theme.ApplyToWindow(dlg)
+    Theme.NamedWindows[dialogTitle] := dlg
+
+    dlg.SetFont("s10 w600", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w340", allowModifiers ? "Press any shortcut key combination" : "Press any single key or clicker button"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w340 y+4", "Hold Ctrl/Alt/Shift/Win + press a key, or edit raw AHK syntax below. Press Esc to cancel."), "Text", "muted")
+
+    dlg.SetFont("s12 w700", Theme.UiFont)
+    lblHuman := dlg.Add("Text", "xm w340 y+12 Center", FormatAhkHotkeyHuman(currentHotkey))
+    Theme.RegisterControl(dlg, lblHuman, "Text", "accent")
+
+    dlg.SetFont("s10 w600", Theme.UiFont)
+    editSyntax := dlg.Add("Edit", "xm w340 h28 y+6 Center", currentHotkey)
+    Theme.RegisterControl(dlg, editSyntax, "Edit")
+
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    statusTxt := dlg.Add("Text", "xm w340 y+6 Center", "Listening for keystroke...")
+    Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
+
+    dlg.SetFont("s9 w600", Theme.UiFont)
+    btnApply := dlg.Add("Button", "xm w106 h32 y+12 Default", "Apply")
+    btnReCap := dlg.Add("Button", "x+6 yp w112 h32", "Re-Capture")
+    btnClear := dlg.Add("Button", "x+6 yp w110 h32" (allowClear ? "" : " Disabled"), "Clear (None)")
+    Theme.RegisterControl(dlg, btnApply, "Button", "accent")
+    Theme.RegisterControl(dlg, btnReCap, "Button", "tabButton")
+    Theme.RegisterControl(dlg, btnClear, "Button", "tabButton")
+
+    ih := InputHook("L0 M I2")
+    ih.KeyOpt("{All}", "N")
+    ih.KeyOpt("{Escape}{LShift}{RShift}{LControl}{RControl}{LAlt}{RAlt}{LWin}{RWin}", "-N V")
+
+    OnCapturedKey(ihHook, VK, SC) {
+        if (dlg._closed)
+            return
+        keyName := GetKeyName(Format("vk{:X}sc{:X}", VK, SC))
+        if (keyName = "" || keyName ~= "^(L|R)?(Shift|Control|Ctrl|Alt|Win)$")
+            return
+        mods := ""
+        if (allowModifiers) {
+            if (GetKeyState("Ctrl", "P"))
+                mods .= "^"
+            if (GetKeyState("Alt", "P"))
+                mods .= "!"
+            if (GetKeyState("Shift", "P"))
+                mods .= "+"
+            if (GetKeyState("LWin", "P") || GetKeyState("RWin", "P"))
+                mods .= "#"
+        }
+        keyOut := (StrLen(keyName) == 1) ? StrLower(keyName) : keyName
+        chord := mods keyOut
+        editSyntax.Value := chord
+        lblHuman.Value := FormatAhkHotkeyHuman(chord)
+        statusTxt.Value := "Captured: " chord "  (" lblHuman.Value ")"
+    }
+    ih.OnKeyDown := OnCapturedKey
+
+    StartCapture(*) {
+        if (dlg._closed)
+            return
+        btnApply.Focus()
+        try ih.Start()
+        statusTxt.Value := "Listening for keystroke..."
+    }
+
+    StopCapture(*) {
+        try ih.Stop()
+        if (!dlg._closed && WinExist("ahk_id " dlg.Hwnd))
+            statusTxt.Value := "Manual edit mode (type AHK syntax)"
+    }
+
+    editSyntax.OnEvent("Focus", StopCapture)
+    editSyntax.OnEvent("LoseFocus", StartCapture)
+    editSyntax.OnEvent("Change", (*) => (lblHuman.Value := FormatAhkHotkeyHuman(editSyntax.Value)))
+
+    Cleanup(*) {
+        if (dlg._closed)
+            return
+        dlg._closed := true
+        try ih.Stop()
+        Theme.UnregisterWindow(dlg, dialogTitle)
+        Theme.ReleaseSuspend()
+        dlg.Destroy()
+    }
+
+    ApplyShortcut(*) {
+        static dummyHotIf := (*) => false
+        static dummyHandler := (*) => 0
+        val := Trim(editSyntax.Value)
+        if (val != "" && StrLower(val) != "none") {
+            try {
+                HotIf dummyHotIf
+                Hotkey(val, dummyHandler, "Off")
+                HotIf
+            } catch {
+                HotIf
+                dlg.Opt("+OwnDialogs")
+                MsgBox("'" val "' is not a valid AutoHotkey keystroke.`nExamples: ^!m, !a, F12, PgDn", "Invalid Keystroke", "Icon!")
+                return
+            }
+        } else if (!allowClear) {
+            dlg.Opt("+OwnDialogs")
+            MsgBox("This shortcut cannot be left blank.", "Shortcut Required", "Icon!")
+            return
+        } else {
+            val := (val = "") ? "" : "None"
+        }
+        Cleanup()
+        onApply.Call(val)
+    }
+
+    btnApply.OnEvent("Click", ApplyShortcut)
+    btnReCap.OnEvent("Click", StartCapture)
+    btnClear.OnEvent("Click", (*) => (Cleanup(), onApply.Call("None")))
+    dlg.OnEvent("Close", Cleanup)
+    dlg.OnEvent("Escape", Cleanup)
+
+    dlg.Show("AutoSize Center")
+    StartCapture()
+    return dlg
+}
+
 PromptForSetup(cfg, isInitialBoot := false) {
     modes := [
         "1: Pro OBS Setup (VB-Cable)",
@@ -143,8 +344,12 @@ PromptForSetup(cfg, isInitialBoot := false) {
         zoomEnabled := (sel == 2 || sel == 3)
         ctrls["obsLbl"].Enabled := obsEnabled
         ctrls["obsHotkey"].Enabled := obsEnabled
+        if (ctrls.Has("obsHotkey_btn"))
+            ctrls["obsHotkey_btn"].Enabled := obsEnabled
         ctrls["zoomLbl"].Enabled := zoomEnabled
         ctrls["zoomHotkey"].Enabled := zoomEnabled
+        if (ctrls.Has("zoomHotkey_btn"))
+            ctrls["zoomHotkey_btn"].Enabled := zoomEnabled
     }
 
     SaveSetup(values, ctrls, dlg) {
@@ -170,12 +375,12 @@ PromptForSetup(cfg, isInitialBoot := false) {
     }
 
     elements := [
-        {type: "Text", opts: "w280", text: "Select your Audio Routing Profile:"},
-        {type: "DropDownList", id: "mode", opts: "w280 Choose" initialMode, items: modes, onChange: UpdateFieldStates},
-        {type: "Text", id: "obsLbl", opts: "w280 y+15", text: "OBS Mute Shortcut" (cfg.EnableWS ? " (Optional with WebSocket):" : ":")},
-        {type: "Hotkey", id: "obsHotkey", opts: "w280", value: obsVal},
-        {type: "Text", id: "zoomLbl", opts: "w280 y+10", text: "Zoom Mute Shortcut (Default Alt+A):"},
-        {type: "Hotkey", id: "zoomHotkey", opts: "w280", value: zoomVal}
+        {type: "Text", opts: "w340", text: "Select your Audio Routing Profile:"},
+        {type: "DropDownList", id: "mode", opts: "w340 Choose" initialMode, items: modes, onChange: UpdateFieldStates},
+        {type: "Text", id: "obsLbl", opts: "w340 y+15", text: "OBS Mute Shortcut" (cfg.EnableWS ? " (Optional with WebSocket):" : ":")},
+        {type: "Shortcut", id: "obsHotkey", opts: "xm w340 h25", value: obsVal, captureTitle: "Capture OBS Mute Shortcut"},
+        {type: "Text", id: "zoomLbl", opts: "xm w340 y+10", text: "Zoom Mute Shortcut (Default Alt+A):"},
+        {type: "Shortcut", id: "zoomHotkey", opts: "xm w340 h25", value: zoomVal, captureTitle: "Capture Zoom Mute Shortcut"}
     ]
 
     BuildSettingsWindow("PresenterSync Audio Setup", elements, SaveSetup, {
@@ -184,7 +389,7 @@ PromptForSetup(cfg, isInitialBoot := false) {
         onClose: isInitialBoot ? ((*) => ExitApp()) : ((dlg) => dlg.Destroy()),
         onInit: UpdateFieldStates,
         saveBtnText: isInitialBoot ? "Save & Start" : "Save & Restart",
-        saveBtnOpts: "w280 h32 Default y+15"
+        saveBtnOpts: "xm w340 h32 Default y+15"
     })
 }
 

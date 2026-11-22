@@ -207,6 +207,29 @@ AssertTrue(InStr(hudRenSrc, "Medium (x1.25)") && InStr(ccSrc, "Medium (1.25x)")
     && InStr(webHtml125, "ps_web_scale") && InStr(webHtml125, "--ui-scale") && InStr(webHtml125, "1.25"),
     "#2 1.25x exposed in Tray submenu, Control Center, and Web Remote")
 
+; 7. (#5) FormatAhkHotkeyHuman & BuildSettingsWindow type: "Shortcut" (manual Edit + Capture button)
+AssertTrue(FormatAhkHotkeyHuman("^!+s") = "Ctrl + Alt + Shift + S"
+    && FormatAhkHotkeyHuman("!a") = "Alt + A"
+    && FormatAhkHotkeyHuman("PgDn") = "PgDn"
+    && FormatAhkHotkeyHuman("None") = "None",
+    "#5 FormatAhkHotkeyHuman formats full chords & single keys")
+
+testDlg := BuildSettingsWindow("Shortcut Unit Test", [
+    { type: "Text", opts: "w340", text: "Test Shortcut:" },
+    { type: "Shortcut", id: "hkTest", opts: "xm w340 h25", value: "^!m", captureTitle: "Capture Test" }
+], "", { suspend: false, show: false })
+AssertTrue(testDlg._ctrls.Has("hkTest") && testDlg._ctrls.Has("hkTest_btn")
+    && testDlg._ctrls["hkTest"].Value = "^!m"
+    && testDlg._ctrls["hkTest_btn"].Text = "Capture Keystroke",
+    "#5 BuildSettingsWindow type: Shortcut preserves manual Edit + adds Capture Keystroke button")
+try testDlg.Destroy()
+
+wizSrc := FileRead(A_LineFile "\..\..\Lib\SetupWizard.ahk", "UTF-8")
+remMainSrc := FileRead(A_LineFile "\..\..\PresenterSync_Remote.ahk", "UTF-8")
+AssertTrue(!InStr(ccSrc, 'type: "Hotkey"') && !InStr(wizSrc, 'type: "Hotkey"') && !InStr(remMainSrc, 'type: "Hotkey"')
+    && InStr(ccSrc, "edHkRemoteInfo") && InStr(ccSrc, "Capture Keystroke") && InStr(ccSrc, "btnCapPtr"),
+    "#5 All Windows dialogs upgraded from msctls_hotkey32 to manual Edit + Capture Keystroke")
+
 ; Clean up HUD timers & windows
 for _, fnProp in ["sceneMarqueeTimerFn", "breathTimerFn", "recTimerFn", "dragTimerFn", "autoDodgeTimerFn", "mutedVoiceTimerFn"] {
     if (st.HasOwnProp(fnProp) && st.%fnProp%)

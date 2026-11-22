@@ -49,12 +49,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.config.ResolvedFormFactor
@@ -488,6 +495,7 @@ fun PointerSettingsScreen(
         EditShortcutsDialog(
             initialToggle = cfg.toggleMuteShortcut,
             initialExit = cfg.exitShortcut,
+            lastCaptured = lastCapturedKey,
             formFactor = formFactor,
             onSave = { t, e ->
                 app.configStore.update {
@@ -637,12 +645,30 @@ private fun CaptureClickerButtonDialog(
 private fun EditShortcutsDialog(
     initialToggle: String,
     initialExit: String,
+    lastCaptured: CapturedKeyEvent?,
     formFactor: ResolvedFormFactor,
     onSave: (String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var toggleTxt by remember { mutableStateOf(initialToggle) }
     var exitTxt by remember { mutableStateOf(initialExit) }
+    var capturingField by remember { mutableStateOf<String?>(null) }
+    var captureStartSeq by remember { mutableStateOf(0L) }
+
+    DisposableEffect(capturingField) {
+        InAppKeyMonitor.captureNextKeyMode.set(capturingField != null)
+        onDispose {
+            InAppKeyMonitor.captureNextKeyMode.set(false)
+        }
+    }
+
+    LaunchedEffect(lastCaptured?.seq) {
+        val field = capturingField
+        if (field != null && lastCaptured != null && lastCaptured.seq > captureStartSeq) {
+            if (field == "toggle") toggleTxt = lastCaptured.shortcutString else exitTxt = lastCaptured.shortcutString
+            capturingField = null
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -653,7 +679,39 @@ private fun EditShortcutsDialog(
                 .widthIn(max = 520.dp)
                 .fillMaxWidth(formFactor.dialogWidthFraction)
                 .heightIn(max = (formFactor.heightDp * 0.92f).dp)
-                .padding(vertical = 12.dp),
+                .padding(vertical = 12.dp)
+                .onPreviewKeyEvent { ev ->
+                    val target = capturingField
+                    if (target != null && ev.type == KeyEventType.KeyDown && ev.nativeKeyEvent.repeatCount == 0) {
+                        val code = ev.nativeKeyEvent.keyCode
+                        val isModOnly = code == AndroidKeyEvent.KEYCODE_CTRL_LEFT ||
+                            code == AndroidKeyEvent.KEYCODE_CTRL_RIGHT ||
+                            code == AndroidKeyEvent.KEYCODE_ALT_LEFT ||
+                            code == AndroidKeyEvent.KEYCODE_ALT_RIGHT ||
+                            code == AndroidKeyEvent.KEYCODE_SHIFT_LEFT ||
+                            code == AndroidKeyEvent.KEYCODE_SHIFT_RIGHT ||
+                            code == AndroidKeyEvent.KEYCODE_META_LEFT ||
+                            code == AndroidKeyEvent.KEYCODE_META_RIGHT
+                        if (isModOnly) return@onPreviewKeyEvent true
+                        if (code == AndroidKeyEvent.KEYCODE_ESCAPE) {
+                            capturingField = null
+                            return@onPreviewKeyEvent true
+                        }
+                        val keyName = AndroidKeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
+                        val chord = buildString {
+                            if (ev.isCtrlPressed) append("Ctrl+")
+                            if (ev.isAltPressed) append("Alt+")
+                            if (ev.isShiftPressed) append("Shift+")
+                            append(keyName)
+                        }
+                        if (target == "toggle") toggleTxt = chord else exitTxt = chord
+                        capturingField = null
+                        InAppKeyMonitor.captureNextKeyMode.set(false)
+                        true
+                    } else {
+                        false
+                    }
+                },
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -683,22 +741,68 @@ private fun EditShortcutsDialog(
                         .padding(horizontal = 20.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    OutlinedTextField(
-                        value = toggleTxt,
-                        onValueChange = { toggleTxt = it },
-                        label = { Text("Global Toggle Mute Shortcut") },
-                        placeholder = { Text("Ctrl+F12") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = exitTxt,
-                        onValueChange = { exitTxt = it },
-                        label = { Text("Stop Floating HUD Shortcut") },
-                        placeholder = { Text("Alt+Shift+F12") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    if (capturingField != null) {
+                        Text(
+                            text = "Listening... Press any key combination (Esc to cancel).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = toggleTxt,
+                            onValueChange = { toggleTxt = it },
+                            label = { Text("Global Toggle Mute Shortcut") },
+                            placeholder = { Text("Ctrl+F12") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                if (capturingField == "toggle") {
+                                    capturingField = null
+                                } else {
+                                    captureStartSeq = lastCaptured?.seq ?: 0L
+                                    capturingField = "toggle"
+                                }
+                            },
+                            contentPadding = CompactExplorerButtonPadding
+                        ) {
+                            Text(if (capturingField == "toggle") "Cancel" else "Capture Keystroke", maxLines = 1, softWrap = false)
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = exitTxt,
+                            onValueChange = { exitTxt = it },
+                            label = { Text("Stop Floating HUD Shortcut") },
+                            placeholder = { Text("Alt+Shift+F12") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                if (capturingField == "exit") {
+                                    capturingField = null
+                                } else {
+                                    captureStartSeq = lastCaptured?.seq ?: 0L
+                                    capturingField = "exit"
+                                }
+                            },
+                            contentPadding = CompactExplorerButtonPadding
+                        ) {
+                            Text(if (capturingField == "exit") "Cancel" else "Capture Keystroke", maxLines = 1, softWrap = false)
+                        }
+                    }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Row(
