@@ -230,6 +230,21 @@ AssertTrue(!InStr(ccSrc, 'type: "Hotkey"') && !InStr(wizSrc, 'type: "Hotkey"') &
     && InStr(ccSrc, "edHkRemoteInfo") && InStr(ccSrc, "Capture Keystroke") && InStr(ccSrc, "btnCapPtr"),
     "#5 All Windows dialogs upgraded from msctls_hotkey32 to manual Edit + Capture Keystroke")
 
+; 8. (#10) Approved System Tray Menu Reorganization checks (Primary + Remote)
+primMainSrc := FileRead(A_LineFile "\..\..\PresenterSync.ahk", "UTF-8")
+primTrayPart := StrSplit(StrSplit(primMainSrc, "BuildTrayMenu(cfg, state) {")[2], "NotifyHelpRefresh(state)")[1]
+remTrayPart := StrSplit(StrSplit(remMainSrc, "BuildRemoteTrayMenu(cfg, state) {")[2], "ToggleRemoteIndicator(cfg, state")[1]
+AssertTrue(InStr(primTrayPart, '"Live Controls"') && InStr(primTrayPart, '"OBS Director && Stage"')
+    && InStr(primTrayPart, '"HUD && Appearance"') && InStr(primTrayPart, '"Remote Companions"')
+    && InStr(primTrayPart, '"Configuration"') && InStr(primTrayPart, '"Help && Diagnostics"')
+    && !InStr(primTrayPart, "Indicator Appearance") && !InStr(primTrayPart, "Snake") && !InStr(primTrayPart, "Easter")
+    && InStr(primMainSrc, "BuildTrayMenu(cfg, state)"),
+    "#10 Primary BuildTrayMenu implements locked 9-essential hierarchy without duplicates")
+AssertTrue(!RegExMatch(primMainSrc, 'SetTrayCheck\("(Enable Full Pointer|Enable Pointer|Enable OBS|Enable Zoom|Show Extra|Show Secondary|Cut Off All)')
+    && InStr(remTrayPart, '"HUD && Appearance"') && InStr(remTrayPart, '"Pointer && Connection"') && InStr(remTrayPart, '"Help && Diagnostics"')
+    && !InStr(remTrayPart, "Snake") && !InStr(remTrayPart, "Easter"),
+    "#10 Submenu toggles use BuildTrayMenu (no silent SetTrayCheck) & Remote BuildRemoteTrayMenu implements locked hierarchy")
+
 ; Clean up HUD timers & windows
 for _, fnProp in ["sceneMarqueeTimerFn", "breathTimerFn", "recTimerFn", "dragTimerFn", "autoDodgeTimerFn", "mutedVoiceTimerFn"] {
     if (st.HasOwnProp(fnProp) && st.%fnProp%)

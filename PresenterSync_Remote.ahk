@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 8.0.5
+; Version: 8.0.6
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 8.0.5.0
+;@Ahk2Exe-SetVersion 8.0.6.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -2222,6 +2222,12 @@ SyncRemoteTrayStatus(cfg, state) {
     BuildRemoteTrayMenu(cfg, state)
 }
 
+_AddRemoteCheckedMenuItem(menuObj, label, handler, isChecked := false) {
+    menuObj.Add(label, handler)
+    if (isChecked)
+        menuObj.Check(label)
+}
+
 BuildRemoteTrayMenu(cfg, state) {
     if (IsObject(state) && state.HasOwnProp("_trayMenuOpen") && state._trayMenuOpen) {
         state._pendingTrayRebuild := true
@@ -2232,7 +2238,7 @@ BuildRemoteTrayMenu(cfg, state) {
     Theme.ApplyMenuTheme()
     A_TrayMenu.Delete()
 
-    ; 1. STATUS LINE
+    ; 1. STATUS LINE & ESSENTIALS (8-ITEM TOP LEVEL)
     statusText := GetRemoteTrayStatusText(state)
     if (IsObject(state))
         state._lastTrayStatusText := statusText
@@ -2240,87 +2246,12 @@ BuildRemoteTrayMenu(cfg, state) {
     A_TrayMenu.Disable(statusText)
     A_TrayMenu.Add()
 
-    ; 2. INDICATOR VISIBILITY
-    A_TrayMenu.Add("Show Mute Indicator", ToggleRemoteIndicator.Bind(cfg, state))
-    if (cfg.ShowIndicator)
-        A_TrayMenu.Check("Show Mute Indicator")
     A_TrayMenu.Add("Open Quick Deck...", (*) => ShowRemoteTouchDeckGUI(cfg, state))
+    try A_TrayMenu.Default := "Open Quick Deck..."
+    _AddRemoteCheckedMenuItem(A_TrayMenu, "Show Mute Indicator", ToggleRemoteIndicator.Bind(cfg, state), cfg.ShowIndicator)
+    A_TrayMenu.Add()
 
-    ; 3. COSMETIC APPEARANCE SUBMENU
-    AppearanceMenu := Menu()
-    AppearanceMenu.Add("Show Text Label", ToggleRemoteText.Bind(cfg, state))
-    if (cfg.ShowText)
-        AppearanceMenu.Check("Show Text Label")
-
-    AppearanceMenu.Add("Use Monochromatic Icon", ToggleRemoteMono.Bind(cfg, state))
-    if (cfg.MonoIcon)
-        AppearanceMenu.Check("Use Monochromatic Icon")
-
-    AppearanceMenu.Add("Use Sleek Corners", ToggleRemoteCorners.Bind(cfg, state))
-    if (cfg.SleekCorners)
-        AppearanceMenu.Check("Use Sleek Corners")
-
-    AppearanceMenu.Add("Aggressive Mute Pulse", ToggleRemotePulse.Bind(cfg, state))
-    if (cfg.AggressivePulse)
-        AppearanceMenu.Check("Aggressive Mute Pulse")
-
-    AppearanceMenu.Add("Mute Audio Cue (Beep)", ToggleAudioCue.Bind(cfg, state))
-    if (cfg.EnableAudioCue)
-        AppearanceMenu.Check("Mute Audio Cue (Beep)")
-
-    AppearanceMenu.Add("Mute Status Toast", ToggleMuteToast.Bind(cfg, state))
-    if (cfg.EnableMuteToast)
-        AppearanceMenu.Check("Mute Status Toast")
-
-    AppearanceMenu.Add("Voice-While-Muted Alert", (*) => ToggleBoolSetting(cfg, state, "EnableVoiceWhileMutedAlert"))
-    if (cfg.EnableVoiceWhileMutedAlert)
-        AppearanceMenu.Check("Voice-While-Muted Alert")
-
-    AppearanceMenu.Add("Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"))
-    if (cfg.EnableHudClickActions)
-        AppearanceMenu.Check("Interactive HUD Click Actions")
-
-    AppearanceMenu.Add("Magnetic Edge/Window Snap", ToggleMagneticSnap.Bind(cfg, state))
-    if (cfg.EnableMagneticSnap)
-        AppearanceMenu.Check("Magnetic Edge/Window Snap")
-
-    AppearanceMenu.Add("Click-Through HUD (Hold Alt)", ToggleHudClickThrough.Bind(cfg, state))
-    if (cfg.HudClickThrough)
-        AppearanceMenu.Check("Click-Through HUD (Hold Alt)")
-
-    AppearanceMenu.Add("Auto-Dodge HUD on Hover", ToggleHudAutoDodge.Bind(cfg, state))
-    if (cfg.HudAutoDodge)
-        AppearanceMenu.Check("Auto-Dodge HUD on Hover")
-
-    AppearanceMenu.Add("Auto-Dim HUD When Idle (10s)", (*) => ToggleHudOptionAndRebuild(cfg, state, "EnableIdleAutoDim", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu))
-    if (cfg.EnableIdleAutoDim)
-        AppearanceMenu.Check("Auto-Dim HUD When Idle (10s)")
-    AppearanceMenu.Add("Show Pill Mini-Badges (Timer / BRB / REC)", (*) => ToggleHudOptionAndRebuild(cfg, state, "ShowPillMiniBadges", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu))
-    if (cfg.ShowPillMiniBadges)
-        AppearanceMenu.Check("Show Pill Mini-Badges (Timer / BRB / REC)")
-
-    AppearanceMenu.Add("Lock Pill Position", (*) => ToggleHudOptionAndRebuild(cfg, state, "LockHudPosition", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu))
-    if (cfg.LockHudPosition)
-        AppearanceMenu.Check("Lock Pill Position")
-
-    AppearanceMenu.Add("Hide HUD from Screen Share / Capture", (*) => ToggleHudOptionAndRebuild(cfg, state, "ExcludeFromCapture", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu))
-    if (cfg.ExcludeFromCapture)
-        AppearanceMenu.Check("Hide HUD from Screen Share / Capture")
-
-    AppearanceMenu.Add()
-
-    BuildSharedAppearanceSubmenus(
-        AppearanceMenu, cfg, state,
-        SetRemoteOpacity.Bind(cfg, state),
-        SetRemoteScale.Bind(cfg, state),
-        SetRemoteTheme.Bind(cfg, state)
-    )
-
-    AppearanceMenu.Add()
-    AppearanceMenu.Add("Reset Indicator Position", ResetRemotePositionAction.Bind(cfg, state))
-    AppearanceMenu.Add("Restore Default Appearance", ResetRemoteAppearanceAction.Bind(cfg, state))
-
-    A_TrayMenu.Add("Indicator Appearance", AppearanceMenu)
+    ; 2. HOST DECK CONTROL
     DeckMenu := Menu()
     DeckMenu.Add("Next Slide (Host PowerPoint)", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_next"))
     DeckMenu.Add("Previous Slide (Host PowerPoint)", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_prev"))
@@ -2328,9 +2259,8 @@ BuildRemoteTrayMenu(cfg, state) {
     DeckSceneMenu := Menu()
     if (IsObject(state) && state.HasOwnProp("scenes") && IsObject(state.scenes) && state.scenes.Length > 0) {
         for scItem in state.scenes {
-            DeckSceneMenu.Add(scItem, ((s, *) => SendRemoteSwitchScene(cfg, state, s)).Bind(scItem))
-            if (state.HasOwnProp("activeScene") && state.activeScene == scItem)
-                DeckSceneMenu.Check(scItem)
+            dispSc := StrReplace(scItem, "&", "&&")
+            _AddRemoteCheckedMenuItem(DeckSceneMenu, dispSc, ((s, *) => SendRemoteSwitchScene(cfg, state, s)).Bind(scItem), state.HasOwnProp("activeScene") && state.activeScene == scItem)
         }
     } else {
         DeckSceneMenu.Add("Connect Primary Bridge for scenes", (*) => 0)
@@ -2338,9 +2268,7 @@ BuildRemoteTrayMenu(cfg, state) {
     }
     DeckMenu.Add("Transition OBS Scene (Preview <-> Program)", (*) => SendRemoteBridgeDeckCommand(cfg, state, "transition_scene"))
     DeckMenu.Add("Switch Host Scene", DeckSceneMenu)
-    DeckMenu.Add("Toggle Standby / `"BRB`" Curtain", (*) => SendRemoteBridgeDeckCommand(cfg, state, "toggle_standby"))
-    if (IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby)
-        DeckMenu.Check("Toggle Standby / `"BRB`" Curtain")
+    _AddRemoteCheckedMenuItem(DeckMenu, "Toggle Standby / `"BRB`" Curtain", (*) => SendRemoteBridgeDeckCommand(cfg, state, "toggle_standby"), IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby)
     DeckMenu.Add("Start / Stop Host Recording", (*) => SendRemoteBridgeDeckCommand(cfg, state, "toggle_record"))
     DeckMenu.Add("Pause / Resume Host Recording", (*) => SendRemoteBridgeDeckCommand(cfg, state, "pause_record"))
     DeckMenu.Add("Split Host Recording Chapter", (*) => SendRemoteBridgeDeckCommand(cfg, state, "split_record"))
@@ -2349,22 +2277,50 @@ BuildRemoteTrayMenu(cfg, state) {
     DeckMenu.Add("Send Stage Nudge to Host...", (*) => PromptSendStageNudgeUI((msg) => SendRemoteStageNudge(cfg, state, msg)))
     deckLabel := (IsObject(state) && state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback) ? "Host Deck Control (DIRECT OBS :4455)" : "Host Deck Control (Bridge)"
     A_TrayMenu.Add(deckLabel, DeckMenu)
-    A_TrayMenu.Add()
 
-    ; 4. POINTER & CONNECTION SETTINGS
+    ; 3. HUD & APPEARANCE (CATEGORIZED SUBMENUS)
+    AppearanceMenu := Menu()
+
+    StyleMenu := Menu()
+    BuildSharedAppearanceSubmenus(StyleMenu, cfg, state, SetRemoteOpacity.Bind(cfg, state), SetRemoteScale.Bind(cfg, state), SetRemoteTheme.Bind(cfg, state))
+    StyleMenu.Add()
+    _AddRemoteCheckedMenuItem(StyleMenu, "Show Text Label", ToggleRemoteText.Bind(cfg, state), cfg.ShowText)
+    _AddRemoteCheckedMenuItem(StyleMenu, "Use Monochromatic Icon", ToggleRemoteMono.Bind(cfg, state), cfg.MonoIcon)
+    _AddRemoteCheckedMenuItem(StyleMenu, "Use Sleek Corners", ToggleRemoteCorners.Bind(cfg, state), cfg.SleekCorners)
+    _AddRemoteCheckedMenuItem(StyleMenu, "Show Pill Mini-Badges (Timer / BRB / REC)", (*) => ToggleHudOptionAndRebuild(cfg, state, "ShowPillMiniBadges", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu), cfg.ShowPillMiniBadges)
+    AppearanceMenu.Add("Visual Style && Sizing", StyleMenu)
+
+    AlertsMenu := Menu()
+    _AddRemoteCheckedMenuItem(AlertsMenu, "Aggressive Mute Pulse", ToggleRemotePulse.Bind(cfg, state), cfg.AggressivePulse)
+    _AddRemoteCheckedMenuItem(AlertsMenu, "Mute Audio Cue (Beep)", ToggleAudioCue.Bind(cfg, state), cfg.EnableAudioCue)
+    _AddRemoteCheckedMenuItem(AlertsMenu, "Mute Status Toast", ToggleMuteToast.Bind(cfg, state), cfg.EnableMuteToast)
+    _AddRemoteCheckedMenuItem(AlertsMenu, "Voice-While-Muted Alert", (*) => ToggleBoolSetting(cfg, state, "EnableVoiceWhileMutedAlert"), cfg.EnableVoiceWhileMutedAlert)
+    AppearanceMenu.Add("Alerts && Feedback", AlertsMenu)
+
+    BehaviorMenu := Menu()
+    _AddRemoteCheckedMenuItem(BehaviorMenu, "Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"), cfg.EnableHudClickActions)
+    _AddRemoteCheckedMenuItem(BehaviorMenu, "Magnetic Edge/Window Snap", ToggleMagneticSnap.Bind(cfg, state), cfg.EnableMagneticSnap)
+    _AddRemoteCheckedMenuItem(BehaviorMenu, "Click-Through HUD (Hold Alt)", ToggleHudClickThrough.Bind(cfg, state), cfg.HudClickThrough)
+    _AddRemoteCheckedMenuItem(BehaviorMenu, "Auto-Dodge HUD on Hover", ToggleHudAutoDodge.Bind(cfg, state), cfg.HudAutoDodge)
+    _AddRemoteCheckedMenuItem(BehaviorMenu, "Auto-Dim HUD When Idle (10s)", (*) => ToggleHudOptionAndRebuild(cfg, state, "EnableIdleAutoDim", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu), cfg.EnableIdleAutoDim)
+    _AddRemoteCheckedMenuItem(BehaviorMenu, "Lock Pill Position", (*) => ToggleHudOptionAndRebuild(cfg, state, "LockHudPosition", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu), cfg.LockHudPosition)
+    _AddRemoteCheckedMenuItem(BehaviorMenu, "Hide HUD from Screen Share / Capture", (*) => ToggleHudOptionAndRebuild(cfg, state, "ExcludeFromCapture", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu), cfg.ExcludeFromCapture)
+    AppearanceMenu.Add("Behavior && Capture Safety", BehaviorMenu)
+
+    AppearanceMenu.Add()
+    AppearanceMenu.Add("Reset Indicator Position", ResetRemotePositionAction.Bind(cfg, state))
+    AppearanceMenu.Add("Restore Default Appearance", ResetRemoteAppearanceAction.Bind(cfg, state))
+    A_TrayMenu.Add("HUD && Appearance", AppearanceMenu)
+
+    ; 4. POINTER & CONNECTION
+    PtrConnMenu := Menu()
     PointerMenu := Menu()
-    PointerMenu.Add("Enable Pointer Mute", ToggleRemotePointerMute.Bind(cfg, state))
-    if (cfg.EnablePointerMute)
-        PointerMenu.Check("Enable Pointer Mute")
-    PointerMenu.Add("Enable Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state))
-    if (cfg.EnablePushToMute)
-        PointerMenu.Check("Enable Cough / Push-to-Mute (Hold)")
-    PointerMenu.Add("Enable Push-to-Talk (Hold to Unmute)", TogglePushToTalk.Bind(cfg, state))
-    if (cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk)
-        PointerMenu.Check("Enable Push-to-Talk (Hold to Unmute)")
+    _AddRemoteCheckedMenuItem(PointerMenu, "Enable Pointer Mute", ToggleRemotePointerMute.Bind(cfg, state), cfg.EnablePointerMute)
+    _AddRemoteCheckedMenuItem(PointerMenu, "Enable Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state), cfg.EnablePushToMute)
+    _AddRemoteCheckedMenuItem(PointerMenu, "Enable Push-to-Talk (Hold to Unmute)", TogglePushToTalk.Bind(cfg, state), cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk)
     PointerMenu.Add("Change Pointer Mute Button...", (*) => ChangeRemotePointerKeyUI(cfg, state))
     PointerMenu.Add("Launch Clicker Tester...", (*) => ShowPointerTester())
-    A_TrayMenu.Add("Pointer Controls", PointerMenu)
+    PtrConnMenu.Add("Pointer Controls", PointerMenu)
 
     ProfilesMenu := Menu()
     savedProfs := LoadSavedHostProfiles(cfg)
@@ -2377,24 +2333,28 @@ BuildRemoteTrayMenu(cfg, state) {
             ProfilesMenu.Add(pNm " (" (prof.host != "" ? prof.host : prof.networkMode) ")", ((nm, *) => (ApplyHostProfile(cfg, state, nm), BuildRemoteTrayMenu(cfg, state))).Bind(pNm))
         }
     }
-    A_TrayMenu.Add("Switch Room / Profile", ProfilesMenu)
-    A_TrayMenu.Add("Change OBS Connection...", (*) => ShowRemoteConnectionUI(cfg, state, false))
-    A_TrayMenu.Add("Change App Shortcuts...", (*) => ChangeRemoteAppHotkeysUI(cfg, state))
-    A_TrayMenu.Add("Start with Windows", ToggleStartWithWindows.Bind(cfg, state))
-    if (cfg.StartWithWindows)
-        A_TrayMenu.Check("Start with Windows")
-    A_TrayMenu.Add("Create Desktop Shortcut for Instance...", (*) => ShowCreateRemoteShortcutUI(cfg, state))
-    A_TrayMenu.Add()
+    PtrConnMenu.Add("Switch Room / Profile", ProfilesMenu)
+    PtrConnMenu.Add()
+    PtrConnMenu.Add("Change Host / OBS Connection...", (*) => ShowRemoteConnectionUI(cfg, state, false))
+    PtrConnMenu.Add("Change App Shortcuts...", (*) => ChangeRemoteAppHotkeysUI(cfg, state))
+    PtrConnMenu.Add("Create Desktop Shortcut for Instance...", (*) => ShowCreateRemoteShortcutUI(cfg, state))
+    _AddRemoteCheckedMenuItem(PtrConnMenu, "Start with Windows", ToggleStartWithWindows.Bind(cfg, state), cfg.StartWithWindows)
+    A_TrayMenu.Add("Pointer && Connection", PtrConnMenu)
 
-    ; 5. HELP, SAFETY & EXIT
-    A_TrayMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
-    A_TrayMenu.Add("View Error && Diagnostic Log...", (*) => DiagnosticLogger.ShowLogViewerWindow(cfg, state))
-    A_TrayMenu.Add("Export Sanitized Diagnostics...", (*) => ExportRemoteSanitizedDiagnostics(cfg, state))
-    A_TrayMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI(cfg, state))
-    A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync_Remote.exe", cfg))
-    A_TrayMenu.Add("Suspend All Hotkeys", ToggleRemoteSuspend)
-    if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
-        A_TrayMenu.Check("Suspend All Hotkeys")
+    ; 5. HELP & DIAGNOSTICS
+    HelpMenu := Menu()
+    HelpMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
+    HelpMenu.Add()
+    HelpMenu.Add("View Error && Diagnostic Log...", (*) => DiagnosticLogger.ShowLogViewerWindow(cfg, state))
+    HelpMenu.Add("Export Sanitized Diagnostics...", (*) => ExportRemoteSanitizedDiagnostics(cfg, state))
+    HelpMenu.Add()
+    HelpMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync_Remote.exe", cfg))
+    HelpMenu.Add("About PresenterSync Remote...", (*) => ShowRemoteAboutUI(cfg, state))
+    A_TrayMenu.Add("Help && Diagnostics", HelpMenu)
+
+    ; 6. SAFETY & EXIT
+    A_TrayMenu.Add()
+    _AddRemoteCheckedMenuItem(A_TrayMenu, "Suspend All Hotkeys", ToggleRemoteSuspend, Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
     A_TrayMenu.Add("Exit PresenterSync Remote", ExitRemoteApp)
 
     if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)

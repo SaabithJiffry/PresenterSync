@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 8.0.5
+; Version: 8.0.6
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -12,7 +12,7 @@
 ;@Ahk2Exe-AddResource *10 assets\PresenterSync.ico, FAVICON_ICO
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 8.0.5.0
+;@Ahk2Exe-SetVersion 8.0.6.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -159,256 +159,175 @@ OnMessage(0x004A, OnHostCopyData.Bind(AppConfig, AppState))
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync.exe")
 
 ; --- CUSTOM TRAY MENU ---
+_AddCheckedMenuItem(menuObj, label, handler, isChecked := false) {
+    menuObj.Add(label, handler)
+    if (isChecked)
+        menuObj.Check(label)
+}
+
 BuildTrayMenu(cfg, state) {
     Theme.ApplyMenuTheme()
     A_TrayMenu.Delete()
 
-    ; 1. POINTER CONTROLS (LIVE PRESENTATION)
-    A_TrayMenu.Add("Enable Full Pointer Controls (PPT + Mute)", TogglePPT.Bind(cfg, state))
-    if (cfg.EnablePPT)
-        A_TrayMenu.Check("Enable Full Pointer Controls (PPT + Mute)")
-
-    A_TrayMenu.Add("Enable Pointer Mute Only", ToggleMicOnly.Bind(cfg, state))
-    if (cfg.EnableMicOnly)
-        A_TrayMenu.Check("Enable Pointer Mute Only")
-
-    A_TrayMenu.Add("Enable Pointer OBS Scene Transition", TogglePointerTransition.Bind(cfg, state))
-    if (cfg.EnablePointerTransition)
-        A_TrayMenu.Check("Enable Pointer OBS Scene Transition")
-
+    ; 1. ESSENTIALS (TOP-LEVEL)
+    A_TrayMenu.Add("Control Center...", ShowControlCenterWindow.Bind(cfg, state))
+    try A_TrayMenu.Default := "Control Center..."
+    _AddCheckedMenuItem(A_TrayMenu, "Show Mute Indicator", ToggleIndicator.Bind(cfg, state), cfg.ShowIndicator)
     A_TrayMenu.Add()
 
-    ; 2. LIVE SYNC & MONITORING MODES
-    A_TrayMenu.Add("Enable OBS WebSocket Sync", ToggleWS.Bind(cfg, state))
-    if (cfg.EnableWS)
-        A_TrayMenu.Check("Enable OBS WebSocket Sync")
+    ; 2. LIVE CONTROLS (POINTER + SYNC ENGINES + REHEARSAL)
+    LiveMenu := Menu()
 
-    A_TrayMenu.Add("Enable Zoom Monitoring", ToggleZoom.Bind(cfg, state))
-    if (cfg.EnableZoom)
-        A_TrayMenu.Check("Enable Zoom Monitoring")
+    PointerMenu := Menu()
+    _AddCheckedMenuItem(PointerMenu, "Full Pointer Controls (PPT + Mute)", TogglePPT.Bind(cfg, state), cfg.EnablePPT)
+    _AddCheckedMenuItem(PointerMenu, "Pointer Mute Only", ToggleMicOnly.Bind(cfg, state), cfg.EnableMicOnly)
+    _AddCheckedMenuItem(PointerMenu, "Pointer OBS Scene Transition", TogglePointerTransition.Bind(cfg, state), cfg.EnablePointerTransition)
+    PointerMenu.Add()
+    _AddCheckedMenuItem(PointerMenu, "Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state), cfg.EnablePushToMute)
+    _AddCheckedMenuItem(PointerMenu, "Push-to-Talk (Hold to Unmute)", TogglePushToTalk.Bind(cfg, state), cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk)
+    PointerMenu.Add()
+    PointerMenu.Add("Change Pointer Mute Button...", ChangeHwMuteHotkeyUI.Bind(cfg, state))
+    PointerMenu.Add("Change Pointer OBS Transition Button...", ChangeHwTransitionHotkeyUI.Bind(cfg, state))
+    PointerMenu.Add("Configure Pointer Intercepts...", ConfigurePointerKeysUI.Bind(cfg, state))
+    PointerMenu.Add("Launch Clicker Tester...", ShowPointerTester)
+    LiveMenu.Add("Pointer && Clicker", PointerMenu)
 
-    A_TrayMenu.Add()
+    SyncMenu := Menu()
+    _AddCheckedMenuItem(SyncMenu, "OBS WebSocket Sync", ToggleWS.Bind(cfg, state), cfg.EnableWS)
+    _AddCheckedMenuItem(SyncMenu, "Conferencing Monitoring (Zoom/Teams/Meet)", ToggleZoom.Bind(cfg, state), cfg.EnableZoom)
+    SyncMenu.Add()
+    RoutingMenu := Menu()
+    RoutingModes := [{ label: "1: Pro OBS Setup (VB-Cable)", mode: 1 }, { label: "2: Standard Direct Mic (Zoom-Only)", mode: 2 }, { label: "3: Dual App Sync (OBS + Zoom)", mode: 3 }]
+    for rm in RoutingModes
+        _AddCheckedMenuItem(RoutingMenu, rm.label, SetRoutingMode.Bind(cfg, rm.mode), cfg.AudioRoutingMode == rm.mode)
+    SyncMenu.Add("Audio Routing Mode", RoutingMenu)
 
-    ; 3. HUD OVERLAY & APPEARANCE
-    A_TrayMenu.Add("Show Mute Indicator", ToggleIndicator.Bind(cfg, state))
-    if (cfg.ShowIndicator)
-        A_TrayMenu.Check("Show Mute Indicator")
+    ConfMenu := Menu()
+    for cApp in GetConferencingAppNames()
+        _AddCheckedMenuItem(ConfMenu, cApp, SetConferencingApp.Bind(cfg, state, cApp), NormalizeConferencingApp(cfg.ConferencingApp) = cApp)
+    SyncMenu.Add("Conferencing Platform", ConfMenu)
+    LiveMenu.Add("Sync Engines", SyncMenu)
+    LiveMenu.Add()
+    LiveMenu.Add("Go Live 10-Second Rehearsal...", (*) => ShowPreFlightRehearsalDialog(cfg, state))
+    A_TrayMenu.Add("Live Controls", LiveMenu)
 
-    A_TrayMenu.Add("Show Extra HUDs", ToggleExtraHuds.Bind(cfg, state))
-    if (cfg.ShowExtraHuds)
-        A_TrayMenu.Check("Show Extra HUDs")
-
-    A_TrayMenu.Add("Show Secondary Mic Pill (Mic-Only)", ToggleSecondaryMicLive.Bind(cfg, state))
-    if (cfg.ShowSecondaryMicHud)
-        A_TrayMenu.Check("Show Secondary Mic Pill (Mic-Only)")
-
-    AppearanceMenu := Menu()
-    AppearanceMenu.Add("Show Text Label", ToggleText.Bind(cfg, state))
-    if (cfg.ShowText)
-        AppearanceMenu.Check("Show Text Label")
-
-    AppearanceMenu.Add("Use Monochromatic Icon", ToggleMono.Bind(cfg, state))
-    if (cfg.MonoIcon)
-        AppearanceMenu.Check("Use Monochromatic Icon")
-
-    AppearanceMenu.Add("Use Sleek Corners", ToggleCorners.Bind(cfg, state))
-    if (cfg.SleekCorners)
-        AppearanceMenu.Check("Use Sleek Corners")
-
-    AppearanceMenu.Add("Aggressive Mute Pulse", TogglePulse.Bind(cfg, state))
-    if (cfg.AggressivePulse)
-        AppearanceMenu.Check("Aggressive Mute Pulse")
-
-    AppearanceMenu.Add("Mute Audio Cue (Beep)", ToggleAudioCue.Bind(cfg, state))
-    if (cfg.EnableAudioCue)
-        AppearanceMenu.Check("Mute Audio Cue (Beep)")
-
-    AppearanceMenu.Add("Mute Status Toast", ToggleMuteToast.Bind(cfg, state))
-    if (cfg.EnableMuteToast)
-        AppearanceMenu.Check("Mute Status Toast")
-
-    AppearanceMenu.Add("Voice-While-Muted Alert", (*) => (ToggleBoolSetting(cfg, state, "EnableVoiceWhileMutedAlert"), UpdateMutedVoiceMonitorTimer(cfg, state)))
-    if (cfg.EnableVoiceWhileMutedAlert)
-        AppearanceMenu.Check("Voice-While-Muted Alert")
-
-    AppearanceMenu.Add("Show Live Voice Activity Bar", ToggleVoiceMeter.Bind(cfg, state))
-    if (cfg.ShowVoiceMeter)
-        AppearanceMenu.Check("Show Live Voice Activity Bar")
-
-    AppearanceMenu.Add("Show Recording Elapsed Timer", ToggleRecTimer.Bind(cfg, state))
-    if (cfg.ShowRecTimer)
-        AppearanceMenu.Check("Show Recording Elapsed Timer")
-
-    AppearanceMenu.Add("Show Stream && VCam HUD", ToggleStreamHud.Bind(cfg, state))
-    if (cfg.ShowStreamHud)
-        AppearanceMenu.Check("Show Stream && VCam HUD")
-
-    AppearanceMenu.Add("Show Recording && Chat HUD (Row 2)", (*) => ToggleHudOptionAndRebuild(cfg, state, "ShowRow2RecChatHud", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh))
-    if (cfg.ShowRow2RecChatHud)
-        AppearanceMenu.Check("Show Recording && Chat HUD (Row 2)")
-
-    AppearanceMenu.Add("Show Studio && Scene HUD (Row 3)", (*) => ToggleHudOptionAndRebuild(cfg, state, "ShowRow3StudioSceneHud", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh))
-    if (cfg.ShowRow3StudioSceneHud)
-        AppearanceMenu.Check("Show Studio && Scene HUD (Row 3)")
-
-    AppearanceMenu.Add("Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"))
-    if (cfg.EnableHudClickActions)
-        AppearanceMenu.Check("Interactive HUD Click Actions")
-
-    AppearanceMenu.Add("Magnetic Edge/Window Snap", ToggleMagneticSnap.Bind(cfg, state))
-    if (cfg.EnableMagneticSnap)
-        AppearanceMenu.Check("Magnetic Edge/Window Snap")
-
-    AppearanceMenu.Add("Click-Through HUD (Hold Alt)", ToggleHudClickThrough.Bind(cfg, state))
-    if (cfg.HudClickThrough)
-        AppearanceMenu.Check("Click-Through HUD (Hold Alt)")
-
-    AppearanceMenu.Add("Auto-Dodge HUD on Hover", ToggleHudAutoDodge.Bind(cfg, state))
-    if (cfg.HudAutoDodge)
-        AppearanceMenu.Check("Auto-Dodge HUD on Hover")
-
-    AppearanceMenu.Add("Hide HUD from Screen Share / Capture", (*) => ToggleHudOptionAndRebuild(cfg, state, "ExcludeFromCapture", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh))
-    if (cfg.ExcludeFromCapture)
-        AppearanceMenu.Check("Hide HUD from Screen Share / Capture")
-
-    AppearanceMenu.Add("Hide Secondary Pill from Capture", (*) => ToggleHudOptionAndRebuild(cfg, state, "ExcludeSecondaryFromCapture", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh))
-    if (cfg.ExcludeSecondaryFromCapture)
-        AppearanceMenu.Check("Hide Secondary Pill from Capture")
-
-    AppearanceMenu.Add()
-
-    BuildSharedAppearanceSubmenus(
-        AppearanceMenu, cfg, state,
-        SetPrimaryOpacityLive.Bind(cfg, state),
-        ApplyScaleLive.Bind(cfg, state),
-        ApplyThemeLive.Bind(cfg, state)
-    )
-
-    AppearanceMenu.Add()
-    AppearanceMenu.Add("Reset Indicator Position", ApplyResetPositionLive.Bind(cfg, state))
-    AppearanceMenu.Add("Reset Secondary Pill Position", ApplyResetSecondaryPositionLive.Bind(cfg, state))
-    AppearanceMenu.Add("Restore Default Appearance", ApplyResetAppearanceLive.Bind(cfg, state))
-
-    A_TrayMenu.Add("Indicator Appearance", AppearanceMenu)
-
+    ; 3. OBS DIRECTOR & STAGE
     DirectorMenu := Menu()
-    DirectorMenu.Add("Toggle Standby / `"BRB`" Curtain", (*) => ExecuteHostToggleStandby(cfg, state))
-    if (IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby)
-        DirectorMenu.Check("Toggle Standby / `"BRB`" Curtain")
+    isStandby := (IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby)
+    _AddCheckedMenuItem(DirectorMenu, "Toggle Standby / `"BRB`" Curtain", (*) => ExecuteHostToggleStandby(cfg, state), isStandby)
     SceneSwitchMenu := Menu()
     if (IsObject(state) && state.HasOwnProp("sceneList") && IsObject(state.sceneList) && state.sceneList.Length > 0) {
         for scName in state.sceneList {
-            SceneSwitchMenu.Add(scName, ((s, *) => ExecuteHostSwitchScene(cfg, state, s)).Bind(scName))
-            if (state.HasOwnProp("currentSceneName") && state.currentSceneName == scName)
-                SceneSwitchMenu.Check(scName)
+            dispSc := StrReplace(scName, "&", "&&")
+            _AddCheckedMenuItem(SceneSwitchMenu, dispSc, ((s, *) => ExecuteHostSwitchScene(cfg, state, s)).Bind(scName), state.HasOwnProp("currentSceneName") && state.currentSceneName == scName)
         }
     } else {
         SceneSwitchMenu.Add("Connect OBS for scenes", (*) => 0)
         SceneSwitchMenu.Disable("Connect OBS for scenes")
     }
     DirectorMenu.Add("Switch OBS Scene", SceneSwitchMenu)
+    DirectorMenu.Add()
     DirectorMenu.Add("Pause / Resume Recording", (*) => ExecuteHostPauseRecord(cfg, state))
     DirectorMenu.Add("Split Recording Chapter", (*) => ExecuteHostSplitRecord(cfg, state))
     DirectorMenu.Add()
     DirectorMenu.Add("Presenter Countdown Timer", BuildSharedPresenterTimerSubmenu(state, (sec, *) => StartHostPresenterTimer(cfg, state, sec), (*) => PauseHostPresenterTimer(cfg, state), (sec, *) => ResetHostPresenterTimer(cfg, state, sec)))
     DirectorMenu.Add("Send Stage Nudge...", (*) => PromptSendStageNudgeUI((msg) => BroadcastHostStageNudge(cfg, state, msg, "Primary Host")))
     DirectorMenu.Add("View && Export Session Timeline...", (*) => SessionTimeline.ShowTimelineWindow(cfg, state))
-    DirectorMenu.Add("Remote Companion Setup && QR Info...", (*) => ShowRemoteCompanionInfo(cfg, state))
-    A_TrayMenu.Add("OBS Director && Standby", DirectorMenu)
+    A_TrayMenu.Add("OBS Director && Stage", DirectorMenu)
 
-    A_TrayMenu.Add()
+    ; 4. HUD & APPEARANCE (CATEGORIZED SUBMENUS)
+    AppearanceMenu := Menu()
 
-    ; 4. SETTINGS & CONFIGURATION SUBMENU
-    SettingsMenu := Menu()
-    SettingsMenu.Add("Control Center (All Settings)...", ShowControlCenterWindow.Bind(cfg, state))
-    SettingsMenu.Add()
-    RoutingMenu := Menu()
-    RoutingModes := [{ label: "1: Pro OBS Setup (VB-Cable)", mode: 1 }, { label: "2: Standard Direct Mic (Zoom-Only)", mode: 2 }, { label: "3: Dual App Sync (OBS + Zoom)", mode: 3 }
-    ]
-    for rm in RoutingModes {
-        RoutingMenu.Add(rm.label, SetRoutingMode.Bind(cfg, rm.mode))
-        if (cfg.AudioRoutingMode == rm.mode)
-            RoutingMenu.Check(rm.label)
-    }
-    SettingsMenu.Add("Audio Routing Mode", RoutingMenu)
-    SettingsMenu.Add("Guided Setup Wizard (4-Step Check)...", (*) => ShowGuidedSetupWizard(cfg, state))
-    SettingsMenu.Add("Run Audio Setup Wizard...", (*) => PromptForSetup(cfg, false))
+    PanelsMenu := Menu()
+    _AddCheckedMenuItem(PanelsMenu, "Show Mute Indicator", ToggleIndicator.Bind(cfg, state), cfg.ShowIndicator)
+    _AddCheckedMenuItem(PanelsMenu, "Show Extra HUDs", ToggleExtraHuds.Bind(cfg, state), cfg.ShowExtraHuds)
+    _AddCheckedMenuItem(PanelsMenu, "Show Recording && Chat HUD (Row 2)", (*) => ToggleHudOptionAndRebuild(cfg, state, "ShowRow2RecChatHud", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh), cfg.ShowRow2RecChatHud)
+    _AddCheckedMenuItem(PanelsMenu, "Show Studio && Scene HUD (Row 3)", (*) => ToggleHudOptionAndRebuild(cfg, state, "ShowRow3StudioSceneHud", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh), cfg.ShowRow3StudioSceneHud)
+    _AddCheckedMenuItem(PanelsMenu, "Show Stream && VCam HUD (Row 4)", ToggleStreamHud.Bind(cfg, state), cfg.ShowStreamHud)
+    _AddCheckedMenuItem(PanelsMenu, "Show Secondary Mic Pill (Mic-Only)", ToggleSecondaryMicLive.Bind(cfg, state), cfg.ShowSecondaryMicHud)
+    PanelsMenu.Add()
+    _AddCheckedMenuItem(PanelsMenu, "Show Live Voice Activity Bar", ToggleVoiceMeter.Bind(cfg, state), cfg.ShowVoiceMeter)
+    _AddCheckedMenuItem(PanelsMenu, "Show Recording Elapsed Timer", ToggleRecTimer.Bind(cfg, state), cfg.ShowRecTimer)
+    AppearanceMenu.Add("HUD Panels && Visibility", PanelsMenu)
 
-    ConfMenu := Menu()
-    for cApp in GetConferencingAppNames() {
-        ConfMenu.Add(cApp, SetConferencingApp.Bind(cfg, state, cApp))
-        if (NormalizeConferencingApp(cfg.ConferencingApp) = cApp)
-            ConfMenu.Check(cApp)
-    }
-    SettingsMenu.Add("Conferencing Platform", ConfMenu)
+    StyleMenu := Menu()
+    BuildSharedAppearanceSubmenus(StyleMenu, cfg, state, SetPrimaryOpacityLive.Bind(cfg, state), ApplyScaleLive.Bind(cfg, state), ApplyThemeLive.Bind(cfg, state))
+    StyleMenu.Add()
+    _AddCheckedMenuItem(StyleMenu, "Show Text Label", ToggleText.Bind(cfg, state), cfg.ShowText)
+    _AddCheckedMenuItem(StyleMenu, "Use Monochromatic Icon", ToggleMono.Bind(cfg, state), cfg.MonoIcon)
+    _AddCheckedMenuItem(StyleMenu, "Use Sleek Corners", ToggleCorners.Bind(cfg, state), cfg.SleekCorners)
+    AppearanceMenu.Add("Visual Style && Sizing", StyleMenu)
 
+    AlertsMenu := Menu()
+    _AddCheckedMenuItem(AlertsMenu, "Aggressive Mute Pulse", TogglePulse.Bind(cfg, state), cfg.AggressivePulse)
+    _AddCheckedMenuItem(AlertsMenu, "Mute Audio Cue (Beep)", ToggleAudioCue.Bind(cfg, state), cfg.EnableAudioCue)
+    _AddCheckedMenuItem(AlertsMenu, "Mute Status Toast", ToggleMuteToast.Bind(cfg, state), cfg.EnableMuteToast)
+    _AddCheckedMenuItem(AlertsMenu, "Voice-While-Muted Alert", (*) => (ToggleBoolSetting(cfg, state, "EnableVoiceWhileMutedAlert"), UpdateMutedVoiceMonitorTimer(cfg, state)), cfg.EnableVoiceWhileMutedAlert)
+    AppearanceMenu.Add("Alerts && Feedback", AlertsMenu)
+
+    BehaviorMenu := Menu()
+    _AddCheckedMenuItem(BehaviorMenu, "Interactive HUD Click Actions", (*) => ToggleBoolSetting(cfg, state, "EnableHudClickActions"), cfg.EnableHudClickActions)
+    _AddCheckedMenuItem(BehaviorMenu, "Magnetic Edge/Window Snap", ToggleMagneticSnap.Bind(cfg, state), cfg.EnableMagneticSnap)
+    _AddCheckedMenuItem(BehaviorMenu, "Click-Through HUD (Hold Alt)", ToggleHudClickThrough.Bind(cfg, state), cfg.HudClickThrough)
+    _AddCheckedMenuItem(BehaviorMenu, "Auto-Dodge HUD on Hover", ToggleHudAutoDodge.Bind(cfg, state), cfg.HudAutoDodge)
+    BehaviorMenu.Add()
+    _AddCheckedMenuItem(BehaviorMenu, "Hide HUD from Screen Share / Capture", (*) => ToggleHudOptionAndRebuild(cfg, state, "ExcludeFromCapture", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh), cfg.ExcludeFromCapture)
+    _AddCheckedMenuItem(BehaviorMenu, "Hide Secondary Pill from Capture", (*) => ToggleHudOptionAndRebuild(cfg, state, "ExcludeSecondaryFromCapture", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh), cfg.ExcludeSecondaryFromCapture)
+    AppearanceMenu.Add("Behavior && Capture Safety", BehaviorMenu)
+
+    AppearanceMenu.Add()
+    AppearanceMenu.Add("Reset Indicator Position", ApplyResetPositionLive.Bind(cfg, state))
+    AppearanceMenu.Add("Reset Secondary Pill Position", ApplyResetSecondaryPositionLive.Bind(cfg, state))
+    AppearanceMenu.Add("Restore Default Appearance", ApplyResetAppearanceLive.Bind(cfg, state))
+    A_TrayMenu.Add("HUD && Appearance", AppearanceMenu)
+
+    ; 5. REMOTE COMPANIONS
+    RemoteMenu := Menu()
+    RemoteMenu.Add("Remote Companion Setup && QR Info...", (*) => ShowRemoteCompanionInfo(cfg, state))
+    RemoteNetMenu := Menu()
+    _AddCheckedMenuItem(RemoteNetMenu, "Same Router (LAN)", SetRemoteNetworkMode.Bind(cfg, state, "LAN"), cfg.RemoteNetworkMode != "Internet")
+    _AddCheckedMenuItem(RemoteNetMenu, "Different Networks (Internet)", SetRemoteNetworkMode.Bind(cfg, state, "Internet"), cfg.RemoteNetworkMode = "Internet")
+    RemoteMenu.Add("Remote Network Mode", RemoteNetMenu)
+    RemoteMenu.Add()
+    _AddCheckedMenuItem(RemoteMenu, "Cut Off All Remote Connections (Standalone Mode)", ToggleRemoteConnectionsCutoff.Bind(cfg, state), !cfg.EnableRemoteConnections)
+    RemoteMenu.Add("Close Remote Companion...", PromptCloseRemoteCompanion.Bind(cfg, state))
+    A_TrayMenu.Add("Remote Companions", RemoteMenu)
+
+    ; 6. CONFIGURATION
+    ConfigMenu := Menu()
     ProfileMenu := Menu()
-    for pName in cfg.GetProfileNames() {
-        ProfileMenu.Add(pName, SwitchProfileAction.Bind(cfg, state, pName))
-        if (StrLower(cfg.ActiveProfile) = StrLower(pName))
-            ProfileMenu.Check(pName)
-    }
+    for pName in cfg.GetProfileNames()
+        _AddCheckedMenuItem(ProfileMenu, pName, SwitchProfileAction.Bind(cfg, state, pName), StrLower(cfg.ActiveProfile) = StrLower(pName))
     ProfileMenu.Add()
-    ProfileMenu.Add("Auto-Switch by Active App", ToggleAutoProfileSwitch.Bind(cfg, state))
-    if (cfg.HasOwnProp("EnableAutoProfileSwitch") && cfg.EnableAutoProfileSwitch)
-        ProfileMenu.Check("Auto-Switch by Active App")
+    _AddCheckedMenuItem(ProfileMenu, "Auto-Switch by Active App", ToggleAutoProfileSwitch.Bind(cfg, state), cfg.HasOwnProp("EnableAutoProfileSwitch") && cfg.EnableAutoProfileSwitch)
     ProfileMenu.Add("Save Current as New Profile...", (*) => ShowProfileManagerUI(cfg, state))
     ProfileMenu.Add("Manage Profiles && Auto Rules...", (*) => ShowProfileManagerUI(cfg, state))
-    SettingsMenu.Add("Configuration Profiles", ProfileMenu)
+    ConfigMenu.Add("Configuration Profiles", ProfileMenu)
+    ConfigMenu.Add()
+    ConfigMenu.Add("OBS Settings && Shortcuts...", ChangeObsSettingsUI.Bind(cfg, state))
+    ConfigMenu.Add("Conferencing Shortcuts (Zoom/Teams/Meet)...", ChangeZoomShortcutsUI.Bind(cfg, state))
+    ConfigMenu.Add("App Shortcuts...", ChangeAppHotkeysUI.Bind(cfg, state))
+    ConfigMenu.Add()
+    ConfigMenu.Add("Guided Setup Wizard (4-Step Check)...", (*) => ShowGuidedSetupWizard(cfg, state))
+    ConfigMenu.Add("Audio Setup Wizard...", (*) => PromptForSetup(cfg, false))
+    ConfigMenu.Add()
+    _AddCheckedMenuItem(ConfigMenu, "Start with Windows", ToggleStartWithWindows.Bind(cfg, state), cfg.StartWithWindows)
+    A_TrayMenu.Add("Configuration", ConfigMenu)
 
-    SettingsMenu.Add()
-    SettingsMenu.Add("Change OBS Settings", ChangeObsSettingsUI.Bind(cfg, state))
-    SettingsMenu.Add("Change Zoom Shortcuts", ChangeZoomShortcutsUI.Bind(cfg, state))
-    SettingsMenu.Add()
-    RemoteNetMenu := Menu()
-    RemoteNetMenu.Add("Same Router (LAN)", SetRemoteNetworkMode.Bind(cfg, state, "LAN"))
-    RemoteNetMenu.Add("Different Networks (Internet)", SetRemoteNetworkMode.Bind(cfg, state, "Internet"))
-    if (cfg.RemoteNetworkMode = "Internet")
-        RemoteNetMenu.Check("Different Networks (Internet)")
-    else
-        RemoteNetMenu.Check("Same Router (LAN)")
-    SettingsMenu.Add("Remote Network Mode", RemoteNetMenu)
-    SettingsMenu.Add("Remote Companion Info...", (*) => ShowRemoteCompanionInfo(cfg, state))
-    SettingsMenu.Add("Close Remote Companion...", PromptCloseRemoteCompanion.Bind(cfg, state))
-    SettingsMenu.Add()
-    SettingsMenu.Add("Change Pointer Mute Button", ChangeHwMuteHotkeyUI.Bind(cfg, state))
-    SettingsMenu.Add("Change Pointer OBS Transition Button...", ChangeHwTransitionHotkeyUI.Bind(cfg, state))
-    SettingsMenu.Add("Enable Cough / Push-to-Mute (Hold)", TogglePushToMute.Bind(cfg, state))
-    if (cfg.EnablePushToMute)
-        SettingsMenu.Check("Enable Cough / Push-to-Mute (Hold)")
-    SettingsMenu.Add("Enable Push-to-Talk (Hold to Unmute)", TogglePushToTalk.Bind(cfg, state))
-    if (cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk)
-        SettingsMenu.Check("Enable Push-to-Talk (Hold to Unmute)")
-    SettingsMenu.Add("Configure Pointer Intercepts", ConfigurePointerKeysUI.Bind(cfg, state))
-    SettingsMenu.Add("Launch Clicker Tester", ShowPointerTester)
-    SettingsMenu.Add()
-    SettingsMenu.Add("Change App Shortcuts", ChangeAppHotkeysUI.Bind(cfg, state))
-    SettingsMenu.Add()
-    SettingsMenu.Add("Start with Windows", ToggleStartWithWindows.Bind(cfg, state))
-    if (cfg.StartWithWindows)
-        SettingsMenu.Check("Start with Windows")
-    SettingsMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))
+    ; 7. HELP & DIAGNOSTICS
+    HelpMenu := Menu()
+    HelpMenu.Add("Help && Shortcuts...", ShowHelpWindow.Bind(cfg, state))
+    HelpMenu.Add()
+    HelpMenu.Add("View Error && Diagnostic Log...", (*) => DiagnosticLogger.ShowLogViewerWindow(cfg, state))
+    HelpMenu.Add("Export Sanitized Diagnostics...", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
+    HelpMenu.Add()
+    HelpMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))
+    HelpMenu.Add("About PresenterSync...", ShowAboutWindow.Bind(cfg, state))
+    A_TrayMenu.Add("Help && Diagnostics", HelpMenu)
 
-    A_TrayMenu.Add("Control Center...", ShowControlCenterWindow.Bind(cfg, state))
-    A_TrayMenu.Add("Settings", SettingsMenu)
-
-    ; 5. HELP, SAFETY & EXIT
-    A_TrayMenu.Add("Go Live 10-Second Rehearsal...", (*) => ShowPreFlightRehearsalDialog(cfg, state))
-    A_TrayMenu.Add("Guided Setup Wizard...", (*) => ShowGuidedSetupWizard(cfg, state))
-    A_TrayMenu.Add("Help && Shortcuts", ShowHelpWindow.Bind(cfg, state))
-    A_TrayMenu.Add("View Error && Diagnostic Log...", (*) => DiagnosticLogger.ShowLogViewerWindow(cfg, state))
-    A_TrayMenu.Add("Export Sanitized Diagnostics...", (*) => ExportSanitizedDiagnostics(cfg, state, "", true))
-    A_TrayMenu.Add("About PresenterSync", ShowAboutWindow.Bind(cfg, state))
-    A_TrayMenu.Add("Check for Updates...", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))
+    ; 8. SYSTEM SAFETY & EXIT
     A_TrayMenu.Add()
-    A_TrayMenu.Add("Suspend All Hotkeys", ToggleSuspend)
-    if (Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
-        A_TrayMenu.Check("Suspend All Hotkeys")
-    A_TrayMenu.Add("Remote Companion Setup && QR Info...", (*) => ShowRemoteCompanionInfo(cfg, state))
-    A_TrayMenu.Add("Cut Off All Remote Connections (Standalone Mode)", ToggleRemoteConnectionsCutoff.Bind(cfg, state))
-    if (!cfg.EnableRemoteConnections)
-        A_TrayMenu.Check("Cut Off All Remote Connections (Standalone Mode)")
-    A_TrayMenu.Add("Close Remote Companion...", PromptCloseRemoteCompanion.Bind(cfg, state))
+    _AddCheckedMenuItem(A_TrayMenu, "Suspend All Hotkeys", ToggleSuspend, Theme.SuspendLockCount > 0 ? Theme.WasSuspendedBeforeDialogs : A_IsSuspended)
     A_TrayMenu.Add("Exit PresenterSync", ExitTrayApp)
 }
 
@@ -431,16 +350,15 @@ ToggleRemoteConnectionsCutoff(cfg, state := "", *) {
             }
             state.relayConnected := false
         }
-        SetTrayCheck("Cut Off All Remote Connections (Standalone Mode)", true)
         ToolTip("Standalone Mode: All Remote Connections Cut Off")
     } else {
         if (IsObject(state)) {
             StartHostCompanionBridge(cfg, state, cfg.BridgePort)
             UpdateHostInternetRelay(cfg, state)
         }
-        SetTrayCheck("Cut Off All Remote Connections (Standalone Mode)", false)
         ToolTip("Remote Companion Connections: Enabled")
     }
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -471,16 +389,14 @@ TogglePPT(cfg, state := "", *) {
     if (cfg.EnablePPT) {
         cfg.EnableMicOnly := false
         cfg.WriteBool("Settings", "EnableMicOnly", false)
-        SetTrayCheck("Enable Pointer Mute Only", false)
-        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", true)
         ToolTip "Pointer Mode: Full PPT + Mute"
     } else {
-        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", false)
         ToolTip "Pointer Mode: OFF"
     }
 
     cfg.WriteBool("Settings", "EnablePPT", cfg.EnablePPT)
     RebindAllHostHotkeys(cfg, state)
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -493,16 +409,14 @@ ToggleMicOnly(cfg, state := "", *) {
     if (cfg.EnableMicOnly) {
         cfg.EnablePPT := false
         cfg.WriteBool("Settings", "EnablePPT", false)
-        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", false)
-        SetTrayCheck("Enable Pointer Mute Only", true)
         ToolTip "Pointer Mode: Mute Only"
     } else {
-        SetTrayCheck("Enable Pointer Mute Only", false)
         ToolTip "Pointer Mode: OFF"
     }
 
     cfg.WriteBool("Settings", "EnableMicOnly", cfg.EnableMicOnly)
     RebindAllHostHotkeys(cfg, state)
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -511,10 +425,10 @@ TogglePointerTransition(cfg, state := "", *) {
     ToolTip()
     cfg.EnablePointerTransition := !cfg.EnablePointerTransition
     cfg.WriteBool("Settings", "EnablePointerTransition", cfg.EnablePointerTransition)
-    SetTrayCheck("Enable Pointer OBS Scene Transition", cfg.EnablePointerTransition)
     if (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
         try state.rebindHotkeysFn.Call()
     ToolTip("Pointer OBS Scene Transition: " (cfg.EnablePointerTransition ? "ON" : "OFF"))
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -527,22 +441,19 @@ CyclePointerMode(cfg, state := "", *) {
         cfg.EnableMicOnly := true
         cfg.WriteBool("Settings", "EnablePPT", false)
         cfg.WriteBool("Settings", "EnableMicOnly", true)
-        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", false)
-        SetTrayCheck("Enable Pointer Mute Only", true)
         ToolTip "Pointer Mode: Mute Only"
     } else if (cfg.EnableMicOnly) {
         cfg.EnableMicOnly := false
         cfg.WriteBool("Settings", "EnableMicOnly", false)
-        SetTrayCheck("Enable Pointer Mute Only", false)
         ToolTip "Pointer Mode: OFF"
     } else {
         cfg.EnablePPT := true
         cfg.WriteBool("Settings", "EnablePPT", true)
-        SetTrayCheck("Enable Full Pointer Controls (PPT + Mute)", true)
         ToolTip "Pointer Mode: Full PPT + Mute"
     }
 
     RebindAllHostHotkeys(cfg, state)
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -554,12 +465,10 @@ ToggleWS(cfg, state, *) {
 
     if (cfg.EnableWS) {
         cfg.WriteBool("Settings", "EnableWS", true)
-        SetTrayCheck("Enable OBS WebSocket Sync", true)
         ToolTip "WebSocket Sync: ON"
         SetTimer state.obsTimerFn, -UIConstants.OBS_INIT_DELAY_MS
     } else {
         cfg.WriteBool("Settings", "EnableWS", false)
-        SetTrayCheck("Enable OBS WebSocket Sync", false)
         ToolTip "WebSocket Sync: OFF"
         SetTimer state.obsTimerFn, 0
         state.obsConnected := false
@@ -576,6 +485,7 @@ ToggleWS(cfg, state, *) {
 
     UpdateZoomMonitorTimer(cfg, state)
     RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -589,11 +499,9 @@ ToggleZoom(cfg, state, *) {
         state.zoomRecGraceUntil := 0
         state.zoomSawRecControl := false
         cfg.WriteBool("Settings", "EnableZoom", true)
-        SetTrayCheck("Enable Zoom Monitoring", true)
         ToolTip "Zoom Monitoring: ON"
     } else {
         cfg.WriteBool("Settings", "EnableZoom", false)
-        SetTrayCheck("Enable Zoom Monitoring", false)
         state.zoomConnected := false
         state.zoomLastMuted := -1
         state.zoomRecGraceUntil := 0
@@ -605,6 +513,7 @@ ToggleZoom(cfg, state, *) {
 
     UpdateZoomMonitorTimer(cfg, state)
     RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
@@ -613,7 +522,7 @@ ToggleIndicator(cfg, state, *) {
     cfg.ShowIndicator := !cfg.ShowIndicator
     cfg.WriteBool("Settings", "ShowIndicator", cfg.ShowIndicator)
 
-    SetTrayCheck("Show Mute Indicator", cfg.ShowIndicator)
+    BuildTrayMenu(cfg, state)
     UpdateHudVisibility(cfg, state)
     if (IsAnyMicHudVisible(cfg) && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
@@ -627,8 +536,8 @@ ToggleExtraHuds(cfg, state, *) {
     cfg.ShowExtraHuds := !cfg.ShowExtraHuds
     cfg.WriteBool("Settings", "ShowExtraHuds", cfg.ShowExtraHuds)
 
-    SetTrayCheck("Show Extra HUDs", cfg.ShowExtraHuds)
     RefreshHudAppearance(cfg, state)
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     ToolTip(cfg.ShowExtraHuds ? "Extra HUDs: ON" : "Extra HUDs: OFF")
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
@@ -637,7 +546,7 @@ ToggleExtraHuds(cfg, state, *) {
 ToggleSecondaryMicLive(cfg, state, *) {
     ToolTip()
     ToggleSecondaryMicHud(cfg, state)
-    SetTrayCheck("Show Secondary Mic Pill (Mic-Only)", cfg.ShowSecondaryMicHud)
+    BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     ToolTip(cfg.ShowSecondaryMicHud ? "Secondary Mic Pill: ON" : "Secondary Mic Pill: OFF")
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
