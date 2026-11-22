@@ -18,6 +18,7 @@ OnError((err, mode) => (FileAppend("UNHANDLED_ERR: " err.Message " (" err.What "
 #Include "%A_LineFile%\..\..\Lib\Gdip.ahk"
 #Include "%A_LineFile%\..\..\Lib\OBS_Network.ahk"
 #Include "%A_LineFile%\..\..\Lib\GUI_Config.ahk"
+#Include "%A_LineFile%\..\..\Lib\WebRemoteUI.ahk"
 
 global g_IsTestMode := true
 
@@ -177,6 +178,34 @@ okStrmClick := HandleHudPillClick(cfg, st, st.StreamGui.Hwnd)
 okStrmDbl := WM_LBUTTONDBLCLK(st, 0, 0, 0x0203, st.StreamGui.Hwnd)
 AssertTrue(okStrmClick == "stream_readonly" && okStrmDbl == 0 && mockWs.sent.Length == 0,
     "#9 StreamGui click and double-click are strictly read-only with 0 OBS WS mutations")
+
+; 6. (#2) 1.25x Indicator Scale exact geometry, tray submenu & Web Remote scale selector
+cfg125 := Config(tmpIni)
+cfg125.IndicatorScale := 1.25
+cfg125.ShowText := true
+st125 := OverlayState(cfg125)
+st125.ComputeDimensions(cfg125)
+lay125 := ComputeHudLayout(st125, 400, 400, cfg125)
+mIconEnd125 := Round(UIConstants.ICON_OFFSET_X * 1.25) + Round(UIConstants.MIC_ICON_W * 1.25)
+mTextStart125 := Round(UIConstants.TEXT_OFFSET_X * 1.25)
+AssertTrue(st125.baseWidth == 210 && st125.baseHeight == 50 && st125.hudGap == 8
+    && (lay125.recW + st125.hudGap + lay125.chatW) == 210
+    && (lay125.studioW + st125.hudGap + lay125.sceneW) == 210
+    && (lay125.streamW + st125.hudGap + lay125.vcamW) == 210
+    && mIconEnd125 < mTextStart125,
+    "#2 1.25x Label Mode exact stack alignment & zero icon/text overlap",
+    "w=" st125.baseWidth " h=" st125.baseHeight " gap=" st125.hudGap)
+
+cfg125.ShowText := false
+st125.ComputeDimensions(cfg125)
+AssertTrue(st125.baseWidth == 100 && st125.baseHeight == 50, "#2 1.25x Icon Mode == 100x50")
+
+hudRenSrc := FileRead(A_LineFile "\..\..\Lib\HudRenderer.ahk", "UTF-8")
+ccSrc := FileRead(A_LineFile "\..\..\Lib\ControlCenter.ahk", "UTF-8")
+webHtml125 := BuildWebRemoteHtml("8.0.4", 4456)
+AssertTrue(InStr(hudRenSrc, "Medium (x1.25)") && InStr(ccSrc, "Medium (1.25x)")
+    && InStr(webHtml125, "ps_web_scale") && InStr(webHtml125, "--ui-scale") && InStr(webHtml125, "1.25"),
+    "#2 1.25x exposed in Tray submenu, Control Center, and Web Remote")
 
 ; Clean up HUD timers & windows
 for _, fnProp in ["sceneMarqueeTimerFn", "breathTimerFn", "recTimerFn", "dragTimerFn", "autoDodgeTimerFn", "mutedVoiceTimerFn"] {

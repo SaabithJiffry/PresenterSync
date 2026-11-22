@@ -77,6 +77,7 @@ private val SCALE_OPTIONS = listOf(
     0.5f to "0.5x Mini",
     0.75f to "0.75x Small",
     1.0f to "1.0x Normal",
+    1.25f to "1.25x Cozy",
     1.5f to "1.5x Medium",
     2.0f to "2.0x Large",
     3.0f to "3.0x XL",

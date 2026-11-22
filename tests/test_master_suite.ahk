@@ -190,8 +190,8 @@ Assert("Tier 2 Chat Pill GDI+ Render", p3 != false)
 Assert("Tier 3 Studio Pill GDI+ Render", p4 != false)
 Assert("Tier 3 Scene Pill GDI+ Render", p5 != false)
 
-; Test Scaled Geometry & Real GDI+ Rendering across all 8 preset scales
-scales := [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 5.0]
+; Test Scaled Geometry & Real GDI+ Rendering across all 9 preset scales
+scales := [0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 5.0]
 for sc in scales {
     cfg.IndicatorScale := sc
     state.ComputeDimensions(cfg)
@@ -578,10 +578,10 @@ AuditDialogGeometry("ConfigurePointerKeysUI", ConfigurePointerKeysUI(cfgScene), 
 AuditDialogGeometry("RemoteCompanionInfo", ShowRemoteCompanionInfo(cfgScene, stScene), 360, 320)
 AuditDialogGeometry("CloseRemoteCompanion", PromptCloseRemoteCompanion(cfgScene, stScene), 340, 130)
 
-; Multi-Scale HUD Stack & Label Mode Non-Overlap Audit across all 8 scales
+; Multi-Scale HUD Stack & Label Mode Non-Overlap Audit across all 9 scales
 allScalesOk := true
 scaleDetail := ""
-for sc in [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 5.0] {
+for sc in [0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 5.0] {
     for showTxt in [false, true] {
         cfgScene.IndicatorScale := sc
         cfgScene.ShowText := showTxt

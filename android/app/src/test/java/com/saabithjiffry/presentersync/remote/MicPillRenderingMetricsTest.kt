@@ -11,7 +11,7 @@ import kotlin.math.min
 
 class MicPillRenderingMetricsTest {
 
-    private val scales = listOf(0.75f, 1.0f, 2.0f, 3.0f, 5.0f)
+    private val scales = listOf(0.75f, 1.0f, 1.25f, 2.0f, 3.0f, 5.0f)
     private val labels = listOf("LIVE", "MUTED", "AUTH ERR", "OFFLINE")
     private val densities = listOf(1.5f, 2.0f, 3.0f)
 

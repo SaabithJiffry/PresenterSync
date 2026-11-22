@@ -2723,6 +2723,7 @@ BuildSharedAppearanceSubmenus(parentMenu, cfg, state, onOpacityFn, onScaleFn, on
         { label: "Tiny (x0.25)", val: 0.25 },
         { label: "Small (x0.5)", val: 0.5 },
         { label: "Normal (x1.0)", val: 1.0 },
+        { label: "Medium (x1.25)", val: 1.25 },
         { label: "Large (x1.5)", val: 1.5 },
         { label: "Huge (x2.0)", val: 2.0 },
         { label: "Massive (x2.5)", val: 2.5 },
