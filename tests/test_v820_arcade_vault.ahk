@@ -24,6 +24,7 @@ OnError((err, mode) => (FileAppend("UNHANDLED_ERR: " err.Message " (" err.What "
 #Include "%A_LineFile%\..\..\Lib\HudSnakeGame.ahk"
 #Include "%A_LineFile%\..\..\Lib\HudArcadeBase.ahk"
 #Include "%A_LineFile%\..\..\Lib\ArcadeVault.ahk"
+#Include "%A_LineFile%\..\..\Lib\Arcade\GameAsteroids.ahk"
 
 global g_IsTestMode := true
 
@@ -155,6 +156,53 @@ AssertTrue(!InStr(helpSrc, "Alt + Ctrl + Shift + S") && !InStr(helpSrc, "Alt+Ctr
     "All explicit Snake chord spoilers scrubbed from Help, Control Center & README")
 AssertTrue(InStr(remSrc, "remoteDeckHotIfFn") && InStr(remSrc, "HudArcadeBase.IsAnyGameActive()"),
     "PresenterSync_Remote protects RemoteNextSlideKey/Prev/Transition with !HudArcadeBase.IsAnyGameActive()")
+
+; 8. GameAsteroids simulation, splitting, powerups, saucer, Mic Pill Bumper & score persistence
+GameAsteroids.Start(cfg, st, true)
+snap0 := GameAsteroids.GetSnapshot()
+AssertTrue(snap0.active && snap0.phase = "playing" && snap0.asteroidCount >= 5 && HudArcadeBase.ActiveGameId = "asteroids",
+    "GameAsteroids initializes cleanly in headless mode & registers active game")
+
+; Clear asteroids, place one Large directly ahead of ship, fire & step until hit
+GameAsteroids._asteroids := []
+shipSnap := GameAsteroids.GetSnapshot().ship
+GameAsteroids.SpawnAsteroid(shipSnap.x, shipSnap.y - 60.0, 0.0, 0.0, 3)
+GameAsteroids.FireBullet(true)
+Loop 20
+    GameAsteroids.StepSimulation(0.016, false)
+snapSplit := GameAsteroids.GetSnapshot()
+AssertTrue(snapSplit.score >= 20 && snapSplit.asteroidCount == 2 && snapSplit.highScore >= 20,
+    "GameAsteroids bullet splits Large asteroid -> 2 Medium asteroids and awards score",
+    "score=" snapSplit.score " cnt=" snapSplit.asteroidCount)
+
+; Saucer hit (clear asteroids first so bullet hits saucer cleanly)
+GameAsteroids._asteroids := []
+GameAsteroids._bullets := []
+GameAsteroids._ship.angle := -1.57079632679
+sc := GameAsteroids.SpawnSaucer(true)
+sc.x := shipSnap.x
+sc.y := shipSnap.y - 50.0
+sc.vx := 0.0
+GameAsteroids._ship.fireCdMs := 0.0
+GameAsteroids.FireBullet(true)
+Loop 15
+    GameAsteroids.StepSimulation(0.016, false)
+snapSaucer := GameAsteroids.GetSnapshot()
+AssertTrue(!snapSaucer.saucerActive && snapSaucer.score >= 270,
+    "GameAsteroids destroys Alien Saucer (+250) and spawns power-up",
+    "score=" snapSaucer.score " saucer=" snapSaucer.saucerActive)
+
+; Mic Pill Bumper bounce
+GameAsteroids._asteroids := []
+GameAsteroids._saucer.active := false
+GameAsteroids._saucerTimerMs := 99999.0
+GameAsteroids._micBumper := true
+GameAsteroids.SetTestMicPillRect({ x: 200, y: 200, w: 120, h: 40 })
+bumperAst := GameAsteroids.SpawnAsteroid(192.0, 220.0, 80.0, 0.0, 1)
+GameAsteroids.StepSimulation(0.05, false)
+AssertTrue(bumperAst.vx < 0.0, "Mic Pill Bumper elastically deflects asteroid away from Mic pill", "vx=" bumperAst.vx)
+GameAsteroids.Stop()
+AssertTrue(!GameAsteroids.IsActive && !HudArcadeBase.IsAnyGameActive(), "GameAsteroids.Stop clears active game cleanly")
 
 try FileDelete(tmpIni)
 try FileAppend("PASS=" passed " FAIL=" failed "`n", "*")

@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 8.1.1
+; Version: 8.1.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 8.1.1.0
+;@Ahk2Exe-SetVersion 8.1.2.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -25,6 +25,7 @@ ProcessSetPriority "High"
 #Include <HudSnakeGame>
 #Include <HudArcadeBase>
 #Include <ArcadeVault>
+#Include <Arcade\GameAsteroids>
 
 g_RemoteCli := ParseRemoteCliArgs(A_Args)
 g_RemoteMutex := AcquireRemoteInstanceMutex(g_RemoteCli.instanceName)
@@ -535,6 +536,7 @@ RegisterRemotePointerHotkey(AppConfig, AppState)
 RegisterRemoteAppHotkeys(AppConfig, AppState)
 OnMessage(0x0218, OnRemotePowerBroadcast.Bind(AppConfig, AppState))
 ArcadeVault.RegisterGame("snake", "HUD Snake", "!^+s", "Ctrl+Alt+Shift+S", (c, s) => HudSnake.Toggle(c, s), () => HudSnake.Stop())
+ArcadeVault.RegisterGame("asteroids", "Asteroid Blaster", "!^+a", "Ctrl+Alt+Shift+A", (c, s) => GameAsteroids.Toggle(c, s), () => GameAsteroids.Stop())
 ArcadeVault.BindVaultHotkey(AppConfig, AppState)
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync_Remote.exe")
 

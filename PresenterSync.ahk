@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 8.1.1
+; Version: 8.1.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -12,7 +12,7 @@
 ;@Ahk2Exe-AddResource *10 assets\PresenterSync.ico, FAVICON_ICO
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 8.1.1.0
+;@Ahk2Exe-SetVersion 8.1.2.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -26,6 +26,7 @@ SetKeyDelay -1, -1
 #Include <HudSnakeGame>
 #Include <HudArcadeBase>
 #Include <ArcadeVault>
+#Include <Arcade\GameAsteroids>
 
 if (A_Args.Length > 0) {
     cliCmd := ParseHostCliArgs(A_Args)
@@ -626,6 +627,7 @@ BindSystemHotkeys(cfg, state) {
     _TryRegisterSystemHotkey(cfg.ExitHotkey, (*) => ExitTrayApp())
     _TryRegisterSystemHotkey(cfg.RemoteInfoHotkey, (*) => ShowRemoteCompanionInfo(cfg, state))
     ArcadeVault.RegisterGame("snake", "HUD Snake", "!^+s", "Ctrl+Alt+Shift+S", (c, s) => HudSnake.Toggle(c, s), () => HudSnake.Stop())
+    ArcadeVault.RegisterGame("asteroids", "Asteroid Blaster", "!^+a", "Ctrl+Alt+Shift+A", (c, s) => GameAsteroids.Toggle(c, s), () => GameAsteroids.Stop())
     ArcadeVault.BindVaultHotkey(cfg, state)
 }
 BindSystemHotkeys(AppConfig, AppState)
