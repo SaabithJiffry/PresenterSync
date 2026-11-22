@@ -202,7 +202,9 @@ object DiagnosticLogger {
             if (backup.exists()) {
                 backup.delete()
             }
-            target.renameTo(backup)
+            if (!target.renameTo(backup)) {
+                runCatching { target.writeText("", Charsets.UTF_8) }
+            }
         }
     }
 
@@ -301,14 +303,30 @@ object DiagnosticLogger {
             }
         } catch (_: Throwable) {
         }
-        return result.distinct()
+        return result.distinct().sortedByDescending { it.length }
     }
 
-    private fun scrubSecrets(input: String, secrets: List<String>): String {
+    private val gcmEnvelopeRegex = Regex("""PSGCM1\|[A-Za-z0-9+/=]+\|[A-Za-z0-9+/=]+""")
+    private val legacyRelayAuthRegex = Regex("""(PSRELAY\|[^|\r\n"]+\|[^|\r\n"]+\|[^|\r\n"]*\|)[^|\r\n\s"}]+""")
+    private val jsonSecretFieldRegex = Regex(
+        """(\\?"?(?:obsPassword|password|sessionToken|token|internetPairingCode|sessionPairingCode|code|auth)\\?"?\s*:\s*\\?")[^"\r\n]+""",
+        RegexOption.IGNORE_CASE
+    )
+    private val tokenHeaderRegex = Regex("""(X-PresenterSync-Token\s*:\s*)[^\r\n\s]+""", RegexOption.IGNORE_CASE)
+    private val bearerHeaderRegex = Regex("""(Authorization\s*:\s*Bearer\s+)[^\r\n\s]+""", RegexOption.IGNORE_CASE)
+    private val uriSecretParamRegex = Regex("""([?&](?:pw|password|token|code|pair)=)[^&\s"'<>]+""", RegexOption.IGNORE_CASE)
+
+    internal fun scrubSecrets(input: String, secrets: List<String> = emptyList()): String {
         var out = input
         for (sec in secrets) {
             out = out.replace(sec, "[REDACTED]")
         }
+        out = gcmEnvelopeRegex.replace(out, "PSGCM1|[REDACTED]")
+        out = legacyRelayAuthRegex.replace(out, "$1[REDACTED]")
+        out = jsonSecretFieldRegex.replace(out, "$1[REDACTED]")
+        out = tokenHeaderRegex.replace(out, "$1[REDACTED]")
+        out = bearerHeaderRegex.replace(out, "$1[REDACTED]")
+        out = uriSecretParamRegex.replace(out, "$1[REDACTED]")
         return out
     }
 

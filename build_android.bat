@@ -43,7 +43,8 @@ set "RELEASE_APK=%ANDROID_DIR%\app\build\outputs\apk\release\app-release.apk"
 if not exist "%RELEASE_APK%" (
     echo [ERROR] Expected release APK not found: %RELEASE_APK%
     popd
-    exit /b 1
+    set "BUILD_EXIT=1"
+    goto :done
 )
 
 echo.
@@ -53,7 +54,8 @@ copy /y "%RELEASE_APK%" "%SCRIPT_DIR%\dist\PresenterSync_Remote.apk" >nul
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to copy dist\PresenterSync_Remote.apk.
     popd
-    exit /b 1
+    set "BUILD_EXIT=1"
+    goto :done
 )
 
 for %%F in ("%SCRIPT_DIR%\dist\PresenterSync_Remote.apk") do (

@@ -185,6 +185,7 @@ class MicPillCanvasView(context: Context) : View(context) {
         resolveVisualState(visualState)
         val metrics = computeRenderMetrics(w, h, visualState.label)
         pillRect.set(metrics.pillLeft, metrics.pillTop, metrics.pillRight, metrics.pillBottom)
+        if (pillRect.width() <= 0.5f || pillRect.height() <= 0.5f) return
 
         drawPillShellAndBorder(canvas, metrics, visualState)
         drawForegroundLabel(canvas, metrics, visualState)
@@ -380,10 +381,11 @@ class MicPillCanvasView(context: Context) : View(context) {
     }
 
     private fun ensureFillShader(bgColor: Int, top: Float, bottom: Float) {
+        val safeBottom = if (bottom > top + 0.5f) bottom else top + 1f
         if (cachedFillShader != null &&
             cachedFillColor == bgColor &&
             cachedFillTop == top &&
-            cachedFillBottom == bottom
+            cachedFillBottom == safeBottom
         ) {
             return
         }
@@ -393,20 +395,21 @@ class MicPillCanvasView(context: Context) : View(context) {
             0f,
             top,
             0f,
-            bottom,
+            safeBottom,
             topColor,
             bottomColor,
             Shader.TileMode.CLAMP
         )
         cachedFillColor = bgColor
         cachedFillTop = top
-        cachedFillBottom = bottom
+        cachedFillBottom = safeBottom
     }
 
     private fun ensureSpecularShader(top: Float, bottom: Float) {
+        val safeBottom = if (bottom > top + 0.5f) bottom else top + 1f
         if (cachedSpecularShader != null &&
             cachedSpecularTop == top &&
-            cachedSpecularBottom == bottom
+            cachedSpecularBottom == safeBottom
         ) {
             return
         }
@@ -414,13 +417,13 @@ class MicPillCanvasView(context: Context) : View(context) {
             0f,
             top,
             0f,
-            bottom,
+            safeBottom,
             intArrayOf(0x3DFFFFFF, 0x10FFFFFF, 0x00FFFFFF),
             floatArrayOf(0f, 0.45f, 1f),
             Shader.TileMode.CLAMP
         )
         cachedSpecularTop = top
-        cachedSpecularBottom = bottom
+        cachedSpecularBottom = safeBottom
     }
 
     private fun drawOuterElevationHalo(canvas: Canvas, metrics: MicPillRenderMetrics, alphaScale: Float) {

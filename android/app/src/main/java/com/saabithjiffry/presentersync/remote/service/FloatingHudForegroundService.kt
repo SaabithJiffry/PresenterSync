@@ -212,6 +212,7 @@ class FloatingHudForegroundService : LifecycleService() {
     }
 
     private fun stopRemoteCleanly() {
+        unregisterWakeReceiver()
         app.configStore.setHudWasActive(false)
         if (::hudSnakeOverlayManager.isInitialized) {
             hudSnakeOverlayManager.stop()

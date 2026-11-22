@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 7.8.0
+; Version: 7.8.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 7.8.0.0
+;@Ahk2Exe-SetVersion 7.8.1.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -740,41 +740,42 @@ PptCondFn := IsPptInterceptActive.Bind(AppConfig)
 BindPptInterceptHotkeys(cfg, state := "") {
     global BoundPptHotkeys, PptCondFn
     HotIf PptCondFn
-    for oldHk in BoundPptHotkeys {
-        try Hotkey(oldHk, "Off")
-    }
-    BoundPptHotkeys := []
+    try {
+        for oldHk in BoundPptHotkeys {
+            try Hotkey(oldHk, "Off")
+        }
+        BoundPptHotkeys := []
 
-    if (!cfg.EnablePPT) {
-        HotIf
-        return
-    }
+        if (!cfg.EnablePPT)
+            return
 
-    pptBindings := [
-        { key: "Down", send: "{Down}" },
-        { key: "Up", send: "{Up}" },
-        { key: "Left", send: "{Left}" },
-        { key: "Right", send: "{Right}" },
-        { key: "PgDn", send: "{PgDn}" },
-        { key: "PgUp", send: "{PgUp}" },
-        { key: "Space", send: "{Space}" },
-        { key: "Enter", send: "{Enter}" },
-        { key: "Tab", send: "{Tab}" },
-        { key: "Esc", send: "{Esc}" },
-        { key: "+F5", send: "{Blind}{F5}" }
-    ]
+        pptBindings := [
+            { key: "Down", send: "{Down}" },
+            { key: "Up", send: "{Up}" },
+            { key: "Left", send: "{Left}" },
+            { key: "Right", send: "{Right}" },
+            { key: "PgDn", send: "{PgDn}" },
+            { key: "PgUp", send: "{PgUp}" },
+            { key: "Space", send: "{Space}" },
+            { key: "Enter", send: "{Enter}" },
+            { key: "Tab", send: "{Tab}" },
+            { key: "Esc", send: "{Esc}" },
+            { key: "+F5", send: "{Blind}{F5}" }
+        ]
 
-    for item in pptBindings {
-        if IsPptKeyAllowed(cfg, item.key) {
-            hkName := "$" item.key
-            sendKey := item.send
-            try {
-                Hotkey(hkName, ((k, *) => SendToPPT(cfg, k)).Bind(sendKey), "On")
-                BoundPptHotkeys.Push(hkName)
+        for item in pptBindings {
+            if IsPptKeyAllowed(cfg, item.key) {
+                hkName := "$" item.key
+                sendKey := item.send
+                try {
+                    Hotkey(hkName, ((k, *) => SendToPPT(cfg, k)).Bind(sendKey), "On")
+                    BoundPptHotkeys.Push(hkName)
+                }
             }
         }
+    } finally {
+        HotIf
     }
-    HotIf
 }
 BindPptInterceptHotkeys(AppConfig, AppState)
 
@@ -842,20 +843,21 @@ PointerCondFn := CheckPointerEnable.Bind(AppConfig)
 BindHwMuteHotkey(cfg, state) {
     global BoundHwMuteHotkey, PointerCondFn
     HotIf PointerCondFn
-    if (BoundHwMuteHotkey != "") {
-        try Hotkey(BoundHwMuteHotkey, "Off")
-        BoundHwMuteHotkey := ""
-    }
-    if (!(cfg.EnablePPT || cfg.EnableMicOnly) || cfg.HwMuteHotkey = "" || cfg.HwMuteHotkey = "None") {
-        HotIf
-        return
-    }
-    hk := "$" RegExReplace(Trim(cfg.HwMuteHotkey), "^[~*$]+")
     try {
-        Hotkey(hk, (*) => TriggerMute(cfg, state), "On")
-        BoundHwMuteHotkey := hk
+        if (BoundHwMuteHotkey != "") {
+            try Hotkey(BoundHwMuteHotkey, "Off")
+            BoundHwMuteHotkey := ""
+        }
+        if (!(cfg.EnablePPT || cfg.EnableMicOnly) || cfg.HwMuteHotkey = "" || cfg.HwMuteHotkey = "None")
+            return
+        hk := "$" RegExReplace(Trim(cfg.HwMuteHotkey), "^[~*$]+")
+        try {
+            Hotkey(hk, (*) => TriggerMute(cfg, state), "On")
+            BoundHwMuteHotkey := hk
+        }
+    } finally {
+        HotIf
     }
-    HotIf
 }
 BindHwMuteHotkey(AppConfig, AppState)
 
@@ -868,20 +870,21 @@ TransitionCondFn := CheckTransitionEnable.Bind(AppConfig)
 BindHwTransitionHotkey(cfg, state) {
     global BoundHwTransitionHotkey, TransitionCondFn
     HotIf TransitionCondFn
-    if (BoundHwTransitionHotkey != "") {
-        try Hotkey(BoundHwTransitionHotkey, "Off")
-        BoundHwTransitionHotkey := ""
-    }
-    if (!cfg.EnablePointerTransition || cfg.HwTransitionHotkey = "" || cfg.HwTransitionHotkey = "None") {
-        HotIf
-        return
-    }
-    hk := "$" RegExReplace(Trim(cfg.HwTransitionHotkey), "^[~*$]+")
     try {
-        Hotkey(hk, (*) => TriggerObsSceneTransition(cfg, state), "On")
-        BoundHwTransitionHotkey := hk
+        if (BoundHwTransitionHotkey != "") {
+            try Hotkey(BoundHwTransitionHotkey, "Off")
+            BoundHwTransitionHotkey := ""
+        }
+        if (!cfg.EnablePointerTransition || cfg.HwTransitionHotkey = "" || cfg.HwTransitionHotkey = "None")
+            return
+        hk := "$" RegExReplace(Trim(cfg.HwTransitionHotkey), "^[~*$]+")
+        try {
+            Hotkey(hk, (*) => TriggerObsSceneTransition(cfg, state), "On")
+            BoundHwTransitionHotkey := hk
+        }
+    } finally {
+        HotIf
     }
-    HotIf
 }
 BindHwTransitionHotkey(AppConfig, AppState)
 
@@ -890,8 +893,10 @@ _RegisterSinglePassthroughHook(rawHk, handler) {
     if (rawHk = "" || rawHk = "None")
         return
     hk := FormatPassthroughHook(rawHk)
-    try Hotkey(hk, handler, "On")
-    BoundPassthroughHooks.Push(hk)
+    try {
+        Hotkey(hk, handler, "On")
+        BoundPassthroughHooks.Push(hk)
+    }
 }
 
 _RegisterPassthroughPair(cfg, state, rawHkA, rawHkB, combinedFn, fnA, fnB) {
@@ -899,17 +904,23 @@ _RegisterPassthroughPair(cfg, state, rawHkA, rawHkB, combinedFn, fnA, fnB) {
     hookA := (rawHkA != "" && rawHkA != "None") ? FormatPassthroughHook(rawHkA) : ""
     hookB := (rawHkB != "" && rawHkB != "None") ? FormatPassthroughHook(rawHkB) : ""
     if (hookA != "" && hookA = hookB) {
-        try Hotkey(hookA, combinedFn.Bind(cfg, state), "On")
-        BoundPassthroughHooks.Push(hookA)
+        try {
+            Hotkey(hookA, combinedFn.Bind(cfg, state), "On")
+            BoundPassthroughHooks.Push(hookA)
+        }
         return
     }
     if (hookA != "") {
-        try Hotkey(hookA, fnA.Bind(cfg, state), "On")
-        BoundPassthroughHooks.Push(hookA)
+        try {
+            Hotkey(hookA, fnA.Bind(cfg, state), "On")
+            BoundPassthroughHooks.Push(hookA)
+        }
     }
     if (hookB != "") {
-        try Hotkey(hookB, fnB.Bind(cfg, state), "On")
-        BoundPassthroughHooks.Push(hookB)
+        try {
+            Hotkey(hookB, fnB.Bind(cfg, state), "On")
+            BoundPassthroughHooks.Push(hookB)
+        }
     }
 }
 

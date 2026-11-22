@@ -14,12 +14,19 @@
     public static ** valueOf(java.lang.String);
 }
 
-# AndroidManifest entry points (Application, Activity, Services, Receivers)
+# AndroidManifest entry points (Application, Activity, Services, Receivers, Widgets, Custom Views)
 -keep public class * extends android.app.Application
 -keep public class * extends android.app.Activity
 -keep public class * extends android.app.Service
 -keep public class * extends android.content.BroadcastReceiver
+-keep public class * extends android.appwidget.AppWidgetProvider
 -keep public class * extends android.service.quicksettings.TileService
+-keep public class com.saabithjiffry.presentersync.remote.** extends android.view.View {
+    public <init>(android.content.Context);
+    public <init>(android.content.Context, android.util.AttributeSet);
+    public <init>(android.content.Context, android.util.AttributeSet, int);
+}
+-keep class org.json.** { *; }
 
 # Native JNI methods (AudioTrack / CameraX image processing / Compose graphics)
 -keepclasseswithmembernames,includedescriptorclasses class * {

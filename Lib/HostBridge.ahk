@@ -25,6 +25,7 @@ class HostBridgeConstants {
     ; by a sleeping Smart Board / dropped Wi-Fi. Reap it so the slot and the
     ; device's "connected" state are freed for the reconnecting socket.
     static DEAD_CLIENT_TIMEOUT_MS := 55000
+    static MAX_CLIENTS := 64
     static PAIR_MAX_FAILS := 5
     static PAIR_LOCKOUT_MS := 30000
     static UDP_COOLDOWN_MS := 200
@@ -928,8 +929,12 @@ class HostCompanionBridge {
                     peerAddr := Buffer(16, 0)
                     addrLen := 16
                     clientSock := DllCall("ws2_32\accept", "Ptr", this.tcpListenSock, "Ptr", peerAddr, "Int*", &addrLen, "Ptr")
-                    if (clientSock = -1)
+                    if (clientSock = -1 || clientSock = 0xFFFFFFFFFFFFFFFF)
                         break
+                    if (this.clients.Count >= HostBridgeConstants.MAX_CLIENTS) {
+                        try DllCall("ws2_32\closesocket", "Ptr", clientSock)
+                        continue
+                    }
                     key := String(clientSock)
                     this.clients[key] := {
                         sock: clientSock,
@@ -1078,15 +1083,21 @@ class HostCompanionBridge {
     _QueueWsFrame(c, opcode, payloadStr) {
         pLen := 0
         pBuf := _HB_StrToUtf8Buf(payloadStr, &pLen)
-        hdrLen := (pLen <= 125) ? 2 : 4
+        hdrLen := (pLen <= 125) ? 2 : ((pLen <= 65535) ? 4 : 10)
         frame := Buffer(hdrLen + pLen, 0)
         NumPut("UChar", 0x80 | (opcode & 0x0F), frame, 0)
         if (pLen <= 125) {
             NumPut("UChar", pLen, frame, 1)
-        } else {
+        } else if (pLen <= 65535) {
             NumPut("UChar", 126, frame, 1)
             NumPut("UChar", (pLen >> 8) & 0xFF, frame, 2)
             NumPut("UChar", pLen & 0xFF, frame, 3)
+        } else {
+            NumPut("UChar", 127, frame, 1)
+            NumPut("UChar", (pLen >> 24) & 0xFF, frame, 6)
+            NumPut("UChar", (pLen >> 16) & 0xFF, frame, 7)
+            NumPut("UChar", (pLen >> 8) & 0xFF, frame, 8)
+            NumPut("UChar", pLen & 0xFF, frame, 9)
         }
         if (pLen > 0)
             DllCall("ntdll\RtlMoveMemory", "Ptr", frame.Ptr + hdrLen, "Ptr", pBuf.Ptr, "UPtr", pLen)
@@ -1098,6 +1109,7 @@ class HostCompanionBridge {
         _HB_StrToUtf8Buf(jsonBody, &bLen)
         hdr := "HTTP/1.1 " statusLine "`r`n"
             . "Content-Type: application/json; charset=utf-8`r`n"
+            . "X-Content-Type-Options: nosniff`r`n"
             . "Content-Length: " bLen "`r`n"
             . "Connection: close`r`n"
             . extraHeaders
@@ -1112,6 +1124,8 @@ class HostCompanionBridge {
         hdr := "HTTP/1.1 " statusLine "`r`n"
             . "Content-Type: text/html; charset=utf-8`r`n"
             . "Cache-Control: no-store`r`n"
+            . "X-Content-Type-Options: nosniff`r`n"
+            . "X-Frame-Options: DENY`r`n"
             . "Content-Length: " bLen "`r`n"
             . "Connection: close`r`n"
             . extraHeaders
@@ -1365,6 +1379,7 @@ class HostCompanionBridge {
             matched := true
             matchedByToken := true
             matchedDevId := this.validTokens[token]
+            this._ResetPairingFailures(c.ip)
         } else if (code != "" && IsObject(this.cfg) && this.cfg.HasOwnProp("SessionPairingCode") && this.cfg.SessionPairingCode != "") {
             if (NormalizePairingCode(code) == NormalizePairingCode(this.cfg.SessionPairingCode)) {
                 matched := true
@@ -1372,6 +1387,8 @@ class HostCompanionBridge {
             } else {
                 this._RecordPairingFailure(c.ip)
             }
+        } else if (token != "") {
+            this._RecordPairingFailure(c.ip)
         }
         if (!matched)
             return false

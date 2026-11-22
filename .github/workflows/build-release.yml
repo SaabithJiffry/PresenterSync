@@ -63,7 +63,7 @@ jobs:
         shell: pwsh
         run: |
           $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
-          foreach ($suite in @("tests\test_qr_code.ahk", "tests\test_host_bridge.ahk", "tests\test_multi_remote.ahk", "tests\test_master_suite.ahk")) {
+          foreach ($suite in @("tests\test_qr_code.ahk", "tests\test_host_bridge.ahk", "tests\test_multi_remote.ahk", "tests\test_v761_preresume_hotkey_audit.ahk", "tests\test_v762_aes_gcm_relay.ahk", "tests\test_v771_host_refactor_audit.ahk", "tests\test_v772_remote_refactor_audit.ahk", "tests\test_master_suite.ahk")) {
             Write-Host "Running $suite ..."
             $errLog = Join-Path $env:TEMP "ahk_stderr.txt"
             $outLog = Join-Path $env:TEMP "ahk_stdout.txt"
@@ -153,7 +153,7 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/v* || "$HAS_KS" == "true" ]]; then
             SIGN_FLAG="-PrequireReleaseSigning=true"
           fi
-          ./gradlew testDebugUnitTest assembleRelease --no-daemon $SIGN_FLAG
+          ./gradlew testDebugUnitTest lintDebug assembleRelease --no-daemon $SIGN_FLAG
 
       - name: Stage dist/PresenterSync_Remote.apk
         run: |

@@ -7,7 +7,12 @@
 #Requires AutoHotkey v2.0
 
 BuildWebRemoteHtml(appVersion := "", activePort := 4456) {
-    verEsc := StrReplace(StrReplace(String(appVersion), "<", "&lt;"), ">", "&gt;")
+    verEsc := String(appVersion)
+    verEsc := StrReplace(verEsc, "&", "&amp;")
+    verEsc := StrReplace(verEsc, "<", "&lt;")
+    verEsc := StrReplace(verEsc, ">", "&gt;")
+    verEsc := StrReplace(verEsc, '"', "&quot;")
+    verEsc := StrReplace(verEsc, "'", "&#39;")
     portNum := IsInteger(activePort) ? Integer(activePort) : 4456
     html := '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
         . '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">'
@@ -92,7 +97,7 @@ BuildWebRemoteHtml(appVersion := "", activePort := 4456) {
         . 'else if(m.type==="mute_state"||m.type==="sync_resync"){renderState(m);}'
         . 'else if(m.type==="ping"){sendJson({type:"pong",timestamp:Date.now()});}'
         . '};'
-        . 'ws.onclose=()=>{if(pingT)clearInterval(pingT);qs("st").textContent="Disconnected";};'
+        . 'ws.onclose=()=>{if(pingT){clearInterval(pingT);pingT=null;}ws=null;qs("st").textContent="Disconnected";};'
         . '}'
         . 'qs("connBtn").onclick=()=>{const c=qs("codeIn").value.trim().toUpperCase();connectWs(c);};'
         . 'if(tok){connectWs("");}'
