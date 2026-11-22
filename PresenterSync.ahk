@@ -41,12 +41,11 @@ EnforceHostSingleInstance() {
             pid := WinGetPID(hwnd)
             if (pid && pid != myPid) {
                 try {
-                    msgBytes := Buffer(StrPut("__exit__", "UTF-8"), 0)
-                    StrPut("__exit__", msgBytes, "UTF-8")
+                    exitCmd := "__exit__"
                     cds := Buffer(A_PtrSize * 3, 0)
                     NumPut("UPtr", 0x5053434C, cds, 0)
-                    NumPut("UInt", msgBytes.Size, cds, A_PtrSize)
-                    NumPut("Ptr", msgBytes.Ptr, cds, A_PtrSize * 2)
+                    NumPut("UInt", (StrLen(exitCmd) + 1) * 2, cds, A_PtrSize)
+                    NumPut("Ptr", StrPtr(exitCmd), cds, A_PtrSize * 2)
                     SendMessage(0x004A, 0, cds.Ptr, , "ahk_id " hwnd, , , , 1500)
                 }
                 deadline := A_TickCount + 800

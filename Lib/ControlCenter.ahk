@@ -709,6 +709,8 @@ SetConferencingApp(cfg, state, appName, *) {
         state.zoomConnected := false
         state.zoomLastMuted := -1
         state.zoomSawRecControl := false
+        if (state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
+            try state.rebindHotkeysFn.Call()
         if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
             try state.rebuildTrayFn.Call()
         if (state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
@@ -808,22 +810,22 @@ ChangeObsSettingsUI(cfg, state := "", *) {
     })
 }
 
-OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply) {
-    existing := Theme.FocusExistingWindow("Edit Pointer Mute Button")
+OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply, dialogTitle := "Edit Pointer Mute Button", headingText := "Presentation Clicker Mute Button") {
+    existing := Theme.FocusExistingWindow(dialogTitle)
     if IsObject(existing)
         return existing
 
     Theme.AcquireSuspend()
 
-    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Edit Pointer Mute Button")
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", dialogTitle)
     dlg._closed := false
     dlg.MarginX := 20
     dlg.MarginY := 18
     Theme.ApplyToWindow(dlg)
-    Theme.NamedWindows["Edit Pointer Mute Button"] := dlg
+    Theme.NamedWindows[dialogTitle] := dlg
 
     dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w280", "Presentation Clicker Mute Button"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w280", headingText), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
     Theme.RegisterControl(dlg, dlg.Add("Text", "xm w280 y+4", "Press a button on your clicker, or click the box to type a custom key name:"), "Text", "muted")
 
@@ -891,7 +893,7 @@ OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply) {
         dlg._closed := true
         OnMessage(0x0006, OnActivateMsg, 0)
         try ih.Stop()
-        Theme.UnregisterWindow(dlg, "Edit Pointer Mute Button")
+        Theme.UnregisterWindow(dlg, dialogTitle)
         Theme.ReleaseSuspend()
         dlg.Destroy()
     }
@@ -951,7 +953,7 @@ ChangeHwTransitionHotkeyUI(cfg, state := "", *) {
         cfg.HwTransitionHotkey := val,
         cfg.Write("Settings", "HwTransitionHotkey", val),
         _ApplyLiveHotkeyRebindOrReload(state)
-    ))
+    ), "Edit Pointer OBS Transition Button", "Presentation Clicker OBS Transition Button")
 }
 
 ConfigurePointerKeysUI(cfg, state := "", *) {
@@ -2201,7 +2203,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, edHwTransition, "Edit")
     btnCapTransition := ccGui.Add("Button", "x460 y382 w105 h28", "Capture Key")
     Theme.RegisterControl(ccGui, btnCapTransition, "Button", "tabButton")
-    btnCapTransition.OnEvent("Click", (*) => OpenPointerKeyCaptureDialog(edHwTransition.Value, "Use Key", (newKey) => (edHwTransition.Value := newKey)))
+    btnCapTransition.OnEvent("Click", (*) => OpenPointerKeyCaptureDialog(edHwTransition.Value, "Use Key", (newKey) => (edHwTransition.Value := newKey), "Edit Pointer OBS Transition Button", "Presentation Clicker OBS Transition Button"))
 
     ; ==========================================================================
     ; TAB 4: HUD & APPEARANCE

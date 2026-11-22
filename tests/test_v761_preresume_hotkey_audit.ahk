@@ -114,11 +114,56 @@ Assert("TogglePPT/ToggleMicOnly/CyclePointerMode call RebindAllHostHotkeys",
 Assert("EnforceHostSingleInstance attempts __exit__ graceful shutdown before ProcessClose",
     InStr(hostSrc, '"__exit__"') > 0 && InStr(hostSrc, "ProcessClose(pid)") > InStr(hostSrc, '"__exit__"'))
 
-; 6. DispatchCliCommandString("__exit__", cfg, st) invokes cliExitFn & returns true
+; 6. DispatchCliCommandString("__exit__", cfg, st) & OnHostCopyData UTF-16 IPC
 stCli := { called: false }
 stCli.cliExitFn := (*) => (stCli.called := true)
 okExit := DispatchCliCommandString("__exit__", cleanCfg, stCli)
 Assert("DispatchCliCommandString('__exit__') returns true and invokes cliExitFn", okExit && stCli.called)
+
+Assert("EnforceHostSingleInstance encodes __exit__ as UTF-16 StrPtr",
+    !InStr(hostSrc, 'StrPut("__exit__", msgBytes, "UTF-8")') && InStr(hostSrc, 'NumPut("Ptr", StrPtr(exitCmd), cds, A_PtrSize * 2)') > 0)
+
+stIpc := { called: false }
+stIpc.cliExitFn := (*) => (stIpc.called := true)
+ipcCmd := "__exit__"
+ipcCds := Buffer(A_PtrSize * 3, 0)
+NumPut("UPtr", 0x5053434C, ipcCds, 0)
+NumPut("UInt", (StrLen(ipcCmd) + 1) * 2, ipcCds, A_PtrSize)
+NumPut("Ptr", StrPtr(ipcCmd), ipcCds, A_PtrSize * 2)
+ipcRes := OnHostCopyData(cleanCfg, stIpc, 0, ipcCds.Ptr, 0x004A, 0)
+Assert("OnHostCopyData handles UTF-16 __exit__ COPYDATASTRUCT", ipcRes == 1 && stIpc.called)
+
+; 7. IsPptKeyAllowed catches AHK key name aliases (PageDown/PageUp/Return)
+tmpIniConf := A_Temp "\PresenterSync_v761_conf_audit_" A_TickCount ".ini"
+try if FileExist(tmpIniConf)
+    FileDelete(tmpIniConf)
+aliasCfg := Config(tmpIniConf)
+aliasCfg.CatchArrows := true, aliasCfg.CatchPg := true, aliasCfg.CatchEnter := true
+aliasCfg.HwMuteHotkey := "None", aliasCfg.ObsMuteHotkey := "None"
+aliasCfg.ObsTransitionHotkey := "None"
+aliasCfg.HwTransitionHotkey := "PageDown"
+Assert("IsPptKeyAllowed blocks PgDn when HwTransitionHotkey=PageDown", !IsPptKeyAllowed(aliasCfg, "PgDn"))
+aliasCfg.HwTransitionHotkey := "PageUp"
+Assert("IsPptKeyAllowed blocks PgUp when HwTransitionHotkey=PageUp", !IsPptKeyAllowed(aliasCfg, "PgUp"))
+aliasCfg.HwTransitionHotkey := "Return"
+Assert("IsPptKeyAllowed blocks Enter when HwTransitionHotkey=Return", !IsPptKeyAllowed(aliasCfg, "Enter"))
+
+; 8. SetConferencingApp calls rebindHotkeysFn & ChangeHwTransitionHotkeyUI passes Transition title
+rebindBox := { count: 0 }
+stConf := { zoomConnected: true, zoomLastMuted: 1, zoomSawRecControl: true, rebindHotkeysFn: (*) => (rebindBox.count += 1) }
+normApp := SetConferencingApp(aliasCfg, stConf, "Microsoft Teams")
+Assert("SetConferencingApp triggers live rebindHotkeysFn", normApp = "Microsoft Teams" && rebindBox.count == 1)
+try if FileExist(tmpIniConf)
+    FileDelete(tmpIniConf)
+try if FileExist(tmpIniConf ".bak")
+    FileDelete(tmpIniConf ".bak")
+
+ccSrc := FileRead(rootDir "\Lib\ControlCenter.ahk", "UTF-8")
+Assert("ChangeHwTransitionHotkeyUI uses Transition dialog title",
+    InStr(ccSrc, '"Edit Pointer OBS Transition Button"') > 0 && InStr(ccSrc, '"Presentation Clicker OBS Transition Button"') > 0)
+
+buildBatSrc := FileRead(rootDir "\build.bat", "UTF-8")
+Assert("build.bat enforces PE FileVersion verification", InStr(buildBatSrc, "FileVersion") > 0 && InStr(buildBatSrc, "APP_VERSION") > 0)
 
 FileAppend("PASS=" PassCount " FAIL=" FailCount "`n", "*")
 ExitApp(FailCount > 0 ? 1 : 0)

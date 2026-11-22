@@ -17,7 +17,7 @@
 #Include "..\Lib\HudSnakeGame.ahk"
 
 Gdip.Startup()
-OnExit((*) => (HudSnake.Stop(), Theme.Shutdown(), UIA.Shutdown(), Gdip.Shutdown()))
+OnExit((*) => (StopHostCompanionBridge(), HudSnake.Stop(), Theme.Shutdown(), UIA.Shutdown(), Gdip.Shutdown()))
 
 results := []
 PassCount := 0
@@ -2962,9 +2962,11 @@ Assert("Secondary Mic Pill defaults OFF with Independent SecondaryPosition='Defa
 cfgSec.ShowIndicator := true
 cfgSec.ShowExtraHuds := true
 cfgSec.EnableWS := true
+cfgSec.EnableRemoteConnections := false
 cfgSec.ShowText := false
 cfgSec.EnableMagneticSnap := false
 stSec := OverlayState(cfgSec)
+stSec.obsTimerFn := ""
 InitHUD(cfgSec, stSec, true)
 Sleep(40)
 

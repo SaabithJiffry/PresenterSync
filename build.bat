@@ -51,6 +51,15 @@ if %errorlevel% neq 0 (
 echo [OK] dist\PresenterSync_Remote.exe built successfully.
 
 echo.
+echo Verifying PE FileVersion matches Lib\GUI_Config.ahk APP_VERSION...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$m = Select-String -Path 'Lib\GUI_Config.ahk' -Pattern 'APP_VERSION\s*:=\s*\x22([0-9]+\.[0-9]+\.[0-9]+)\x22' | Select-Object -First 1; if (-not $m) { Write-Error 'Failed to parse APP_VERSION from Lib\GUI_Config.ahk'; exit 1 }; $exp = $m.Matches[0].Groups[1].Value + '.0'; foreach ($exe in @('dist\PresenterSync.exe','dist\PresenterSync_Remote.exe')) { if (-not (Test-Path $exe)) { Write-Error ('Missing ' + $exe); exit 1 }; $item = Get-Item $exe; if ($item.Length -le 0) { Write-Error ('Empty ' + $exe); exit 1 }; $act = $item.VersionInfo.FileVersion; Write-Host ('[PE] ' + $exe + ' FileVersion=' + $act + ' (expected ' + $exp + ', ' + $item.Length + ' bytes)'); if ($act -ne $exp) { Write-Error ($exe + ' FileVersion mismatch: ' + $act + ' != ' + $exp); exit 1 } }"
+if %errorlevel% neq 0 (
+    echo [FAILED] Built EXE PE FileVersion verification failed.
+    if /i not "%~1"=="--nopause" pause
+    exit /b %errorlevel%
+)
+
+echo.
 echo Refreshing Windows Shell icon cache...
 set "REPO_DIR=%~dp0dist"
 set "HOST_EXE=%DIST_DIR%\PresenterSync.exe"

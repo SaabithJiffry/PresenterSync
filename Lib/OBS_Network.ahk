@@ -72,6 +72,17 @@ ExtractBaseKeyName(hk) {
     return Trim(s)
 }
 
+_NormalizeCollisionKeyAlias(k) {
+    static aliasMap := Map(
+        "pagedown", "pgdn",
+        "pageup", "pgup",
+        "return", "enter",
+        "escape", "esc"
+    )
+    low := StrLower(Trim(String(k)))
+    return aliasMap.Has(low) ? aliasMap[low] : low
+}
+
 _DoHotkeysCollide(hkA, hkB) {
     cleanA := StripHotkeyModifiers(hkA, true)
     cleanB := StripHotkeyModifiers(hkB, true)
@@ -79,9 +90,9 @@ _DoHotkeysCollide(hkA, hkB) {
         return false
     normA := GetKeyName(cleanA)
     normB := GetKeyName(cleanB)
-    if (normA != "" && normB != "")
-        return StrLower(normA) == StrLower(normB)
-    return StrLower(cleanA) == StrLower(cleanB)
+    keyA := _NormalizeCollisionKeyAlias(normA != "" ? normA : cleanA)
+    keyB := _NormalizeCollisionKeyAlias(normB != "" ? normB : cleanB)
+    return keyA == keyB
 }
 
 IsPptKeyAllowed(cfg, pptKey) {
