@@ -45,7 +45,7 @@ for _, token in ["toggle_mute", "transition_scene", "slide_start", "ppt_next", "
 }
 arcadeJs := BuildWebRemoteArcadeJs()
 Assert("BuildWebRemoteArcadeJs returns valid JS with ZERO \x27 escapes", StrLen(arcadeJs) > 3000 && !InStr(arcadeJs, "\x27"))
-for _, jsToken in ["PSArcadeVault", "PSArcadeHost", "PSWebSnake", "PSWebAsteroids", "ps_arcade_hi_snake", "ps_arcade_hi_asteroids", "INSERTCOIN", "ASTEROID BLASTER", "MIC BUMPER"] {
+for _, jsToken in ["PSArcadeVault", "PSArcadeHost", "PSWebSnake", "PSWebAsteroids", "PSWebBrickBreaker", "PSWebCyberPong", "ps_arcade_hi_snake", "ps_arcade_hi_asteroids", "ps_arcade_hi_brick_breaker", "ps_arcade_hi_cyber_pong", "INSERTCOIN", "ASTEROID BLASTER", "BRICK BREAKER", "CYBER PONG", "MIC BUMPER"] {
     Assert("BuildWebRemoteArcadeJs includes '" jsToken "'", InStr(arcadeJs, jsToken) > 0)
 }
 Assert("BuildWebRemoteArcadeJs never persists vault unlock status in localStorage/sessionStorage", !InStr(arcadeJs, "ps_arcade_unlocked") && !InStr(arcadeJs, "sessionStorage.setItem"))
@@ -126,7 +126,7 @@ resHealth := HttpGetAsync("http://127.0.0.1:" bridgePort "/health")
 Assert("GET /health returns 200 OK & JSON", resHealth.status = 200 && InStr(StrLower(resHealth.contentType), "application/json") > 0 && InStr(resHealth.body, '"ok":true') > 0)
 
 resArcade := HttpGetAsync("http://127.0.0.1:" bridgePort "/arcade.js")
-Assert("GET /arcade.js returns 200 OK application/javascript with PSWebAsteroids (M2.4)", resArcade.status = 200 && InStr(StrLower(resArcade.contentType), "javascript") > 0 && InStr(resArcade.body, "PSWebAsteroids") > 0 && !InStr(resArcade.body, "\x27"), Format("status={} type={} bytes={}", resArcade.status, resArcade.contentType, resArcade.byteLen))
+Assert("GET /arcade.js returns 200 OK application/javascript with Asteroid Blaster & Paddle Pack (M2.4/M3.3)", resArcade.status = 200 && InStr(StrLower(resArcade.contentType), "javascript") > 0 && InStr(resArcade.body, "PSWebAsteroids") > 0 && InStr(resArcade.body, "PSWebBrickBreaker") > 0 && InStr(resArcade.body, "PSWebCyberPong") > 0 && !InStr(resArcade.body, "\x27"), Format("status={} type={} bytes={}", resArcade.status, resArcade.contentType, resArcade.byteLen))
 
 ; 3. Non-blocking WinSock2 loopback WS toggle_mute ack (#1) + clean disconnect (#7)
 LoopbackWsOpen(port, path) {
