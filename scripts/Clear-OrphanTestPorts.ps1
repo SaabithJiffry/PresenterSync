@@ -27,5 +27,7 @@ foreach ($procId in $pids) {
 if ($CleanLogs) {
     $logs = Join-Path $PSScriptRoot '..\tests\*_results.log'
     Remove-Item -Path $logs -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path (Join-Path $PSScriptRoot '..\tests\logs') -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path (Join-Path $PSScriptRoot '..\logs') -Recurse -Force -ErrorAction SilentlyContinue
 }
 exit 0

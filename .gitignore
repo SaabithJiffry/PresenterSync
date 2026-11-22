@@ -26,6 +26,8 @@ PresenterSync_Remote.ini
 
 # Test Logs & Generated Fixtures
 *.log
+logs/
+tests/logs/
 tests/*.ini
 tests/*.log
 tests/debug_*.txt
