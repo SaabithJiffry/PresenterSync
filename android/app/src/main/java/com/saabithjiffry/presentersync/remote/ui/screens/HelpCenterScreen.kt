@@ -226,6 +226,36 @@ private val HELP_TOPICS = listOf(
         "Session Locked After 5 Wrong Codes / Wrong Password",
         "Primary Host protects Session Codes with a 30s rate limit.",
         "If 5 incorrect codes are submitted within 30s, wait 30 seconds or click 'New' in Windows Host -> Remote Companion Info to rotate the Session Code & QR immediately."
+    ),
+    HelpTopic(
+        "Floating HUD",
+        "Smart Board High-DPI Canvas & Pill Mini-Badges",
+        "Crisp 0.5x–5.0x optical stroke scaling with Timer, BRB, REC & Voice Alert badges.",
+        "MicPillCanvasView scales borders sub-linearly (<= 3.0dp) with tonal sheen and knockout mute slash. Enable 'Show Pill Mini-Badges' in HUD Style to display active Timer (MM:SS / -MM:SS), BRB, REC, and amber speaking-while-muted border alerts."
+    ),
+    HelpTopic(
+        "Director Deck",
+        "Full-Screen OLED Podium Deck & 2x1 Home Screen Widget",
+        "Pure #000000 lectern controller with Speaker Notes + 1-tap Home Screen Widget.",
+        "Tap 'Podium Deck (Full-Screen OLED Mode)' on Status & HUD for a keep-screen-on lectern view with oversized Mute/Unmute, OBS Transition, Prev/Next/F5 Slides + Speaker Notes, Timer, BRB, and Quick-Nudge chips. Add the 2x1 PresenterSync widget to your Android Home Screen for instant LIVE/MUTED/REC status & 1-tap mute."
+    ),
+    HelpTopic(
+        "Pointer & Keys",
+        "Background BT Media Clicker & Silent Haptic Alerts",
+        "Control mute/slides with BT media buttons (screen off) and feel silent vibration cues.",
+        "Enable 'Background Bluetooth Media Clicker' in Pointer & Keys to capture Play/Pause, Next, Previous, and Volume buttons via MediaSession even with the screen off. Enable 'Silent Haptic / Vibration Alerts' in HUD Style for distinct waveform patterns on Mute, Unmute, 2m Warning, Overtime, Voice-While-Muted, and Stage Nudge."
+    ),
+    HelpTopic(
+        "Connection",
+        "AES-256-GCM WAN Relay, Direct OBS Failover & Browser Web Remote",
+        "Encrypted WAN Relay, automatic :4455 fallback / :4456 re-promotion, and browser UI.",
+        "WAN Relay payloads are encrypted end-to-end with AES-256-GCM (96-bit IV + 128-bit tag) and support a custom self-hosted Relay Base URL. If Host Bridge (:4456) drops, Android falls back to Direct OBS (:4455) within 1.8s and auto-re-promotes every 8s. Any browser (iPad/Mac/Linux) can also open http://<host-ip>:4456/ for the zero-install Web Remote."
+    ),
+    HelpTopic(
+        "Troubleshooting",
+        "Battery Optimization, Share Pairing QR, Dual Probe & Error Log",
+        "Keep background HUD/BT clicker alive, share host QR, and export diagnostics.",
+        "In Connection Settings, use the Battery Optimization banner if Android restricts background networking, tap 'Share Pairing QR' to pair a second device, or tap 'Test Connection' for a unified :4456/health + :4455 probe. Open Diagnostics in Help Center to search, copy, or clear the persistent Error Log."
     )
 )
 

@@ -705,6 +705,30 @@ GetHelpKnowledgeBase() {
         "TRY AT YOUR OWN RISK...`r`n`r`n• TRIGGER / ESCAPE:`r`n  Press Alt + Ctrl + Shift + S at any time while PresenterSync is running! There is intentionally NO System Tray or Control Center menu item—only this hidden keyboard chord.`r`n`r`n• WHAT TO EXPECT:`r`n  Your floating HUD detaches into something unexpected right on top of your desktop (no popup window), while your background telemetry and PowerPoint slide intercepts politely pause until you press Esc or Alt + Ctrl + Shift + S to restore normal presenter duty.`r`n`r`n• QUICK KEYS ONCE TRIGGERED:`r`n  - Navigate: Arrow Keys or W / A / S / D`r`n  - Pause / Resume: P or Space`r`n  - Toggle Boundary Rules: E`r`n  - Retry: R, Enter, or Space`r`n  - Exit Back to Live HUD: Esc or Alt + Ctrl + Shift + S",
         "secret easter egg snake mini game hidden alt ctrl shift s risk curiosity wrap walls")
 
+    Add("feat-obs-transition", "Features", "Audio Routing & OBS Telemetry", "Native OBS Scene Transition Keystroke & Bounce Filter",
+        "Settings > Change Pointer OBS Transition Button / Control Center > OBS & Stream", "HwTransitionHotkey / ObsTransitionHotkey", "25ms bounce shield",
+        "Bind a dedicated clicker button or OBS fallback hotkey to trigger Preview <-> Program transitions with zero-lag SetKeyDelay -1, -1.",
+        "NATIVE OBS SCENE TRANSITION (TriggerObsSceneTransition)`r`n`r`n• Dedicated Clicker Binding (HwTransitionHotkey): Enable 'Enable Pointer OBS Scene Transition' and assign a clicker button; bound with the '$' hook prefix so PowerPoint intercepts never collide.`r`n• Studio Mode & Fallback: Calls OBS WebSocket TriggerStudioModeTransition when Studio Mode is active, SetCurrentProgramScene when a preview/previous scene is known, or ControlSend (ObsTransitionHotkey) with zero-lag SetKeyDelay -1, -1 when OBS WS cannot determine a target scene.`r`n• 25ms Micro-Bounce Filter: Prevents noisy wireless clicker switches from double-triggering transitions.",
+        "obs scene transition studio mode hwtransitionhotkey obstransitionhotkey triggerobsscenetransition bounce")
+
+    Add("feat-preflight-bundle", "Features", "Profiles, Updates & Startup", "Go Live 10s Rehearsal, Portable Settings Bundle & Quick-Nudge Presets",
+        "Tray > Go Live 10-Second Rehearsal... / Control Center > Profiles & Sys", "Pre-Flight / .json / .ini", "5 Live Gates",
+        "Run a 10-second 5-gate rehearsal check before going live, export/import portable settings bundles, and customize Quick-Nudge presets.",
+        "PRE-FLIGHT REHEARSAL, PORTABLE BUNDLES & QUICK-NUDGE PRESETS`r`n`r`n• Go Live 10-Second Rehearsal (RunPreFlightRehearsalChecks): Checks 5 live gates—(1) OBS :4455 + transition + mic input, (2) live mic peak > 5%, (3) Conferencing window, (4) Host Bridge + paired remotes, (5) Recording disk space (<512 MB FAIL, <2048 MB WARN).`r`n• Portable Settings Bundle (ExportPortableSettingsBundle / ImportPortableSettingsBundle): Export or import non-secret settings as .json (PresenterSyncBundle_v1) or .ini with automatic .ini.bak crash-recovery backup.`r`n• Quick-Nudge Presets (QuickNudgePresets): Customize up to 6 '|' or ',' separated stage nudges (default: '2 min left|Wrap up|Check Mic|Q&A') synced across Host, Windows Remote, Android Remote, and Web Remote.",
+        "go live 10s rehearsal preflight bundle export import json ini quick nudge presets")
+
+    Add("feat-watchdogs-cli", "Features", "Safety Watchdogs & CLI", "CoreAudio Fallback, Safety Watchdogs, Auto-Mute Triggers & 64-bit CLI Flags",
+        "Control Center > Audio & Conf / OBS & Stream / CLI", "--mute --transition --scene --nudge", "Active Watchdogs",
+        "Protects live sessions with CoreAudio OS mic drift monitoring, Forgotten-Record/Low-Disk/Dead-Mic watchdogs, Auto-Mute triggers, and WM_COPYDATA CLI control.",
+        "WATCHDOGS, AUTO-MUTE & CLI FLAGS`r`n`r`n• CoreAudio IAudioEndpointVolume Fallback & Drift Watchdog + Multi-Mic Lockstep (SecondaryAudioSources).`r`n• Watchdogs: Forgotten-Record (15s), Stream-Drop auto-backup record (10s), Low-Disk (30s), Dead-Mic (45s), and 3s Stop-Record 2nd-tap confirm guard.`r`n• Auto-Mute Triggers: Auto-mute on Windows lock screen, meeting end, or first OBS connect.`r`n• 64-bit WM_COPYDATA CLI Flags: --mute, --unmute, --toggle, --transition, --scene <name>, --brb, --nudge <msg>, --timer <sec|pause|reset>, --status.",
+        "watchdogs coreaudio drift forgotten record low disk dead mic auto mute cli wm_copydata")
+
+    Add("feat-diagnostics-privacy", "Features", "Diagnostics & Privacy", "Persistent Error Log, Secret Redaction & Screen-Share Capture Exclusion",
+        "Tray > View Error & Diagnostic Log... / Export Sanitized Diagnostics...", "logs\\PresenterSync_ErrorLog.log", "5 MB Rotation + Capture Exclusion",
+        "50-event rolling breadcrumbs, 5-section context snapshots with secret redaction, PERF_LAG checks, and WDA_EXCLUDEFROMCAPTURE privacy.",
+        "DIAGNOSTICS & SCREEN-SHARE PRIVACY`r`n`r`n• DiagnosticLogger (logs\\PresenterSync_ErrorLog.log): Captures 50-event rolling breadcrumbs, 5-section context snapshots, PERF_LAG (>120ms) warnings, and 5 MB log rotation—automatically scrubbing passwords, tokens, and pairing codes.`r`n• Screen-Share Capture Exclusion (ExcludeFromCapture / ExcludeSecondaryFromCapture): Applies Windows WDA_EXCLUDEFROMCAPTURE so floating HUD pills and Stage Nudges stay hidden from OBS Display/Window Capture and screen shares.",
+        "diagnostic logger error log breadcrumbs redaction perf lag capture exclusion wda_excludefromcapture")
+
     ; ==========================================================================
     ; 4. KEYBOARD & CLICKER SHORTCUTS
     ; ==========================================================================
@@ -740,6 +764,18 @@ GetHelpKnowledgeBase() {
         "Connects across 2.4 GHz, 5 GHz, and wired adapters using .local mDNS and multi-IP auto-failover.",
         "SAME ROUTER (LAN) SETUP`r`n`r`n1. On Primary Host PC: Enable OBS WebSocket Server (Tools -> WebSocket Server Settings, Port 4455 + Password) and allow Private Firewall TCP port 4455.`r`n2. Open Tray -> Settings -> Remote Companion Info... -> click 'Copy Universal String to Clipboard' (contains HOSTNAME.local plus every Ethernet & Wi-Fi IP).`r`n3. On Secondary PC / Smart Board: Launch PresenterSync_Remote.exe, keep Mode '1: Same Router (LAN)', paste the Universal String, enter OBS Password, match Target Mic Name ('Mic/Aux'), click Test Connection, then Connect & Start!`r`n4. Failover: Remote cycles through every candidate address cleanly until the active route connects.",
         "remote lan same router universal string mdns local ip failover port 4455 firewall")
+
+    Add("rem-web-relay", "Remote", "Web Remote & AES-256-GCM Relay", "Zero-Install Browser Web Remote (:4456) & AES-256-GCM WAN Relay",
+        "http://<host-ip>:4456/  |  Control Center > Remote Companion", "TCP :4456 / Custom Relay URL", "AES-256-GCM",
+        "Control PresenterSync from any iOS, iPadOS, macOS, Linux, or Chromebook browser, or over encrypted AES-256-GCM WAN Relay.",
+        "ZERO-INSTALL BROWSER WEB REMOTE & AES-256-GCM WAN RELAY`r`n`r`n• Browser Web Remote (Lib\\WebRemoteUI.ahk): Open http://<host-ip>:4456/ (shown in Remote Companion Info) on any browser, enter the 6-char Session Code, and control Mic Mute, OBS Transition, Slides + Speaker Notes, Scenes, Timer, BRB, and Stage Nudges over WebSocket.`r`n• Authenticated AES-256-GCM WAN Relay: Uses Windows bcrypt.dll (Lib\\Crypto.ahk) <-> Android AES/GCM/NoPadding (RelayCrypto.kt) with 96-bit IV, 128-bit auth tag, replay protection, and optional self-hosted Relay Base URL (RelayBaseUrl).",
+        "web remote browser ios ipad mac linux chromebook 4456 aes gcm wan relay custom url")
+
+    Add("rem-ergonomics", "Remote", "Remote Ergonomics & Android", "Windows & Android Remote v8.0.0 Ergonomics, Podium Deck, Widget & Haptics",
+        "PresenterSync_Remote.exe  |  PresenterSync_Remote.apk", "Quick Deck / Podium / Widget / BT", "v8.0.0 Parity",
+        "Overview of Windows Remote Quick Deck, Saved Profiles, Lock/Auto-Dim, Screen-Ratio persistence, plus Android Podium Deck, 2x1 Widget, Haptics & BT Media Clicker.",
+        "WINDOWS & ANDROID REMOTE v8.0.0 ERGONOMICS`r`n`r`n• Windows Remote: Double-click pill for Touch Quick Deck (ShowRemoteTouchDeckGUI), Saved Host Profiles, Paste Pairing URI, Slide & OBS Transition hotkeys, Lock Pill Position (LockHudPosition), 10s Idle Auto-Dim (EnableIdleAutoDim), Screen-Ratio persistence (savedXRatio/savedYRatio), Pill Mini-Badges, and Sanitized Diagnostics Export.`r`n• Android Remote: High-DPI Smart Board Canvas (0.5x-5.0x), expanded Quick Menu (TRANSITION_SCENE), Full-Screen OLED Podium Deck (PodiumDeckScreen), 2x1 Home Screen App Widget, silent HapticAlertPlayer (API 26-34), Background BT Media Clicker, Battery Optimization check, and Share Pairing QR.",
+        "windows remote android quick deck podium widget haptics bt media clicker lock auto dim ratio mini badges")
 
     Add("rem-internet", "Remote", "PresenterSync Remote Companion", "Different Networks (Internet Pairing Code) & Mode 2 Bridge",
         "Settings > Remote Network Mode > Different Networks (Internet)", "PS-XXXX-XXXX Code", "Auto-enabled in Mode 2",
