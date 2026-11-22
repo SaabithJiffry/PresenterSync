@@ -457,45 +457,69 @@ _RBC_JsonGetStrArray(jsonStr, key) {
     return out
 }
 
+_RBC_OpenBroadcastUdpSocket() {
+    wsaBuf := Buffer(408, 0)
+    if (DllCall("ws2_32\WSAStartup", "UShort", 0x0202, "Ptr", wsaBuf.Ptr, "Int") != 0)
+        return 0
+    sock := DllCall("ws2_32\socket", "Int", 2, "Int", 2, "Int", 17, "UPtr") ; AF_INET, SOCK_DGRAM, IPPROTO_UDP
+    if (sock = -1 || sock = 0xFFFFFFFFFFFFFFFF || sock = 0xFFFFFFFF) {
+        try DllCall("ws2_32\WSACleanup")
+        return 0
+    }
+    try {
+        bBroadcast := Buffer(4, 0)
+        NumPut("Int", 1, bBroadcast, 0)
+        DllCall("ws2_32\setsockopt", "Ptr", sock, "Int", 0xFFFF, "Int", 0x0020, "Ptr", bBroadcast.Ptr, "Int", 4, "Int") ; SO_BROADCAST
+        nonBlk := Buffer(4, 0)
+        NumPut("UInt", 1, nonBlk, 0)
+        DllCall("ws2_32\ioctlsocket", "Ptr", sock, "UInt", 0x8004667E, "Ptr", nonBlk.Ptr, "Int") ; FIONBIO
+        bindAddr := Buffer(16, 0)
+        NumPut("Short", 2, bindAddr, 0)
+        if (DllCall("ws2_32\bind", "Ptr", sock, "Ptr", bindAddr.Ptr, "Int", 16, "Int") != 0) {
+            _RBC_CloseUdpSocket(sock)
+            return 0
+        }
+        return sock
+    } catch {
+        _RBC_CloseUdpSocket(sock)
+        return 0
+    }
+}
+
+_RBC_CloseUdpSocket(sock) {
+    if (sock != 0 && sock != -1 && sock != 0xFFFFFFFFFFFFFFFF && sock != 0xFFFFFFFF)
+        try DllCall("ws2_32\closesocket", "Ptr", sock)
+    try DllCall("ws2_32\WSACleanup")
+}
+
+_RBC_SendUdpToTargets(sock, udpPort, targets, pktStr) {
+    pktBytes := Buffer(StrPut(pktStr, "UTF-8"), 0)
+    nBytes := StrPut(pktStr, pktBytes, "UTF-8") - 1
+    portNet := DllCall("ws2_32\htons", "UShort", Integer(udpPort), "UShort")
+    for _, dstIp in targets {
+        dstAddr := Buffer(16, 0)
+        NumPut("Short", 2, dstAddr, 0)
+        NumPut("UShort", portNet, dstAddr, 2)
+        NumPut("UInt", DllCall("ws2_32\inet_addr", "AStr", dstIp, "UInt"), dstAddr, 4)
+        DllCall("ws2_32\sendto", "Ptr", sock, "Ptr", pktBytes.Ptr, "Int", nBytes, "Int", 0, "Ptr", dstAddr.Ptr, "Int", 16, "Int")
+    }
+}
+
+_RBC_FormatSockAddrIp(srcAddr) {
+    return NumGet(srcAddr, 4, "UChar") "." NumGet(srcAddr, 5, "UChar") "." NumGet(srcAddr, 6, "UChar") "." NumGet(srcAddr, 7, "UChar")
+}
+
 DiscoverHostBridgeUdp(sessionCode, udpPort := 4456, timeoutMs := 450) {
     codeNorm := NormalizePairingCode(sessionCode)
     if (codeNorm = "" || !IsInteger(udpPort) || Integer(udpPort) < 1 || Integer(udpPort) > 65535)
         return ""
 
-    wsaBuf := Buffer(408, 0)
-    if (DllCall("ws2_32\WSAStartup", "UShort", 0x0202, "Ptr", wsaBuf.Ptr, "Int") != 0)
-        return ""
-
-    sock := DllCall("ws2_32\socket", "Int", 2, "Int", 2, "Int", 17, "UPtr") ; AF_INET, SOCK_DGRAM, IPPROTO_UDP
-    if (sock = -1 || sock = 0xFFFFFFFFFFFFFFFF)
+    sock := _RBC_OpenBroadcastUdpSocket()
+    if (!sock)
         return ""
 
     try {
-        bBroadcast := Buffer(4, 0)
-        NumPut("Int", 1, bBroadcast, 0)
-        DllCall("ws2_32\setsockopt", "Ptr", sock, "Int", 0xFFFF, "Int", 0x0020, "Ptr", bBroadcast.Ptr, "Int", 4, "Int") ; SO_BROADCAST
-
-        nonBlk := Buffer(4, 0)
-        NumPut("UInt", 1, nonBlk, 0)
-        DllCall("ws2_32\ioctlsocket", "Ptr", sock, "UInt", 0x8004667E, "Ptr", nonBlk.Ptr, "Int") ; FIONBIO
-
-        bindAddr := Buffer(16, 0)
-        NumPut("Short", 2, bindAddr, 0)
-        DllCall("ws2_32\bind", "Ptr", sock, "Ptr", bindAddr.Ptr, "Int", 16, "Int")
-
-        pktStr := "PSYNC_DISCOVER|" codeNorm
-        pktBytes := Buffer(StrPut(pktStr, "UTF-8"), 0)
-        nBytes := StrPut(pktStr, pktBytes, "UTF-8") - 1
-
-        portNet := DllCall("ws2_32\htons", "UShort", Integer(udpPort), "UShort")
-        for _, dstIp in ["255.255.255.255", "127.0.0.1"] {
-            dstAddr := Buffer(16, 0)
-            NumPut("Short", 2, dstAddr, 0)
-            NumPut("UShort", portNet, dstAddr, 2)
-            NumPut("UInt", DllCall("ws2_32\inet_addr", "AStr", dstIp, "UInt"), dstAddr, 4)
-            DllCall("ws2_32\sendto", "Ptr", sock, "Ptr", pktBytes.Ptr, "Int", nBytes, "Int", 0, "Ptr", dstAddr.Ptr, "Int", 16, "Int")
-        }
-
+        _RBC_SendUdpToTargets(sock, udpPort, ["255.255.255.255", "127.0.0.1"], "PSYNC_DISCOVER|" codeNorm)
         deadline := A_TickCount + Max(100, timeoutMs)
         rxBuf := Buffer(1024, 0)
         srcAddr := Buffer(16, 0)
@@ -508,10 +532,9 @@ DiscoverHostBridgeUdp(sessionCode, udpPort := 4456, timeoutMs := 450) {
                 text := StrGet(rxBuf, rx, "UTF-8")
                 parts := StrSplit(Trim(text), "|")
                 if (parts.Length >= 4 && parts[1] = "PSYNC_OFFER") {
-                    senderIp := NumGet(srcAddr, 4, "UChar") "." NumGet(srcAddr, 5, "UChar") "." NumGet(srcAddr, 6, "UChar") "." NumGet(srcAddr, 7, "UChar")
                     return {
                         ok: true,
-                        senderIp: senderIp,
+                        senderIp: _RBC_FormatSockAddrIp(srcAddr),
                         hostName: parts[2],
                         bridgePort: IsInteger(parts[3]) ? String(Integer(parts[3])) : String(udpPort),
                         obsPort: IsInteger(parts[4]) ? String(Integer(parts[4])) : "4455",
@@ -523,7 +546,7 @@ DiscoverHostBridgeUdp(sessionCode, udpPort := 4456, timeoutMs := 450) {
             Sleep(25)
         }
     } finally {
-        DllCall("ws2_32\closesocket", "Ptr", sock)
+        _RBC_CloseUdpSocket(sock)
     }
     return ""
 }
@@ -558,32 +581,12 @@ DiscoverPublicHostsUdp(discoverPort := 4457, timeoutMs := 650, extraTargets := "
     if (!IsInteger(discoverPort) || Integer(discoverPort) < 1 || Integer(discoverPort) > 65535)
         return results
 
-    wsaBuf := Buffer(408, 0)
-    if (DllCall("ws2_32\WSAStartup", "UShort", 0x0202, "Ptr", wsaBuf.Ptr, "Int") != 0)
-        return results
-
-    sock := DllCall("ws2_32\socket", "Int", 2, "Int", 2, "Int", 17, "UPtr")
-    if (sock = -1 || sock = 0xFFFFFFFFFFFFFFFF)
+    sock := _RBC_OpenBroadcastUdpSocket()
+    if (!sock)
         return results
 
     seen := Map()
     try {
-        bBroadcast := Buffer(4, 0)
-        NumPut("Int", 1, bBroadcast, 0)
-        DllCall("ws2_32\setsockopt", "Ptr", sock, "Int", 0xFFFF, "Int", 0x0020, "Ptr", bBroadcast.Ptr, "Int", 4, "Int")
-
-        nonBlk := Buffer(4, 0)
-        NumPut("UInt", 1, nonBlk, 0)
-        DllCall("ws2_32\ioctlsocket", "Ptr", sock, "UInt", 0x8004667E, "Ptr", nonBlk.Ptr, "Int")
-
-        bindAddr := Buffer(16, 0)
-        NumPut("Short", 2, bindAddr, 0)
-        DllCall("ws2_32\bind", "Ptr", sock, "Ptr", bindAddr.Ptr, "Int", 16, "Int")
-
-        pktStr := "PS_DISCOVER_V1"
-        pktBytes := Buffer(StrPut(pktStr, "UTF-8"), 0)
-        nBytes := StrPut(pktStr, pktBytes, "UTF-8") - 1
-
         targets := ["255.255.255.255", "127.0.0.1"]
         if IsObject(extraTargets) {
             for _, t in extraTargets {
@@ -592,14 +595,7 @@ DiscoverPublicHostsUdp(discoverPort := 4457, timeoutMs := 650, extraTargets := "
                     targets.Push(ts)
             }
         }
-        portNet := DllCall("ws2_32\htons", "UShort", Integer(discoverPort), "UShort")
-        for _, dstIp in targets {
-            dstAddr := Buffer(16, 0)
-            NumPut("Short", 2, dstAddr, 0)
-            NumPut("UShort", portNet, dstAddr, 2)
-            NumPut("UInt", DllCall("ws2_32\inet_addr", "AStr", dstIp, "UInt"), dstAddr, 4)
-            DllCall("ws2_32\sendto", "Ptr", sock, "Ptr", pktBytes.Ptr, "Int", nBytes, "Int", 0, "Ptr", dstAddr.Ptr, "Int", 16, "Int")
-        }
+        _RBC_SendUdpToTargets(sock, discoverPort, targets, "PS_DISCOVER_V1")
 
         deadline := A_TickCount + Max(120, timeoutMs)
         rxBuf := Buffer(2048, 0)
@@ -611,8 +607,7 @@ DiscoverPublicHostsUdp(discoverPort := 4457, timeoutMs := 650, extraTargets := "
             if (rx > 0) {
                 NumPut("UChar", 0, rxBuf, rx)
                 text := StrGet(rxBuf, rx, "UTF-8")
-                senderIp := NumGet(srcAddr, 4, "UChar") "." NumGet(srcAddr, 5, "UChar") "." NumGet(srcAddr, 6, "UChar") "." NumGet(srcAddr, 7, "UChar")
-                parsed := ParsePublicDiscoveryBeaconJson(text, senderIp)
+                parsed := ParsePublicDiscoveryBeaconJson(text, _RBC_FormatSockAddrIp(srcAddr))
                 if IsObject(parsed) {
                     key := StrLower(parsed.hostUuid)
                     if (!seen.Has(key)) {
@@ -625,7 +620,7 @@ DiscoverPublicHostsUdp(discoverPort := 4457, timeoutMs := 650, extraTargets := "
             }
         }
     } finally {
-        DllCall("ws2_32\closesocket", "Ptr", sock)
+        _RBC_CloseUdpSocket(sock)
     }
     return results
 }
@@ -685,6 +680,7 @@ ProbeHostBridgeHealth(host, bridgePort, expectedUuid := "", timeoutMs := 750) {
     if (IsLoopbackHost(cleanHost) && !IsLocalTcpPortListening(bPort))
         return { ok: false }
     url := "http://" cleanHost ":" bPort "/health"
+    whr := ""
     try {
         whr := ComObject("WinHttp.WinHttpRequest.5.1")
         whr.SetTimeouts(250, 450, 450, Max(350, timeoutMs))
@@ -719,7 +715,11 @@ ProbeHostBridgeHealth(host, bridgePort, expectedUuid := "", timeoutMs := 750) {
             hostName: _RBC_JsonGetStr(body, "hostName")
         }
     } catch {
+        if (IsObject(whr))
+            try whr.Abort()
         return { ok: false }
+    } finally {
+        whr := ""
     }
 }
 
@@ -736,6 +736,7 @@ HttpPostBridgePair(host, bridgePort, sessionCode, deviceId, deviceName) {
     url := "http://" cleanHost ":" bPort "/pair"
     payload := '{"code":"' _RBC_JsonEscape(sessionCode) '","deviceId":"' _RBC_JsonEscape(deviceId) '","deviceName":"' _RBC_JsonEscape(deviceName) '","platform":"Windows"}'
 
+    whr := ""
     try {
         whr := ComObject("WinHttp.WinHttpRequest.5.1")
         whr.SetTimeouts(450, 750, 750, 1400)
@@ -784,7 +785,11 @@ HttpPostBridgePair(host, bridgePort, sessionCode, deviceId, deviceName) {
             error: (errMsg != "" ? errMsg : "HTTP " st)
         }
     } catch as exc {
+        if (IsObject(whr))
+            try whr.Abort()
         return { ok: false, status: 0, error: exc.Message }
+    } finally {
+        whr := ""
     }
 }
 
@@ -917,8 +922,161 @@ GetRemoteDisplayDeviceName(cfg) {
     return A_ComputerName
 }
 
+_RBC_GetDeviceId(cfg) {
+    return (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
+}
+
+CloseRemoteSocketRef(ws, state := "", deferred := false) {
+    if (IsObject(state) && state.HasOwnProp("obsWs") && state.obsWs == ws)
+        state.obsWs := ""
+    if (!IsObject(ws))
+        return
+    try ws._psClosed := true
+    if (deferred && IsSet(SafeCloseWebSocketDeferred))
+        SafeCloseWebSocketDeferred(ws)
+    else
+        try ws.shutdown()
+}
+
+CloseRemoteWebSocket(state, deferred := false) {
+    if (!IsObject(state) || !state.HasOwnProp("obsWs"))
+        return
+    ws := state.obsWs
+    state.obsWs := ""
+    if (!IsObject(ws))
+        return
+    CloseRemoteSocketRef(ws, state, deferred)
+}
+
+CancelRemotePongWatchdog(state) {
+    if (IsObject(state) && state.HasOwnProp("_pongWatchdogTimerFn") && IsObject(state._pongWatchdogTimerFn)) {
+        try SetTimer(state._pongWatchdogTimerFn, 0)
+        state._pongWatchdogTimerFn := ""
+        return true
+    }
+    return false
+}
+
+CancelRemoteBridgeHandshakeWatchdog(state) {
+    if (IsObject(state) && state.HasOwnProp("_bridgeHandshakeTimerFn") && IsObject(state._bridgeHandshakeTimerFn)) {
+        try SetTimer(state._bridgeHandshakeTimerFn, 0)
+        state._bridgeHandshakeTimerFn := ""
+        return true
+    }
+    return false
+}
+
+StopRemoteSessionTimers(state, stopReconnect := false) {
+    if (!IsObject(state))
+        return 0
+    stopped := 0
+    if (stopReconnect && state.HasOwnProp("reconnectTimerFn") && IsObject(state.reconnectTimerFn)) {
+        try SetTimer(state.reconnectTimerFn, 0)
+        stopped += 1
+    }
+    if (state.HasOwnProp("heartbeatTimerFn") && IsObject(state.heartbeatTimerFn)) {
+        try SetTimer(state.heartbeatTimerFn, 0)
+        stopped += 1
+    }
+    if (CancelRemotePongWatchdog(state))
+        stopped += 1
+    if (CancelRemoteBridgeHandshakeWatchdog(state))
+        stopped += 1
+    for _, timerProp in ["lanRepromoteTimerFn", "presenterTickFn", "recTickFn", "breathTimerFn"] {
+        if (state.HasOwnProp(timerProp) && IsObject(state.%timerProp%)) {
+            try SetTimer(state.%timerProp%, 0)
+            stopped += 1
+        }
+    }
+    return stopped
+}
+
+StopAllRemoteTimers(state) {
+    if (!IsObject(state))
+        return 0
+    static timerProps := [
+        "dragTimerFn", "breathTimerFn", "autoDodgeTimerFn", "idleDimTimerFn",
+        "reconnectTimerFn", "heartbeatTimerFn", "lanRepromoteTimerFn",
+        "presenterTickFn", "recTickFn", "rebuildTrayFn"
+    ]
+    stopped := 0
+    for _, prop in timerProps {
+        if (state.HasOwnProp(prop) && IsObject(state.%prop%)) {
+            try SetTimer(state.%prop%, 0)
+            stopped += 1
+        }
+    }
+    if (CancelRemotePongWatchdog(state))
+        stopped += 1
+    if (CancelRemoteBridgeHandshakeWatchdog(state))
+        stopped += 1
+    return stopped
+}
+
+ResetRemoteConnectionTelemetry(state, resetFallback := false) {
+    if (!IsObject(state))
+        return
+    state.obsConnected := false
+    state.usingBridge := false
+    state.usingDirectObsFallback := false
+    if (resetFallback)
+        state.usingRelayFallback := false
+    state.activeHost := ""
+    state.recState := 0
+    state.recSeconds := 0
+    state.streamDropWarn := false
+    state.voiceWhileMuted := false
+    state.isStandby := false
+    state.timerState := "stopped"
+    state.scenes := []
+}
+
+IsRemoteDirectObsReady(cfg, state) {
+    if (IsSet(IsRemoteUsingDirectObsChannel) && IsRemoteUsingDirectObsChannel(cfg, state))
+        return true
+    return IsObject(state) && state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback && state.HasOwnProp("obsConnected") && state.obsConnected && IsObject(state.obsWs)
+}
+
+_RBC_PersistRemoteMute(cfg, state, targetMuted) {
+    val := !!targetMuted
+    if (IsObject(state))
+        state.isMuted := val
+    if (IsObject(cfg) && cfg.HasOwnProp("IsMuted")) {
+        cfg.IsMuted := val
+        if (cfg.HasMethod("WriteBool"))
+            try cfg.WriteBool("Settings", "IsMuted", val)
+    }
+}
+
+_RBC_NotifyRemoteStateUi(state, preferRebuildTray := false) {
+    if (!IsObject(state))
+        return
+    if (preferRebuildTray && state.HasOwnProp("rebuildTrayFn") && IsObject(state.rebuildTrayFn)) {
+        try state.rebuildTrayFn.Call()
+    } else if (state.HasMethod("NotifyTrayStatus")) {
+        state.NotifyTrayStatus()
+    }
+}
+
+CommitRemoteSceneChange(state, newScene, notify := true) {
+    if (!IsObject(state))
+        return
+    clean := Trim(String(newScene))
+    if (clean = "")
+        return
+    curSc := state.HasOwnProp("activeScene") ? Trim(String(state.activeScene))
+        : (state.HasOwnProp("currentSceneName") ? Trim(String(state.currentSceneName)) : "")
+    if (curSc != "" && curSc != "Scene" && curSc != clean)
+        state.previousProgramScene := curSc
+    state.activeScene := clean
+    if (state.HasOwnProp("currentSceneName"))
+        state.currentSceneName := clean
+    if (notify)
+        _RBC_NotifyRemoteStateUi(state, false)
+}
+
 BuildRemoteBridgeAuthJson(cfg) {
-    devId := (cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
+    devId := _RBC_GetDeviceId(cfg)
     tok := cfg.HasOwnProp("SessionToken") ? Trim(cfg.SessionToken) : ""
     code := cfg.HasOwnProp("SessionPairingCode") ? Trim(cfg.SessionPairingCode) : ""
     devName := GetRemoteDisplayDeviceName(cfg)
@@ -926,13 +1084,11 @@ BuildRemoteBridgeAuthJson(cfg) {
 }
 
 BuildRemoteBridgeToggleJson(cfg) {
-    devId := (cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
-    return '{"type":"toggle_mute","deviceId":"' _RBC_JsonEscape(devId) '","source":"clicker"}'
+    return '{"type":"toggle_mute","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"clicker"}'
 }
 
 BuildRemoteBridgeSetMuteJson(cfg, targetMuted) {
-    devId := (cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
-    return '{"type":"set_mute","isMuted":' (targetMuted ? "true" : "false") ',"deviceId":"' _RBC_JsonEscape(devId) '","source":"hud"}'
+    return '{"type":"set_mute","isMuted":' (targetMuted ? "true" : "false") ',"deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"hud"}'
 }
 
 BuildRemoteBridgePingJson() {
@@ -940,24 +1096,20 @@ BuildRemoteBridgePingJson() {
 }
 
 BuildRemoteBridgeDeckJson(cfg, actionType) {
-    devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
-    return '{"type":"' _RBC_JsonEscape(actionType) '","deviceId":"' _RBC_JsonEscape(devId) '","source":"tray"}'
+    return '{"type":"' _RBC_JsonEscape(actionType) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
 }
 
 BuildRemoteBridgeSceneJson(cfg, sceneName) {
-    devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
-    return '{"type":"switch_scene","sceneName":"' _RBC_JsonEscape(sceneName) '","deviceId":"' _RBC_JsonEscape(devId) '","source":"tray"}'
+    return '{"type":"switch_scene","sceneName":"' _RBC_JsonEscape(sceneName) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
 }
 
 BuildRemoteBridgeTimerJson(cfg, action, durationSec := 0) {
-    devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
-    return '{"type":"' _RBC_JsonEscape(action) '","durationSec":' Integer(durationSec) ',"deviceId":"' _RBC_JsonEscape(devId) '","source":"tray"}'
+    return '{"type":"' _RBC_JsonEscape(action) '","durationSec":' Integer(durationSec) ',"deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
 }
 
 BuildRemoteBridgeNudgeJson(cfg, message, sender := "", accentHex := "F59E0B") {
-    devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? cfg.DeviceId : "win-default"
     snd := (Trim(String(sender)) != "") ? Trim(String(sender)) : GetRemoteDisplayDeviceName(cfg)
-    return '{"type":"stage_nudge","message":"' _RBC_JsonEscape(message) '","sender":"' _RBC_JsonEscape(snd) '","accentHex":"' _RBC_JsonEscape(accentHex) '","deviceId":"' _RBC_JsonEscape(devId) '"}'
+    return '{"type":"stage_nudge","message":"' _RBC_JsonEscape(message) '","sender":"' _RBC_JsonEscape(snd) '","accentHex":"' _RBC_JsonEscape(accentHex) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '"}'
 }
 
 ParseHostBridgeWsEvent(rawText) {
@@ -1210,11 +1362,7 @@ ExecuteRemoteLocalTimerCommand(cfg, state, action, durationSec := 0) {
     }
     if (IsSet(DiagnosticLogger))
         try DiagnosticLogger.RecordBreadcrumb("Timer", "RemoteLocalTimer", actLow " | rem=" state.timerRemainingSec)
-    if (state.HasOwnProp("rebuildTrayFn") && IsObject(state.rebuildTrayFn)) {
-        try state.rebuildTrayFn.Call()
-    } else if (state.HasMethod("NotifyTrayStatus")) {
-        state.NotifyTrayStatus()
-    }
+    _RBC_NotifyRemoteStateUi(state, true)
     return true
 }
 
@@ -1240,20 +1388,11 @@ ExecuteRemoteLocalStandbyToggle(cfg, state, enterStandby := "") {
         if (!state.isMuted) {
             if (IsObject(state.obsWs))
                 SendObsRequest(state.obsWs, "SetInputMute", "RemoteClickerSetMute", '{"inputName":"' EscapeJsonStr(micName) '","inputMuted":true}')
-            state.isMuted := true
-            if (cfg.HasOwnProp("IsMuted")) {
-                cfg.IsMuted := true
-                if (cfg.HasMethod("WriteBool"))
-                    try cfg.WriteBool("Settings", "IsMuted", true)
-            }
+            _RBC_PersistRemoteMute(cfg, state, true)
         }
         if (IsObject(state.obsWs))
             SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteStandbyScene", '{"sceneName":"' EscapeJsonStr(brbScene) '"}')
-        if (prevSc != "" && prevSc != brbScene)
-            state.previousProgramScene := prevSc
-        state.activeScene := brbScene
-        if (state.HasOwnProp("currentSceneName"))
-            state.currentSceneName := brbScene
+        CommitRemoteSceneChange(state, brbScene, false)
         state.isStandby := true
         if (IsSet(DiagnosticLogger))
             try DiagnosticLogger.RecordBreadcrumb("Director", "RemoteLocalStandbyEnter", "scene=" brbScene " | prev=" prevSc)
@@ -1265,29 +1404,18 @@ ExecuteRemoteLocalStandbyToggle(cfg, state, enterStandby := "") {
             if (snap.HasOwnProp("scene") && snap.scene != "" && snap.scene != "Scene") {
                 if (IsObject(state.obsWs))
                     SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteStandbyRestoreScene", '{"sceneName":"' EscapeJsonStr(snap.scene) '"}')
-                state.activeScene := snap.scene
-                if (state.HasOwnProp("currentSceneName"))
-                    state.currentSceneName := snap.scene
+                CommitRemoteSceneChange(state, snap.scene, false)
             }
             if (snap.HasOwnProp("muted")) {
                 if (IsObject(state.obsWs))
                     SendObsRequest(state.obsWs, "SetInputMute", "RemoteClickerSetMute", '{"inputName":"' EscapeJsonStr(micName) '","inputMuted":' (snap.muted ? "true" : "false") '}')
-                state.isMuted := !!snap.muted
-                if (cfg.HasOwnProp("IsMuted")) {
-                    cfg.IsMuted := !!snap.muted
-                    if (cfg.HasMethod("WriteBool"))
-                        try cfg.WriteBool("Settings", "IsMuted", !!snap.muted)
-                }
+                _RBC_PersistRemoteMute(cfg, state, snap.muted)
             }
         }
         if (IsSet(DiagnosticLogger))
             try DiagnosticLogger.RecordBreadcrumb("Director", "RemoteLocalStandbyExit", "scene=" state.activeScene)
     }
-    if (state.HasOwnProp("rebuildTrayFn") && IsObject(state.rebuildTrayFn)) {
-        try state.rebuildTrayFn.Call()
-    } else if (state.HasMethod("NotifyTrayStatus")) {
-        state.NotifyTrayStatus()
-    }
+    _RBC_NotifyRemoteStateUi(state, true)
     return true
 }
 
@@ -1304,15 +1432,8 @@ ExecuteRemoteDirectObsTransition(cfg, state) {
     targetSc := (prevSc != "" && prevSc != curSc) ? prevSc : prevProg
     if (targetSc != "") {
         ok := SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteSceneTransition", '{"sceneName":"' EscapeJsonStr(targetSc) '"}')
-        if (ok) {
-            if (curSc != "" && curSc != "Scene" && curSc != targetSc)
-                state.previousProgramScene := curSc
-            state.activeScene := targetSc
-            if (state.HasOwnProp("currentSceneName"))
-                state.currentSceneName := targetSc
-            if (state.HasMethod("NotifyTrayStatus"))
-                state.NotifyTrayStatus()
-        }
+        if (ok)
+            CommitRemoteSceneChange(state, targetSc, true)
         return ok
     }
     return false
@@ -1418,12 +1539,7 @@ HandleRemotePowerBroadcast(wParam, state, reconnectFn := "") {
             state.isSystemSuspending := false
             state.lastRxTick := 0
             state.reconnecting := false
-            if (state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
-                oldWs := state.obsWs
-                state.obsWs := ""
-                try oldWs._psClosed := true
-                try oldWs.shutdown()
-            }
+            CloseRemoteWebSocket(state, false)
             if (state.HasOwnProp("obsConnected"))
                 state.obsConnected := false
         }
@@ -1450,11 +1566,12 @@ ProbeRemoteTcpPort(host, port, timeoutMs := 750) {
     wsaBuf := Buffer(408, 0)
     if (DllCall("ws2_32\WSAStartup", "UShort", 0x0202, "Ptr", wsaBuf.Ptr, "Int") != 0)
         return false
-    sock := DllCall("ws2_32\socket", "Int", 2, "Int", 1, "Int", 6, "UPtr") ; AF_INET, SOCK_STREAM, IPPROTO_TCP
-    if (sock = -1 || sock = 0xFFFFFFFFFFFFFFFF)
-        return false
+    sock := -1
     ok := false
     try {
+        sock := DllCall("ws2_32\socket", "Int", 2, "Int", 1, "Int", 6, "UPtr") ; AF_INET, SOCK_STREAM, IPPROTO_TCP
+        if (sock = -1 || sock = 0xFFFFFFFFFFFFFFFF || sock = 0xFFFFFFFF)
+            return false
         nonBlk := Buffer(4, 0)
         NumPut("UInt", 1, nonBlk, 0)
         DllCall("ws2_32\ioctlsocket", "Ptr", sock, "UInt", 0x8004667E, "Ptr", nonBlk.Ptr, "Int")
@@ -1480,7 +1597,9 @@ ProbeRemoteTcpPort(host, port, timeoutMs := 750) {
                 ok := (NumGet(errVal, 0, "Int") == 0)
         }
     } finally {
-        DllCall("ws2_32\closesocket", "Ptr", sock)
+        if (sock != 0 && sock != -1 && sock != 0xFFFFFFFFFFFFFFFF && sock != 0xFFFFFFFF)
+            try DllCall("ws2_32\closesocket", "Ptr", sock)
+        try DllCall("ws2_32\WSACleanup")
     }
     return ok
 }

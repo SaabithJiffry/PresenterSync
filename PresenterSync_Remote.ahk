@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 7.7.1
+; Version: 7.7.2
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 7.7.1.0
+;@Ahk2Exe-SetVersion 7.7.2.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -37,8 +37,22 @@ DiagnosticLogger.Init("PresenterSync_Remote")
 
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
-RegisterSelfUpdateBeforeRelaunch((*) => ((IsSet(AppState) && IsObject(AppState)) ? ((AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn ? SetTimer(AppState.presenterTickFn, 0) : 0), (AppState.HasOwnProp("recTickFn") && AppState.recTickFn ? SetTimer(AppState.recTickFn, 0) : 0)) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
-OnExit((*) => ((IsSet(AppState) && IsObject(AppState)) ? ((AppState.HasOwnProp("presenterTickFn") && AppState.presenterTickFn ? SetTimer(AppState.presenterTickFn, 0) : 0), (AppState.HasOwnProp("recTickFn") && AppState.recTickFn ? SetTimer(AppState.recTickFn, 0) : 0)) : 0, HudSnake.Stop(), ReleaseRemoteInstanceMutex(g_RemoteMutex), Theme.Shutdown(), Gdip.Shutdown()))
+ShutdownRemoteApp(*) {
+    global AppState, g_RemoteMutex
+    if (IsSet(AppState) && IsObject(AppState)) {
+        try AppState.StopAllTimers()
+        try CloseRemoteWebSocket(AppState, false)
+    }
+    if (IsSet(HideStageNudgeBanner))
+        try HideStageNudgeBanner()
+    try HudSnake.Stop()
+    try ReleaseRemoteInstanceMutex(g_RemoteMutex)
+    try Theme.Shutdown()
+    try Gdip.Shutdown()
+}
+
+RegisterSelfUpdateBeforeRelaunch(ShutdownRemoteApp)
+OnExit(ShutdownRemoteApp)
 
 if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico"))
     try TraySetIcon(A_ScriptDir "\assets\PresenterSyncRemote.ico")
@@ -466,6 +480,10 @@ class RemoteState {
         }
     }
 
+    StopAllTimers() {
+        return StopAllRemoteTimers(this)
+    }
+
     ComputeDimensions(cfg) {
         cLive := (IsObject(cfg) && cfg.HasOwnProp("CustomLiveHex")) ? cfg.CustomLiveHex : "107C10"
         cMuted := (IsObject(cfg) && cfg.HasOwnProp("CustomMutedHex")) ? cfg.CustomMutedHex : "C42B1C"
@@ -551,9 +569,9 @@ if (g_RemoteCli.pairingUri != "") {
         AppState.ComputeDimensions(AppConfig)
         ApplyMicAppearance(AppConfig, AppState)
         if (AppConfig.SessionPairingCode != "" && AppConfig.NetworkMode = "LAN") {
-            pairRes := PairRemoteWithHostBridge(AppConfig.HostAddress, AppConfig.BridgePort, AppConfig.SessionPairingCode, AppConfig.DeviceId, GetRemoteDisplayDeviceName(AppConfig))
-            if (pairRes.ok)
-                ApplyBridgePairResultToConfig(AppConfig, pairRes)
+            uriPairRes := PairRemoteWithHostBridge(AppConfig.HostAddress, AppConfig.BridgePort, AppConfig.SessionPairingCode, AppConfig.DeviceId, GetRemoteDisplayDeviceName(AppConfig))
+            if (uriPairRes.ok)
+                ApplyBridgePairResultToConfig(AppConfig, uriPairRes)
         }
         AppConfig.FirstRun := false
         SaveRemoteConnectionSettingsToIni(AppConfig)
@@ -627,16 +645,76 @@ RemoteIdleDimTick(cfg, state) {
     }
 }
 
-ConnectToRemoteOBS(cfg, state) {
-    SetTimer state.reconnectTimerFn, 0
-    SetTimer state.heartbeatTimerFn, 0
-    CancelRemotePongWatchdog(state)
-    CancelRemoteBridgeHandshakeWatchdog(state)
-    if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
-        SetTimer state.lanRepromoteTimerFn, 0
-
-    if (state.obsConnected)
+RefreshRemoteMicHudAlpha(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("MicGui") || !IsObject(state.MicGui))
         return
+    state.currentAlpha := GetRemoteEffectiveAlpha(state)
+    ApplyMicAppearance(cfg, state)
+}
+
+SyncRemoteBreathTimer(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state) || !state.HasOwnProp("breathTimerFn") || !state.breathTimerFn)
+        return
+    if (state.isMuted && cfg.ShowIndicator && state.obsConnected) {
+        state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
+        SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+    } else {
+        SetTimer state.breathTimerFn, 0
+    }
+}
+
+HandleRemoteAuthFailure(cfg, state, ws, statusCode, trayMsg) {
+    state.connStatus := statusCode
+    state._sawAuthChallenge := false
+    state.obsConnected := false
+    state.usingBridge := false
+    state.usingDirectObsFallback := false
+    StopRemoteSessionTimers(state, true)
+    CloseRemoteSocketRef(ws, state, true)
+    RefreshRemoteMicHudAlpha(cfg, state)
+    state.NotifyTrayStatus()
+    TrayTip(trayMsg, "PresenterSync Remote", 3)
+}
+
+ApplyRemoteRelayTelemetryPacket(cfg, state, telObj) {
+    if (!IsObject(telObj))
+        return
+    SyncRemoteBridgeTelemetry(cfg, state, {
+        recState: telObj.recState,
+        recSeconds: telObj.recSeconds,
+        streamDropWarn: telObj.streamDropWarn,
+        voiceWhileMuted: telObj.voiceWhileMuted,
+        osMicMutedDrift: state.osMicMutedDrift,
+        lowDiskWarnLevel: state.lowDiskWarnLevel,
+        lowDiskMb: state.lowDiskMb,
+        deadMicWarn: state.deadMicWarn,
+        isStandby: telObj.isStandby,
+        timerState: (telObj.timerState != "" ? telObj.timerState : state.timerState),
+        timerRemainingSec: telObj.timerRemainingSec,
+        timerPresetSec: telObj.timerPresetSec,
+        activeScene: (telObj.activeScene != "" ? telObj.activeScene : state.activeScene),
+        scenes: telObj.scenes
+    })
+    UpdateRemoteLocalRecTimer(state)
+}
+
+SendRemoteRelaySyncRequest(cfg, state) {
+    topic := GetInternetRelayTopic(cfg.InternetPairingCode)
+    mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
+    return PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", "sync_req", "0"), GetEffectiveRelayBaseUrl(cfg), mockWs)
+}
+
+ConnectToRemoteOBS(cfg, state) {
+    if (state.obsConnected) {
+        SetTimer state.reconnectTimerFn, 0
+        SetTimer state.heartbeatTimerFn, 0
+        CancelRemotePongWatchdog(state)
+        CancelRemoteBridgeHandshakeWatchdog(state)
+        if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
+            SetTimer state.lanRepromoteTimerFn, 0
+        return
+    }
+    StopRemoteSessionTimers(state, true)
 
     if ((state.HasOwnProp("_trayMenuOpen") && state._trayMenuOpen) || (state.HasOwnProp("_trayMenuCloseUntil") && A_TickCount < state._trayMenuCloseUntil)) {
         SetTimer state.reconnectTimerFn, -400
@@ -649,13 +727,7 @@ ConnectToRemoteOBS(cfg, state) {
     state.activeHost := ""
     state.usingBridge := false
     state.usingDirectObsFallback := false
-
-    if IsObject(state.obsWs) {
-        oldWs := state.obsWs
-        state.obsWs := ""
-        oldWs._psClosed := true
-        try oldWs.shutdown()
-    }
+    CloseRemoteWebSocket(state, false)
 
     if (IsRemoteUsingInternetChannel(cfg, state)) {
         pairCode := Trim(cfg.InternetPairingCode)
@@ -699,24 +771,15 @@ ConnectToRemoteOBS(cfg, state) {
                 repromoteMs := state.HasOwnProp("lanRepromoteIntervalMs") ? Max(1500, Integer(state.lanRepromoteIntervalMs)) : 12000
                 SetTimer state.lanRepromoteTimerFn, repromoteMs
             }
-            state.currentAlpha := GetRemoteEffectiveAlpha(state)
-            if IsObject(state.MicGui)
-                ApplyMicAppearance(cfg, state)
-            if (state.isMuted && cfg.ShowIndicator) {
-                state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
-                SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
-            }
-            mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-            PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", "sync_req", "0"), relayBase, mockWs)
+            RefreshRemoteMicHudAlpha(cfg, state)
+            SyncRemoteBreathTimer(cfg, state)
+            SendRemoteRelaySyncRequest(cfg, state)
             state.NotifyTrayStatus()
         } catch {
-            state.obsWs := ""
+            CloseRemoteWebSocket(state, false)
             state.obsConnected := false
             SetTimer state.breathTimerFn, 0
-            if (IsObject(state.MicGui)) {
-                state.currentAlpha := GetRemoteEffectiveAlpha(state)
-                ApplyMicAppearance(cfg, state)
-            }
+            RefreshRemoteMicHudAlpha(cfg, state)
             FailoverToNextCandidate(cfg, state)
         }
         return
@@ -738,10 +801,7 @@ ConnectToRemoteOBS(cfg, state) {
     candidate := state.candidates[state.candidateIndex]
     if (IsLoopbackHost(candidate.host) && !IsLocalTcpPortListening(candidate.port)) {
         SetTimer state.breathTimerFn, 0
-        if (IsObject(state.MicGui)) {
-            state.currentAlpha := GetRemoteEffectiveAlpha(state)
-            ApplyMicAppearance(cfg, state)
-        }
+        RefreshRemoteMicHudAlpha(cfg, state)
         FailoverToNextCandidate(cfg, state)
         return
     }
@@ -761,12 +821,9 @@ ConnectToRemoteOBS(cfg, state) {
         }
     } catch {
         CancelRemoteBridgeHandshakeWatchdog(state)
-        state.obsWs := ""
+        CloseRemoteWebSocket(state, false)
         SetTimer state.breathTimerFn, 0
-        if (IsObject(state.MicGui)) {
-            state.currentAlpha := GetRemoteEffectiveAlpha(state)
-            ApplyMicAppearance(cfg, state)
-        }
+        RefreshRemoteMicHudAlpha(cfg, state)
         FailoverToNextCandidate(cfg, state, candidate)
     }
 }
@@ -803,12 +860,7 @@ TryPromoteRemoteWanToLan(cfg, state) {
             state._lanCycleStartTick := 0
             state.candidates := BuildRemoteLanCandidateQueue(cfg)
             state.candidateIndex := 1
-            if IsObject(state.obsWs) {
-                oldWs := state.obsWs
-                state.obsWs := ""
-                oldWs._psClosed := true
-                try oldWs.shutdown()
-            }
+            CloseRemoteWebSocket(state, false)
             state.obsConnected := false
             state.NotifyTrayStatus()
             SetTimer state.reconnectTimerFn, -30
@@ -911,52 +963,23 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     if (state.obsWs == ws)
         state.obsWs := ""
 
-    CancelRemotePongWatchdog(state)
-    CancelRemoteBridgeHandshakeWatchdog(state)
     state.connGen += 1
     wasConnected := state.obsConnected
-    state.obsConnected := false
-    state.usingBridge := false
-    state.usingDirectObsFallback := false
-    state.activeHost := ""
-    state.recState := 0
-    state.recSeconds := 0
-    state.streamDropWarn := false
-    state.voiceWhileMuted := false
-    state.isStandby := false
-    state.timerState := "stopped"
-    state.scenes := []
-    if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
-        SetTimer state.presenterTickFn, 0
-    if (state.HasOwnProp("recTickFn") && IsObject(state.recTickFn))
-        SetTimer state.recTickFn, 0
-    SetTimer state.heartbeatTimerFn, 0
-    if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
-        SetTimer state.lanRepromoteTimerFn, 0
-    SetTimer state.breathTimerFn, 0
+    ResetRemoteConnectionTelemetry(state, false)
+    StopRemoteSessionTimers(state, false)
     state.animSeq += 1
 
     ; Visual feedback on HUD: Dim while disconnected
     if (!wasConnected && status == 4009) {
         isMissingPw := (cfg.ObsPassword = "" && (!state.HasOwnProp("_sawAuthChallenge") || state._sawAuthChallenge))
-        state._sawAuthChallenge := false
-        state.connStatus := isMissingPw ? "pw_required" : "auth_failed"
-        if (IsObject(state.MicGui)) {
-            state.currentAlpha := GetRemoteEffectiveAlpha(state)
-            ApplyMicAppearance(cfg, state)
-        }
-        SetTimer state.reconnectTimerFn, 0
-        state.NotifyTrayStatus()
-        TrayTip(isMissingPw ? "OBS WebSocket requires a password. Enter it in Change OBS Connection." : "OBS WebSocket authentication failed. Check password in Change OBS Connection.", "PresenterSync Remote", 3)
+        HandleRemoteAuthFailure(cfg, state, "", isMissingPw ? "pw_required" : "auth_failed",
+            isMissingPw ? "OBS WebSocket requires a password. Enter it in Change OBS Connection." : "OBS WebSocket authentication failed. Check password in Change OBS Connection.")
         return
     }
 
     state._sawAuthChallenge := false
     state.connStatus := "searching"
-    if (IsObject(state.MicGui)) {
-        state.currentAlpha := GetRemoteEffectiveAlpha(state)
-        ApplyMicAppearance(cfg, state)
-    }
+    RefreshRemoteMicHudAlpha(cfg, state)
     state.NotifyTrayStatus()
 
     FailoverToNextCandidate(cfg, state, candidate)
@@ -995,20 +1018,10 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             state.activeHost := candidate.raw
             keepAliveMs := Max(10000, cfg.HeartbeatSeconds * 1000)
             SetTimer state.heartbeatTimerFn, keepAliveMs
-            state.currentAlpha := GetRemoteEffectiveAlpha(state)
-            if (ev.hasMuted) {
-                state.isMuted := ev.isMuted
-                cfg.IsMuted := ev.isMuted
-                cfg.WriteBool("Settings", "IsMuted", ev.isMuted)
-            }
-            if IsObject(state.MicGui)
-                ApplyMicAppearance(cfg, state)
-            if (state.isMuted && cfg.ShowIndicator) {
-                state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
-                SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
-            } else {
-                SetTimer state.breathTimerFn, 0
-            }
+            if (ev.hasMuted)
+                _RBC_PersistRemoteMute(cfg, state, ev.isMuted)
+            RefreshRemoteMicHudAlpha(cfg, state)
+            SyncRemoteBreathTimer(cfg, state)
             state.NotifyTrayStatus()
         } else if (ev.kind = "auth_error") {
             CancelRemoteBridgeHandshakeWatchdog(state)
@@ -1023,35 +1036,13 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.obsConnected := false
                 state.usingBridge := false
                 SetTimer state.heartbeatTimerFn, 0
-                if IsObject(ws) {
-                    ws._psClosed := true
-                    SafeCloseWebSocketDeferred(ws)
-                }
-                if (state.obsWs == ws)
-                    state.obsWs := ""
+                CloseRemoteSocketRef(ws, state, true)
                 SetTimer state.reconnectTimerFn, -100
                 return
             }
             isMissingPw := (cfg.ObsPassword = "" && InStr(reasonLow, "password"))
-            state.connStatus := isMissingPw ? "pw_required" : "auth_failed"
-            state._sawAuthChallenge := false
-            state.obsConnected := false
-            state.usingBridge := false
-            SetTimer state.reconnectTimerFn, 0
-            SetTimer state.heartbeatTimerFn, 0
-            SetTimer state.breathTimerFn, 0
-            if IsObject(ws) {
-                ws._psClosed := true
-                SafeCloseWebSocketDeferred(ws)
-            }
-            if (state.obsWs == ws)
-                state.obsWs := ""
-            if (IsObject(state.MicGui)) {
-                state.currentAlpha := GetRemoteEffectiveAlpha(state)
-                ApplyMicAppearance(cfg, state)
-            }
-            state.NotifyTrayStatus()
-            TrayTip("Host Bridge authentication failed (" (ev.reason != "" ? ev.reason : "Invalid code/token") "). Re-pair in Change OBS Connection.", "PresenterSync Remote", 3)
+            HandleRemoteAuthFailure(cfg, state, ws, isMissingPw ? "pw_required" : "auth_failed",
+                "Host Bridge authentication failed (" (ev.reason != "" ? ev.reason : "Invalid code/token") "). Re-pair in Change OBS Connection.")
         } else if (ev.kind = "mute_state" || ev.kind = "sync_resync") {
             CancelRemoteBridgeHandshakeWatchdog(state)
             if (ev.HasOwnProp("hostUuid") && ev.hostUuid != "" && (!cfg.HasOwnProp("PairedHostUuid") || cfg.PairedHostUuid != ev.hostUuid)) {
@@ -1064,9 +1055,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.usingDirectObsFallback := false
                 state.connStatus := "connected"
                 state.activeHost := candidate.raw
-                state.currentAlpha := GetRemoteEffectiveAlpha(state)
-                if IsObject(state.MicGui)
-                    ApplyMicAppearance(cfg, state)
+                RefreshRemoteMicHudAlpha(cfg, state)
                 state.NotifyTrayStatus()
             }
             SyncRemoteMuteState(cfg, state, ev.isMuted)
@@ -1096,21 +1085,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             return
         expectedTok := GetInternetRelayAuthToken(cfg.InternetPairingCode, cfg.ObsPassword)
         if (pkt.cmd = "auth_error" || pkt.auth != expectedTok) {
-            state.connStatus := "auth_failed"
-            state.obsConnected := false
-            SetTimer state.reconnectTimerFn, 0
-            SetTimer state.heartbeatTimerFn, 0
-            SetTimer state.breathTimerFn, 0
-            if IsObject(ws)
-                SafeCloseWebSocketDeferred(ws)
-            if (state.obsWs == ws)
-                state.obsWs := ""
-            if (IsObject(state.MicGui)) {
-                state.currentAlpha := GetRemoteEffectiveAlpha(state)
-                ApplyMicAppearance(cfg, state)
-            }
-            state.NotifyTrayStatus()
-            TrayTip("Internet Relay authentication failed. Check password in Change OBS Connection.", "PresenterSync Remote", 3)
+            HandleRemoteAuthFailure(cfg, state, ws, "auth_failed",
+                "Internet Relay authentication failed. Check password in Change OBS Connection.")
             return
         }
         state._relayPeerLegacy := !pkt.encrypted
@@ -1119,73 +1095,21 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.obsConnected := true
                 state.connStatus := "connected"
                 state.activeHost := candidate.raw
-                state.currentAlpha := GetRemoteEffectiveAlpha(state)
-                if IsObject(state.MicGui)
-                    ApplyMicAppearance(cfg, state)
+                RefreshRemoteMicHudAlpha(cfg, state)
                 state.NotifyTrayStatus()
             }
             SyncRemoteMuteState(cfg, state, pkt.hasMutedField ? !!pkt.isMuted : (pkt.data = "1" || pkt.data = "true"))
-            if (pkt.hasTelemetry) {
-                SyncRemoteBridgeTelemetry(cfg, state, {
-                    recState: pkt.recState,
-                    recSeconds: pkt.recSeconds,
-                    streamDropWarn: pkt.streamDropWarn,
-                    voiceWhileMuted: pkt.voiceWhileMuted,
-                    osMicMutedDrift: state.osMicMutedDrift,
-                    lowDiskWarnLevel: state.lowDiskWarnLevel,
-                    lowDiskMb: state.lowDiskMb,
-                    deadMicWarn: state.deadMicWarn,
-                    isStandby: pkt.isStandby,
-                    timerState: (pkt.timerState != "" ? pkt.timerState : state.timerState),
-                    timerRemainingSec: pkt.timerRemainingSec,
-                    timerPresetSec: pkt.timerPresetSec,
-                    activeScene: (pkt.activeScene != "" ? pkt.activeScene : state.activeScene),
-                    scenes: pkt.scenes
-                })
-                UpdateRemoteLocalRecTimer(state)
-            }
+            if (pkt.hasTelemetry)
+                ApplyRemoteRelayTelemetryPacket(cfg, state, pkt)
         } else if (pkt.cmd = "dir_state") {
             if (pkt.hasMutedField)
                 SyncRemoteMuteState(cfg, state, !!pkt.isMuted)
             if (pkt.hasTelemetry) {
-                SyncRemoteBridgeTelemetry(cfg, state, {
-                    recState: pkt.recState,
-                    recSeconds: pkt.recSeconds,
-                    streamDropWarn: pkt.streamDropWarn,
-                    voiceWhileMuted: pkt.voiceWhileMuted,
-                    osMicMutedDrift: state.osMicMutedDrift,
-                    lowDiskWarnLevel: state.lowDiskWarnLevel,
-                    lowDiskMb: state.lowDiskMb,
-                    deadMicWarn: state.deadMicWarn,
-                    isStandby: pkt.isStandby,
-                    timerState: (pkt.timerState != "" ? pkt.timerState : state.timerState),
-                    timerRemainingSec: pkt.timerRemainingSec,
-                    timerPresetSec: pkt.timerPresetSec,
-                    activeScene: (pkt.activeScene != "" ? pkt.activeScene : state.activeScene),
-                    scenes: pkt.scenes
-                })
-                UpdateRemoteLocalRecTimer(state)
+                ApplyRemoteRelayTelemetryPacket(cfg, state, pkt)
             } else {
                 parsedDir := ParseDirStatePayload(pkt.data, state)
-                if (IsObject(parsedDir)) {
-                    SyncRemoteBridgeTelemetry(cfg, state, {
-                        recState: parsedDir.recState,
-                        recSeconds: parsedDir.recSeconds,
-                        streamDropWarn: parsedDir.streamDropWarn,
-                        voiceWhileMuted: parsedDir.voiceWhileMuted,
-                        osMicMutedDrift: state.osMicMutedDrift,
-                        lowDiskWarnLevel: state.lowDiskWarnLevel,
-                        lowDiskMb: state.lowDiskMb,
-                        deadMicWarn: state.deadMicWarn,
-                        isStandby: parsedDir.isStandby,
-                        timerState: parsedDir.timerState,
-                        timerRemainingSec: parsedDir.timerRemainingSec,
-                        timerPresetSec: parsedDir.timerPresetSec,
-                        activeScene: parsedDir.activeScene,
-                        scenes: parsedDir.scenes
-                    })
-                    UpdateRemoteLocalRecTimer(state)
-                }
+                if (IsObject(parsedDir))
+                    ApplyRemoteRelayTelemetryPacket(cfg, state, parsedDir)
             }
         } else if (pkt.cmd = "nudge") {
             nSep := InStr(pkt.data, ";")
@@ -1202,11 +1126,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         return
     }
     if (IsRemoteUsingInternetChannel(cfg, state)) {
-        if RegExMatch(msg, '"event"\s*:\s*"open"') {
-            topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-            mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-            PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", "sync_req", "0"), GetEffectiveRelayBaseUrl(cfg), mockWs)
-        }
+        if RegExMatch(msg, '"event"\s*:\s*"open"')
+            SendRemoteRelaySyncRequest(cfg, state)
         return
     }
 
@@ -1259,9 +1180,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         }
 
         ; Restore base alpha & query initial mic mute + full Director state directly from OBS :4455
-        state.currentAlpha := GetRemoteEffectiveAlpha(state)
-        if IsObject(state.MicGui)
-            ApplyMicAppearance(cfg, state)
+        RefreshRemoteMicHudAlpha(cfg, state)
         escMic := EscapeJsonStr(cfg.TargetMicName)
         SendObsRequest(ws, "GetInputMute", "InitRemoteMute", '{"inputName":"' escMic '"}')
         SendObsRequest(ws, "GetRecordStatus", "InitRemoteRec")
@@ -1440,20 +1359,6 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
     }
 }
 
-CancelRemotePongWatchdog(state) {
-    if (IsObject(state) && state.HasOwnProp("_pongWatchdogTimerFn") && IsObject(state._pongWatchdogTimerFn)) {
-        try SetTimer(state._pongWatchdogTimerFn, 0)
-        state._pongWatchdogTimerFn := ""
-    }
-}
-
-CancelRemoteBridgeHandshakeWatchdog(state) {
-    if (IsObject(state) && state.HasOwnProp("_bridgeHandshakeTimerFn") && IsObject(state._bridgeHandshakeTimerFn)) {
-        try SetTimer(state._bridgeHandshakeTimerFn, 0)
-        state._bridgeHandshakeTimerFn := ""
-    }
-}
-
 StartRemoteBridgeHandshakeWatchdog(cfg, state, candidate, expectedGen, timeoutMs := 1800) {
     if (!IsObject(state))
         return
@@ -1470,12 +1375,7 @@ OnRemoteBridgeHandshakeTimeout(cfg, state, candidate, expectedGen) {
         return
     if (IsSet(DiagnosticLogger))
         try DiagnosticLogger.RecordBreadcrumb("Failover", "BridgeConnectTimeout", "1800ms exceeded on " candidate.raw " -> falling back to Direct OBS :4455")
-    if IsObject(state.obsWs) {
-        oldWs := state.obsWs
-        state.obsWs := ""
-        oldWs._psClosed := true
-        try oldWs.shutdown()
-    }
+    CloseRemoteWebSocket(state, false)
     state.obsConnected := false
     state.usingBridge := false
     FailoverToNextCandidate(cfg, state, candidate)
@@ -1486,27 +1386,12 @@ ForceRemoteReconnectNow(cfg, state, reason := "wake") {
         return
     if (IsSet(DiagnosticLogger))
         try DiagnosticLogger.RecordBreadcrumb("Remote", "ForceReconnectNow", "reason=" reason)
-    SetTimer state.reconnectTimerFn, 0
-    SetTimer state.heartbeatTimerFn, 0
-    CancelRemotePongWatchdog(state)
-    CancelRemoteBridgeHandshakeWatchdog(state)
-    if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
-        SetTimer state.lanRepromoteTimerFn, 0
-    if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
-        SetTimer state.presenterTickFn, 0
-    if (state.HasOwnProp("recTickFn") && IsObject(state.recTickFn))
-        SetTimer state.recTickFn, 0
-    SetTimer state.breathTimerFn, 0
+    StopRemoteSessionTimers(state, true)
     state.animSeq += 1
     state.connGen += 1
     state._lastWakeReconnectTick := A_TickCount
 
-    if IsObject(state.obsWs) {
-        oldWs := state.obsWs
-        state.obsWs := ""
-        oldWs._psClosed := true
-        try oldWs.shutdown()
-    }
+    CloseRemoteWebSocket(state, false)
     state.obsConnected := false
     state.usingBridge := false
     state.usingDirectObsFallback := false
@@ -1515,10 +1400,7 @@ ForceRemoteReconnectNow(cfg, state, reason := "wake") {
     state.connStatus := "searching"
     state.candidateIndex := 1
     state._lanCycleStartTick := 0
-    if (IsObject(state.MicGui)) {
-        state.currentAlpha := GetRemoteEffectiveAlpha(state)
-        ApplyMicAppearance(cfg, state)
-    }
+    RefreshRemoteMicHudAlpha(cfg, state)
     state.NotifyTrayStatus()
     SetTimer state.reconnectTimerFn, -30
 }
@@ -1572,9 +1454,7 @@ VerifyOrReconnectRemote(cfg, state, reason := "wake") {
     if (IsRemoteUsingBridgeChannel(cfg, state)) {
         SendRemotePingWithWatchdog(cfg, state, "bridge")
     } else if (IsRemoteUsingInternetChannel(cfg, state)) {
-        topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-        mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-        PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", "sync_req", "0"), GetEffectiveRelayBaseUrl(cfg), mockWs)
+        SendRemoteRelaySyncRequest(cfg, state)
     } else {
         SendRemotePingWithWatchdog(cfg, state, "obs")
     }
@@ -1619,9 +1499,7 @@ RemoteHeartbeatTick(cfg, state) {
         return
     }
     if (IsRemoteUsingInternetChannel(cfg, state)) {
-        topic := GetInternetRelayTopic(cfg.InternetPairingCode)
-        mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
-        PublishInternetRelayPacket(topic, BuildOutboundRelayPacket(cfg, state, "remote", "sync_req", "0"), GetEffectiveRelayBaseUrl(cfg), mockWs)
+        SendRemoteRelaySyncRequest(cfg, state)
         return
     }
     ; Lightweight request to keep TCP session alive + verify response within 2500ms
@@ -1743,8 +1621,7 @@ SendRemoteBridgeDeckCommand(cfg, state, actionType) {
         payload := BuildRemoteBridgeDeckJson(cfg, actionType)
         return TrySendWsText(state.obsWs, payload)
     }
-    if (IsRemoteUsingDirectObsChannel(cfg, state) || (IsObject(state) && state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback)) {
-        actLow := StrLower(Trim(String(actionType)))
+    if (IsRemoteDirectObsReady(cfg, state)) {
         if (actLow = "toggle_record")
             return SendObsRequest(state.obsWs, "ToggleRecord", "RemoteToggleRec")
         if (actLow = "pause_record") {
@@ -1777,13 +1654,8 @@ SendRemoteSwitchScene(cfg, state, sceneName) {
         return TrySendWsText(state.obsWs, BuildRemoteBridgeSceneJson(cfg, clean))
     if (IsObject(state) && state.obsConnected && IsObject(state.obsWs)) {
         ok := SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteSwitchScene", '{"sceneName":"' EscapeJsonStr(clean) '"}')
-        if (ok) {
-            if (state.HasOwnProp("activeScene") && state.activeScene != "" && state.activeScene != "Scene" && state.activeScene != clean)
-                state.previousProgramScene := state.activeScene
-            state.activeScene := clean
-            if (state.HasMethod("NotifyTrayStatus"))
-                state.NotifyTrayStatus()
-        }
+        if (ok)
+            CommitRemoteSceneChange(state, clean, true)
         return ok
     }
     return false
@@ -1798,7 +1670,7 @@ SendRemoteTimerCommand(cfg, state, action, durationSec := 0) {
         return _SendRemoteRelayAction(cfg, state, action, String(Integer(durationSec)))
     if (IsRemoteUsingBridgeChannel(cfg, state))
         return TrySendWsText(state.obsWs, BuildRemoteBridgeTimerJson(cfg, action, durationSec))
-    if (IsRemoteUsingDirectObsChannel(cfg, state) || (IsObject(state) && state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback))
+    if (IsRemoteDirectObsReady(cfg, state))
         return ExecuteRemoteLocalTimerCommand(cfg, state, action, durationSec)
     TrayTip("Presenter timer requires a Primary Host Bridge, Direct OBS, or Relay connection.", "PresenterSync Remote", 2)
     return false
@@ -1863,31 +1735,37 @@ CheckRemotePointerEnable(cfg, ThisHotkey) {
     return cfg.EnablePointerMute && !(IsSet(HudSnake) && HudSnake.IsActive) && (Theme.OpenWindows.Count == 0 || !Theme.OpenWindows.Has(WinExist("A")))
 }
 
+_SetRemoteHotkeyState(hk, enabled, handler := "", hotIfFn := "") {
+    clean := Trim(String(hk))
+    if (clean = "" || StrLower(clean) = "none")
+        return false
+    ok := false
+    try {
+        if (IsObject(hotIfFn))
+            HotIf hotIfFn
+        if (enabled && IsObject(handler))
+            Hotkey clean, handler, "On"
+        else
+            Hotkey clean, "Off"
+        ok := true
+    } finally {
+        if (IsObject(hotIfFn))
+            HotIf
+    }
+    return ok
+}
+
 RegisterRemotePointerHotkey(cfg, state) {
     UnregisterRemotePointerHotkey(cfg, state)
-    if (!cfg.EnablePointerMute || cfg.HwMuteHotkey = "" || cfg.HwMuteHotkey = "None")
+    if (!cfg.EnablePointerMute)
         return
-    try {
-        HotIf state.pointerHotIfFn
-        Hotkey cfg.HwMuteHotkey, OnRemoteClickerMute.Bind(cfg, state), "On"
+    if (_SetRemoteHotkeyState(cfg.HwMuteHotkey, true, OnRemoteClickerMute.Bind(cfg, state), state.pointerHotIfFn))
         state.activePointerKey := cfg.HwMuteHotkey
-        HotIf
-    } catch {
-        HotIf
-    }
 }
 
 UnregisterRemotePointerHotkey(cfg, state) {
     keyToClear := (state.activePointerKey != "") ? state.activePointerKey : cfg.HwMuteHotkey
-    if (keyToClear != "" && keyToClear != "None") {
-        try {
-            HotIf state.pointerHotIfFn
-            Hotkey keyToClear, "Off"
-            HotIf
-        } catch {
-            HotIf
-        }
-    }
+    _SetRemoteHotkeyState(keyToClear, false, "", state.pointerHotIfFn)
     state.activePointerKey := ""
 }
 
@@ -1897,59 +1775,33 @@ ExitRemoteApp(*) {
 
 RegisterRemoteAppHotkeys(cfg, state) {
     UnregisterRemoteAppHotkeys(cfg, state)
-    if (cfg.PptHotkey != "" && cfg.PptHotkey != "None") {
-        try {
-            Hotkey cfg.PptHotkey, ToggleRemotePointerMute.Bind(cfg, state), "On"
-            state.activeToggleMuteHk := cfg.PptHotkey
-        }
-    }
-    if (cfg.ExitHotkey != "" && cfg.ExitHotkey != "None") {
-        try {
-            Hotkey cfg.ExitHotkey, ExitRemoteApp, "On"
-            state.activeExitHk := cfg.ExitHotkey
-        }
-    }
-    remoteBindings := [
+    if (_SetRemoteHotkeyState(cfg.PptHotkey, true, ToggleRemotePointerMute.Bind(cfg, state)))
+        state.activeToggleMuteHk := cfg.PptHotkey
+    if (_SetRemoteHotkeyState(cfg.ExitHotkey, true, ExitRemoteApp))
+        state.activeExitHk := cfg.ExitHotkey
+    for _, spec in [
         ["RemoteNextSlideKey", "activeRemoteNextSlideHk", "ppt_next"],
         ["RemotePrevSlideKey", "activeRemotePrevSlideHk", "ppt_prev"],
         ["RemoteTransitionKey", "activeRemoteTransitionHk", "transition_scene"]
-    ]
-    for _, spec in remoteBindings {
+    ] {
         cfgProp := spec[1], stateProp := spec[2], act := spec[3]
         hkVal := cfg.HasOwnProp(cfgProp) ? cfg.%cfgProp% : ""
-        if (hkVal != "" && hkVal != "None") {
-            try {
-                Hotkey hkVal, ((a, *) => SendRemoteBridgeDeckCommand(cfg, state, a)).Bind(act), "On"
-                state.%stateProp% := hkVal
-            }
-        }
+        if (_SetRemoteHotkeyState(hkVal, true, ((a, *) => SendRemoteBridgeDeckCommand(cfg, state, a)).Bind(act)))
+            state.%stateProp% := hkVal
     }
 }
 
 UnregisterRemoteAppHotkeys(cfg, state) {
-    hkToggle := (state.activeToggleMuteHk != "") ? state.activeToggleMuteHk : cfg.PptHotkey
-    if (hkToggle != "" && hkToggle != "None") {
-        try Hotkey hkToggle, "Off"
-    }
-    state.activeToggleMuteHk := ""
-
-    hkExit := (state.activeExitHk != "") ? state.activeExitHk : cfg.ExitHotkey
-    if (hkExit != "" && hkExit != "None") {
-        try Hotkey hkExit, "Off"
-    }
-    state.activeExitHk := ""
-
-    remoteBindings := [
+    for _, spec in [
+        ["PptHotkey", "activeToggleMuteHk"],
+        ["ExitHotkey", "activeExitHk"],
         ["RemoteNextSlideKey", "activeRemoteNextSlideHk"],
         ["RemotePrevSlideKey", "activeRemotePrevSlideHk"],
         ["RemoteTransitionKey", "activeRemoteTransitionHk"]
-    ]
-    for _, spec in remoteBindings {
+    ] {
         cfgProp := spec[1], stateProp := spec[2]
         hkVal := (state.HasOwnProp(stateProp) && state.%stateProp% != "") ? state.%stateProp% : (cfg.HasOwnProp(cfgProp) ? cfg.%cfgProp% : "")
-        if (hkVal != "" && hkVal != "None") {
-            try Hotkey hkVal, "Off"
-        }
+        _SetRemoteHotkeyState(hkVal, false)
         state.%stateProp% := ""
     }
 }
@@ -2114,11 +1966,7 @@ RefreshRemoteHudAppearance(cfg, state) {
     if (cfg.ShowIndicator) {
         state.MicGui.Move(state.savedX, state.savedY, state.baseWidth, state.baseHeight)
         state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", state.savedX, state.savedY, state.baseWidth, state.baseHeight))
-        if (state.isMuted && state.obsConnected) {
-            SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
-        } else {
-            SetTimer state.breathTimerFn, 0
-        }
+        SyncRemoteBreathTimer(cfg, state)
     } else {
         state.MicGui.Hide()
         SetTimer state.breathTimerFn, 0
@@ -2177,72 +2025,104 @@ UpdateRemoteTouchDeckUI(cfg, state) {
     }
 }
 
+CreateThemedRemoteDialog(winKey, title, marginX := 18, marginY := 16, suspendHotkeys := false) {
+    existing := Theme.FocusExistingWindow(winKey)
+    if (IsObject(existing))
+        return { existing: existing, gui: "" }
+    if (suspendHotkeys)
+        Theme.AcquireSuspend()
+    g := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", title)
+    g._closed := false
+    if (marginX >= 0)
+        g.MarginX := marginX
+    if (marginY >= 0)
+        g.MarginY := marginY
+    Theme.ApplyToWindow(g)
+    Theme.NamedWindows[winKey] := g
+    return { existing: "", gui: g }
+}
+
+AddThemedCtrl(guiObj, ctrlType, opts, textOrItems := "", themeType := "", variant := "") {
+    ctrl := (textOrItems != "" || IsObject(textOrItems))
+        ? guiObj.Add(ctrlType, opts, textOrItems)
+        : guiObj.Add(ctrlType, opts)
+    tType := (themeType != "") ? themeType : ctrlType
+    if (variant != "")
+        Theme.RegisterControl(guiObj, ctrl, tType, variant)
+    else
+        Theme.RegisterControl(guiObj, ctrl, tType)
+    return ctrl
+}
+
+BindRemoteDialogClose(guiObj, winKey, releaseSuspend := false, extraCleanupFn := "", cancelBtn := "") {
+    CloseFn(*) {
+        if (guiObj.HasOwnProp("_closed") && guiObj._closed)
+            return
+        guiObj._closed := true
+        if (IsObject(extraCleanupFn))
+            try extraCleanupFn.Call()
+        Theme.UnregisterWindow(guiObj, winKey)
+        if (releaseSuspend)
+            Theme.ReleaseSuspend()
+        guiObj.Destroy()
+    }
+    if (IsObject(cancelBtn))
+        cancelBtn.OnEvent("Click", CloseFn)
+    guiObj.OnEvent("Close", CloseFn)
+    guiObj.OnEvent("Escape", CloseFn)
+    return CloseFn
+}
+
 ShowRemoteTouchDeckGUI(cfg, state, *) {
     winKey := "PresenterSync Remote Quick Deck"
-    existing := Theme.FocusExistingWindow(winKey)
-    if (IsObject(existing)) {
+    dlgRes := CreateThemedRemoteDialog(winKey, winKey, 14, 12, false)
+    if (IsObject(dlgRes.existing)) {
         UpdateRemoteTouchDeckUI(cfg, state)
-        return existing
+        return dlgRes.existing
     }
-
-    deckGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", winKey)
-    deckGui.MarginX := 14
-    deckGui.MarginY := 12
-    Theme.ApplyToWindow(deckGui)
-    Theme.NamedWindows[winKey] := deckGui
+    deckGui := dlgRes.gui
     ApplyWindowCaptureAffinity(deckGui.Hwnd, (IsObject(cfg) && cfg.HasOwnProp("ExcludeFromCapture")) ? cfg.ExcludeFromCapture : true)
 
     deckGui.SetFont("s10 w700", Theme.UiFont)
-    lblHeader := deckGui.Add("Text", "x14 y14 w592 h26", "Connecting...")
-    Theme.RegisterControl(deckGui, lblHeader, "Text")
+    lblHeader := AddThemedCtrl(deckGui, "Text", "x14 y14 w592 h26", "Connecting...")
 
     deckGui.SetFont("s11 w700", Theme.UiFont)
-    btnMute := deckGui.Add("Button", "x14 y50 w290 h52", "MUTE / UNMUTE")
-    btnTrans := deckGui.Add("Button", "x316 y50 w290 h52", "OBS TRANSITION (Preview <-> Program)")
-    Theme.RegisterControl(deckGui, btnMute, "Button", "accent")
-    Theme.RegisterControl(deckGui, btnTrans, "Button")
+    btnMute := AddThemedCtrl(deckGui, "Button", "x14 y50 w290 h52", "MUTE / UNMUTE", "Button", "accent")
+    btnTrans := AddThemedCtrl(deckGui, "Button", "x316 y50 w290 h52", "OBS TRANSITION (Preview <-> Program)")
     btnMute.OnEvent("Click", (*) => (OnRemoteClickerMute(cfg, state, true), UpdateRemoteTouchDeckUI(cfg, state)))
     btnTrans.OnEvent("Click", (*) => SendRemoteBridgeDeckCommand(cfg, state, "transition_scene"))
 
     deckGui.SetFont("s9 w600", Theme.UiFont)
-    lblSlide := deckGui.Add("Text", "x14 y114 w592 h22", "Slide: (No active slideshow)")
-    Theme.RegisterControl(deckGui, lblSlide, "Text", "muted")
+    lblSlide := AddThemedCtrl(deckGui, "Text", "x14 y114 w592 h22", "Slide: (No active slideshow)", "Text", "muted")
 
-    btnPrevSlide := deckGui.Add("Button", "x14 y142 w190 h42", "Prev Slide")
-    btnNextSlide := deckGui.Add("Button", "x215 y142 w190 h42", "Next Slide")
-    btnStartSlide := deckGui.Add("Button", "x416 y142 w190 h42", "Start Slideshow (F5)")
-    for _, sb in [btnPrevSlide, btnNextSlide, btnStartSlide]
-        Theme.RegisterControl(deckGui, sb, "Button")
+    btnPrevSlide := AddThemedCtrl(deckGui, "Button", "x14 y142 w190 h42", "Prev Slide")
+    btnNextSlide := AddThemedCtrl(deckGui, "Button", "x215 y142 w190 h42", "Next Slide")
+    btnStartSlide := AddThemedCtrl(deckGui, "Button", "x416 y142 w190 h42", "Start Slideshow (F5)")
     btnPrevSlide.OnEvent("Click", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_prev"))
     btnNextSlide.OnEvent("Click", (*) => SendRemoteBridgeDeckCommand(cfg, state, "ppt_next"))
     btnStartSlide.OnEvent("Click", (*) => SendRemoteBridgeDeckCommand(cfg, state, "slide_start"))
 
-    lblSceneHdr := deckGui.Add("Text", "x14 y198 w592 h20", "Scene Switcher:")
-    Theme.RegisterControl(deckGui, lblSceneHdr, "Text")
+    AddThemedCtrl(deckGui, "Text", "x14 y198 w592 h20", "Scene Switcher:")
 
     sceneBtns := []
     Loop 6 {
         idx := A_Index
         bx := 14 + (idx - 1) * 100
-        sBtn := deckGui.Add("Button", "x" bx " y222 w94 h42 Hidden", "Scene " idx)
-        Theme.RegisterControl(deckGui, sBtn, "Button")
+        sBtn := AddThemedCtrl(deckGui, "Button", "x" bx " y222 w94 h42 Hidden", "Scene " idx)
         sBtn.OnEvent("Click", ((i, *) => (
             (IsObject(state.scenes) && i <= state.scenes.Length) ? SendRemoteSwitchScene(cfg, state, state.scenes[i]) : 0
         )).Bind(idx))
         sceneBtns.Push(sBtn)
     }
 
-    lblTimer := deckGui.Add("Text", "x14 y278 w592 h22", "Timer: 10:00 (stopped)")
-    Theme.RegisterControl(deckGui, lblTimer, "Text")
+    lblTimer := AddThemedCtrl(deckGui, "Text", "x14 y278 w592 h22", "Timer: 10:00 (stopped)")
 
-    btnStandby := deckGui.Add("Button", "x14 y304 w116 h42", "Standby (BRB)")
-    btnT5 := deckGui.Add("Button", "x138 y304 w82 h42", "+5m")
-    btnT10 := deckGui.Add("Button", "x228 y304 w82 h42", "+10m")
-    btnT15 := deckGui.Add("Button", "x318 y304 w82 h42", "+15m")
-    btnTimerPause := deckGui.Add("Button", "x408 y304 w104 h42", "Pause")
-    btnTimerReset := deckGui.Add("Button", "x520 y304 w86 h42", "Reset")
-    for _, tb in [btnStandby, btnT5, btnT10, btnT15, btnTimerPause, btnTimerReset]
-        Theme.RegisterControl(deckGui, tb, "Button")
+    btnStandby := AddThemedCtrl(deckGui, "Button", "x14 y304 w116 h42", "Standby (BRB)")
+    btnT5 := AddThemedCtrl(deckGui, "Button", "x138 y304 w82 h42", "+5m")
+    btnT10 := AddThemedCtrl(deckGui, "Button", "x228 y304 w82 h42", "+10m")
+    btnT15 := AddThemedCtrl(deckGui, "Button", "x318 y304 w82 h42", "+15m")
+    btnTimerPause := AddThemedCtrl(deckGui, "Button", "x408 y304 w104 h42", "Pause")
+    btnTimerReset := AddThemedCtrl(deckGui, "Button", "x520 y304 w86 h42", "Reset")
     btnStandby.OnEvent("Click", (*) => (SendRemoteBridgeDeckCommand(cfg, state, "toggle_standby"), UpdateRemoteTouchDeckUI(cfg, state)))
     btnT5.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, "timer_start", 300))
     btnT10.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, "timer_start", 600))
@@ -2250,37 +2130,22 @@ ShowRemoteTouchDeckGUI(cfg, state, *) {
     btnTimerPause.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, (state.timerState = "paused") ? "timer_start" : "timer_pause", 0))
     btnTimerReset.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, "timer_reset", state.timerPresetSec))
 
-    btnNudge1 := deckGui.Add("Button", "x14 y360 w190 h40", "2 min left")
-    btnNudge2 := deckGui.Add("Button", "x215 y360 w190 h40", "Wrap up")
-    btnNudge3 := deckGui.Add("Button", "x416 y360 w190 h40", "Check Mic")
-    for _, nb in [btnNudge1, btnNudge2, btnNudge3]
-        Theme.RegisterControl(deckGui, nb, "Button")
-    btnNudge1.OnEvent("Click", (*) => SendRemoteStageNudge(cfg, state, "2 min left"))
-    btnNudge2.OnEvent("Click", (*) => SendRemoteStageNudge(cfg, state, "Wrap up"))
-    btnNudge3.OnEvent("Click", (*) => SendRemoteStageNudge(cfg, state, "Check Mic"))
+    for idx, nudgeTxt in ["2 min left", "Wrap up", "Check Mic"] {
+        nx := (idx == 1) ? 14 : ((idx == 2) ? 215 : 416)
+        nBtn := AddThemedCtrl(deckGui, "Button", "x" nx " y360 w190 h40", nudgeTxt)
+        nBtn.OnEvent("Click", ((t, *) => SendRemoteStageNudge(cfg, state, t)).Bind(nudgeTxt))
+    }
 
-    edNudge := deckGui.Add("Edit", "x14 y412 w444 h40", "")
-    btnSendNudge := deckGui.Add("Button", "x468 y412 w138 h40", "Send Nudge")
-    Theme.RegisterControl(deckGui, edNudge, "Edit")
-    Theme.RegisterControl(deckGui, btnSendNudge, "Button")
+    edNudge := AddThemedCtrl(deckGui, "Edit", "x14 y412 w444 h40", "")
+    btnSendNudge := AddThemedCtrl(deckGui, "Button", "x468 y412 w138 h40", "Send Nudge")
     btnSendNudge.OnEvent("Click", (*) => (
         (Trim(edNudge.Value) != "") ? (SendRemoteStageNudge(cfg, state, Trim(edNudge.Value)), edNudge.Value := "") : 0
     ))
 
-    btnCloseDeck := deckGui.Add("Button", "x486 y466 w120 h40", "Close")
-    Theme.RegisterControl(deckGui, btnCloseDeck, "Button")
-
-    CloseQuickDeck(*) {
-        Theme.UnregisterWindow(deckGui, winKey)
-        if (IsObject(state)) {
-            state.quickDeckGui := ""
-            state.quickDeckCtrls := ""
-        }
-        deckGui.Destroy()
-    }
-    btnCloseDeck.OnEvent("Click", CloseQuickDeck)
-    deckGui.OnEvent("Close", CloseQuickDeck)
-    deckGui.OnEvent("Escape", CloseQuickDeck)
+    btnCloseDeck := AddThemedCtrl(deckGui, "Button", "x486 y466 w120 h40", "Close")
+    BindRemoteDialogClose(deckGui, winKey, false, (*) => (
+        IsObject(state) ? (state.quickDeckGui := "", state.quickDeckCtrls := "") : 0
+    ), btnCloseDeck)
 
     if (IsObject(state)) {
         state.quickDeckGui := deckGui
@@ -2555,45 +2420,33 @@ SetRemoteTheme(cfg, state, themeMenu, mode, *) {
 }
 
 ShowCreateRemoteShortcutUI(cfg, state := "", *) {
-    existing := Theme.FocusExistingWindow("Create Remote Instance Shortcut")
-    if IsObject(existing)
-        return existing
-
-    Theme.AcquireSuspend()
-
-    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Create Remote Instance Shortcut")
-    dlg._closed := false
-    dlg.MarginX := 20
-    dlg.MarginY := 16
-    Theme.ApplyToWindow(dlg)
-    Theme.NamedWindows["Create Remote Instance Shortcut"] := dlg
+    dlgRes := CreateThemedRemoteDialog("Create Remote Instance Shortcut", "Create Remote Instance Shortcut", 20, 16, true)
+    if IsObject(dlgRes.existing)
+        return dlgRes.existing
+    dlg := dlgRes.gui
 
     dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360", "Quick-Launch Desktop Shortcut"), "Text")
+    AddThemedCtrl(dlg, "Text", "xm w360", "Quick-Launch Desktop Shortcut")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 h32 y+4", "Creates a Desktop .lnk launching PresenterSync Remote for a dedicated Smart Board or classroom instance."), "Text", "muted")
+    AddThemedCtrl(dlg, "Text", "xm w360 h32 y+4", "Creates a Desktop .lnk launching PresenterSync Remote for a dedicated Smart Board or classroom instance.", "Text", "muted")
 
     curInst := (IsObject(cfg) && cfg.HasOwnProp("InstanceName")) ? cfg.InstanceName : ""
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Instance Name (Optional, e.g. SmartBoard-101):"), "Text")
+    AddThemedCtrl(dlg, "Text", "xm w360 y+10", "Instance Name (Optional, e.g. SmartBoard-101):")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    edInst := dlg.Add("Edit", "xm w360 y+4", curInst)
-    Theme.RegisterControl(dlg, edInst, "Edit")
+    edInst := AddThemedCtrl(dlg, "Edit", "xm w360 y+4", curInst)
     DllCall("SendMessage", "Ptr", edInst.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "SmartBoard-Room101 (leave blank for Default)")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Desktop Shortcut Filename:"), "Text")
+    AddThemedCtrl(dlg, "Text", "xm w360 y+10", "Desktop Shortcut Filename:")
     dlg.SetFont("s9 w400", Theme.UiFont)
     defaultLnkName := RegExReplace(GetDefaultRemoteShortcutFilename(curInst), "i)\.lnk$", "")
-    edLnkName := dlg.Add("Edit", "xm w360 y+4", defaultLnkName)
-    Theme.RegisterControl(dlg, edLnkName, "Edit")
+    edLnkName := AddThemedCtrl(dlg, "Edit", "xm w360 y+4", defaultLnkName)
 
-    chkPinIni := dlg.Add("Checkbox", "xm w360 y+10", "Include explicit -Config INI path in shortcut")
-    Theme.RegisterControl(dlg, chkPinIni, "Checkbox")
+    chkPinIni := AddThemedCtrl(dlg, "Checkbox", "xm w360 y+10", "Include explicit -Config INI path in shortcut")
 
     initSpec := BuildRemoteShortcutLaunchSpec(curInst, "")
-    lblPreview := dlg.Add("Text", "xm w360 h34 y+8", "Args: " (initSpec.args != "" ? initSpec.args : "(default instance)"))
-    Theme.RegisterControl(dlg, lblPreview, "Text", "muted")
+    lblPreview := AddThemedCtrl(dlg, "Text", "xm w360 h34 y+8", "Args: " (initSpec.args != "" ? initSpec.args : "(default instance)"), "Text", "muted")
 
     userEditedLnk := false
     UpdatePreview(*) {
@@ -2608,19 +2461,9 @@ ShowCreateRemoteShortcutUI(cfg, state := "", *) {
     edLnkName.OnEvent("Change", (*) => (userEditedLnk := true))
     chkPinIni.OnEvent("Click", UpdatePreview)
 
-    btnCreate := dlg.Add("Button", "xm w174 h32 y+14 Default", "Create Shortcut")
-    btnCancel := dlg.Add("Button", "x+12 yp w174 h32", "Cancel")
-    Theme.RegisterControl(dlg, btnCreate, "Button", "accent")
-    Theme.RegisterControl(dlg, btnCancel, "Button")
-
-    CloseDlg(*) {
-        if (dlg._closed)
-            return
-        dlg._closed := true
-        Theme.UnregisterWindow(dlg, "Create Remote Instance Shortcut")
-        Theme.ReleaseSuspend()
-        dlg.Destroy()
-    }
+    btnCreate := AddThemedCtrl(dlg, "Button", "xm w174 h32 y+14 Default", "Create Shortcut", "Button", "accent")
+    btnCancel := AddThemedCtrl(dlg, "Button", "x+12 yp w174 h32", "Cancel")
+    CloseDlg := BindRemoteDialogClose(dlg, "Create Remote Instance Shortcut", true, "", btnCancel)
 
     OnCreateClick(*) {
         res := CreateRemoteInstanceDesktopShortcut(cfg, Trim(edInst.Value), "", Trim(edLnkName.Value), !!chkPinIni.Value)
@@ -2634,9 +2477,6 @@ ShowCreateRemoteShortcutUI(cfg, state := "", *) {
     }
 
     btnCreate.OnEvent("Click", OnCreateClick)
-    btnCancel.OnEvent("Click", CloseDlg)
-    dlg.OnEvent("Close", CloseDlg)
-    dlg.OnEvent("Escape", CloseDlg)
     dlg.Show()
     return dlg
 }
@@ -2788,27 +2628,22 @@ BuildRemoteHelpStatusLine(cfg, state) {
 }
 
 ShowRemoteHelpUI(cfg, state, *) {
-    existing := Theme.FocusExistingWindow("RemoteHelpWindow")
-    if IsObject(existing) {
+    dlgRes := CreateThemedRemoteDialog("RemoteHelpWindow", "PresenterSync Remote v" UIConstants.APP_VERSION " - Setup & Help Guide", -1, -1, false)
+    if IsObject(dlgRes.existing) {
         if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
             try state.refreshHelpFn.Call()
-        return existing
+        return dlgRes.existing
     }
-
-    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Remote v" UIConstants.APP_VERSION " - Setup & Help Guide")
-    Theme.ApplyToWindow(helpGui)
-    Theme.NamedWindows["RemoteHelpWindow"] := helpGui
+    helpGui := dlgRes.gui
 
     ; --- Persistent Top Search Bar ---
     helpGui.SetFont("s9 w600 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x14 y15 w84 h22", "Search Help:"), "Text")
+    AddThemedCtrl(helpGui, "Text", "x14 y15 w84 h22", "Search Help:")
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    edRemSearch := helpGui.Add("Edit", "x102 y12 w416 h26")
-    Theme.RegisterControl(helpGui, edRemSearch, "Edit")
+    edRemSearch := AddThemedCtrl(helpGui, "Edit", "x102 y12 w416 h26")
     DllCall("SendMessage", "Ptr", edRemSearch.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "Search Remote HUD, Pointer Controls, Pairing Code, Tray menus...")
-    btnRemClear := helpGui.Add("Button", "x526 y12 w68 h26", "Clear")
-    Theme.RegisterControl(helpGui, btnRemClear, "Button")
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x602 y15 w124 h22 Right", "Type to search"), "Text", "muted")
+    btnRemClear := AddThemedCtrl(helpGui, "Button", "x526 y12 w68 h26", "Clear")
+    AddThemedCtrl(helpGui, "Text", "x602 y15 w124 h22 Right", "Type to search", "Text", "muted")
 
     tabNames := ["Mic HUD Guide", "Setup Guide", "Help Search"]
     helpGui.SetFont("s9 w600 norm", Theme.UiFont)
@@ -2819,7 +2654,7 @@ ShowRemoteHelpUI(cfg, state, *) {
     ; --- TAB 1: REMOTE 1-TIER MIC HUD ANATOMY ---
     tabs.UseTab(1)
     helpGui.SetFont("s10 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(helpGui, helpGui.Add("Text", "x30 y94 w680 h22", "Interactive Remote 1-Tier Mic HUD Guide - Click any state or callout [1]-[4]:"), "Text", "tabText")
+    AddThemedCtrl(helpGui, "Text", "x30 y94 w680 h22", "Interactive Remote 1-Tier Mic HUD Guide - Click any state or callout [1]-[4]:", "Text", "tabText")
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
 
     remAnatomy := GetRemoteHudAnatomyItems()
@@ -2829,9 +2664,7 @@ ShowRemoteHelpUI(cfg, state, *) {
     remBtns := []
     for i, item in remAnatomy {
         bx := 30 + (i - 1) * 172
-        bCtrl := helpGui.Add("Button", Format("x{} y322 w164 h28", bx), StrReplace(item.tag, "&", "&&"))
-        Theme.RegisterControl(helpGui, bCtrl, "Button", "tabButton")
-        remBtns.Push(bCtrl)
+        remBtns.Push(AddThemedCtrl(helpGui, "Button", Format("x{} y322 w164 h28", bx), StrReplace(item.tag, "&", "&&"), "Button", "tabButton"))
     }
 
     edRemHudDetail := AddHelpGuideEdit(helpGui, 30, 356, 680, 114, "")
@@ -2944,28 +2777,18 @@ ShowRemoteHelpUI(cfg, state, *) {
     )
 
     helpGui.SetFont("s9 w400 norm", Theme.UiFont)
-    btnConn := helpGui.Add("Button", "x14 y494 w172 h34", "Change Connection...")
-    btnKey := helpGui.Add("Button", "x198 y494 w164 h34", "Change Mute Key...")
-    btnSc := helpGui.Add("Button", "x374 y494 w174 h34", "Edit App Shortcuts...")
-    btnClose := helpGui.Add("Button", "x590 y494 w136 h34 Default", "Close")
-    Theme.RegisterControl(helpGui, btnConn, "Button", "accent")
-    Theme.RegisterControl(helpGui, btnKey, "Button")
-    Theme.RegisterControl(helpGui, btnSc, "Button")
-    Theme.RegisterControl(helpGui, btnClose, "Button")
+    btnConn := AddThemedCtrl(helpGui, "Button", "x14 y494 w172 h34", "Change Connection...", "Button", "accent")
+    btnKey := AddThemedCtrl(helpGui, "Button", "x198 y494 w164 h34", "Change Mute Key...")
+    btnSc := AddThemedCtrl(helpGui, "Button", "x374 y494 w174 h34", "Edit App Shortcuts...")
+    btnClose := AddThemedCtrl(helpGui, "Button", "x590 y494 w136 h34 Default", "Close")
 
-    CloseRemoteHelp(*) {
-        if (IsObject(state) && state.HasOwnProp("refreshHelpFn"))
-            state.refreshHelpFn := ""
-        helpGui._onThemeRefresh := ""
-        Theme.UnregisterWindow(helpGui, "RemoteHelpWindow")
-        helpGui.Destroy()
-    }
     btnConn.OnEvent("Click", (*) => ShowRemoteConnectionUI(cfg, state, false))
     btnKey.OnEvent("Click", (*) => ChangeRemotePointerKeyUI(cfg, state))
     btnSc.OnEvent("Click", (*) => ChangeRemoteAppHotkeysUI(cfg, state))
-    btnClose.OnEvent("Click", CloseRemoteHelp)
-    helpGui.OnEvent("Close", CloseRemoteHelp)
-    helpGui.OnEvent("Escape", CloseRemoteHelp)
+    BindRemoteDialogClose(helpGui, "RemoteHelpWindow", false, (*) => (
+        (IsObject(state) && state.HasOwnProp("refreshHelpFn")) ? (state.refreshHelpFn := "") : 0,
+        helpGui._onThemeRefresh := ""
+    ), btnClose)
 
     helpGui.Show("w740 h540 Center")
     btnClose.Focus()
@@ -2973,34 +2796,29 @@ ShowRemoteHelpUI(cfg, state, *) {
 }
 
 ShowRemoteAboutUI(cfg := "", state := "", *) {
-    existing := Theme.FocusExistingWindow("AboutRemoteWindow")
-    if IsObject(existing)
-        return existing
-
-    aboutGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "About PresenterSync Remote")
-    aboutGui.MarginX := 18
-    aboutGui.MarginY := 16
-    Theme.ApplyToWindow(aboutGui)
-    Theme.NamedWindows["AboutRemoteWindow"] := aboutGui
+    dlgRes := CreateThemedRemoteDialog("AboutRemoteWindow", "About PresenterSync Remote", 18, 16, false)
+    if IsObject(dlgRes.existing)
+        return dlgRes.existing
+    aboutGui := dlgRes.gui
 
     iconSource := A_IsCompiled ? A_ScriptFullPath : (FileExist(A_ScriptDir "\assets\PresenterSyncRemote.ico") ? A_ScriptDir "\assets\PresenterSyncRemote.ico" : A_ScriptDir "\..\assets\PresenterSyncRemote.ico")
     if FileExist(iconSource)
         aboutGui.Add("Picture", "x203 y16 w64 h64", iconSource)
 
     aboutGui.SetFont("s16 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y88 w430 h30 Center", "PresenterSync Remote"), "Text")
+    AddThemedCtrl(aboutGui, "Text", "x20 y88 w430 h30 Center", "PresenterSync Remote")
 
     aboutGui.SetFont("s10 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y120 w430 h20 Center", "Version " UIConstants.APP_VERSION "  -  Remote Companion Edition"), "Text", "accent")
+    AddThemedCtrl(aboutGui, "Text", "x20 y120 w430 h20 Center", "Version " UIConstants.APP_VERSION "  -  Remote Companion Edition", "Text", "accent")
 
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y142 w430 h20 Center", "Lightweight 1-Tier Mic Companion for Smart Boards & Secondary PCs"), "Text", "muted")
+    AddThemedCtrl(aboutGui, "Text", "x20 y142 w430 h20 Center", "Lightweight 1-Tier Mic Companion for Smart Boards & Secondary PCs", "Text", "muted")
 
     aboutGui.SetFont("s9 w600 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y164 w430 h18 Center", "Created by Saabith Jiffry"), "Text")
+    AddThemedCtrl(aboutGui, "Text", "x20 y164 w430 h18 Center", "Created by Saabith Jiffry")
 
     aboutGui.SetFont("s9 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(aboutGui, aboutGui.Add("Text", "x20 y192 w430 h18", "Included Remote Companion Capabilities & Scope:"), "Text")
+    AddThemedCtrl(aboutGui, "Text", "x20 y192 w430 h18", "Included Remote Companion Capabilities & Scope:")
 
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
     remCapsText := "Streamlined companion engineered strictly for Smart Boards & secondary PCs.`r`n`r`n"
@@ -3016,30 +2834,19 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
     AddHelpGuideEdit(aboutGui, 20, 214, 430, 214, remCapsText)
 
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
-    gitBtn := aboutGui.Add("Button", "x20 y440 w208 h30", "GitHub Repo")
-    Theme.RegisterControl(aboutGui, gitBtn, "Button")
+    gitBtn := AddThemedCtrl(aboutGui, "Button", "x20 y440 w208 h30", "GitHub Repo")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    updBtn := aboutGui.Add("Button", "x242 y440 w208 h30", "Check for Updates")
-    Theme.RegisterControl(aboutGui, updBtn, "Button")
+    updBtn := AddThemedCtrl(aboutGui, "Button", "x242 y440 w208 h30", "Check for Updates")
     updBtn.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync_Remote.exe", cfg))
 
-    helpBtn := aboutGui.Add("Button", "x20 y478 w208 h30", "Open Help Guide")
-    Theme.RegisterControl(aboutGui, helpBtn, "Button")
-    CloseAbout(*) {
-        Theme.UnregisterWindow(aboutGui, "AboutRemoteWindow")
-        aboutGui.Destroy()
-    }
+    helpBtn := AddThemedCtrl(aboutGui, "Button", "x20 y478 w208 h30", "Open Help Guide")
+    closeBtn := AddThemedCtrl(aboutGui, "Button", "x242 y478 w208 h30 Default", "Close")
+    CloseAbout := BindRemoteDialogClose(aboutGui, "AboutRemoteWindow", false, "", closeBtn)
     if IsObject(cfg)
         helpBtn.OnEvent("Click", (*) => (CloseAbout(), ShowRemoteHelpUI(cfg, state)))
     else
         helpBtn.Enabled := false
-
-    closeBtn := aboutGui.Add("Button", "x242 y478 w208 h30 Default", "Close")
-    Theme.RegisterControl(aboutGui, closeBtn, "Button")
-    closeBtn.OnEvent("Click", CloseAbout)
-    aboutGui.OnEvent("Close", CloseAbout)
-    aboutGui.OnEvent("Escape", CloseAbout)
 
     aboutGui.Show("w470 h524 Center")
     closeBtn.Focus()
@@ -3047,36 +2854,25 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
 }
 
 ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
-    existing := Theme.FocusExistingWindow("OBS Remote Connection")
-    if IsObject(existing)
-        return existing
-
-    Theme.AcquireSuspend()
-
-    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "OBS Remote Connection")
-    dlg._closed := false
+    dlgRes := CreateThemedRemoteDialog("OBS Remote Connection", "OBS Remote Connection", 20, 16, true)
+    if IsObject(dlgRes.existing)
+        return dlgRes.existing
+    dlg := dlgRes.gui
     dlg._testSeq := 0
     dlg._testWs := ""
     dlg._testTimer := ""
-    dlg.MarginX := 20
-    dlg.MarginY := 16
-    Theme.ApplyToWindow(dlg)
-    Theme.NamedWindows["OBS Remote Connection"] := dlg
 
     dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360", "Connect to Primary Streaming Host"), "Text")
+    AddThemedCtrl(dlg, "Text", "xm w360", "Connect to Primary Streaming Host")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+4", "Choose Same Router (LAN) or Different Networks (Over the Internet):"), "Text", "muted")
+    AddThemedCtrl(dlg, "Text", "xm w360 y+4", "Choose Same Router (LAN) or Different Networks (Over the Internet):", "Text", "muted")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "Saved Host Profiles (Room Switching):"), "Text")
+    AddThemedCtrl(dlg, "Text", "xm w360 y+8", "Saved Host Profiles (Room Switching):")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    ddlProfiles := dlg.Add("DropDownList", "xm w210", [])
-    Theme.RegisterControl(dlg, ddlProfiles, "DropDownList")
-    btnSaveProf := dlg.Add("Button", "x+6 yp w72 h24", "Save Profile")
-    btnDelProf := dlg.Add("Button", "x+6 yp w66 h24", "Delete")
-    Theme.RegisterControl(dlg, btnSaveProf, "Button")
-    Theme.RegisterControl(dlg, btnDelProf, "Button")
+    ddlProfiles := AddThemedCtrl(dlg, "DropDownList", "xm w210", [])
+    btnSaveProf := AddThemedCtrl(dlg, "Button", "x+6 yp w72 h24", "Save Profile")
+    btnDelProf := AddThemedCtrl(dlg, "Button", "x+6 yp w66 h24", "Delete")
 
     RefreshProfilesCombo(selectName := "") {
         ddlProfiles.Delete()
@@ -3098,86 +2894,62 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     RefreshProfilesCombo()
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+10", "Network Mode:"), "Text")
+    AddThemedCtrl(dlg, "Text", "xm w360 y+10", "Network Mode:")
     dlg.SetFont("s9 w400", Theme.UiFont)
     netChoice := (cfg.NetworkMode = "Internet") ? 2 : 1
-    ddlNetMode := dlg.Add("DropDownList", "xm w360 Choose" netChoice, [
+    ddlNetMode := AddThemedCtrl(dlg, "DropDownList", "xm w360 Choose" netChoice, [
         "1: Same Router / Local Wi-Fi or Ethernet (LAN - Default)",
         "2: Different Networks / Over the Internet (WAN Relay)"
     ])
-    Theme.RegisterControl(dlg, ddlNetMode, "DropDownList")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    lblSession := dlg.Add("Text", "xm w360 y+10", "Host Bridge Session Code (Multi-Remote / Auto-Find):")
-    Theme.RegisterControl(dlg, lblSession, "Text")
+    lblSession := AddThemedCtrl(dlg, "Text", "xm w360 y+10", "Host Bridge Session Code (Multi-Remote / Auto-Find):")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editSession := dlg.Add("Edit", "xm w170", cfg.SessionPairingCode)
-    Theme.RegisterControl(dlg, editSession, "Edit")
+    editSession := AddThemedCtrl(dlg, "Edit", "xm w170", cfg.SessionPairingCode)
     DllCall("SendMessage", "Ptr", editSession.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "e.g. K7M-9P2")
-    editBridgePort := dlg.Add("Edit", "x+8 yp w54", cfg.BridgePort)
-    Theme.RegisterControl(dlg, editBridgePort, "Edit")
-    btnPairCode := dlg.Add("Button", "x+8 yp w120 h24", "Pair by Code")
-    Theme.RegisterControl(dlg, btnPairCode, "Button")
+    editBridgePort := AddThemedCtrl(dlg, "Edit", "x+8 yp w54", cfg.BridgePort)
+    btnPairCode := AddThemedCtrl(dlg, "Button", "x+8 yp w120 h24", "Pair by Code")
     dlg._pairedToken := cfg.SessionToken
     dlg._pairedCode := cfg.SessionPairingCode
     dlg._pairedHostUuid := cfg.HasOwnProp("PairedHostUuid") ? cfg.PairedHostUuid : ""
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    lblPair := dlg.Add("Text", "xm w360 y+10", "Internet Pairing Code (Optional Fallback / WAN):")
-    Theme.RegisterControl(dlg, lblPair, "Text")
+    lblPair := AddThemedCtrl(dlg, "Text", "xm w360 y+10", "Internet Pairing Code (Optional Fallback / WAN):")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editPair := dlg.Add("Edit", "xm w360", cfg.InternetPairingCode)
-    Theme.RegisterControl(dlg, editPair, "Edit")
+    editPair := AddThemedCtrl(dlg, "Edit", "xm w360", cfg.InternetPairingCode)
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    lblRelayUrl := dlg.Add("Text", "xm w360 y+8", "Relay Server URL (ntfy, default https://ntfy.sh):")
-    Theme.RegisterControl(dlg, lblRelayUrl, "Text")
+    lblRelayUrl := AddThemedCtrl(dlg, "Text", "xm w360 y+8", "Relay Server URL (ntfy, default https://ntfy.sh):")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editRelayUrl := dlg.Add("Edit", "xm w360", GetEffectiveRelayBaseUrl(cfg))
-    Theme.RegisterControl(dlg, editRelayUrl, "Edit")
+    editRelayUrl := AddThemedCtrl(dlg, "Edit", "xm w360", GetEffectiveRelayBaseUrl(cfg))
     DllCall("SendMessage", "Ptr", editRelayUrl.Hwnd, "UInt", 0x1501, "Ptr", 1, "WStr", "https://ntfy.sh")
 
     dlg.SetFont("s9 w600", Theme.UiFont)
-    lblHost := dlg.Add("Text", "xm w360 y+8", "LAN Host Address (e.g. STUDIO-PC.local, 192.168.1.50):")
-    Theme.RegisterControl(dlg, lblHost, "Text")
+    lblHost := AddThemedCtrl(dlg, "Text", "xm w360 y+8", "LAN Host Address (e.g. STUDIO-PC.local, 192.168.1.50):")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    editHost := dlg.Add("Edit", "xm w270", cfg.HostAddress)
-    Theme.RegisterControl(dlg, editHost, "Edit")
-    btnScanLan := dlg.Add("Button", "x+8 yp w82 h24", "Scan LAN")
-    Theme.RegisterControl(dlg, btnScanLan, "Button")
+    editHost := AddThemedCtrl(dlg, "Edit", "xm w270", cfg.HostAddress)
+    btnScanLan := AddThemedCtrl(dlg, "Button", "x+8 yp w82 h24", "Scan LAN")
 
-    lblPort := dlg.Add("Text", "xm w360 y+8", "OBS WebSocket Port:")
-    Theme.RegisterControl(dlg, lblPort, "Text")
-    editPort := dlg.Add("Edit", "xm w360", cfg.HostPort)
-    Theme.RegisterControl(dlg, editPort, "Edit")
+    lblPort := AddThemedCtrl(dlg, "Text", "xm w360 y+8", "OBS WebSocket Port:")
+    editPort := AddThemedCtrl(dlg, "Edit", "xm w360", cfg.HostPort)
 
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "OBS WebSocket Password (Optional):"), "Text")
-    editPw := dlg.Add("Edit", "xm w360 Password", cfg.ObsPassword)
-    Theme.RegisterControl(dlg, editPw, "Edit")
+    AddThemedCtrl(dlg, "Text", "xm w360 y+8", "OBS WebSocket Password (Optional):")
+    editPw := AddThemedCtrl(dlg, "Edit", "xm w360 Password", cfg.ObsPassword)
 
-    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w360 y+8", "Exact Audio Source Name:"), "Text")
-    editMic := dlg.Add("Edit", "xm w360", cfg.TargetMicName)
-    Theme.RegisterControl(dlg, editMic, "Edit")
+    AddThemedCtrl(dlg, "Text", "xm w360 y+8", "Exact Audio Source Name:")
+    editMic := AddThemedCtrl(dlg, "Edit", "xm w360", cfg.TargetMicName)
 
     UpdateModeFields(*) {
         isInternet := (ddlNetMode.Value == 2)
-        lblSession.Enabled := !isInternet
-        editSession.Enabled := !isInternet
-        editBridgePort.Enabled := !isInternet
-        btnPairCode.Enabled := !isInternet
+        for _, ctrl in [lblSession, editSession, editBridgePort, btnPairCode, lblHost, editHost, btnScanLan, lblPort, editPort]
+            ctrl.Enabled := !isInternet
         lblPair.Enabled := true
         editPair.Enabled := true
-        lblHost.Enabled := !isInternet
-        editHost.Enabled := !isInternet
-        btnScanLan.Enabled := !isInternet
-        lblPort.Enabled := !isInternet
-        editPort.Enabled := !isInternet
     }
     ddlNetMode.OnEvent("Change", UpdateModeFields)
     UpdateModeFields()
 
-    statusTxt := dlg.Add("Text", "xm w360 y+10 Center", "Status: Ready to pair, test, or connect")
-    Theme.RegisterControl(dlg, statusTxt, "Text", "muted")
+    statusTxt := AddThemedCtrl(dlg, "Text", "xm w360 y+10 Center", "Status: Ready to pair, test, or connect", "Text", "muted")
 
     ApplyPairResultToDialog(pairRes) {
         if (pairRes.HasOwnProp("hostsCsv") && pairRes.hostsCsv != "")
@@ -3237,16 +3009,16 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
             bpIn := "4456"
         btnPairCode.Enabled := false
         statusTxt.Value := "Discovering Primary Host & pairing..."
-        pairRes := PairRemoteWithHostBridge(Trim(editHost.Value), bpIn, Trim(editSession.Value), cfg.DeviceId, GetRemoteDisplayDeviceName(cfg))
+        codePairRes := PairRemoteWithHostBridge(Trim(editHost.Value), bpIn, Trim(editSession.Value), cfg.DeviceId, GetRemoteDisplayDeviceName(cfg))
         btnPairCode.Enabled := true
-        if (!pairRes.ok) {
-            statusTxt.Value := "✕ " pairRes.error
+        if (!codePairRes.ok) {
+            statusTxt.Value := "✕ " codePairRes.error
             return
         }
-        ApplyPairResultToDialog(pairRes)
+        ApplyPairResultToDialog(codePairRes)
         ddlNetMode.Choose(1)
         UpdateModeFields()
-        statusTxt.Value := "✓ Paired to " (pairRes.hostName != "" ? pairRes.hostName : pairRes.host) " (" pairRes.host ":" pairRes.bridgePort ")!"
+        statusTxt.Value := "✓ Paired to " (codePairRes.hostName != "" ? codePairRes.hostName : codePairRes.host) " (" codePairRes.host ":" codePairRes.bridgePort ")!"
     }
     btnPairCode.OnEvent("Click", PairByCodeAction)
 
@@ -3432,21 +3204,10 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         CleanupDialog(false)
 
         ; Disconnect existing and trigger fresh failover connection
-        SetTimer state.reconnectTimerFn, 0
-        SetTimer state.heartbeatTimerFn, 0
-        CancelRemotePongWatchdog(state)
-        CancelRemoteBridgeHandshakeWatchdog(state)
-        if (state.HasOwnProp("recTickFn") && IsObject(state.recTickFn))
-            SetTimer state.recTickFn, 0
-        SetTimer state.breathTimerFn, 0
+        StopRemoteSessionTimers(state, true)
         state.animSeq += 1
         state.connGen += 1
-        if IsObject(state.obsWs) {
-            oldWs := state.obsWs
-            state.obsWs := ""
-            oldWs._psClosed := true
-            try oldWs.shutdown()
-        }
+        CloseRemoteWebSocket(state, false)
         state.obsConnected := false
         state.usingBridge := false
         state.usingDirectObsFallback := false
@@ -3455,10 +3216,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         state.candidateIndex := 1
         state.usingRelayFallback := false
         state.candidates := []
-        if (IsObject(state.MicGui)) {
-            state.currentAlpha := GetRemoteEffectiveAlpha(state)
-            ApplyMicAppearance(cfg, state)
-        }
+        RefreshRemoteMicHudAlpha(cfg, state)
         state.NotifyTrayStatus()
         SetTimer state.reconnectTimerFn, -20
     }
@@ -3676,9 +3434,17 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
                     message: OnTestMsg,
                     close: OnTestClose
                 }, true, "", 2000)
+                if (IsCancelled()) {
+                    SafeCloseWebSocketDeferred(probeWs)
+                    return
+                }
                 dlg._testWs := probeWs
             } catch {
                 ClearProbeTimer()
+                if (IsObject(probeWs))
+                    SafeCloseWebSocketDeferred(probeWs)
+                if (IsObject(dlg._testWs))
+                    SafeCloseWebSocketDeferred(dlg._testWs)
                 dlg._testWs := ""
                 if (IsCancelled())
                     return
