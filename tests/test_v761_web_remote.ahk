@@ -35,14 +35,20 @@ Assert(name, cond, detail := "") {
     }
 }
 
-; 1. Pure HTML builder checks (#1 zero \x27, #2 1.25x scale, #7 favicon/About/Disconnect, #11 Web Snake)
-html := BuildWebRemoteHtml("8.1.0", 14472)
+; 1. Pure HTML & /arcade.js builder checks (#1 zero \x27, #2 1.25x scale, #7 favicon/About/Disconnect, M2.4 Vault & Asteroid Blaster)
+html := BuildWebRemoteHtml("8.2.0", 14472)
 Assert("BuildWebRemoteHtml returns valid HTML5", InStr(html, "<!DOCTYPE html>") && InStr(html, "</html>"))
-Assert("BuildWebRemoteHtml embeds version & port", InStr(html, "8.1.0") && InStr(html, "14472"))
+Assert("BuildWebRemoteHtml embeds version & port", InStr(html, "8.2.0") && InStr(html, "14472"))
 Assert("BuildWebRemoteHtml contains ZERO broken \x27 escapes (#1)", !InStr(html, "\x27"))
-for _, token in ["toggle_mute", "transition_scene", "slide_start", "ppt_next", "ppt_prev", "toggle_standby", "timer_start", "stage_nudge", "/ws", "/favicon.ico", "aboutModal", "discBtn", "cleanDisconnect", "addEventListener", "ps_web_scale", "1.25", "PSWebSnake", "ps_arcade_hi_snake", "snkCanvas"] {
+for _, token in ["toggle_mute", "transition_scene", "slide_start", "ppt_next", "ppt_prev", "toggle_standby", "timer_start", "stage_nudge", "/ws", "/favicon.ico", "/arcade.js", "aboutModal", "discBtn", "cleanDisconnect", "addEventListener", "ps_web_scale", "1.25", "vaultSlotBadge", "vaultDrawerSlot", "CABINET: LOCKED [0 CREDITS]", "PSArcadeVault", "PSArcadeHost"] {
     Assert("BuildWebRemoteHtml includes control/feature '" token "'", InStr(html, token) > 0)
 }
+arcadeJs := BuildWebRemoteArcadeJs()
+Assert("BuildWebRemoteArcadeJs returns valid JS with ZERO \x27 escapes", StrLen(arcadeJs) > 3000 && !InStr(arcadeJs, "\x27"))
+for _, jsToken in ["PSArcadeVault", "PSArcadeHost", "PSWebSnake", "PSWebAsteroids", "ps_arcade_hi_snake", "ps_arcade_hi_asteroids", "INSERTCOIN", "ASTEROID BLASTER", "MIC BUMPER"] {
+    Assert("BuildWebRemoteArcadeJs includes '" jsToken "'", InStr(arcadeJs, jsToken) > 0)
+}
+Assert("BuildWebRemoteArcadeJs never persists vault unlock status in localStorage/sessionStorage", !InStr(arcadeJs, "ps_arcade_unlocked") && !InStr(arcadeJs, "sessionStorage.setItem"))
 
 ; 2. Live loopback HostCompanionBridge HTTP checks on port 14472
 tmpIni := A_Temp "\ps_v761_web_remote_test.ini"
@@ -118,6 +124,9 @@ Assert("GET /favicon.ico returns 200 OK binary image/x-icon (#7)", resFav.status
 
 resHealth := HttpGetAsync("http://127.0.0.1:" bridgePort "/health")
 Assert("GET /health returns 200 OK & JSON", resHealth.status = 200 && InStr(StrLower(resHealth.contentType), "application/json") > 0 && InStr(resHealth.body, '"ok":true') > 0)
+
+resArcade := HttpGetAsync("http://127.0.0.1:" bridgePort "/arcade.js")
+Assert("GET /arcade.js returns 200 OK application/javascript with PSWebAsteroids (M2.4)", resArcade.status = 200 && InStr(StrLower(resArcade.contentType), "javascript") > 0 && InStr(resArcade.body, "PSWebAsteroids") > 0 && !InStr(resArcade.body, "\x27"), Format("status={} type={} bytes={}", resArcade.status, resArcade.contentType, resArcade.byteLen))
 
 ; 3. Non-blocking WinSock2 loopback WS toggle_mute ack (#1) + clean disconnect (#7)
 LoopbackWsOpen(port, path) {

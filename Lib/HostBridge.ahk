@@ -12,6 +12,7 @@
 
 #DllLoad ws2_32.dll
 #Include WebRemoteUI.ahk
+#Include WebRemoteArcade.ahk
 
 class HostBridgeConstants {
     static DEFAULT_PORT := 4456
@@ -1179,6 +1180,21 @@ class HostCompanionBridge {
         this._QueueText(c, hdr . htmlBody, HostBridgeConstants.MAX_HTTP_SEND_BYTES)
     }
 
+    _SendJsResponse(c, statusLine, jsBody, extraHeaders := "") {
+        bLen := 0
+        _HB_StrToUtf8Buf(jsBody, &bLen)
+        hdr := "HTTP/1.1 " statusLine "`r`n"
+            . "Content-Type: application/javascript; charset=utf-8`r`n"
+            . "Cache-Control: no-store`r`n"
+            . "X-Content-Type-Options: nosniff`r`n"
+            . "Content-Length: " bLen "`r`n"
+            . "Connection: close`r`n"
+            . extraHeaders
+            . "`r`n"
+        c.closeAfterSend := true
+        this._QueueText(c, hdr . jsBody, HostBridgeConstants.MAX_HTTP_SEND_BYTES)
+    }
+
     _SendBinaryResponse(c, statusLine, contentType, dataBuf, byteLen, extraHeaders := "") {
         hdr := "HTTP/1.1 " statusLine "`r`n"
             . "Content-Type: " contentType "`r`n"
@@ -1323,6 +1339,13 @@ class HostCompanionBridge {
                     this._SendBinaryResponse(c, "200 OK", "image/x-icon", favBuf, favBuf.Size)
                 else
                     this._SendBinaryResponse(c, "204 No Content", "image/x-icon", Buffer(0), 0)
+                return
+            }
+
+            if (method = "GET" && cleanPath = "/arcade.js") {
+                c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
+                jsBody := BuildWebRemoteArcadeJs()
+                this._SendJsResponse(c, "200 OK", jsBody)
                 return
             }
 
