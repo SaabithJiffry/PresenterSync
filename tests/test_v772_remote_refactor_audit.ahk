@@ -220,6 +220,8 @@ AssertTrue(InStr(remoteSrc, "RegisterSelfUpdateBeforeRelaunch(ShutdownRemoteApp)
     "ShutdownRemoteApp is wired to both RegisterSelfUpdateBeforeRelaunch and OnExit")
 AssertTrue(!RegExMatch(remoteSrc, "(?m)^\s*pairRes\s*:="),
     "PresenterSync_Remote.ahk has zero local-shadows-global pairRes assignments")
+AssertTrue(RegExMatch(remoteSrc, "s)_SetRemoteHotkeyState\(.*?try\s*\{.*?\}\s*catch\s*\{.*?\}\s*finally\s*\{.*?HotIf"),
+    "_SetRemoteHotkeyState catches nonexistent hotkey errors before finally HotIf reset")
 
 try FileAppend("PASS=" passed " FAIL=" failed "`n", "*")
 ExitApp(failed > 0 ? 1 : 0)
