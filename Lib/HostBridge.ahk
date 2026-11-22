@@ -18,6 +18,7 @@ class HostBridgeConstants {
     static DEFAULT_DISCOVERY_PORT := 4457
     static DISCOVER_V1_PROTO := "PS_DISCOVER_V1"
     static MAX_BUFFER_BYTES := 65536
+    static MAX_HTTP_SEND_BYTES := 1048576
     static AUTH_TIMEOUT_MS := 3000
     static KEEP_ALIVE_MS := 20000
     ; v7.0.5 (#11): an authenticated WS client that has sent nothing (not even a
@@ -603,6 +604,49 @@ class HostCompanionBridge {
         return true
     }
 
+    DisconnectDevice(devId) {
+        if (devId = "")
+            return false
+        devName := devId
+        plat := "Remote"
+        if (this.pairedDevices.Has(devId)) {
+            dev := this.pairedDevices[devId]
+            if (dev.HasOwnProp("deviceName") && dev.deviceName != "")
+                devName := dev.deviceName
+            if (dev.HasOwnProp("platform") && dev.platform != "")
+                plat := dev.platform
+            if (dev.HasOwnProp("token") && dev.token != "" && this.validTokens.Has(dev.token))
+                this.validTokens.Delete(dev.token)
+            this.pairedDevices.Delete(devId)
+        }
+        staleTokens := []
+        for tok, ownerId in this.validTokens {
+            if (ownerId = devId)
+                staleTokens.Push(tok)
+        }
+        for tok in staleTokens
+            this.validTokens.Delete(tok)
+
+        targets := []
+        for _, cli in this.clients {
+            if (cli.deviceId = devId)
+                targets.Push(cli)
+        }
+        for cli in targets {
+            if (cli.kind = "ws") {
+                this._QueueWsFrame(cli, 0x1, '{"type":"disconnected","ok":true}')
+                cli.closeAfterSend := true
+                this._FlushSendQueue(cli)
+            } else {
+                this._CloseClient(cli)
+            }
+        }
+        if (IsSet(SessionTimeline))
+            SessionTimeline.Record("Remote", "Remote Disconnected: " devName, this.state, plat)
+        this.SavePairedDevices()
+        return true
+    }
+
     UnpairDevice(devId) {
         if (devId = "" || !this.pairedDevices.Has(devId))
             return false
@@ -1016,9 +1060,10 @@ class HostCompanionBridge {
         }
     }
 
-    _QueueRawBytes(c, srcPtr, byteLen) {
+    _QueueRawBytes(c, srcPtr, byteLen, maxQueueBytes := 0) {
         if (byteLen <= 0)
             return
+        limit := (maxQueueBytes > 0) ? maxQueueBytes : (HostBridgeConstants.MAX_BUFFER_BYTES * 2)
         if (c.sendLen = 0) {
             sent := DllCall("ws2_32\send", "Ptr", c.sock, "Ptr", srcPtr, "Int", byteLen, "Int", 0, "Int")
             if (sent = byteLen) {
@@ -1035,7 +1080,7 @@ class HostCompanionBridge {
                     return
                 }
             }
-            res := _HB_AppendBytes(c.sendBuf, c.sendLen, srcPtr + offset, rem, HostBridgeConstants.MAX_BUFFER_BYTES * 2)
+            res := _HB_AppendBytes(c.sendBuf, c.sendLen, srcPtr + offset, rem, limit)
             if (!IsObject(res)) {
                 this._CloseClient(c)
                 return
@@ -1045,7 +1090,7 @@ class HostCompanionBridge {
             return
         }
 
-        res := _HB_AppendBytes(c.sendBuf, c.sendLen, srcPtr, byteLen, HostBridgeConstants.MAX_BUFFER_BYTES * 2)
+        res := _HB_AppendBytes(c.sendBuf, c.sendLen, srcPtr, byteLen, limit)
         if (!IsObject(res)) {
             this._CloseClient(c)
             return
@@ -1055,11 +1100,11 @@ class HostCompanionBridge {
         this._FlushSendQueue(c)
     }
 
-    _QueueText(c, str) {
+    _QueueText(c, str, maxQueueBytes := 0) {
         bLen := 0
         bBuf := _HB_StrToUtf8Buf(str, &bLen)
         if (bLen > 0)
-            this._QueueRawBytes(c, bBuf.Ptr, bLen)
+            this._QueueRawBytes(c, bBuf.Ptr, bLen, maxQueueBytes)
     }
 
     _FlushSendQueue(c) {
@@ -1131,7 +1176,67 @@ class HostCompanionBridge {
             . extraHeaders
             . "`r`n"
         c.closeAfterSend := true
-        this._QueueText(c, hdr . htmlBody)
+        this._QueueText(c, hdr . htmlBody, HostBridgeConstants.MAX_HTTP_SEND_BYTES)
+    }
+
+    _SendBinaryResponse(c, statusLine, contentType, dataBuf, byteLen, extraHeaders := "") {
+        hdr := "HTTP/1.1 " statusLine "`r`n"
+            . "Content-Type: " contentType "`r`n"
+            . "Cache-Control: public, max-age=86400`r`n"
+            . "X-Content-Type-Options: nosniff`r`n"
+            . "Content-Length: " byteLen "`r`n"
+            . "Connection: close`r`n"
+            . extraHeaders
+            . "`r`n"
+        hdrLen := 0
+        hdrBuf := _HB_StrToUtf8Buf(hdr, &hdrLen)
+        totalLen := hdrLen + Max(0, Integer(byteLen))
+        outBuf := Buffer(Max(1, totalLen), 0)
+        if (hdrLen > 0)
+            DllCall("ntdll\RtlMoveMemory", "Ptr", outBuf.Ptr, "Ptr", hdrBuf.Ptr, "UPtr", hdrLen)
+        if (byteLen > 0 && IsObject(dataBuf))
+            DllCall("ntdll\RtlMoveMemory", "Ptr", outBuf.Ptr + hdrLen, "Ptr", dataBuf.Ptr, "UPtr", byteLen)
+        c.closeAfterSend := true
+        this._QueueRawBytes(c, outBuf.Ptr, totalLen, HostBridgeConstants.MAX_HTTP_SEND_BYTES)
+    }
+
+    _LoadFaviconBytes() {
+        static cachedBuf := ""
+        static attempted := false
+        if (IsObject(cachedBuf) && cachedBuf.Size > 0)
+            return cachedBuf
+        if (attempted)
+            return ""
+        attempted := true
+
+        for _, cand in [A_ScriptDir "\assets\PresenterSync.ico", A_LineFile "\..\..\assets\PresenterSync.ico"] {
+            if (FileExist(cand)) {
+                try {
+                    buf := FileRead(cand, "RAW")
+                    if (IsObject(buf) && buf.Size > 0) {
+                        cachedBuf := buf
+                        return cachedBuf
+                    }
+                }
+            }
+        }
+        if (A_IsCompiled) {
+            try {
+                hRes := DllCall("FindResourceW", "Ptr", 0, "Str", "FAVICON_ICO", "Ptr", 10, "Ptr")
+                if (hRes) {
+                    sz := DllCall("SizeofResource", "Ptr", 0, "Ptr", hRes, "UInt")
+                    hGlob := DllCall("LoadResource", "Ptr", 0, "Ptr", hRes, "Ptr")
+                    pData := hGlob ? DllCall("LockResource", "Ptr", hGlob, "Ptr") : 0
+                    if (pData && sz > 0) {
+                        buf := Buffer(sz, 0)
+                        DllCall("ntdll\RtlMoveMemory", "Ptr", buf.Ptr, "Ptr", pData, "UPtr", sz)
+                        cachedBuf := buf
+                        return cachedBuf
+                    }
+                }
+            }
+        }
+        return ""
     }
 
     _CloseClient(c) {
@@ -1208,6 +1313,16 @@ class HostCompanionBridge {
                 appVer := IsSet(UIConstants) ? UIConstants.APP_VERSION : ""
                 htmlBody := BuildWebRemoteHtml(appVer, this.boundTcpPort)
                 this._SendHtmlResponse(c, "200 OK", htmlBody)
+                return
+            }
+
+            if (method = "GET" && cleanPath = "/favicon.ico") {
+                c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
+                favBuf := this._LoadFaviconBytes()
+                if (IsObject(favBuf) && favBuf.Size > 0)
+                    this._SendBinaryResponse(c, "200 OK", "image/x-icon", favBuf, favBuf.Size)
+                else
+                    this._SendBinaryResponse(c, "204 No Content", "image/x-icon", Buffer(0), 0)
                 return
             }
 
@@ -1575,7 +1690,9 @@ class HostCompanionBridge {
 
         switch (msgType) {
             case "toggle_mute":
-                ExecuteHostRemoteToggleMute(this.cfg, this.state)
+                ok := ExecuteHostRemoteToggleMute(this.cfg, this.state)
+                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_mute","ok":' (ok ? "true" : "false") '}')
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "set_mute":
                 targetMuted := _HB_JsonExtractBool(msg, "isMuted", this.state.isMuted)
                 ExecuteHostRemoteSetMute(this.cfg, this.state, targetMuted)
@@ -1642,6 +1759,8 @@ class HostCompanionBridge {
             case "ping":
                 isMutedStr := this.state.isMuted ? "true" : "false"
                 this._QueueWsFrame(c, 0x1, '{"type":"pong","isMuted":' isMutedStr ',"timestamp":' A_TickCount '}')
+            case "disconnect":
+                this.DisconnectDevice(c.deviceId)
             case "unpair":
                 this.UnpairDevice(c.deviceId)
         }
