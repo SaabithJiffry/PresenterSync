@@ -76,7 +76,7 @@ class ArcadeOverlayHost(
         if (!Settings.canDrawOverlays(context)) return false
 
         val cleanId = gameId.trim().lowercase()
-        if (cleanId != "asteroids" && cleanId != "brick_breaker" && cleanId != "cyber_pong") return false
+        if (cleanId != "asteroids" && cleanId != "brick_breaker" && cleanId != "cyber_pong" && cleanId != "flappy") return false
 
         if (attached) {
             stop()
@@ -147,7 +147,7 @@ class ArcadeOverlayHost(
                 resizer = { w, h, d, b -> eng.updateDisplayMetrics(w, h, d, b) }
                 stopper = { eng.stop() }
             }
-            else -> {
+            "cyber_pong" -> {
                 val eng = CyberPongEngine(
                     onNewHighScore = { newBest -> configStore.updateArcadeHighScore("cyber_pong", newBest) }
                 )
@@ -166,6 +166,28 @@ class ArcadeOverlayHost(
                 )
                 stepper = { dt -> eng.step(dt) }
                 resizer = { w, h, d, _ -> eng.updateDisplayMetrics(w, h, d) }
+                stopper = { eng.stop() }
+            }
+            else -> {
+                val eng = FlappyWaveEngine(
+                    onNewHighScore = { newBest -> configStore.updateArcadeHighScore("flappy", newBest) }
+                )
+                eng.startNewSession(
+                    widthPx = bounds.width,
+                    heightPx = bounds.height,
+                    screenDensity = density,
+                    initialHighScore = cfg.arcadeHighScores["flappy"] ?: 0,
+                    bumperRect = localBumper
+                )
+                view = FlappyWaveOverlayView(
+                    context = context,
+                    engine = eng,
+                    onExitRequested = { stop() },
+                    onStateInteracted = { },
+                    onMuteKeyEvent = onMuteKeyEvent
+                )
+                stepper = { dt -> eng.step(dt) }
+                resizer = { w, h, d, b -> eng.updateDisplayMetrics(w, h, d, b) }
                 stopper = { eng.stop() }
             }
         }

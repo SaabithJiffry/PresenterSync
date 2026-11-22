@@ -45,6 +45,12 @@ object ArcadeVaultManager {
             title = "Cyber Pong",
             subtitle = "Velocity-spin energy puck duel with 1P Adaptive AI & 2P Split-Screen Touch",
             badge = "SECTOR Z-04"
+        ),
+        ArcadeGameEntry(
+            id = "flappy",
+            title = "Clicker Flappy / Wave",
+            subtitle = "Classic Flap & Gravity Wave ribbon flight with safe Clicker Slide nav & live Mic Mute",
+            badge = "SECTOR Z-05"
         )
     )
 
