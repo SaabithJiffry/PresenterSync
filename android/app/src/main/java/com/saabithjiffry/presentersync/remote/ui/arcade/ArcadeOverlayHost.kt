@@ -76,7 +76,8 @@ class ArcadeOverlayHost(
         if (!Settings.canDrawOverlays(context)) return false
 
         val cleanId = gameId.trim().lowercase()
-        if (cleanId != "asteroids" && cleanId != "brick_breaker" && cleanId != "cyber_pong" && cleanId != "flappy") return false
+        val supported = setOf("asteroids", "brick_breaker", "cyber_pong", "flappy", "tron", "pac_grid")
+        if (cleanId !in supported) return false
 
         if (attached) {
             stop()
@@ -168,7 +169,7 @@ class ArcadeOverlayHost(
                 resizer = { w, h, d, _ -> eng.updateDisplayMetrics(w, h, d) }
                 stopper = { eng.stop() }
             }
-            else -> {
+            "flappy" -> {
                 val eng = FlappyWaveEngine(
                     onNewHighScore = { newBest -> configStore.updateArcadeHighScore("flappy", newBest) }
                 )
@@ -188,6 +189,48 @@ class ArcadeOverlayHost(
                 )
                 stepper = { dt -> eng.step(dt) }
                 resizer = { w, h, d, b -> eng.updateDisplayMetrics(w, h, d, b) }
+                stopper = { eng.stop() }
+            }
+            "tron" -> {
+                val eng = LightCyclesEngine(
+                    onNewHighScore = { newBest -> configStore.updateArcadeHighScore("tron", newBest) }
+                )
+                eng.startNewSession(
+                    widthPx = bounds.width,
+                    heightPx = bounds.height,
+                    screenDensity = density,
+                    initialHighScore = cfg.arcadeHighScores["tron"] ?: 0
+                )
+                view = LightCyclesOverlayView(
+                    context = context,
+                    engine = eng,
+                    onExitRequested = { stop() },
+                    onStateInteracted = { },
+                    onMuteKeyEvent = onMuteKeyEvent
+                )
+                stepper = { dt -> eng.step(dt) }
+                resizer = { w, h, d, _ -> eng.updateDisplayMetrics(w, h, d) }
+                stopper = { eng.stop() }
+            }
+            else -> {
+                val eng = PacGridEngine(
+                    onNewHighScore = { newBest -> configStore.updateArcadeHighScore("pac_grid", newBest) }
+                )
+                eng.startNewSession(
+                    widthPx = bounds.width,
+                    heightPx = bounds.height,
+                    screenDensity = density,
+                    initialHighScore = cfg.arcadeHighScores["pac_grid"] ?: 0
+                )
+                view = PacGridOverlayView(
+                    context = context,
+                    engine = eng,
+                    onExitRequested = { stop() },
+                    onStateInteracted = { },
+                    onMuteKeyEvent = onMuteKeyEvent
+                )
+                stepper = { dt -> eng.step(dt) }
+                resizer = { w, h, d, _ -> eng.updateDisplayMetrics(w, h, d) }
                 stopper = { eng.stop() }
             }
         }

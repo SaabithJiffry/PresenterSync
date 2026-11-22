@@ -51,6 +51,18 @@ object ArcadeVaultManager {
             title = "Clicker Flappy / Wave",
             subtitle = "Classic Flap & Gravity Wave ribbon flight with safe Clicker Slide nav & live Mic Mute",
             badge = "SECTOR Z-05"
+        ),
+        ArcadeGameEntry(
+            id = "tron",
+            title = "Neon Light Cycles (TRON)",
+            subtitle = "Flood-fill AI light wall arena with rechargeable Turbo Boost & swipe/D-pad steering",
+            badge = "SECTOR Z-06"
+        ),
+        ArcadeGameEntry(
+            id = "pac_grid",
+            title = "Neon Pac-Grid",
+            subtitle = "Authentic 28x31 neon maze with 4 chaser personalities, Scatter/Chase waves & warp tunnel",
+            badge = "SECTOR Z-07"
         )
     )
 
