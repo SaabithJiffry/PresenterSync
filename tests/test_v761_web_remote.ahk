@@ -35,12 +35,12 @@ Assert(name, cond, detail := "") {
     }
 }
 
-; 1. Pure HTML builder checks (#1 zero \x27 & #7 favicon / About / Disconnect)
-html := BuildWebRemoteHtml("8.0.2", 14472)
+; 1. Pure HTML builder checks (#1 zero \x27, #2 1.25x scale, #7 favicon/About/Disconnect, #11 Web Snake)
+html := BuildWebRemoteHtml("8.1.0", 14472)
 Assert("BuildWebRemoteHtml returns valid HTML5", InStr(html, "<!DOCTYPE html>") && InStr(html, "</html>"))
-Assert("BuildWebRemoteHtml embeds version & port", InStr(html, "8.0.2") && InStr(html, "14472"))
+Assert("BuildWebRemoteHtml embeds version & port", InStr(html, "8.1.0") && InStr(html, "14472"))
 Assert("BuildWebRemoteHtml contains ZERO broken \x27 escapes (#1)", !InStr(html, "\x27"))
-for _, token in ["toggle_mute", "transition_scene", "slide_start", "ppt_next", "ppt_prev", "toggle_standby", "timer_start", "stage_nudge", "/ws", "/favicon.ico", "aboutModal", "discBtn", "cleanDisconnect", "addEventListener"] {
+for _, token in ["toggle_mute", "transition_scene", "slide_start", "ppt_next", "ppt_prev", "toggle_standby", "timer_start", "stage_nudge", "/ws", "/favicon.ico", "aboutModal", "discBtn", "cleanDisconnect", "addEventListener", "ps_web_scale", "1.25", "PSWebSnake", "ps_arcade_hi_snake", "snkCanvas"] {
     Assert("BuildWebRemoteHtml includes control/feature '" token "'", InStr(html, token) > 0)
 }
 
