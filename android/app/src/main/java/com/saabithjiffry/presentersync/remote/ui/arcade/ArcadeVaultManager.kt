@@ -33,6 +33,18 @@ object ArcadeVaultManager {
             title = "Asteroid Blaster",
             subtitle = "Vector thruster shooter with UFO saucers, power-ups & Mic Pill bumper",
             badge = "SECTOR Z-02"
+        ),
+        ArcadeGameEntry(
+            id = "brick_breaker",
+            title = "Brick Breaker",
+            subtitle = "Neon bottom-edge paddle, armored multi-hit bricks & HUD-pill drops",
+            badge = "SECTOR Z-03"
+        ),
+        ArcadeGameEntry(
+            id = "cyber_pong",
+            title = "Cyber Pong",
+            subtitle = "Velocity-spin energy puck duel with 1P Adaptive AI & 2P Split-Screen Touch",
+            badge = "SECTOR Z-04"
         )
     )
 

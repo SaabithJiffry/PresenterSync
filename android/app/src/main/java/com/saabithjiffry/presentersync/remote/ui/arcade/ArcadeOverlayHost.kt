@@ -33,7 +33,9 @@ class ArcadeOverlayHost(
 
     private var activeGameId: String? = null
     private var activeView: ArcadeCanvasBaseView? = null
-    private var asteroidsEngine: AsteroidsEngine? = null
+    private var frameStepper: ((Float) -> Unit)? = null
+    private var resizeHandler: ((Int, Int, Float, ArcadeRectF?) -> Unit)? = null
+    private var stopHandler: (() -> Unit)? = null
     private var attached = false
     private var currentConfig: RemoteConfig = configStore.current
     private var currentMuted: Boolean = false
@@ -58,7 +60,7 @@ class ArcadeOverlayHost(
             val dtSec = if (lastFrameNs == 0L) 0.016f else ((frameTimeNanos - lastFrameNs) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
             lastFrameNs = frameTimeNanos
 
-            asteroidsEngine?.step(dtSec)
+            frameStepper?.invoke(dtSec)
             view.updateSharedState(currentConfig, resolveFormFactor(), currentMuted, currentPillRect, frameTimeNanos)
             choreographer.postFrameCallback(this)
         }
@@ -74,7 +76,7 @@ class ArcadeOverlayHost(
         if (!Settings.canDrawOverlays(context)) return false
 
         val cleanId = gameId.trim().lowercase()
-        if (cleanId != "asteroids") return false
+        if (cleanId != "asteroids" && cleanId != "brick_breaker" && cleanId != "cyber_pong") return false
 
         if (attached) {
             stop()
@@ -95,24 +97,78 @@ class ArcadeOverlayHost(
         currentPillRect = localBumper
 
         val formFactor = resolveFormFactor()
-        val eng = AsteroidsEngine(
-            onNewHighScore = { newBest -> configStore.updateArcadeHighScore("asteroids", newBest) }
-        )
-        eng.startNewSession(
-            widthPx = bounds.width,
-            heightPx = bounds.height,
-            screenDensity = density,
-            initialHighScore = cfg.arcadeHighScores["asteroids"] ?: 0,
-            bumperRect = localBumper
-        )
+        val view: ArcadeCanvasBaseView
+        val stepper: (Float) -> Unit
+        val resizer: (Int, Int, Float, ArcadeRectF?) -> Unit
+        val stopper: () -> Unit
 
-        val view = AsteroidsOverlayView(
-            context = context,
-            engine = eng,
-            onExitRequested = { stop() },
-            onStateInteracted = { },
-            onMuteKeyEvent = onMuteKeyEvent
-        )
+        when (cleanId) {
+            "asteroids" -> {
+                val eng = AsteroidsEngine(
+                    onNewHighScore = { newBest -> configStore.updateArcadeHighScore("asteroids", newBest) }
+                )
+                eng.startNewSession(
+                    widthPx = bounds.width,
+                    heightPx = bounds.height,
+                    screenDensity = density,
+                    initialHighScore = cfg.arcadeHighScores["asteroids"] ?: 0,
+                    bumperRect = localBumper
+                )
+                view = AsteroidsOverlayView(
+                    context = context,
+                    engine = eng,
+                    onExitRequested = { stop() },
+                    onStateInteracted = { },
+                    onMuteKeyEvent = onMuteKeyEvent
+                )
+                stepper = { dt -> eng.step(dt) }
+                resizer = { w, h, d, b -> eng.updateDisplayMetrics(w, h, d, b) }
+                stopper = { eng.stop() }
+            }
+            "brick_breaker" -> {
+                val eng = BrickBreakerEngine(
+                    onNewHighScore = { newBest -> configStore.updateArcadeHighScore("brick_breaker", newBest) }
+                )
+                eng.startNewSession(
+                    widthPx = bounds.width,
+                    heightPx = bounds.height,
+                    screenDensity = density,
+                    initialHighScore = cfg.arcadeHighScores["brick_breaker"] ?: 0,
+                    bumperRect = localBumper
+                )
+                view = BrickBreakerOverlayView(
+                    context = context,
+                    engine = eng,
+                    onExitRequested = { stop() },
+                    onStateInteracted = { },
+                    onMuteKeyEvent = onMuteKeyEvent
+                )
+                stepper = { dt -> eng.step(dt) }
+                resizer = { w, h, d, b -> eng.updateDisplayMetrics(w, h, d, b) }
+                stopper = { eng.stop() }
+            }
+            else -> {
+                val eng = CyberPongEngine(
+                    onNewHighScore = { newBest -> configStore.updateArcadeHighScore("cyber_pong", newBest) }
+                )
+                eng.startNewSession(
+                    widthPx = bounds.width,
+                    heightPx = bounds.height,
+                    screenDensity = density,
+                    initialHighScore = cfg.arcadeHighScores["cyber_pong"] ?: 0
+                )
+                view = CyberPongOverlayView(
+                    context = context,
+                    engine = eng,
+                    onExitRequested = { stop() },
+                    onStateInteracted = { },
+                    onMuteKeyEvent = onMuteKeyEvent
+                )
+                stepper = { dt -> eng.step(dt) }
+                resizer = { w, h, d, _ -> eng.updateDisplayMetrics(w, h, d) }
+                stopper = { eng.stop() }
+            }
+        }
 
         val flags = computeWindowFlags(cfg.hideFromScreenCapture, cfg.keepScreenOn)
         val params = WindowManager.LayoutParams(
@@ -129,7 +185,9 @@ class ArcadeOverlayHost(
 
         return try {
             windowManager.addView(view, params)
-            asteroidsEngine = eng
+            frameStepper = stepper
+            resizeHandler = resizer
+            stopHandler = stopper
             activeGameId = cleanId
             activeView = view
             attached = true
@@ -141,7 +199,7 @@ class ArcadeOverlayHost(
             choreographer.postFrameCallback(frameCallback)
             true
         } catch (_: Exception) {
-            eng.stop()
+            stopper()
             false
         }
     }
@@ -174,14 +232,16 @@ class ArcadeOverlayHost(
         lp.x = bounds.left
         lp.y = bounds.top
         runCatching { windowManager.updateViewLayout(view, lp) }
-        asteroidsEngine?.updateDisplayMetrics(bounds.width, bounds.height, density)
+        resizeHandler?.invoke(bounds.width, bounds.height, density, currentPillRect)
         view.updateSharedState(currentConfig, resolveFormFactor(), currentMuted, currentPillRect, System.nanoTime())
     }
 
     fun stop() {
         choreographer.removeFrameCallback(frameCallback)
-        asteroidsEngine?.stop()
-        asteroidsEngine = null
+        stopHandler?.invoke()
+        stopHandler = null
+        frameStepper = null
+        resizeHandler = null
         activeGameId = null
         val v = activeView
         activeView = null
