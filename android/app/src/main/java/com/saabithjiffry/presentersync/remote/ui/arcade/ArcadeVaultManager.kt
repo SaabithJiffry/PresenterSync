@@ -69,6 +69,12 @@ object ArcadeVaultManager {
             title = "Missile Defense",
             subtitle = "Multi-tap interceptor defense with 4 neon shield pylons, splitters & shockwave chains",
             badge = "SECTOR Z-08"
+        ),
+        ArcadeGameEntry(
+            id = "block_drop",
+            title = "Neon Block Drop",
+            subtitle = "10x20 translucent neon-glass well with 7-bag, SRS wall kicks, Ghost guide & Hold",
+            badge = "SECTOR Z-09"
         )
     )
 
