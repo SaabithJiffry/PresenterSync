@@ -458,6 +458,72 @@ abstract class ArcadeCanvasBaseView(
         canvas.drawText(label, rect.centerX(), rect.centerY() - (fm.ascent + fm.descent) / 2f, boldPaint)
     }
 
+    protected fun drawGlowCircle(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        fillArgb: Int = 0,
+        strokeArgb: Int = 0,
+        strokeWidthPx: Float = 2f * density,
+        glowArgb: Int = 0,
+        glowWidthPx: Float = 6f * density
+    ) {
+        if (glowArgb != 0) {
+            strokePaint.color = glowArgb
+            strokePaint.strokeWidth = glowWidthPx
+            canvas.drawCircle(cx, cy, radius, strokePaint)
+        }
+        if (fillArgb != 0) {
+            fillPaint.color = fillArgb
+            canvas.drawCircle(cx, cy, radius, fillPaint)
+        }
+        if (strokeArgb != 0 && strokeWidthPx > 0f) {
+            strokePaint.color = strokeArgb
+            strokePaint.strokeWidth = strokeWidthPx
+            canvas.drawCircle(cx, cy, radius, strokePaint)
+        }
+    }
+
+    protected fun drawGlowLine(
+        canvas: Canvas,
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        coreArgb: Int,
+        coreWidthPx: Float,
+        glowArgb: Int = 0,
+        glowWidthPx: Float = coreWidthPx * 2.4f
+    ) {
+        strokePaint.strokeCap = Paint.Cap.ROUND
+        if (glowArgb != 0) {
+            strokePaint.color = glowArgb
+            strokePaint.strokeWidth = glowWidthPx
+            canvas.drawLine(x1, y1, x2, y2, strokePaint)
+        }
+        strokePaint.color = coreArgb
+        strokePaint.strokeWidth = coreWidthPx
+        canvas.drawLine(x1, y1, x2, y2, strokePaint)
+    }
+
+    protected fun drawCenteredText(
+        canvas: Canvas,
+        text: String,
+        cx: Float,
+        cy: Float,
+        textSizePx: Float,
+        colorArgb: Int,
+        bold: Boolean = true
+    ) {
+        val p = if (bold) boldPaint else textPaint
+        p.color = colorArgb
+        p.textSize = textSizePx
+        p.textAlign = Paint.Align.CENTER
+        val fm = p.fontMetrics
+        canvas.drawText(text, cx, cy - (fm.ascent + fm.descent) / 2f, p)
+    }
+
     protected abstract fun onGameFrameRender(canvas: Canvas, palette: HudColorPalette, isDark: Boolean, opacity: Int)
     protected abstract fun onGameKey(keyCode: Int, isDown: Boolean, event: KeyEvent): Boolean
     protected abstract fun onGameTouch(event: MotionEvent): Boolean

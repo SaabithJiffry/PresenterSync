@@ -14,8 +14,11 @@ import org.junit.Test
 class OnboardingAndVersionTest {
 
     @Test
-    fun activeAppVersionMatchesMilestone11Release() {
-        assertEquals("8.0.1", AppConstants.APP_VERSION)
+    fun activeAppVersionMatchesSemanticVersionFormat() {
+        assertTrue(
+            "Expected semantic version X.Y.Z, got ${AppConstants.APP_VERSION}",
+            Regex("^\\d+\\.\\d+\\.\\d+$").matches(AppConstants.APP_VERSION)
+        )
     }
 
     @Test

@@ -119,7 +119,7 @@ BuildWebRemoteHtml(appVersion := "", activePort := 4456) {
         . '<div id="vaultFooter" class="vaultFooter"><span>PresenterSync Bridge :' portNum '</span><span id="vaultSlotBadge" style="cursor:pointer">CABINET: LOCKED [0 CREDITS]</span></div>'
         . '<div id="vaultDrawerSlot" class="hide"></div>'
         . '</div></div>'
-        . '<script>'
+        . '<script>(()=>{ "use strict";'
     html .= 'const qs=id=>document.getElementById(id);'
         . 'const RECONN_DELAYS=[1200,2500,4000,5000];'
         . 'let ws=null,pingT=null,pongWatchT=null,reconnT=null,repromoteT=null,obsWs=null,obsRecT=null;'
@@ -332,6 +332,6 @@ BuildWebRemoteHtml(appVersion := "", activePort := 4456) {
         . 'applyWebScale(webScale);'
         . 'qs("scaleBtn").addEventListener("click",()=>{const i=WEB_SCALES.indexOf(webScale);applyWebScale(WEB_SCALES[(i+1)%WEB_SCALES.length]);});'
         . 'if(tok){connectWs("",false);}'
-        . '</script><script src="/arcade.js"></script></body></html>'
+        . '})();</script><script src="/arcade.js"></script></body></html>'
     return html
 }
