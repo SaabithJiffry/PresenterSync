@@ -63,6 +63,12 @@ object ArcadeVaultManager {
             title = "Neon Pac-Grid",
             subtitle = "Authentic 28x31 neon maze with 4 chaser personalities, Scatter/Chase waves & warp tunnel",
             badge = "SECTOR Z-07"
+        ),
+        ArcadeGameEntry(
+            id = "missile_defense",
+            title = "Missile Defense",
+            subtitle = "Multi-tap interceptor defense with 4 neon shield pylons, splitters & shockwave chains",
+            badge = "SECTOR Z-08"
         )
     )
 

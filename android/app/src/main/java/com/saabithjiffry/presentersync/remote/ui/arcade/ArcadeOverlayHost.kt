@@ -76,7 +76,7 @@ class ArcadeOverlayHost(
         if (!Settings.canDrawOverlays(context)) return false
 
         val cleanId = gameId.trim().lowercase()
-        val supported = setOf("asteroids", "brick_breaker", "cyber_pong", "flappy", "tron", "pac_grid")
+        val supported = setOf("asteroids", "brick_breaker", "cyber_pong", "flappy", "tron", "pac_grid", "missile_defense")
         if (cleanId !in supported) return false
 
         if (attached) {
@@ -202,6 +202,27 @@ class ArcadeOverlayHost(
                     initialHighScore = cfg.arcadeHighScores["tron"] ?: 0
                 )
                 view = LightCyclesOverlayView(
+                    context = context,
+                    engine = eng,
+                    onExitRequested = { stop() },
+                    onStateInteracted = { },
+                    onMuteKeyEvent = onMuteKeyEvent
+                )
+                stepper = { dt -> eng.step(dt) }
+                resizer = { w, h, d, _ -> eng.updateDisplayMetrics(w, h, d) }
+                stopper = { eng.stop() }
+            }
+            "missile_defense" -> {
+                val eng = MissileDefenseEngine(
+                    onNewHighScore = { newBest -> configStore.updateArcadeHighScore("missile_defense", newBest) }
+                )
+                eng.startNewSession(
+                    widthPx = bounds.width,
+                    heightPx = bounds.height,
+                    screenDensity = density,
+                    initialHighScore = cfg.arcadeHighScores["missile_defense"] ?: 0
+                )
+                view = MissileDefenseOverlayView(
                     context = context,
                     engine = eng,
                     onExitRequested = { stop() },
