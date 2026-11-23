@@ -69,7 +69,7 @@ cfg := MockArcadeConfig()
 state := { isMuted: true }
 
 ; --- 0. Version Check ---
-AssertEq(UIConstants.APP_VERSION, "8.4.1", "UIConstants.APP_VERSION is 8.4.1")
+AssertEq(UIConstants.APP_VERSION, "8.5.0", "UIConstants.APP_VERSION is 8.5.0")
 
 ; ==============================================================================
 ; 1. NEON LIGHT CYCLES (TRON) TESTS
@@ -262,6 +262,20 @@ AssertEq(psTurned.runnerDy, -1, "Pac-Grid automatically applies buffered upward 
 
 savedPacBest := cfg.Read("ArcadeHighScores", "pac_grid", 0)
 AssertTrue(savedPacBest > 0, "Pac-Grid saves high score to [ArcadeHighScores] pac_grid")
+
+; 2i. Adaptation #3: Toggleable Centered / Expanded Full-Work-Area Mode
+AssertEq(GamePacGrid.GetStateSnapshot().expandedMode, false, "Pac-Grid starts in Centered square mode (expandedMode=false)")
+mCenter := GamePacGrid._GetMazeMetrics()
+AssertEq(mCenter.expanded, false, "Pac-Grid Centered metrics report expanded=false")
+AssertEq(mCenter.cellX, mCenter.cellY, "Pac-Grid Centered mode keeps uniform square cells (cellX == cellY)")
+
+AssertEq(GamePacGrid.ToggleViewMode(), true, "Pac-Grid ToggleViewMode() switches to Expanded Full-Work-Area mode")
+AssertEq(GamePacGrid.GetStateSnapshot().expandedMode, true, "Pac-Grid GetStateSnapshot exposes expandedMode=true")
+mFull := GamePacGrid._GetMazeMetrics()
+AssertEq(mFull.expanded, true, "Pac-Grid Expanded metrics report expanded=true")
+AssertTrue(mFull.boardW >= mFull.W * 0.85, "Pac-Grid Expanded boardW fills >= 85% of work area width")
+AssertTrue(mFull.boardH >= mFull.H * 0.78, "Pac-Grid Expanded boardH fills >= 78% of work area height")
+AssertEq(GamePacGrid.ToggleViewMode(), false, "Pac-Grid ToggleViewMode() switches back to Centered mode")
 GamePacGrid.Stop()
 
 ; ==============================================================================

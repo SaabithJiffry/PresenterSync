@@ -6,6 +6,7 @@ import com.saabithjiffry.presentersync.remote.ui.arcade.ChaserWaveMode
 import com.saabithjiffry.presentersync.remote.ui.arcade.LightCyclesEngine
 import com.saabithjiffry.presentersync.remote.ui.arcade.LightCyclesPhase
 import com.saabithjiffry.presentersync.remote.ui.arcade.PacGridEngine
+import com.saabithjiffry.presentersync.remote.ui.arcade.PacGridOverlayView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -235,5 +236,35 @@ class GridMazeEngineTest {
         engine.step(0.04f)
         assertEquals("Buffered turn should engage down corridor at intersection", 0, engine.runnerDx)
         assertEquals(1, engine.runnerDy)
+    }
+
+    @Test
+    fun `PacGridOverlayView computeMazeLayout toggles between Centered square and Expanded full work area`() {
+        val w = 1920f
+        val h = 1080f
+        val density = 2f
+
+        val centered = PacGridOverlayView.computeMazeLayout(
+            widthPx = w,
+            heightPx = h,
+            density = density,
+            cols = PacGridEngine.MAZE_COLS,
+            rows = PacGridEngine.MAZE_ROWS,
+            expanded = false
+        )
+        assertEquals("Centered mode must use uniform square cells", centered.cellW, centered.cellH, 0.01f)
+        assertTrue("Centered board should be horizontally centered", centered.left > 100f)
+
+        val expanded = PacGridOverlayView.computeMazeLayout(
+            widthPx = w,
+            heightPx = h,
+            density = density,
+            cols = PacGridEngine.MAZE_COLS,
+            rows = PacGridEngine.MAZE_ROWS,
+            expanded = true
+        )
+        assertTrue("Expanded boardW should stretch across >= 90% of work area width", expanded.boardW >= w * 0.90f)
+        assertTrue("Expanded boardH should stretch across >= 80% of work area height", expanded.boardH >= h * 0.80f)
+        assertTrue("Expanded boardW must exceed Centered boardW on widescreen", expanded.boardW > centered.boardW)
     }
 }

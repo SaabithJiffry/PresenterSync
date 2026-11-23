@@ -45,7 +45,7 @@ for _, token in ["toggle_mute", "transition_scene", "slide_start", "ppt_next", "
 }
 arcadeJs := BuildWebRemoteArcadeJs()
 Assert("BuildWebRemoteArcadeJs returns valid JS with ZERO \x27 escapes", StrLen(arcadeJs) > 3000 && !InStr(arcadeJs, "\x27"))
-for _, jsToken in ["PSArcadeVault", "PSArcadeHost", "PSWebSnake", "PSWebAsteroids", "PSWebBrickBreaker", "PSWebCyberPong", "PSWebFlappy", "ps_arcade_hi_snake", "ps_arcade_hi_asteroids", "ps_arcade_hi_brick_breaker", "ps_arcade_hi_cyber_pong", "ps_arcade_hi_flappy", "INSERTCOIN", "ASTEROID BLASTER", "BRICK BREAKER", "CYBER PONG", "CLICKER FLAPPY", "GRAVITY WAVE", "MIC BUMPER"] {
+for _, jsToken in ["PSArcadeVault", "PSArcadeHost", "PSWebSnake", "PSWebAsteroids", "PSWebBrickBreaker", "PSWebCyberPong", "PSWebFlappy", "PSWebLightCycles", "PSWebPacGrid", "ps_arcade_hi_snake", "ps_arcade_hi_asteroids", "ps_arcade_hi_brick_breaker", "ps_arcade_hi_cyber_pong", "ps_arcade_hi_flappy", "ps_arcade_hi_tron", "ps_arcade_hi_pac_grid", "buildPieces", "View: Full", "INSERTCOIN", "ASTEROID BLASTER", "BRICK BREAKER", "CYBER PONG", "CLICKER FLAPPY", "NEON LIGHT CYCLES", "NEON PAC-GRID", "GRAVITY WAVE", "MIC BUMPER"] {
     Assert("BuildWebRemoteArcadeJs includes '" jsToken "'", InStr(arcadeJs, jsToken) > 0)
 }
 Assert("BuildWebRemoteArcadeJs never persists vault unlock status in localStorage/sessionStorage", !InStr(arcadeJs, "ps_arcade_unlocked") && !InStr(arcadeJs, "sessionStorage.setItem"))
@@ -126,7 +126,7 @@ resHealth := HttpGetAsync("http://127.0.0.1:" bridgePort "/health")
 Assert("GET /health returns 200 OK & JSON", resHealth.status = 200 && InStr(StrLower(resHealth.contentType), "application/json") > 0 && InStr(resHealth.body, '"ok":true') > 0)
 
 resArcade := HttpGetAsync("http://127.0.0.1:" bridgePort "/arcade.js")
-Assert("GET /arcade.js returns 200 OK application/javascript with Asteroid Blaster, Paddle Pack & Clicker Flappy (M2.4-M4.3)", resArcade.status = 200 && InStr(StrLower(resArcade.contentType), "javascript") > 0 && InStr(resArcade.body, "PSWebAsteroids") > 0 && InStr(resArcade.body, "PSWebBrickBreaker") > 0 && InStr(resArcade.body, "PSWebCyberPong") > 0 && InStr(resArcade.body, "PSWebFlappy") > 0 && InStr(resArcade.body, "ps_arcade_hi_flappy") > 0 && !InStr(resArcade.body, "\x27"), Format("status={} type={} bytes={}", resArcade.status, resArcade.contentType, resArcade.byteLen))
+Assert("GET /arcade.js returns 200 OK application/javascript with full M2-M5 suite (LightCycles, PacGrid, Snake buildPieces, View: Full)", resArcade.status = 200 && InStr(StrLower(resArcade.contentType), "javascript") > 0 && InStr(resArcade.body, "PSWebAsteroids") > 0 && InStr(resArcade.body, "PSWebBrickBreaker") > 0 && InStr(resArcade.body, "PSWebCyberPong") > 0 && InStr(resArcade.body, "PSWebFlappy") > 0 && InStr(resArcade.body, "PSWebLightCycles") > 0 && InStr(resArcade.body, "PSWebPacGrid") > 0 && InStr(resArcade.body, "ps_arcade_hi_tron") > 0 && InStr(resArcade.body, "ps_arcade_hi_pac_grid") > 0 && InStr(resArcade.body, "buildPieces") > 0 && InStr(resArcade.body, "View: Full") > 0 && !InStr(resArcade.body, "\x27"), Format("status={} type={} bytes={}", resArcade.status, resArcade.contentType, resArcade.byteLen))
 
 ; 3. Non-blocking WinSock2 loopback WS toggle_mute ack (#1) + clean disconnect (#7)
 LoopbackWsOpen(port, path) {

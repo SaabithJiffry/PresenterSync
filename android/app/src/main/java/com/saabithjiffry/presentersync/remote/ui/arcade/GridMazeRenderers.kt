@@ -321,6 +321,67 @@ class PacGridOverlayView(
     private var touchStartX = 0f
     private var touchStartY = 0f
 
+    var expandedView: Boolean = false
+
+    data class MazeLayout(
+        val left: Float,
+        val top: Float,
+        val cellW: Float,
+        val cellH: Float,
+        val boardW: Float,
+        val boardH: Float
+    )
+
+    companion object {
+        fun computeMazeLayout(
+            widthPx: Float,
+            heightPx: Float,
+            density: Float,
+            cols: Int,
+            rows: Int,
+            expanded: Boolean,
+            showTouchDpad: Boolean = false
+        ): MazeLayout {
+            val w = widthPx.coerceAtLeast(320f)
+            val h = heightPx.coerceAtLeast(320f)
+            if (expanded) {
+                val topInset = 68f * density
+                val sideInset = 10f * density
+                val bottomInset = if (showTouchDpad) 128f * density else 12f * density
+                val availW = (w - sideInset * 2f).coerceAtLeast(160f)
+                val availH = (h - topInset - bottomInset).coerceAtLeast(160f)
+                val cellW = availW / cols.toFloat()
+                val cellH = availH / rows.toFloat()
+                return MazeLayout(
+                    left = sideInset,
+                    top = topInset,
+                    cellW = cellW,
+                    cellH = cellH,
+                    boardW = cellW * cols,
+                    boardH = cellH * rows
+                )
+            }
+            val topInset = 78f * density
+            val bottomInset = if (showTouchDpad) 136f * density else 28f * density
+            val sideInset = 14f * density
+            val availW = (w - sideInset * 2f).coerceAtLeast(160f)
+            val availH = (h - topInset - bottomInset).coerceAtLeast(160f)
+            val tileSize = min(availW / cols.toFloat(), availH / rows.toFloat())
+            val boardW = tileSize * cols
+            val boardH = tileSize * rows
+            val left = (w - boardW) * 0.5f
+            val top = topInset + (availH - boardH) * 0.5f
+            return MazeLayout(
+                left = left,
+                top = top,
+                cellW = tileSize,
+                cellH = tileSize,
+                boardW = boardW,
+                boardH = boardH
+            )
+        }
+    }
+
     override fun buildScoreboardBadge(): String = "NEON PAC-GRID · LVL ${engine.level}"
 
     override fun buildScoreboardStats(): String {
@@ -333,12 +394,12 @@ class PacGridOverlayView(
     }
 
     override fun buildExtraChipLabel(): String {
-        return if (engine.showTouchDpad) "D-Pad: ON" else "D-Pad: OFF"
+        return if (expandedView) "View: Full" else "View: Center"
     }
 
     override fun buildPauseTitle(): String = "NEON PAC-GRID PAUSED"
 
-    override fun buildPauseSubtitle(): String = "Swipe, tap on-screen D-Pad, or use Arrows/WASD to buffer turns"
+    override fun buildPauseSubtitle(): String = "Swipe, tap on-screen D-Pad, or use Arrows/WASD to buffer turns · F: Center/Full View"
 
     override fun buildGameOverSubtitle(): String =
         "Score ${engine.score} · Best ${engine.highScore} · Level ${engine.level}"
@@ -348,7 +409,8 @@ class PacGridOverlayView(
     override fun isGameOver(): Boolean = engine.phase == PacGridPhase.GAME_OVER
 
     override fun onExtraTopAction() {
-        engine.toggleTouchDpad()
+        expandedView = !expandedView
+        invalidate()
     }
 
     override fun onTogglePause() {
@@ -387,6 +449,13 @@ class PacGridOverlayView(
             }
             KeyEvent.KEYCODE_P -> {
                 if (event.repeatCount == 0) engine.togglePause()
+                return true
+            }
+            KeyEvent.KEYCODE_F, KeyEvent.KEYCODE_BUTTON_Y -> {
+                if (event.repeatCount == 0) {
+                    expandedView = !expandedView
+                    invalidate()
+                }
                 return true
             }
             KeyEvent.KEYCODE_R -> {
@@ -452,20 +521,21 @@ class PacGridOverlayView(
         fillPaint.color = withAlpha(if (isDark) 0x070B14 else 0x0F172A, if (isDark) 144 else 124)
         canvas.drawRect(0f, 0f, w, h, fillPaint)
 
-        val topInset = 78f * density
-        val bottomInset = if (engine.showTouchDpad) 136f * density else 28f * density
-        val sideInset = 14f * density
-        val availW = (w - sideInset * 2f).coerceAtLeast(160f)
-        val availH = (h - topInset - bottomInset).coerceAtLeast(160f)
-
-        val tileSize = min(
-            availW / PacGridEngine.MAZE_COLS.toFloat(),
-            availH / PacGridEngine.MAZE_ROWS.toFloat()
+        val layout = computeMazeLayout(
+            widthPx = w,
+            heightPx = h,
+            density = density,
+            cols = PacGridEngine.MAZE_COLS,
+            rows = PacGridEngine.MAZE_ROWS,
+            expanded = expandedView,
+            showTouchDpad = engine.showTouchDpad
         )
-        val boardW = tileSize * PacGridEngine.MAZE_COLS
-        val boardH = tileSize * PacGridEngine.MAZE_ROWS
-        val left = (w - boardW) * 0.5f
-        val top = topInset + (availH - boardH) * 0.5f
+        val left = layout.left
+        val top = layout.top
+        val cellW = layout.cellW
+        val cellH = layout.cellH
+        val tileSize = min(cellW, cellH)
+        val boardH = layout.boardH
 
         val pulse = ((nowNs / 120_000_000L) % 2L == 0L)
         val wallRgb = if (isMicMuted) palette.mutedBg else palette.liveBg
@@ -476,19 +546,20 @@ class PacGridOverlayView(
         // Render 28x31 maze walls, pellets, and corner Power Orbs
         for (r in 0 until PacGridEngine.MAZE_ROWS) {
             for (c in 0 until PacGridEngine.MAZE_COLS) {
-                val tl = left + c * tileSize
-                val tt = top + r * tileSize
-                val cx = tl + tileSize * 0.5f
-                val cy = tt + tileSize * 0.5f
+                val tl = left + c * cellW
+                val tt = top + r * cellH
+                val cx = tl + cellW * 0.5f
+                val cy = tt + cellH * 0.5f
 
                 when (engine.getTile(c, r)) {
                     PacGridEngine.TILE_WALL -> {
-                        val pad = tileSize * 0.08f
-                        tempRect.set(tl + pad, tt + pad, tl + tileSize - pad, tt + tileSize - pad)
+                        val padX = cellW * 0.08f
+                        val padY = cellH * 0.08f
+                        tempRect.set(tl + padX, tt + padY, tl + cellW - padX, tt + cellH - padY)
                         canvas.drawRoundRect(tempRect, tileSize * 0.22f, tileSize * 0.22f, wallPaint)
                     }
                     PacGridEngine.TILE_GHOST_GATE -> {
-                        canvas.drawLine(tl, cy, tl + tileSize, cy, gatePaint)
+                        canvas.drawLine(tl, cy, tl + cellW, cy, gatePaint)
                     }
                     PacGridEngine.TILE_PELLET -> {
                         pelletPaint.color = 0xFFFDE68A.toInt()
@@ -505,22 +576,22 @@ class PacGridOverlayView(
 
         // Bonus Neon Fruit
         engine.activeFruit?.let { fruit ->
-            val fx = left + (fruit.col + 0.5f) * tileSize
-            val fy = top + (fruit.row + 0.5f) * tileSize
+            val fx = left + (fruit.col + 0.5f) * cellW
+            val fy = top + (fruit.row + 0.5f) * cellH
             actorPaint.color = 0xFFEC4899.toInt()
             canvas.drawCircle(fx, fy, tileSize * 0.44f, actorPaint)
         }
 
         // Neon Runner
-        val rx = left + (engine.runnerCol + 0.5f) * tileSize
-        val ry = top + (engine.runnerRow + 0.5f) * tileSize
+        val rx = left + (engine.runnerCol + 0.5f) * cellW
+        val ry = top + (engine.runnerRow + 0.5f) * cellH
         actorPaint.color = 0xFFFACC15.toInt()
         canvas.drawCircle(rx, ry, tileSize * 0.48f, actorPaint)
 
         // 4 Chasers (Blinky, Pinky, Inky, Clyde)
         for (chaser in engine.chasers) {
-            val gx = left + (chaser.col + 0.5f) * tileSize
-            val gy = top + (chaser.row + 0.5f) * tileSize
+            val gx = left + (chaser.col + 0.5f) * cellW
+            val gy = top + (chaser.row + 0.5f) * cellH
             when (chaser.state) {
                 ChaserState.EYES -> {
                     actorPaint.color = 0xFFFFFFFF.toInt()

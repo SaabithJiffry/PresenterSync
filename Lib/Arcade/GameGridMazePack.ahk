@@ -808,6 +808,7 @@ class GamePacGrid {
 
     static _chasers := []
     static _popups := []
+    static _expandedMode := false
 
     static Toggle(cfg, state) {
         if (this.IsActive)
@@ -879,10 +880,19 @@ class GamePacGrid {
             { key: "$a", fn: (*) => GamePacGrid.QueueDir(-1, 0) },
             { key: "$d", fn: (*) => GamePacGrid.QueueDir(1, 0) },
             { key: "$p", fn: (*) => GamePacGrid.TogglePause() },
+            { key: "$f", fn: (*) => GamePacGrid.ToggleViewMode() },
+            { key: "$+f", fn: (*) => GamePacGrid.ToggleViewMode() },
             { key: "$r", fn: (*) => (GamePacGrid.Phase = "gameover" ? GamePacGrid._ResetGame() : 0) },
             { key: "$Escape", fn: (*) => GamePacGrid.Stop() }
         ]
         HudArcadeBase.BindKeysSafe(cfg, bindings, this._boundHotkeys, condFn)
+    }
+
+    static ToggleViewMode() {
+        this._expandedMode := !this._expandedMode
+        if (this.IsActive && !this._headless)
+            this._RenderFrame()
+        return this._expandedMode
     }
 
     static TogglePause() {
@@ -1458,8 +1468,8 @@ class GamePacGrid {
         }
         if (showPopup) {
             m := this._GetMazeMetrics()
-            px := m.ox + (Float(col) + 0.5) * m.cell
-            py := m.oy + (Float(row) + 0.5) * m.cell
+            px := m.ox + (Float(col) + 0.5) * m.cellX
+            py := m.oy + (Float(row) + 0.5) * m.cellY
             this._popups.Push({ x: px, y: py, text: "+" Integer(pts), ttlMs: 850.0, col: colArgb })
         }
     }
@@ -1467,6 +1477,21 @@ class GamePacGrid {
     static _GetMazeMetrics() {
         W := IsObject(this._surf) ? Float(this._surf.W) : 1280.0
         H := IsObject(this._surf) ? Float(this._surf.H) : 720.0
+        if (this._expandedMode) {
+            topY := 68.0
+            padX := 16.0
+            padBot := 14.0
+            availW := Max(320.0, W - padX * 2.0)
+            availH := Max(240.0, H - topY - padBot)
+            cellX := availW / Float(this.COLS)
+            cellY := availH / Float(this.ROWS)
+            cell := Min(cellX, cellY)
+            boardW := cellX * Float(this.COLS)
+            boardH := cellY * Float(this.ROWS)
+            ox := padX
+            oy := topY
+            return { W: W, H: H, ox: ox, oy: oy, cellX: cellX, cellY: cellY, cell: cell, boardW: boardW, boardH: boardH, expanded: true }
+        }
         topY := 76.0
         botPad := 28.0
         availH := Max(240.0, H - topY - botPad)
@@ -1477,7 +1502,7 @@ class GamePacGrid {
         boardH := cell * Float(this.ROWS)
         ox := (W - boardW) * 0.5
         oy := topY + (availH - boardH) * 0.5
-        return { W: W, H: H, ox: ox, oy: oy, cell: cell, boardW: boardW, boardH: boardH }
+        return { W: W, H: H, ox: ox, oy: oy, cellX: cell, cellY: cell, cell: cell, boardW: boardW, boardH: boardH, expanded: false }
     }
 
     ; --- Headless Test Helpers ---
@@ -1572,7 +1597,8 @@ class GamePacGrid {
             fruit70Spawned: this._fruit70Spawned,
             fruit170Spawned: this._fruit170Spawned,
             chasers: this._chasers,
-            popupCount: this._popups.Length
+            popupCount: this._popups.Length,
+            expandedMode: this._expandedMode
         }
     }
 
@@ -1596,22 +1622,22 @@ class GamePacGrid {
             Loop this.ROWS {
                 r := A_Index - 1
                 rowArr := this._grid[A_Index]
-                gy := m.oy + Float(r) * m.cell
+                gy := m.oy + Float(r) * m.cellY
                 Loop this.COLS {
                     c := A_Index - 1
                     cellVal := rowArr[A_Index]
-                    gx := m.ox + Float(c) * m.cell
+                    gx := m.ox + Float(c) * m.cellX
                     if (cellVal == 1) {
-                        HudArcadeBase.FillRoundedRect(g, gx + 1.0, gy + 1.0, m.cell - 2.0, m.cell - 2.0, 3.0, 0x441E3A8A)
-                        HudArcadeBase.StrokeRoundedRect(g, gx + 1.0, gy + 1.0, m.cell - 2.0, m.cell - 2.0, 3.0, 0xCC3B82F6, 1.2)
+                        HudArcadeBase.FillRoundedRect(g, gx + 1.0, gy + 1.0, Max(2.0, m.cellX - 2.0), Max(2.0, m.cellY - 2.0), 3.0, 0x441E3A8A)
+                        HudArcadeBase.StrokeRoundedRect(g, gx + 1.0, gy + 1.0, Max(2.0, m.cellX - 2.0), Max(2.0, m.cellY - 2.0), 3.0, 0xCC3B82F6, 1.2)
                     } else if (cellVal == 2 && pPelletBrush) {
                         pr := Max(2.2, m.cell * 0.14)
-                        DllCall("gdiplus\GdipFillEllipse", "Ptr", g, "Ptr", pPelletBrush, "Float", gx + m.cell * 0.5 - pr, "Float", gy + m.cell * 0.5 - pr, "Float", pr * 2.0, "Float", pr * 2.0)
+                        DllCall("gdiplus\GdipFillEllipse", "Ptr", g, "Ptr", pPelletBrush, "Float", gx + m.cellX * 0.5 - pr, "Float", gy + m.cellY * 0.5 - pr, "Float", pr * 2.0, "Float", pr * 2.0)
                     } else if (cellVal == 3 && pOrbBrush) {
                         orad := Max(4.5, m.cell * 0.34)
-                        DllCall("gdiplus\GdipFillEllipse", "Ptr", g, "Ptr", pOrbBrush, "Float", gx + m.cell * 0.5 - orad, "Float", gy + m.cell * 0.5 - orad, "Float", orad * 2.0, "Float", orad * 2.0)
+                        DllCall("gdiplus\GdipFillEllipse", "Ptr", g, "Ptr", pOrbBrush, "Float", gx + m.cellX * 0.5 - orad, "Float", gy + m.cellY * 0.5 - orad, "Float", orad * 2.0, "Float", orad * 2.0)
                     } else if (cellVal == 4) {
-                        HudArcadeBase.FillRoundedRect(g, gx, gy + m.cell * 0.4, m.cell, Max(2.5, m.cell * 0.2), 1.0, 0xFFF472B6)
+                        HudArcadeBase.FillRoundedRect(g, gx, gy + m.cellY * 0.4, m.cellX, Max(2.5, m.cell * 0.2), 1.0, 0xFFF472B6)
                     }
                 }
             }
@@ -1624,33 +1650,36 @@ class GamePacGrid {
 
         ; Draw active Bonus Neon Fruit below ghost pen
         if (this._fruitActive) {
-            fx := m.ox + Float(this._fruitCol) * m.cell
-            fy := m.oy + Float(this._fruitRow) * m.cell
-            HudArcadeBase.FillRoundedRect(g, fx + 2.0, fy + 2.0, m.cell - 4.0, m.cell - 4.0, m.cell * 0.4, 0xFF10B981)
-            HudArcadeBase.StrokeRoundedRect(g, fx + 2.0, fy + 2.0, m.cell - 4.0, m.cell - 4.0, m.cell * 0.4, 0xFFA7F3D0, 1.5)
+            fr := Max(4.0, (m.cell - 4.0) * 0.5)
+            fcx := m.ox + (Float(this._fruitCol) + 0.5) * m.cellX
+            fcy := m.oy + (Float(this._fruitRow) + 0.5) * m.cellY
+            HudArcadeBase.FillRoundedRect(g, fcx - fr, fcy - fr, fr * 2.0, fr * 2.0, fr * 0.8, 0xFF10B981)
+            HudArcadeBase.StrokeRoundedRect(g, fcx - fr, fcy - fr, fr * 2.0, fr * 2.0, fr * 0.8, 0xFFA7F3D0, 1.5)
         }
 
         ; Draw Pac-Runner
-        rx := m.ox + Float(this._runnerCol) * m.cell
-        ry := m.oy + Float(this._runnerRow) * m.cell
-        HudArcadeBase.FillRoundedRect(g, rx + 1.0, ry + 1.0, m.cell - 2.0, m.cell - 2.0, (m.cell - 2.0) * 0.5, 0xFFFACC15)
-        HudArcadeBase.StrokeRoundedRect(g, rx + 1.0, ry + 1.0, m.cell - 2.0, m.cell - 2.0, (m.cell - 2.0) * 0.5, 0xFFFEF08A, 1.5)
+        rr := Max(4.0, (m.cell - 2.0) * 0.5)
+        rcx := m.ox + (Float(this._runnerCol) + 0.5) * m.cellX
+        rcy := m.oy + (Float(this._runnerRow) + 0.5) * m.cellY
+        HudArcadeBase.FillRoundedRect(g, rcx - rr, rcy - rr, rr * 2.0, rr * 2.0, rr, 0xFFFACC15)
+        HudArcadeBase.StrokeRoundedRect(g, rcx - rr, rcy - rr, rr * 2.0, rr * 2.0, rr, 0xFFFEF08A, 1.5)
 
         ; Draw 4 Chasers (normal / frightened blue-flash / returning eyes)
         for _, ch in this._chasers {
-            cx := m.ox + Float(ch.col) * m.cell
-            cy := m.oy + Float(ch.row) * m.cell
+            ccx := m.ox + (Float(ch.col) + 0.5) * m.cellX
+            ccy := m.oy + (Float(ch.row) + 0.5) * m.cellY
+            cr := Max(4.0, (m.cell - 2.0) * 0.5)
             if (ch.state = "eyes") {
-                HudArcadeBase.FillRoundedRect(g, cx + 2.0, cy + m.cell * 0.25, m.cell * 0.32, m.cell * 0.42, 3.0, 0xFFF8FAFC)
-                HudArcadeBase.FillRoundedRect(g, cx + m.cell * 0.54, cy + m.cell * 0.25, m.cell * 0.32, m.cell * 0.42, 3.0, 0xFFF8FAFC)
+                HudArcadeBase.FillRoundedRect(g, ccx - cr * 0.68, ccy - cr * 0.42, cr * 0.56, cr * 0.78, 3.0, 0xFFF8FAFC)
+                HudArcadeBase.FillRoundedRect(g, ccx + cr * 0.12, ccy - cr * 0.42, cr * 0.56, cr * 0.78, 3.0, 0xFFF8FAFC)
             } else {
                 bodyCol := ch.color
                 if (ch.state = "frightened") {
                     flashing := (this._frightenedSec < 2.0 && Mod(Round(this._animTimeSec * 8.0), 2) == 0)
                     bodyCol := flashing ? 0xFFF8FAFC : 0xFF2563EB
                 }
-                HudArcadeBase.FillRoundedRect(g, cx + 1.0, cy + 1.0, m.cell - 2.0, m.cell - 2.0, 5.0, bodyCol)
-                HudArcadeBase.StrokeRoundedRect(g, cx + 1.0, ry == cy ? cy + 1.0 : cy + 1.0, m.cell - 2.0, m.cell - 2.0, 5.0, 0xFFF8FAFC, 1.2)
+                HudArcadeBase.FillRoundedRect(g, ccx - cr, ccy - cr, cr * 2.0, cr * 2.0, 5.0, bodyCol)
+                HudArcadeBase.StrokeRoundedRect(g, ccx - cr, ccy - cr, cr * 2.0, cr * 2.0, 5.0, 0xFFF8FAFC, 1.2)
             }
         }
 
@@ -1660,9 +1689,10 @@ class GamePacGrid {
         isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
         micMuted := (IsObject(this._state) && this._state.HasOwnProp("isMuted")) ? (this._state.isMuted ? 1 : 0) : -1
         modeLabel := (this._frightenedSec > 0.0) ? Format("FRIGHT ({:.1f}s)", this._frightenedSec) : StrUpper(this._waveMode)
-        stats := Format("SCORE {}  •  BEST {}  •  LIVES {}  •  LVL {}  •  MODE: {}",
-            this._score, this._highScore, this._lives, this._level, modeLabel)
-        hint := "Arrows / WASD: Buffered Turn  •  P: Pause  •  R: Retry  •  Esc: Exit"
+        viewLabel := this._expandedMode ? "[F] View: Full" : "[F] View: Center"
+        stats := Format("SCORE {}  •  BEST {}  •  LIVES {}  •  LVL {}  •  MODE: {}  •  {}",
+            this._score, this._highScore, this._lives, this._level, modeLabel, viewLabel)
+        hint := "Arrows / WASD: Buffered Turn  •  F: Center/Full View  •  P: Pause  •  R: Retry  •  Esc: Exit"
         HudArcadeBase.DrawScoreboardPill(g, m.W, "NEON PAC-GRID", stats, hint, isDark, micMuted)
 
         if (this.Phase = "paused") {
