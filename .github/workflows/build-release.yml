@@ -133,7 +133,8 @@ jobs:
                 Write-Host "::error title=$suite reported [FAIL]::$summary"
                 exit 1
               }
-              $summary = if (Test-Path $errLog) { ((Get-Content $errLog -Raw) -replace "`r?`n", " | ").Trim() } else { "" }
+              $rawErr = if (Test-Path $errLog) { [string](Get-Content $errLog -Raw) } else { "" }
+              $summary = ($rawErr -replace "`r?`n", " | ").Trim()
               if (-not $summary) { $summary = "ExitCode=$($p.ExitCode)" }
               Write-Host "::error title=$suite failed::$summary"
               exit $p.ExitCode

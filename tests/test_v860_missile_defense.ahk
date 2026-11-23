@@ -71,7 +71,8 @@ AssertTrue(GameMissileDefense.GetStateSnapshot().interceptorsCount == 1, "FireIn
 ; Step enough for interceptor to reach target and detonate shockwave
 GameMissileDefense.StepForTest(1.2)
 snap := GameMissileDefense.GetStateSnapshot()
-AssertTrue(snap.meteorsCount == 0 && snap.score == 475 && snap.combo >= 2 && snap.wave == 2,
+; Wave 2 only starts once both Wave 1 meteors are destroyed (on shorter screens, Wave 2 may already spawn its first meteor before 1.2s elapses)
+AssertTrue(snap.score == 475 && snap.combo >= 2 && snap.wave == 2,
     "Shockwave blast destroys 2 meteors with chain-kill multiplier (25*1+25*2=75) + 400 wave bonus",
     "score=" snap.score " combo=" snap.combo " wave=" snap.wave " meteors=" snap.meteorsCount)
 
