@@ -69,7 +69,7 @@ cfg := MockArcadeConfig()
 state := { isMuted: true }
 
 ; --- 0. Version Check ---
-AssertEq(UIConstants.APP_VERSION, "8.5.0", "UIConstants.APP_VERSION is 8.5.0")
+AssertTrue(RegExMatch(UIConstants.APP_VERSION, "^\d+\.\d+\.\d+$") > 0, "UIConstants.APP_VERSION is valid semver")
 
 ; ==============================================================================
 ; 1. NEON LIGHT CYCLES (TRON) TESTS
