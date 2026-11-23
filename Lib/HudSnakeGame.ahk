@@ -8,6 +8,7 @@
 ; ==============================================================================
 
 #Include "%A_LineFile%\..\Gdip.ahk"
+#Include "%A_LineFile%\..\HudArcadeBase.ahk"
 
 class HudSnake {
     static IsActive := false
@@ -47,25 +48,21 @@ class HudSnake {
     static _popups := []         ; Floating "+10" / "+30" HUD-style tags
 
     ; High-Precision Timing & Pause/Resume Restoration
-    static _qpcFreq := 0
     static _stepMs := 132
     static _morphDurationMs := 360
     static _morphStartUs := 0.0
     static _stepStartUs := 0.0
     static _frozenInterp := 0.0
-    static _mmTimerActive := false
     static _tickTimerFn := ""
     static _boundHotkeys := []
     static _gpLastBtnMask := 0
     static _gpLastDirKey := ""
-    static _gpDllName := ""
-    static _gpDllChecked := false
-    static _gpBuf := Buffer(16, 0)
     static _cfg := ""
     static _state := ""
     static _headless := false
 
-    ; Persistent Zero-Alloc GDI+ Layered Canvas + Scratch Tube Buffer
+    ; Persistent Zero-Alloc GDI+ Layered Canvas (via HudArcadeBase) + Scratch Tube Buffer
+    static _surf := ""
     static _gui := ""
     static _hdcMem := 0
     static _hbm := 0
@@ -77,10 +74,6 @@ class HudSnake {
     static _pImgAttr := 0
     static _snakeColorMat := Buffer(100, 0)
     static _prevDirtyRect := ""
-    static _ptWin := Buffer(8, 0)
-    static _szWin := Buffer(8, 0)
-    static _ptSrc := Buffer(8, 0)
-    static _blend := Buffer(4, 0)
 
     static Toggle(cfg, state) {
         if (this.IsActive)
@@ -135,12 +128,7 @@ class HudSnake {
                 this.Stop()
                 return false
             }
-            if (!this._mmTimerActive) {
-                try {
-                    DllCall("winmm\timeBeginPeriod", "UInt", 1, "UInt")
-                    this._mmTimerActive := true
-                }
-            }
+            HudArcadeBase.BeginHighResTimer()
             this._BindGameHotkeys()
             this._RenderFrame(tickUs)
             this._tickTimerFn := ObjBindMethod(this, "_FrameTick")
@@ -157,10 +145,7 @@ class HudSnake {
             try SetTimer(this._tickTimerFn, 0)
             this._tickTimerFn := ""
         }
-        if (this._mmTimerActive) {
-            try DllCall("winmm\timeEndPeriod", "UInt", 1, "UInt")
-            this._mmTimerActive := false
-        }
+        HudArcadeBase.EndHighResTimer()
         this._UnbindGameHotkeys()
         this._DestroyCanvas()
 
@@ -400,19 +385,10 @@ class HudSnake {
     ; ==========================================================================
 
     static _InitClock() {
-        if (!this._qpcFreq) {
-            freq := 0
-            DllCall("QueryPerformanceFrequency", "Int64*", &freq)
-            this._qpcFreq := (freq > 0) ? Float(freq) : 10000000.0
-        }
     }
 
     static _NowUs() {
-        if (!this._qpcFreq)
-            this._InitClock()
-        cnt := 0
-        DllCall("QueryPerformanceCounter", "Int64*", &cnt)
-        return (Float(cnt) * 1000000.0) / this._qpcFreq
+        return HudArcadeBase.NowUs()
     }
 
     static _CloneSnake(src) {
@@ -747,37 +723,13 @@ class HudSnake {
         return { x: -1, y: 0 }
     }
 
-    static _EnsureXInputDll() {
-        if (this._gpDllChecked)
-            return this._gpDllName
-        this._gpDllChecked := true
-        for dllName in ["xinput1_4.dll", "xinput9_1_0.dll", "xinput1_3.dll"] {
-            hMod := DllCall("LoadLibrary", "Str", dllName, "Ptr")
-            if (hMod) {
-                this._gpDllName := dllName
-                return dllName
-            }
-        }
-        return ""
-    }
-
     static _PollGamepadInput() {
         if (!this.IsActive)
             return
-        decoded := ""
-        dllName := this._EnsureXInputDll()
-        if (dllName != "") {
-            Loop 4 {
-                idx := A_Index - 1
-                res := DllCall(dllName "\XInputGetState", "UInt", idx, "Ptr", this._gpBuf.Ptr, "UInt")
-                if (res == 0) {
-                    buttons := NumGet(this._gpBuf, 4, "UShort")
-                    thumbX := NumGet(this._gpBuf, 8, "Short")
-                    thumbY := NumGet(this._gpBuf, 10, "Short")
-                    decoded := this.DecodeXInputGamepadState(buttons, thumbX, thumbY)
-                    break
-                }
-            }
+        local decoded := ""
+        local xi := HudArcadeBase.PollXInput()
+        if (IsObject(xi)) {
+            decoded := this.DecodeXInputGamepadState(xi.btn, xi.lx, xi.ly)
         }
         if (!IsObject(decoded)) {
             try {
@@ -900,41 +852,34 @@ class HudSnake {
 
     static _InitCanvas() {
         this._DestroyCanvas()
-        this._gui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 +E0x20 -DPIScale", "PresenterSync HUD Snake")
-        if (IsSet(ApplyWindowCaptureAffinity))
-            ApplyWindowCaptureAffinity(this._gui.Hwnd, true)
-        this._gui.Show(Format("NoActivate x{} y{} w{} h{}", this._waLeft, this._waTop, this._W, this._H))
-
-        bi := Buffer(40, 0)
-        NumPut("UInt", 40, "Int", this._W, "Int", -this._H, "UShort", 1, "UShort", 32, bi, 0)
-        hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
-        this._hdcMem := DllCall("CreateCompatibleDC", "Ptr", hdcScreen, "Ptr")
-        pBits := 0
-        this._hbm := DllCall("CreateDIBSection", "Ptr", hdcScreen, "Ptr", bi, "UInt", 0, "Ptr*", &pBits, "Ptr", 0, "UInt", 0, "Ptr")
-        DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcScreen)
-
-        if (!this._hdcMem || !this._hbm || !pBits) {
-            this._DestroyCanvas()
+        local surf := HudArcadeBase.CreateSurface({
+            title: "PresenterSync HUD Snake",
+            interactiveMouse: false,
+            headless: false,
+            waLeft: this._waLeft,
+            waTop: this._waTop,
+            W: this._W,
+            H: this._H
+        })
+        if (!IsObject(surf) || !surf.pGraphics || !surf.pBits) {
+            if (IsObject(surf))
+                HudArcadeBase.DestroySurface(surf)
             return false
         }
-        this._pBits := pBits
-        this._obm := DllCall("SelectObject", "Ptr", this._hdcMem, "Ptr", this._hbm, "Ptr")
-        pGfx := 0
-        DllCall("gdiplus\GdipCreateFromHDC", "Ptr", this._hdcMem, "Ptr*", &pGfx)
-        if (!pGfx) {
-            this._DestroyCanvas()
-            return false
-        }
-        DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGfx, "Int", 4)
-        DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGfx, "Int", 4)
-        this._pGraphics := pGfx
+        this._surf := surf
+        this._gui := surf.gui
+        this._hdcMem := surf.hdcMem
+        this._hbm := surf.hbm
+        this._obm := surf.obm
+        this._pBits := surf.pBits
+        this._pGraphics := surf.pGraphics
 
         ; Persistent offscreen ARGB scratch layer for seamless single-silhouette snake tube rendering
-        pSBmp := 0
+        local pSBmp := 0
         DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", this._W, "Int", this._H, "Int", 0, "Int", 0x26200A, "Ptr", 0, "Ptr*", &pSBmp)
         if (pSBmp) {
             this._pSnakeBmp := pSBmp
-            pSGfx := 0
+            local pSGfx := 0
             DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", pSBmp, "Ptr*", &pSGfx)
             if (pSGfx) {
                 DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pSGfx, "Int", 4)
@@ -942,7 +887,7 @@ class HudSnake {
                 this._pSnakeGfx := pSGfx
             }
         }
-        pAttr := 0
+        local pAttr := 0
         DllCall("gdiplus\GdipCreateImageAttributes", "Ptr*", &pAttr)
         this._pImgAttr := pAttr
         this._prevDirtyRect := ""
@@ -953,11 +898,6 @@ class HudSnake {
         NumPut("Float", 1.0, this._snakeColorMat, 48)
         NumPut("Float", 1.0, this._snakeColorMat, 72)
         NumPut("Float", 1.0, this._snakeColorMat, 96)
-
-        NumPut("Int", this._waLeft, "Int", this._waTop, this._ptWin, 0)
-        NumPut("Int", this._W, "Int", this._H, this._szWin, 0)
-        NumPut("Int64", 0, this._ptSrc, 0)
-        NumPut("UInt", 0x01FF0000, this._blend, 0)
         return true
     }
 
@@ -975,53 +915,23 @@ class HudSnake {
             this._pSnakeBmp := 0
         }
         this._prevDirtyRect := ""
-        if (this._pGraphics) {
-            DllCall("gdiplus\GdipDeleteGraphics", "Ptr", this._pGraphics)
-            this._pGraphics := 0
+        if (IsObject(this._surf)) {
+            HudArcadeBase.DestroySurface(this._surf)
+            this._surf := ""
         }
-        if (this._hdcMem && this._obm) {
-            DllCall("SelectObject", "Ptr", this._hdcMem, "Ptr", this._obm)
-            this._obm := 0
-        }
-        if (this._hbm) {
-            DllCall("DeleteObject", "Ptr", this._hbm)
-            this._hbm := 0
-        }
+        this._pGraphics := 0
+        this._obm := 0
+        this._hbm := 0
         this._pBits := 0
-        if (this._hdcMem) {
-            DllCall("DeleteDC", "Ptr", this._hdcMem)
-            this._hdcMem := 0
-        }
-        if (IsObject(this._gui)) {
-            try this._gui.Destroy()
-            this._gui := ""
-        }
+        this._hdcMem := 0
+        this._gui := ""
     }
 
     static _FillRoundedBox(pGfx, x, y, w, h, radius, fillArgb, borderArgb := 0, borderW := 1.4) {
-        pPath := Gdip.CreateRoundedRectPath(x, y, w, h, radius)
-        if (!pPath)
-            return
-        pBrush := 0
-        pPen := 0
-        try {
-            if ((fillArgb >>> 24) > 0) {
-                DllCall("gdiplus\GdipCreateSolidFill", "UInt", fillArgb, "Ptr*", &pBrush)
-                if (pBrush)
-                    DllCall("gdiplus\GdipFillPath", "Ptr", pGfx, "Ptr", pBrush, "Ptr", pPath)
-            }
-            if ((borderArgb >>> 24) > 0 && borderW > 0) {
-                DllCall("gdiplus\GdipCreatePen1", "UInt", borderArgb, "Float", Float(borderW), "Int", 2, "Ptr*", &pPen)
-                if (pPen)
-                    DllCall("gdiplus\GdipDrawPath", "Ptr", pGfx, "Ptr", pPen, "Ptr", pPath)
-            }
-        } finally {
-            if (pPen)
-                DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
-            if (pBrush)
-                DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
-            DllCall("gdiplus\GdipDeletePath", "Ptr", pPath)
-        }
+        if ((fillArgb >>> 24) > 0)
+            HudArcadeBase.FillRoundedRect(pGfx, x, y, w, h, radius, fillArgb)
+        if ((borderArgb >>> 24) > 0 && borderW > 0)
+            HudArcadeBase.StrokeRoundedRect(pGfx, x, y, w, h, radius, borderArgb, borderW)
     }
 
     static _RenderFrame(nowUs := -1) {
@@ -1062,7 +972,7 @@ class HudSnake {
         if (this.Phase = "paused" || this.Phase = "gameover")
             this._DrawStatusBanner(pGfx, snakePal, isDark)
 
-        DllCall("UpdateLayeredWindow", "Ptr", this._gui.Hwnd, "Ptr", 0, "Ptr", this._ptWin, "Ptr", this._szWin, "Ptr", this._hdcMem, "Ptr", this._ptSrc, "UInt", 0, "Ptr", this._blend, "UInt", 2, "Int")
+        HudArcadeBase.PresentFrame(this._surf)
     }
 
     static _DrawEdgeHints(pGfx, snakePal, isDark) {

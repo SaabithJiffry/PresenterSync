@@ -15,7 +15,7 @@
 
 class PaddlePhysicsCore {
     static Clamp(val, lo, hi) {
-        return Max(Float(lo), Min(Float(hi), Float(val)))
+        return HudArcadeBase.Clamp(Float(val), Float(lo), Float(hi))
     }
 
     static CollideCircleRect(ball, rx, ry, rw, rh) {

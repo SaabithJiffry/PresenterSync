@@ -698,38 +698,15 @@ class GameMissileDefense {
 
         ; Draw expanding neon shockwave blast rings
         for _, b in this._blasts {
-            frac := Max(0.0, Min(1.0, 1.0 - (b.ageMs / b.lifeMs)))
-            aFill := Integer(frac * 95.0)
-            aRing := Integer(frac * 240.0)
-            colFill := (aFill << 24) | 0x38BDF8
-            colRing := (aRing << 24) | 0x7DD3FC
-            pBBrush := 0, pBPen := 0
-            DllCall("gdiplus\GdipCreateSolidFill", "UInt", colFill, "Ptr*", &pBBrush)
-            DllCall("gdiplus\GdipCreatePen1", "UInt", colRing, "Float", 2.4, "Int", 2, "Ptr*", &pBPen)
-            try {
-                if (pBBrush)
-                    DllCall("gdiplus\GdipFillEllipse", "Ptr", g, "Ptr", pBBrush, "Float", b.x - b.r, "Float", b.y - b.r, "Float", b.r * 2.0, "Float", b.r * 2.0)
-                if (pBPen)
-                    DllCall("gdiplus\GdipDrawEllipse", "Ptr", g, "Ptr", pBPen, "Float", b.x - b.r, "Float", b.y - b.r, "Float", b.r * 2.0, "Float", b.r * 2.0)
-            } finally {
-                if (pBBrush)
-                    DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBBrush)
-                if (pBPen)
-                    DllCall("gdiplus\GdipDeletePen", "Ptr", pBPen)
-            }
+            local frac := HudArcadeBase.Clamp(1.0 - (b.ageMs / b.lifeMs), 0.0, 1.0)
+            local aFill := Integer(frac * 95.0)
+            local aRing := Integer(frac * 240.0)
+            HudArcadeBase.DrawCircle(g, b.x, b.y, b.r, (aFill << 24) | 0x38BDF8, (aRing << 24) | 0x7DD3FC, 2.4)
         }
 
         ; Draw particles
         for _, pt in this._particles {
-            pPtBrush := 0
-            DllCall("gdiplus\GdipCreateSolidFill", "UInt", pt.col, "Ptr*", &pPtBrush)
-            try {
-                if (pPtBrush)
-                    DllCall("gdiplus\GdipFillEllipse", "Ptr", g, "Ptr", pPtBrush, "Float", pt.x - 2.0, "Float", pt.y - 2.0, "Float", 4.0, "Float", 4.0)
-            } finally {
-                if (pPtBrush)
-                    DllCall("gdiplus\GdipDeleteBrush", "Ptr", pPtBrush)
-            }
+            HudArcadeBase.FillCircle(g, pt.x, pt.y, 2.0, pt.col)
         }
 
         ; Draw aiming reticle

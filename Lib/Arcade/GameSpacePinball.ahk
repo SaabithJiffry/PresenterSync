@@ -897,43 +897,10 @@ class GameSpacePinball {
     }
 
     static _DrawLine(pG, x1, y1, x2, y2, argb, width) {
-        pPen := 0
-        try {
-            DllCall("gdiplus\GdipCreatePen1", "UInt", argb, "Float", Float(width), "Int", 2, "Ptr*", &pPen)
-            if (pPen) {
-                DllCall("gdiplus\GdipSetPenStartCap", "Ptr", pPen, "Int", 2)
-                DllCall("gdiplus\GdipSetPenEndCap", "Ptr", pPen, "Int", 2)
-                DllCall("gdiplus\GdipDrawLine", "Ptr", pG, "Ptr", pPen, "Float", Float(x1), "Float", Float(y1), "Float", Float(x2), "Float", Float(y2))
-            }
-        } finally {
-            if (pPen)
-                DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
-        }
+        HudArcadeBase.DrawLine(pG, x1, y1, x2, y2, argb, width, true)
     }
 
     static _DrawCircle(pG, cx, cy, r, fillArgb, strokeArgb, strokeW) {
-        x := Float(cx - r), y := Float(cy - r), d := Float(r * 2.0)
-        if (fillArgb != 0) {
-            pBrush := 0
-            try {
-                DllCall("gdiplus\GdipCreateSolidFill", "UInt", fillArgb, "Ptr*", &pBrush)
-                if (pBrush)
-                    DllCall("gdiplus\GdipFillEllipse", "Ptr", pG, "Ptr", pBrush, "Float", x, "Float", y, "Float", d, "Float", d)
-            } finally {
-                if (pBrush)
-                    DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
-            }
-        }
-        if (strokeArgb != 0 && strokeW > 0.0) {
-            pPen := 0
-            try {
-                DllCall("gdiplus\GdipCreatePen1", "UInt", strokeArgb, "Float", Float(strokeW), "Int", 2, "Ptr*", &pPen)
-                if (pPen)
-                    DllCall("gdiplus\GdipDrawEllipse", "Ptr", pG, "Ptr", pPen, "Float", x, "Float", y, "Float", d, "Float", d)
-            } finally {
-                if (pPen)
-                    DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
-            }
-        }
+        HudArcadeBase.DrawCircle(pG, cx, cy, r, fillArgb, strokeArgb, strokeW)
     }
 }

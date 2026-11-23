@@ -225,9 +225,16 @@ class HudArcadeBase {
         onMouse := (o.HasOwnProp("onMouseEvent") && IsObject(o.onMouseEvent)) ? o.onMouseEvent : ""
 
         waL := 0, waT := 0, waR := A_ScreenWidth, waB := A_ScreenHeight
-        try MonitorGetWorkArea(, &waL, &waT, &waR, &waB)
-        W := Max(320, waR - waL)
-        H := Max(240, waB - waT)
+        if (o.HasOwnProp("W") && o.HasOwnProp("H")) {
+            waL := o.HasOwnProp("waLeft") ? Integer(o.waLeft) : 0
+            waT := o.HasOwnProp("waTop") ? Integer(o.waTop) : 0
+            W := Max(320, Integer(o.W))
+            H := Max(240, Integer(o.H))
+        } else {
+            try MonitorGetWorkArea(, &waL, &waT, &waR, &waB)
+            W := Max(320, waR - waL)
+            H := Max(240, waB - waT)
+        }
 
         NumPut("UInt", 40, "Int", W, "Int", -H, "UShort", 1, "UShort", 32, this._bi, 0)
         hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
@@ -445,5 +452,101 @@ class HudArcadeBase {
         Gdip.DrawText(pGraphics, title, "Segoe UI", 16.0, 1, accentArgb, cx + 16.0, cy + 16.0, cardW - 32.0, 34.0, 1, 1, 0, true)
         Gdip.DrawText(pGraphics, subLine, "Segoe UI", 10.5, 1, txMain, cx + 16.0, cy + 56.0, cardW - 32.0, 40.0, 1, 1, 0, true)
         Gdip.DrawText(pGraphics, hintLine, "Segoe UI", 9.0, 0, txSub, cx + 16.0, cy + 104.0, cardW - 32.0, 34.0, 1, 1, 0, true)
+    }
+
+    static DrawLine(pGraphics, x1, y1, x2, y2, argb, width := 1.5, roundCap := true) {
+        if (!pGraphics || (argb >>> 24) == 0 || width <= 0)
+            return
+        local pPen := 0
+        try {
+            DllCall("gdiplus\GdipCreatePen1", "UInt", argb, "Float", Float(width), "Int", 2, "Ptr*", &pPen)
+            if (pPen) {
+                if (roundCap)
+                    DllCall("gdiplus\GdipSetPenLineCap197819", "Ptr", pPen, "Int", 2, "Int", 2, "Int", 0)
+                DllCall("gdiplus\GdipDrawLine", "Ptr", pGraphics, "Ptr", pPen, "Float", Float(x1), "Float", Float(y1), "Float", Float(x2), "Float", Float(y2))
+            }
+        } finally {
+            if (pPen)
+                DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
+        }
+    }
+
+    static FillCircle(pGraphics, cx, cy, r, argb) {
+        if (!pGraphics || (argb >>> 24) == 0 || r <= 0)
+            return
+        local pBrush := 0
+        try {
+            DllCall("gdiplus\GdipCreateSolidFill", "UInt", argb, "Ptr*", &pBrush)
+            if (pBrush)
+                DllCall("gdiplus\GdipFillEllipse", "Ptr", pGraphics, "Ptr", pBrush, "Float", Float(cx - r), "Float", Float(cy - r), "Float", Float(r * 2.0), "Float", Float(r * 2.0))
+        } finally {
+            if (pBrush)
+                DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
+        }
+    }
+
+    static StrokeCircle(pGraphics, cx, cy, r, argb, width := 1.5) {
+        if (!pGraphics || (argb >>> 24) == 0 || r <= 0 || width <= 0)
+            return
+        local pPen := 0
+        try {
+            DllCall("gdiplus\GdipCreatePen1", "UInt", argb, "Float", Float(width), "Int", 2, "Ptr*", &pPen)
+            if (pPen)
+                DllCall("gdiplus\GdipDrawEllipse", "Ptr", pGraphics, "Ptr", pPen, "Float", Float(cx - r), "Float", Float(cy - r), "Float", Float(r * 2.0), "Float", Float(r * 2.0))
+        } finally {
+            if (pPen)
+                DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
+        }
+    }
+
+    static DrawCircle(pGraphics, cx, cy, r, fillArgb := 0, strokeArgb := 0, strokeW := 1.5) {
+        if (fillArgb)
+            this.FillCircle(pGraphics, cx, cy, r, fillArgb)
+        if (strokeArgb && strokeW > 0)
+            this.StrokeCircle(pGraphics, cx, cy, r, strokeArgb, strokeW)
+    }
+
+    static FillRect(pGraphics, x, y, w, h, argb) {
+        if (!pGraphics || (argb >>> 24) == 0 || w <= 0 || h <= 0)
+            return
+        local pBrush := 0
+        try {
+            DllCall("gdiplus\GdipCreateSolidFill", "UInt", argb, "Ptr*", &pBrush)
+            if (pBrush)
+                DllCall("gdiplus\GdipFillRectangle", "Ptr", pGraphics, "Ptr", pBrush, "Float", Float(x), "Float", Float(y), "Float", Float(w), "Float", Float(h))
+        } finally {
+            if (pBrush)
+                DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
+        }
+    }
+
+    static StrokeRect(pGraphics, x, y, w, h, argb, width := 1.5) {
+        if (!pGraphics || (argb >>> 24) == 0 || w <= 0 || h <= 0 || width <= 0)
+            return
+        local pPen := 0
+        try {
+            DllCall("gdiplus\GdipCreatePen1", "UInt", argb, "Float", Float(width), "Int", 2, "Ptr*", &pPen)
+            if (pPen)
+                DllCall("gdiplus\GdipDrawRectangle", "Ptr", pGraphics, "Ptr", pPen, "Float", Float(x), "Float", Float(y), "Float", Float(w), "Float", Float(h))
+        } finally {
+            if (pPen)
+                DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
+        }
+    }
+
+    static Clamp(val, lo, hi) {
+        return Max(lo, Min(hi, val))
+    }
+
+    static DistSq(x1, y1, x2, y2) {
+        local dx := Float(x2) - Float(x1)
+        local dy := Float(y2) - Float(y1)
+        return dx * dx + dy * dy
+    }
+
+    static CircleRectIntersects(cx, cy, r, rx, ry, rw, rh) {
+        local nearX := this.Clamp(Float(cx), Float(rx), Float(rx + rw))
+        local nearY := this.Clamp(Float(cy), Float(ry), Float(ry + rh))
+        return this.DistSq(cx, cy, nearX, nearY) <= (Float(r) * Float(r))
     }
 }
