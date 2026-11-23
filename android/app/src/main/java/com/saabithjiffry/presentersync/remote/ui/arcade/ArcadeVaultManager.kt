@@ -75,6 +75,12 @@ object ArcadeVaultManager {
             title = "Neon Block Drop",
             subtitle = "10x20 translucent neon-glass well with 7-bag, SRS wall kicks, Ghost guide & Hold",
             badge = "SECTOR Z-09"
+        ),
+        ArcadeGameEntry(
+            id = "pinball",
+            title = "Space Cadet Pinball",
+            subtitle = "240Hz sub-stepped physics table with bumpers, drop targets, rank LEDs & TILT",
+            badge = "SECTOR Z-10"
         )
     )
 

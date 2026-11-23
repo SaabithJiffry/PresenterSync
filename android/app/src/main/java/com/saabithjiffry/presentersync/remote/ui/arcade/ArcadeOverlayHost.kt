@@ -76,7 +76,7 @@ class ArcadeOverlayHost(
         if (!Settings.canDrawOverlays(context)) return false
 
         val cleanId = gameId.trim().lowercase()
-        val supported = setOf("asteroids", "brick_breaker", "cyber_pong", "flappy", "tron", "pac_grid", "missile_defense", "block_drop")
+        val supported = setOf("asteroids", "brick_breaker", "cyber_pong", "flappy", "tron", "pac_grid", "missile_defense", "block_drop", "pinball")
         if (cleanId !in supported) return false
 
         if (attached) {
@@ -244,6 +244,27 @@ class ArcadeOverlayHost(
                     initialHighScore = cfg.arcadeHighScores["block_drop"] ?: 0
                 )
                 view = BlockDropOverlayView(
+                    context = context,
+                    engine = eng,
+                    onExitRequested = { stop() },
+                    onStateInteracted = { },
+                    onMuteKeyEvent = onMuteKeyEvent
+                )
+                stepper = { dt -> eng.step(dt) }
+                resizer = { w, h, d, _ -> eng.updateDisplayMetrics(w, h, d) }
+                stopper = { eng.stop() }
+            }
+            "pinball" -> {
+                val eng = SpacePinballEngine(
+                    onNewHighScore = { newBest -> configStore.updateArcadeHighScore("pinball", newBest) }
+                )
+                eng.startNewSession(
+                    widthPx = bounds.width,
+                    heightPx = bounds.height,
+                    screenDensity = density,
+                    initialHighScore = cfg.arcadeHighScores["pinball"] ?: 0
+                )
+                view = SpacePinballOverlayView(
                     context = context,
                     engine = eng,
                     onExitRequested = { stop() },
