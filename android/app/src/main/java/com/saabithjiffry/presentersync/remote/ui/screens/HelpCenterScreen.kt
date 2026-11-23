@@ -256,6 +256,12 @@ private val HELP_TOPICS = listOf(
         "Battery Optimization, Share Pairing QR, Dual Probe & Error Log",
         "Keep background HUD/BT clicker alive, share host QR, and export diagnostics.",
         "In Connection Settings, use the Battery Optimization banner if Android restricts background networking, tap 'Share Pairing QR' to pair a second device, or tap 'Test Connection' for a unified :4456/health + :4455 probe. Open Diagnostics in Help Center to search, copy, or clear the persistent Error Log."
+    ),
+    HelpTopic(
+        "Connection",
+        "Web Remote Tap-to-Mute, Clean Disconnect & Direct OBS :4455 Fallback",
+        "Full browser companion resilience with branding, About drawer, and automatic failover.",
+        "Open http://<host-ip>:4456/ in any browser for tap-to-mute control, branding & About drawer, Clean Disconnect (clears session token cleanly), automatic reconnect, and Direct OBS :4455 fallback when Host Bridge is unavailable. Windows Host also supports 1.25x HUD scale, Capture Keystroke buttons, True OBS Recording timer sync, and perimeter hold bars on Mic, Rec, and Studio pills."
     )
 )
 

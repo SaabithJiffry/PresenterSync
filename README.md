@@ -8,14 +8,15 @@
 
 ---
 
-## Core Capabilities (v8.0.0)
+## Core Capabilities (v9.0.0)
 
 ### 1. Adaptive Floating Mic, 4-Tier HUD & Privacy Capture Exclusion
 * **Adaptive 4-Tier Host Stack (`PresenterSync.exe`):**
-  * **Tier 1:** High-contrast `LIVE` / `MUTED` Mic pill with live **CoreAudio Voice Activity VU Meter**, **Speaking-While-Muted Alert**, and optional **Timer / `BRB` / `REC` Pill Mini-Badges** (`ShowPillMiniBadges`).
-  * **Tier 2:** Recording status (`REC` / `PAUSED` / `NOT REC`) with live elapsed timer + universal UIA **Unread Chat Counter** (`CHAT` / `X NEW`) for Zoom, Microsoft Teams, and Google Meet (with Meet background-tab alert).
-  * **Tier 3:** OBS **Studio Mode** toggle + scrolling **Active Program Scene** pill (short-click opens live Scene Switcher menu).
-  * **Tier 4:** Optional **OBS Live Stream Health** (`OFFLINE` / `LIVE` / `RECONNECT` / `DROP WARN`) + **Virtual Camera (`VCAM`)** controls.
+  * **Tier 1:** High-contrast `LIVE` / `MUTED` Mic pill with live **CoreAudio Voice Activity VU Meter**, **Speaking-While-Muted Alert**, perimeter hold toggle (`MicGui`), `1.25x` crisp scale option, and optional **Timer / `BRB` / `REC` Pill Mini-Badges** (`ShowPillMiniBadges`).
+  * **Tier 2:** Recording status (`REC` / `PAUSED` / `NOT REC`) with **True OBS Recording Elapsed Timer Sync**, short-click Pause/Unpause & perimeter hold Stop (`RecGui`), plus universal UIA **Unread Chat Counter** (`CHAT` / `X NEW`) for Zoom, Microsoft Teams, and Google Meet (with Meet background-tab alert).
+  * **Tier 3:** OBS **Studio Mode** toggle with perimeter hold bar (`StudioGui`) + calm, seamless scrolling **Active Program Scene** marquee pill (short-click opens live Scene Switcher menu).
+  * **Tier 4:** Optional **OBS Live Stream Health** read-only pill (`OFFLINE` / `LIVE` / `RECONNECT` / `DROP WARN`) + **Virtual Camera (`VCAM`)** controls.
+* **Reorganized Tray Menus & Capture Keystroke Buttons:** Streamlined Windows System Tray hierarchy and 1-click **Capture Keystroke** buttons in Control Center / Settings for zero-guesswork hotkey binding.
 * **Toggleable Secondary Independent Mic Pill (Primary App Only):** Toggle **Show Secondary Mic Pill (Mic-Only)** from the System Tray or Control Center Tab 4 (`HUD & Theme`). Renders **only** the Mic pill layer (`LIVE`/`MUTED`, voice meter, custom colors, breathing pulse), drags and snaps independently into `[SecondaryPosition]`, syncs live mute state with the Primary stack, and stays strictly off Remote companion builds.
 * **Screen-Share Capture Exclusion:** Toggleable `WDA_EXCLUDEFROMCAPTURE` on Windows (`ExcludeFromCapture` / `ExcludeSecondaryFromCapture`) and `FLAG_SECURE` on Android (`hideFromScreenCapture`) keeps floating HUDs and Stage Nudges invisible to OBS Display/Window Capture and screen shares.
 * **Interactive & Non-Intrusive:** Short-click any pill for instant action; left-drag for `14px` magnetic edge/window snapping; optional **Auto-Dodge on Hover**, **Click-Through Mode** (hold `Alt` to drag), and **Custom `#RRGGBB` Hex Theme Colors** with automatic WCAG contrast.
@@ -39,7 +40,7 @@
 
 ### 4. Multi-Remote Companions (`Windows`, `Android`, `Zero-Install Browser Web Remote`) & AES-256-GCM WAN Relay
 * **Simultaneous Multi-Remote Host Bridge (`TCP :4456`, fallback `4458..4465`) & Classroom UDP Discovery (`:4457`):** Pair multiple Android devices, Windows Remotes (`-Instance <name>`), and Web Remotes simultaneously, with Standalone Cutoff mode (`EnableRemoteConnections=false` closes listening ports cleanly) and Firewall/UIPI probes.
-* **Zero-Install Browser Web Remote (`http://<host-ip>:4456/`):** Self-contained dark-themed HTML5/CSS3/ES6 companion (`Lib\WebRemoteUI.ahk`) for iOS, iPadOS, macOS, Linux, and Chromebooks with Session Code auth, `localStorage` token persistence, and full live WebSocket control.
+* **Zero-Install Browser Web Remote (`http://<host-ip>:4456/`):** Self-contained dark-themed HTML5/CSS3/ES6 companion (`Lib\WebRemoteUI.ahk`) for iOS, iPadOS, macOS, Linux, and Chromebooks with Session Code auth, `localStorage` token persistence, tap-to-mute support, branding & About drawer, Clean Disconnect, auto-reconnect, and Direct OBS `:4455` fallback.
 * **Direct OBS `:4455` Failover & Automatic `:4456` Bridge Re-Promotion:** If Host Bridge drops (`1,800ms` timeout), Remotes fail over automatically to Direct OBS `:4455` (with local `BRB` & Timer fallback) and probe `:4456` every `8,000ms` to re-promote seamlessly when the Host returns.
 * **Authenticated AES-256-GCM WAN Relay:** Cross-platform `bcrypt.dll` (`Lib\Crypto.ahk`) <-> Kotlin `RelayCrypto.kt` (`AES/GCM/NoPadding`) with 96-bit IV, 128-bit auth tag, replay protection, custom self-hosted Relay Base URL (`RelayBaseUrl`), and full WAN telemetry parity.
 * **Windows Remote Ergonomics (`PresenterSync_Remote.exe`):** `WM_POWERBROADCAST` wake & `WM_DISPLAYCHANGE` hotplug recovery, dual `:4456/health` + `:4455` probe, Touch-Friendly Quick Deck (`ShowRemoteTouchDeckGUI`), Saved Host Profiles, `"Paste Pairing URI"`, Slide & OBS Transition hotkeys, `LockHudPosition`, 10s idle auto-dim, `savedXRatio`/`savedYRatio` screen-ratio persistence, Error Log viewer, and pill mini-badges.
@@ -141,9 +142,9 @@ PresenterSync/
 
 ## Automated Verification Coverage
 
-* **Windows (AutoHotkey v2):** `32` automated suites including `tests\test_master_suite.ahk` (`353` checks covering HUD rendering, OBS WS v5, UIA, Bridge, Watchdogs, Timeline, and Diagnostics) plus dedicated `v7.0.1`–`v7.8.1` feature & static audit suites.
-* **Cross-Process & Cross-Language E2E (Python):** `9` live multi-process suites (`test_host_bridge.py`, `test_multi_remote_e2e.py`, `test_v762_cross_lang_crypto.py`, and `test_e2e_01`..`06`) verifying Web Remote, Crash Failover & Re-Promotion, Sleep/Wake & Rapid Transition Stress, Standalone Cutoff, PTT Mutual Exclusion, CLI `WM_COPYDATA`, Watchdogs, and AES-256-GCM parity.
-* **Android (JVM & Lint):** `35` JUnit test suites (`112` tests) + `lintDebug` (`0` errors).
+* **Windows (AutoHotkey v2):** `41` automated suites including `tests\test_master_suite.ahk` (`353` checks covering HUD rendering, OBS WS v5, UIA, Bridge, Watchdogs, Timeline, and Diagnostics) plus dedicated `v7.0.1`–`v8.8.0` feature & static audit suites.
+* **Cross-Process & Cross-Language E2E (Python):** `12` live multi-process suites (`test_host_bridge.py`, `test_multi_remote_e2e.py`, `test_real_handlers_e2e.py`, `test_udp_discovery_e2e.py`, `test_v762_cross_lang_crypto.py`, `test_windows_self_updater_e2e.py`, and `test_e2e_01`..`06`) verifying Web Remote, Crash Failover & Re-Promotion, Sleep/Wake & Rapid Transition Stress, Standalone Cutoff, PTT Mutual Exclusion, CLI `WM_COPYDATA`, Watchdogs, and AES-256-GCM parity.
+* **Android (JVM & Lint):** Full `testDebugUnitTest` + `lintDebug` (`0` errors).
 
 ---
 

@@ -16,9 +16,9 @@ GetPrimaryHudAnatomyItems() {
             tag: "[1] STREAM",
             pillTitle: "STREAM Status & Drop Alert (Row 4 Left)",
             tier: "Tier 4 (OBS WebSocket v5 Only — Top Row Left)",
-            summary: "Shows live OBS streaming output status plus automatic dropped-frame and bitrate congestion alerts.",
+            summary: "Read-only live OBS streaming output status plus automatic dropped-frame and bitrate congestion alerts.",
             states: "• Slate OFF: Not streaming.`r`n• Rose/Red LIVE: Broadcast active cleanly.`r`n• Orange WARN: Reconnecting, skipped frames detected, or congestion >= 35%.",
-            actions: "• Short-Click: Pops a tooltip showing exact stream state, congestion %, and skipped frame count.`r`n• Left-Drag: Moves the entire HUD stack.`r`n• Right-Click: Opens the full tray menu.",
+            actions: "• Short-Click: Read-only status tooltip showing exact stream state, congestion %, and skipped frame count (never starts/stops stream accidentally).`r`n• Left-Drag: Moves the entire HUD stack.`r`n• Right-Click: Opens the reorganized Tray menu.",
             configWhere: "• Tray -> Show Extra HUDs (must be ON)`r`n• Tray -> Indicator Appearance -> Show Stream & VCam HUD`r`n• Tray -> Enable OBS WebSocket Sync (Alt+F12)`r`n• Control Center -> OBS & Stream tab"
         },
         {
@@ -36,9 +36,9 @@ GetPrimaryHudAnatomyItems() {
             tag: "[3] STUDIO",
             pillTitle: "OBS Studio Mode Badge (Row 3 Left)",
             tier: "Tier 3 (OBS WebSocket v5 — Upper-Middle Row Left)",
-            summary: "Shows whether OBS Studio Mode (dual Preview / Program editing view) is active and lets you toggle it live.",
+            summary: "Shows whether OBS Studio Mode (dual Preview / Program editing view) is active with a perimeter hold bar for safe toggling.",
             states: "• Slate STUDIO: Single-scene standard OBS view.`r`n• Purple STUDIO: Studio Mode active (safe Preview edits before transitioning).",
-            actions: "• Short-Click: Enables or disables OBS Studio Mode live.`r`n• Left-Drag: Moves the entire HUD stack.`r`n• Right-Click: Opens the full tray menu.",
+            actions: "• Hold / Click: Perimeter hold bar confirms Studio Mode toggle safely without accidental mid-talk switches.`r`n• Left-Drag: Moves the entire HUD stack.`r`n• Right-Click: Opens the reorganized Tray menu.",
             configWhere: "• Tray -> Show Extra HUDs`r`n• Tray -> Enable OBS WebSocket Sync`r`n• Control Center -> OBS & Stream tab"
         },
         {
@@ -46,7 +46,7 @@ GetPrimaryHudAnatomyItems() {
             tag: "[4] SCENE",
             pillTitle: "Active Program Scene & Switcher (Row 3 Right)",
             tier: "Tier 3 (OBS WebSocket v5 — Upper-Middle Row Right)",
-            summary: "Displays the currently live OBS Program scene name with smooth horizontal marquee scrolling for long names.",
+            summary: "Displays the currently live OBS Program scene name with a calm, seamless horizontal marquee for long names.",
             states: "• Dark Slate Pill: Shows active OBS Program Scene name; automatically scrolls left/right when wider than the pill.",
             actions: "• Short-Click: Opens a floating Popup Scene Switcher menu so you can switch OBS scenes without leaving PowerPoint.`r`n• Left-Drag: Moves the entire HUD stack.`r`n• Right-Click: Opens the full tray menu.",
             configWhere: "• Tray -> Show Extra HUDs`r`n• Tray -> Enable OBS WebSocket Sync`r`n• Control Center -> HUD & Theme tab"
@@ -56,9 +56,9 @@ GetPrimaryHudAnatomyItems() {
             tag: "[5] REC + Timer",
             pillTitle: "Recording Status & Elapsed Timer (Row 2 Left)",
             tier: "Tier 2 (OBS WebSocket OR Conferencing UIA — Middle Row Left)",
-            summary: "Tracks 3-state recording progress in OBS Studio or Zoom/Teams/Meet and counts elapsed recording duration live.",
-            states: "• Slate NOT REC: Idle / not recording.`r`n• Red REC 04:18: Recording active with live MM:SS (or H:MM:SS) timer.`r`n• Amber PAUSED 04:18: Recording paused (resumes timing when unpaused).",
-            actions: "• Short-Click: Starts or stops Recording in OBS (or sends your Conferencing Rec shortcut).`r`n• Left-Drag: Moves the entire HUD stack.`r`n• Right-Click: Opens the full tray menu.",
+            summary: "Tracks 3-state recording progress in OBS Studio or Zoom/Teams/Meet with True OBS Recording elapsed timer sync.",
+            states: "• Slate NOT REC: Idle / not recording.`r`n• Red REC 04:18: Recording active with live MM:SS (or H:MM:SS) timer synced to OBS.`r`n• Amber PAUSED 04:18: Recording paused (resumes timing when unpaused).",
+            actions: "• Short-Click: Pauses/Unpauses active OBS recording (or starts recording when idle).`r`n• Perimeter Hold: Hold to Stop recording safely with a live perimeter progress bar.`r`n• Left-Drag: Moves the entire HUD stack.`r`n• Right-Click: Opens the reorganized Tray menu.",
             configWhere: "• Tray -> Show Extra HUDs`r`n• Tray -> Indicator Appearance -> Show Recording Elapsed Timer`r`n• Control Center -> OBS & Stream / Audio & Conf tabs"
         },
         {
@@ -78,7 +78,7 @@ GetPrimaryHudAnatomyItems() {
             tier: "Tier 1 (Always Available Base Pill — Bottom Row)",
             summary: "Your unmistakable always-on-top microphone status indicator with fade-pop transition animation and muted breathing pulse.",
             states: "• Bright Green LIVE: Microphone is unmuted / live on air.`r`n• Red MUTED (Pulses): Microphone is muted and pulses gently (or aggressively) so you never speak into a muted mic.",
-            actions: "• Short-Click: Immediately toggles mic Mute/Unmute (via OBS WebSocket, fallback shortcut, or Conferencing key).`r`n• Hardware Clicker: Press pointer button (default b), or HOLD >= 350ms for Cough Push-to-Mute.`r`n• Left-Drag / Right-Click: Reposition entire stack or open Tray menu.",
+            actions: "• Short-Click or Perimeter Hold: Immediately toggles mic Mute/Unmute (perimeter hold bar confirms gesture).`r`n• Hardware Clicker: Press pointer button (default b), or HOLD >= 350ms for Cough Push-to-Mute (bind via Capture Keystroke buttons in Control Center).`r`n• Left-Drag / Right-Click: Reposition entire stack (supports 1.25x scale) or open reorganized Tray menu.",
             configWhere: "• Tray -> Show Mute Indicator (Ctrl+Shift+F12)`r`n• Tray -> Indicator Appearance -> Show Text Label / Aggressive Mute Pulse / HUD Color Preset`r`n• Control Center -> Audio & Conf / HUD & Theme"
         },
         {
