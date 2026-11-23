@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 8.5.3
+; Version: 8.5.4
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -12,7 +12,7 @@
 ;@Ahk2Exe-AddResource *10 assets\PresenterSync.ico, FAVICON_ICO
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 8.5.3.0
+;@Ahk2Exe-SetVersion 8.5.4.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -30,6 +30,7 @@ SetKeyDelay -1, -1
 #Include <Arcade\GamePaddlePack>
 #Include <Arcade\GameClickerFlappy>
 #Include <Arcade\GameGridMazePack>
+#Include <Arcade\GameMissileDefense>
 
 if (A_Args.Length > 0) {
     cliCmd := ParseHostCliArgs(A_Args)
@@ -636,6 +637,7 @@ BindSystemHotkeys(cfg, state) {
     ArcadeVault.RegisterGame("flappy", "Clicker Flappy / Wave", "!^+f", "Ctrl+Alt+Shift+F", (c, s) => GameClickerFlappy.Toggle(c, s), () => GameClickerFlappy.Stop())
     ArcadeVault.RegisterGame("tron", "Neon Light Cycles (TRON)", "!^+t", "Ctrl+Alt+Shift+T", (c, s) => GameLightCycles.Toggle(c, s), () => GameLightCycles.Stop())
     ArcadeVault.RegisterGame("pac_grid", "Neon Pac-Grid", "!^+c", "Ctrl+Alt+Shift+C", (c, s) => GamePacGrid.Toggle(c, s), () => GamePacGrid.Stop())
+    ArcadeVault.RegisterGame("missile_defense", "Missile Defense", "!^+m", "Ctrl+Alt+Shift+M", (c, s) => GameMissileDefense.Toggle(c, s), () => GameMissileDefense.Stop())
     ArcadeVault.BindVaultHotkey(cfg, state)
 }
 BindSystemHotkeys(AppConfig, AppState)
