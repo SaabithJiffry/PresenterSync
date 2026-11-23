@@ -877,7 +877,15 @@ class HostCompanionBridge {
         tokField := (IsObject(c) && c.HasOwnProp("sessionToken") && c.sessionToken != "")
             ? ',"sessionToken":"' _HB_JsonEscape(c.sessionToken) '"'
             : ""
-        return '{"type":"auth_ok","hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"' tokField '}'
+        obsField := ""
+        if (IsObject(this.cfg) && this.cfg.HasOwnProp("EnableWS") && this.cfg.EnableWS) {
+            micName := (this.cfg.HasOwnProp("targetMicName") && Trim(String(this.cfg.targetMicName)) != "")
+                ? Trim(String(this.cfg.targetMicName))
+                : "Mic/Aux"
+            obsPass := this.cfg.HasOwnProp("obsPassword") ? String(this.cfg.obsPassword) : ""
+            obsField := ',"obsFallback":{"port":4455,"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(obsPass) '"}'
+        }
+        return '{"type":"auth_ok","hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"' tokField obsField '}'
     }
 
     _OnUdpMessage(wParam, lParam, msg, hwnd) {

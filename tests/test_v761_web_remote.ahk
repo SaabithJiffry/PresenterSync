@@ -40,7 +40,7 @@ html := BuildWebRemoteHtml("8.2.0", 14472)
 Assert("BuildWebRemoteHtml returns valid HTML5", InStr(html, "<!DOCTYPE html>") && InStr(html, "</html>"))
 Assert("BuildWebRemoteHtml embeds version & port", InStr(html, "8.2.0") && InStr(html, "14472"))
 Assert("BuildWebRemoteHtml contains ZERO broken \x27 escapes (#1)", !InStr(html, "\x27"))
-for _, token in ["toggle_mute", "transition_scene", "slide_start", "ppt_next", "ppt_prev", "toggle_standby", "timer_start", "stage_nudge", "/ws", "/favicon.ico", "/arcade.js", "aboutModal", "discBtn", "cleanDisconnect", "addEventListener", "ps_web_scale", "1.25", "vaultSlotBadge", "vaultDrawerSlot", "CABINET: LOCKED [0 CREDITS]", "PSArcadeVault", "PSArcadeHost"] {
+for _, token in ["toggle_mute", "transition_scene", "slide_start", "ppt_next", "ppt_prev", "toggle_standby", "timer_start", "stage_nudge", "/ws", "/favicon.ico", "/arcade.js", "aboutModal", "discBtn", "cleanDisconnect", "addEventListener", "ps_web_scale", "1.25", "vaultSlotBadge", "vaultDrawerSlot", "CABINET: LOCKED [0 CREDITS]", "PSArcadeVault", "PSArcadeHost", "pongWatchT", "visibilitychange", "sha256Base64", "DIRECT OBS", "startDirectObsFallback", "startRepromoteProbe"] {
     Assert("BuildWebRemoteHtml includes control/feature '" token "'", InStr(html, token) > 0)
 }
 arcadeJs := BuildWebRemoteArcadeJs()
@@ -55,6 +55,9 @@ tmpIni := A_Temp "\ps_v761_web_remote_test.ini"
 try FileDelete(tmpIni)
 cfg := Config(tmpIni)
 cfg.SessionPairingCode := "WEB-761"
+cfg.EnableWS := true
+cfg.targetMicName := "Mic/Aux"
+cfg.obsPassword := "TopSecretOBS4455!"
 mockObsSent := []
 cfg.AudioRoutingMode := 1
 state := {
@@ -124,6 +127,8 @@ Assert("GET /favicon.ico returns 200 OK binary image/x-icon (#7)", resFav.status
 
 resHealth := HttpGetAsync("http://127.0.0.1:" bridgePort "/health")
 Assert("GET /health returns 200 OK & JSON", resHealth.status = 200 && InStr(StrLower(resHealth.contentType), "application/json") > 0 && InStr(resHealth.body, '"ok":true') > 0)
+Assert("GET /health NEVER exposes obsPassword or obsFallback (M5A.3)", !InStr(resHealth.body, "TopSecretOBS4455!") && !InStr(resHealth.body, "obsFallback"))
+Assert("GET / HTML NEVER exposes obsPassword (M5A.3)", !InStr(resRoot.body, "TopSecretOBS4455!"))
 
 resArcade := HttpGetAsync("http://127.0.0.1:" bridgePort "/arcade.js")
 Assert("GET /arcade.js returns 200 OK application/javascript with full M2-M5 suite (LightCycles, PacGrid, Snake buildPieces, View: Full, Alien Blaster)", resArcade.status = 200 && InStr(StrLower(resArcade.contentType), "javascript") > 0 && InStr(resArcade.body, "PSWebAsteroids") > 0 && InStr(resArcade.body, "ALIEN BLASTER") > 0 && InStr(resArcade.body, "Mode: Alien") > 0 && InStr(resArcade.body, "PSWebBrickBreaker") > 0 && InStr(resArcade.body, "PSWebCyberPong") > 0 && InStr(resArcade.body, "PSWebFlappy") > 0 && InStr(resArcade.body, "PSWebLightCycles") > 0 && InStr(resArcade.body, "PSWebPacGrid") > 0 && InStr(resArcade.body, "ps_arcade_hi_tron") > 0 && InStr(resArcade.body, "ps_arcade_hi_pac_grid") > 0 && InStr(resArcade.body, "buildPieces") > 0 && InStr(resArcade.body, "View: Full") > 0 && !InStr(resArcade.body, "\x27"), Format("status={} type={} bytes={}", resArcade.status, resArcade.contentType, resArcade.byteLen))
@@ -205,6 +210,12 @@ LoopbackWsPumpAndFind(sock, pattern, timeoutMs := 2000) {
 wsSock := LoopbackWsOpen(bridgePort, "/ws?code=WEB-761&deviceId=dev-web-1&deviceName=WebTest&platform=Web")
 gotAuth := LoopbackWsPumpAndFind(wsSock, "auth_ok", 2500)
 Assert("Loopback WS authenticates Web Remote client", gotAuth && bridge.pairedDevices.Has("dev-web-1"))
+gotObsFb := LoopbackWsPumpAndFind(wsSock, '"obsFallback":{"port":4455,"targetMic":"Mic/Aux","password":"TopSecretOBS4455!"}', 1000)
+Assert("Post-auth auth_ok includes obsFallback metadata when EnableWS=true (M5A.3)", gotObsFb)
+
+LoopbackWsSendText(wsSock, '{"type":"ping"}')
+gotPong := LoopbackWsPumpAndFind(wsSock, '"type":"pong"', 2000)
+Assert("Client ping receives server pong for 3s watchdog (M5A.3)", gotPong)
 
 LoopbackWsSendText(wsSock, '{"type":"toggle_mute","deviceId":"dev-web-1","source":"web_remote"}')
 gotAck := LoopbackWsPumpAndFind(wsSock, "toggle_mute", 2000)

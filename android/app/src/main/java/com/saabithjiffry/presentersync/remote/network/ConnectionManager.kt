@@ -1099,11 +1099,17 @@ class ConnectionManager(
         if (recState == 1) {
             if (recTickerJob?.isActive != true) {
                 recTickerJob = scope.launch {
+                    var obsResyncTicks = 0
                     while (gen == generation.get() && _uiState.value.connected && _uiState.value.recState == 1) {
                         delay(1000L)
                         val cur = _uiState.value
                         if (gen == generation.get() && cur.connected && cur.recState == 1) {
                             _uiState.value = cur.copy(recSeconds = cur.recSeconds + 1)
+                            obsResyncTicks++
+                            if (obsResyncTicks >= 15) {
+                                obsResyncTicks = 0
+                                obsClient?.sendGetRecordStatus()
+                            }
                         }
                     }
                 }
