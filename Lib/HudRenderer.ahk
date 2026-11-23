@@ -60,7 +60,7 @@ ComputeSecondaryMicLayout(cfg, state) {
     return { x: sx, y: sy, w: w, h: h }
 }
 
-_RenderMicPillSurface(hwnd, x, y, w, h, cfg, state, alpha, overrideMuted := "") {
+_RenderMicPillSurface(hwnd, x, y, w, h, cfg, state, alpha, overrideMuted := "", holdProgress := 0.0) {
     if (!hwnd || !IsObject(cfg) || !IsObject(state))
         return false
 
@@ -108,7 +108,8 @@ _RenderMicPillSurface(hwnd, x, y, w, h, cfg, state, alpha, overrideMuted := "") 
 
     meterLevel := (!mutedState && !isRemoteOffline && cfg.HasOwnProp("ShowVoiceMeter") && cfg.ShowVoiceMeter && state.HasOwnProp("voicePeak")) ? state.voicePeak : 0.0
     meterArgb := cfg.MonoIcon ? Gdip.HexToArgb(icHex, 216) : 0xD8FFFFFF
-    return Gdip.RenderPill(hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg, meterLevel, meterArgb)
+    holdArgb := mutedState ? 0xFF22C55E : 0xFFEF4444
+    return Gdip.RenderPill(hwnd, x, y, w, h, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), alpha, GetCornerRadius(cfg, h), iconCfg, labelCfg, meterLevel, meterArgb, holdProgress, holdArgb)
 }
 
 ApplySecondaryMicAppearance(cfg, state, customX := "", customY := "", customW := "", customH := "", customAlpha := "", overrideMuted := "") {
@@ -122,7 +123,8 @@ ApplySecondaryMicAppearance(cfg, state, customX := "", customY := "", customW :=
     sh := (customH != "") ? customH : secPos.h
     defAlpha := state.HasOwnProp("secondaryCurrentAlpha") ? state.secondaryCurrentAlpha : state.currentAlpha
     sAlpha := (customAlpha != "") ? customAlpha : defAlpha
-    return _RenderMicPillSurface(state.SecondaryMicGui.Hwnd, sx, sy, sw, sh, cfg, state, sAlpha, overrideMuted)
+    secHold := state.HasOwnProp("secondaryMicHoldProgress") ? Float(state.secondaryMicHoldProgress) : 0.0
+    return _RenderMicPillSurface(state.SecondaryMicGui.Hwnd, sx, sy, sw, sh, cfg, state, sAlpha, overrideMuted, secHold)
 }
 
 ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", customH := "", customAlpha := "", overrideMuted := "") {
@@ -135,7 +137,8 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
     w := (customW != "") ? customW : pos.micW
     h := (customH != "") ? customH : pos.micH
     alpha := (customAlpha != "") ? customAlpha : state.currentAlpha
-    ok := _RenderMicPillSurface(state.MicGui.Hwnd, x, y, w, h, cfg, state, alpha, overrideMuted)
+    micHold := state.HasOwnProp("micHoldProgress") ? Float(state.micHoldProgress) : 0.0
+    ok := _RenderMicPillSurface(state.MicGui.Hwnd, x, y, w, h, cfg, state, alpha, overrideMuted, micHold)
 
     if (customX = "" && customW = "" && !IsSecondaryHudSuppressed(cfg) && state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui)) {
         secAlpha := (customAlpha != "") ? customAlpha : (state.HasOwnProp("secondaryCurrentAlpha") ? state.secondaryCurrentAlpha : alpha)
@@ -529,11 +532,28 @@ RecTimerTick(cfg, state) {
             SetTimer(state.recTimerFn, 0)
         return
     }
-    state.recElapsedSec += 1
-    if (state.HasOwnProp("obsRecState") && state.obsRecState == 1)
-        state.obsRecElapsedSec += 1
+    if (state.HasOwnProp("obsRecState") && state.obsRecState == 1) {
+        if (state.HasOwnProp("obsRecAnchorTick") && state.obsRecAnchorTick > 0)
+            state.obsRecElapsedSec := Max(0, Integer((state.obsRecAnchorMs + (A_TickCount - state.obsRecAnchorTick)) // 1000))
+        else
+            state.obsRecElapsedSec += 1
+    }
     if (state.HasOwnProp("confRecState") && state.confRecState == 1)
         state.confRecElapsedSec += 1
+
+    activeMax := 0
+    if (state.HasOwnProp("obsRecState") && state.obsRecState == state.recState)
+        activeMax := Max(activeMax, state.obsRecElapsedSec)
+    if (state.HasOwnProp("confRecState") && state.confRecState == state.recState)
+        activeMax := Max(activeMax, state.confRecElapsedSec)
+    state.recElapsedSec := activeMax
+
+    state._recPollCounter := (state.HasOwnProp("_recPollCounter") ? state._recPollCounter : 0) + 1
+    if (Mod(state._recPollCounter, 15) == 0 && state.HasOwnProp("obsRecState") && state.obsRecState == 1
+        && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+        SendObsRequest(state.obsWs, "GetRecordStatus", "PollRecStatus")
+    }
+
     if (Mod(state.recElapsedSec, 5) == 0)
         _NotifyHostTelemetryChanged(cfg, state, true)
     if (cfg.ShowIndicator && cfg.ShowExtraHuds && (!cfg.HasOwnProp("ShowRecTimer") || cfg.ShowRecTimer) && !state.isDraggingHud && IsGuiValid(state.RecGui)) {
@@ -595,6 +615,20 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1, source := "obs") {
         state.confRecState := newState
         state.confRecElapsedSec := srcElapsed
     } else {
+        if (durProvided) {
+            state.obsRecAnchorMs := Integer(initialDurationMs)
+            state.obsRecAnchorTick := A_TickCount
+        } else if (newState == 0) {
+            state.obsRecAnchorMs := 0
+            state.obsRecAnchorTick := 0
+        } else if (newState == 1 && prevSrcState != 1) {
+            state.obsRecAnchorMs := srcElapsed * 1000
+            state.obsRecAnchorTick := A_TickCount
+        } else if (newState == 2 && prevSrcState == 1 && state.HasOwnProp("obsRecAnchorTick") && state.obsRecAnchorTick > 0) {
+            state.obsRecAnchorMs := Max(0, state.obsRecAnchorMs + (A_TickCount - state.obsRecAnchorTick))
+            state.obsRecAnchorTick := 0
+            srcElapsed := Integer(state.obsRecAnchorMs // 1000)
+        }
         state.obsRecState := newState
         state.obsRecElapsedSec := srcElapsed
     }
@@ -2518,12 +2552,33 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         return
 
     isSecondary := (state.HasOwnProp("SecondaryMicGui") && IsObject(state.SecondaryMicGui) && hwnd == state.SecondaryMicGui.Hwnd)
+    clickActionsEnabled := !cfg.HasOwnProp("EnableHudClickActions") || cfg.EnableHudClickActions
     prevMouseMode := A_CoordModeMouse
     CoordMode("Mouse", "Screen")
     MouseGetPos(&startMX, &startMY)
     downTick := A_TickCount
 
     if (isSecondary) {
+        secDragInitiated := false
+        if (clickActionsEnabled) {
+            UpdateSecondaryMicHold(p) {
+                if (p != state.secondaryMicHoldProgress) {
+                    state.secondaryMicHoldProgress := p
+                    ApplySecondaryMicAppearance(cfg, state)
+                }
+            }
+            secRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, 350, UpdateSecondaryMicHold)
+            if (secRes.verdict = "tap" || secRes.verdict = "hold") {
+                CoordMode("Mouse", prevMouseMode)
+                HandleHudPillClick(cfg, state, hwnd)
+                return
+            }
+            if (secRes.verdict = "cancel") {
+                CoordMode("Mouse", prevMouseMode)
+                return
+            }
+            secDragInitiated := true
+        }
         secPos := ComputeSecondaryMicLayout(cfg, state)
         prevSX := secPos.x
         prevSY := secPos.y
@@ -2553,13 +2608,32 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         ApplyHudClickThroughStyle(cfg, state)
         if (IsAnyMicHudVisible(cfg) && state.isMuted)
             SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
-        if (isShortClick)
+        if (isShortClick && !secDragInitiated)
             HandleHudPillClick(cfg, state, hwnd)
         return
     }
 
     dragInitiated := false
-    clickActionsEnabled := !cfg.HasOwnProp("EnableHudClickActions") || cfg.EnableHudClickActions
+
+    if (clickActionsEnabled && IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd) {
+        UpdateMicHold(p) {
+            if (p != state.micHoldProgress) {
+                state.micHoldProgress := p
+                ApplyMicAppearance(cfg, state)
+            }
+        }
+        micRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, 350, UpdateMicHold)
+        if (micRes.verdict = "tap" || micRes.verdict = "hold") {
+            CoordMode("Mouse", prevMouseMode)
+            HandleHudPillClick(cfg, state, hwnd)
+            return
+        }
+        if (micRes.verdict = "cancel") {
+            CoordMode("Mouse", prevMouseMode)
+            return
+        }
+        dragInitiated := true
+    }
 
     if (clickActionsEnabled && IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd) {
         UpdateStudioHold(p) {

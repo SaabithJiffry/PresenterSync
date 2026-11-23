@@ -13,7 +13,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 
 class UIConstants {
-    static APP_VERSION := "8.5.0"
+    static APP_VERSION := "8.5.1"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -90,6 +90,7 @@ class UIConstants {
     static OBS_RECONNECT_MS := 5000
     static OBS_INIT_DELAY_MS := 100
     static TOOLTIP_DURATION_MS := 2000
+    static MIC_LONG_PRESS_MS := 600
     static STUDIO_LONG_PRESS_MS := 600
     static REC_STOP_LONG_PRESS_MS := 900
     static STOP_RECORD_CONFIRM_WINDOW_MS := 3000
@@ -2092,6 +2093,8 @@ class OverlayState {
     recElapsedSec := 0
     obsRecState := 0
     obsRecElapsedSec := 0
+    obsRecAnchorMs := 0
+    obsRecAnchorTick := 0
     confRecState := 0
     confRecElapsedSec := 0
     recSourceTag := ""
@@ -2274,6 +2277,8 @@ class OverlayState {
         this.currentAlpha := cfg.OpacityLevel
         this.secondaryCurrentAlpha := cfg.OpacityLevel
         this._breathStepAlpha := cfg.OpacityLevel
+        this.micHoldProgress := 0.0
+        this.secondaryMicHoldProgress := 0.0
         this.recHoldProgress := 0.0
         this.studioHoldProgress := 0.0
         this.sceneMarqueeLastTick := 0

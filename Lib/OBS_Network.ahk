@@ -2332,12 +2332,17 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         else if (InStr(msg, '"eventType":"RecordStateChanged"') || InStr(msg, '"eventType": "RecordStateChanged"')) {
             if (RegExMatch(msg, '"outputState"\s*:\s*"([^"]+)"', &matchRecOut)) {
                 outState := matchRecOut[1]
-                if (outState = "OBS_WEBSOCKET_OUTPUT_STARTED" || outState = "OBS_WEBSOCKET_OUTPUT_RESUMED")
+                if (outState = "OBS_WEBSOCKET_OUTPUT_STARTED" || outState = "OBS_WEBSOCKET_OUTPUT_RESUMED") {
                     SyncRecState(cfg, state, 1)
-                else if (outState = "OBS_WEBSOCKET_OUTPUT_PAUSED")
+                    if (IsObject(ws))
+                        SendObsRequest(ws, "GetRecordStatus", "SyncRecStatus")
+                } else if (outState = "OBS_WEBSOCKET_OUTPUT_PAUSED") {
                     SyncRecState(cfg, state, 2)
-                else if (outState = "OBS_WEBSOCKET_OUTPUT_STOPPED")
+                    if (IsObject(ws))
+                        SendObsRequest(ws, "GetRecordStatus", "SyncRecStatus")
+                } else if (outState = "OBS_WEBSOCKET_OUTPUT_STOPPED") {
                     SyncRecState(cfg, state, 0)
+                }
             }
         }
         else if (InStr(msg, '"eventType":"StreamStateChanged"') || InStr(msg, '"eventType": "StreamStateChanged"')) {
@@ -2398,7 +2403,9 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                 SetTimer(ClearObsNetworkToolTip, -2500)
             }
         }
-        else if (InStr(msg, '"requestId":"InitRecState"') || InStr(msg, '"requestId": "InitRecState"')) {
+        else if (InStr(msg, '"requestId":"InitRecState"') || InStr(msg, '"requestId": "InitRecState"')
+            || InStr(msg, '"requestId":"SyncRecStatus"') || InStr(msg, '"requestId": "SyncRecStatus"')
+            || InStr(msg, '"requestId":"PollRecStatus"') || InStr(msg, '"requestId": "PollRecStatus"')) {
             if (RegExMatch(msg, '"outputActive"\s*:\s*(true|false)', &matchActive)) {
                 active := (matchActive[1] == "true")
                 paused := false

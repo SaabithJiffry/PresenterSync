@@ -137,6 +137,9 @@ class ObsWebSocketClient(
                             else -> if (outputActive) 1 else 0
                         }
                         callbacks.onRecordStateChanged(nextRecState, if (nextRecState == 0) 0 else -1)
+                        if (nextRecState == 1 || nextRecState == 2) {
+                            sendRequest("GetRecordStatus", "SyncRemoteRec", null)
+                        }
                     }
                     "StreamStateChanged" -> {
                         val outputActive = eventData.optBoolean("outputActive", false)
@@ -207,7 +210,7 @@ class ObsWebSocketClient(
                             callbacks.onMicRecovered()
                         }
                     }
-                    "InitRemoteRec" -> {
+                    "InitRemoteRec", "SyncRemoteRec" -> {
                         if (resultOk && respData != null) {
                             val active = respData.optBoolean("outputActive", false)
                             val paused = respData.optBoolean("outputPaused", false)

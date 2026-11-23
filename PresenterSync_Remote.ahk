@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 8.5.0
+; Version: 8.5.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 8.5.0.0
+;@Ahk2Exe-SetVersion 8.5.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -354,6 +354,7 @@ class RemoteState {
     _relayPeerLegacy := false
 
     isMuted := false
+    micHoldProgress := 0.0
     recState := 0
     recSeconds := 0
     stopRecConfirmUntil := 0
@@ -1225,8 +1226,12 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     if (state.recState == 0)
                         state.recSeconds := 0
                     state.recState := 1
+                    if (IsObject(ws))
+                        SendObsRequest(ws, "GetRecordStatus", "InitRemoteRec")
                 } else if (outSt = "OBS_WEBSOCKET_OUTPUT_PAUSED") {
                     state.recState := 2
+                    if (IsObject(ws))
+                        SendObsRequest(ws, "GetRecordStatus", "InitRemoteRec")
                 } else if (outSt = "OBS_WEBSOCKET_OUTPUT_STOPPED") {
                     state.recState := 0
                     state.recSeconds := 0
@@ -1867,6 +1872,27 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     MouseGetPos(&startMX, &startMY)
     downTick := A_TickCount
 
+    dragInitiated := false
+    if (!cfg.HasOwnProp("EnableHudClickActions") || cfg.EnableHudClickActions) {
+        UpdateRemoteMicHold(p) {
+            if (p != state.micHoldProgress) {
+                state.micHoldProgress := p
+                ApplyMicAppearance(cfg, state)
+            }
+        }
+        micRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, 350, UpdateRemoteMicHold)
+        if (micRes.verdict = "tap" || micRes.verdict = "hold") {
+            CoordMode("Mouse", prevMouseMode)
+            HandleRemoteHudClick(cfg, state)
+            return
+        }
+        if (micRes.verdict = "cancel" || (cfg.HasOwnProp("LockHudPosition") && cfg.LockHudPosition)) {
+            CoordMode("Mouse", prevMouseMode)
+            return
+        }
+        dragInitiated := true
+    }
+
     if (cfg.HasOwnProp("LockHudPosition") && cfg.LockHudPosition) {
         KeyWait "LButton"
         MouseGetPos(&endMX, &endMY)
@@ -1921,7 +1947,7 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     if (cfg.ShowIndicator && state.obsConnected && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 
-    if (isShortClick)
+    if (isShortClick && !dragInitiated)
         HandleRemoteHudClick(cfg, state)
 }
 
