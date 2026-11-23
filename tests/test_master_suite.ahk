@@ -838,6 +838,7 @@ Assert("SyncRecState syncs initialDurationMs=125000 -> 125s and preserves Label 
     stRec.recState == 1 && stRec.recElapsedSec == 125
     && (stRec.recW + stRec.hudGap + stRec.chatW) == stRec.baseWidth)
 
+stRec.obsRecAnchorTick -= 1000
 RecTimerTick(cfgRec, stRec)
 Assert("RecTimerTick increments recElapsedSec while recording active", stRec.recElapsedSec == 126)
 
@@ -2242,8 +2243,8 @@ Assert("v4.5.0 HudSnake special bonus fruit is >= 2x wider/taller (~4x area) tha
     normSpan.w > 12 && bonusSpan.w >= (normSpan.w * 1.95) && bonusSpan.h >= (normSpan.h * 1.95) && bonusAreaRatio >= 3.8,
     Format("norm={}x{} bonus={}x{} areaRatio={:.2f}", normSpan.w, normSpan.h, bonusSpan.w, bonusSpan.h, bonusAreaRatio))
 
-; Verify Help Center exposes Alt+Ctrl+Shift+S playfully as "Try at your own risk" without leaking "Snake" in visible copy
-riskHits := SearchHelpEntries("Try at your own risk", "All", false)
+; Verify Help Center exposes Sector Z breadcrumb playfully without leaking "Snake", "Easter", or "INSERT COIN" in visible copy
+riskHits := SearchHelpEntries("Sector Z", "All", false)
 hasSecretRisk := false, hasScRisk := false, visibleSnakeSpoil := false
 for rh in riskHits {
     if (rh.id = "feat-easter-snake")
@@ -2251,10 +2252,10 @@ for rh in riskHits {
     if (rh.id = "sc-global")
         hasScRisk := true
     visTxt := rh.title " " rh.menuPath " " rh.defVal " " rh.summary " " rh.body
-    if (InStr(visTxt, "Snake") || InStr(visTxt, "Easter"))
+    if (InStr(visTxt, "Snake") || InStr(visTxt, "Easter") || InStr(visTxt, "INSERT COIN"))
         visibleSnakeSpoil := true
 }
-Assert("v4.5.0 Help Search 'Try at your own risk' surfaces secret chord without visibly spoiling Snake",
+Assert("v9.0.0 Help Search 'Sector Z' surfaces confidential breadcrumb without visibly spoiling Snake or passphrase",
     hasSecretRisk && hasScRisk && !visibleSnakeSpoil,
     Format("secret={} sc={} visSpoil={}", hasSecretRisk, hasScRisk, visibleSnakeSpoil))
 
@@ -2278,8 +2279,8 @@ for hCtrl in helpTabGui {
     try helpTextDump .= hCtrl.Text "`n"
 }
 WinClose("ahk_id " helpTabGui.Hwnd)
-Assert("v4.5.0 Help Shortcuts tab displays Alt + Ctrl + Shift + S playfully ('Try at your own risk')",
-    InStr(helpTextDump, "Alt + Ctrl + Shift + S") && InStr(helpTextDump, "Try at your own risk"))
+Assert("v9.0.0 Help Shortcuts tab displays confidential Sector Z Subsystem ('Locked [0 Credits]') without spoilers",
+    InStr(helpTextDump, "Sector Z Subsystem") && InStr(helpTextDump, "Locked [0 Credits]") && !InStr(helpTextDump, "Snake") && !InStr(helpTextDump, "INSERT COIN"))
 
 ; Verify Snake Scoreboard & Status Banner render cleanly in Light & Dark modes without errors
 for themeName in ["dark", "light"] {
@@ -2646,7 +2647,7 @@ helpRemSnake := SearchHelpEntries("", "All", true)
 helpPriSnake := SearchHelpEntries("rfeat-easter-snake", "All", false)
 hasRemSnakeHint := false
 for hEntry in helpRemSnake {
-    if (hEntry.id = "rfeat-easter-snake" && InStr(hEntry.body, "Alt + Ctrl + Shift + S") && InStr(hEntry.body, "Try at your own risk"))
+    if (hEntry.id = "rfeat-easter-snake" && InStr(hEntry.body, "Ctrl + Alt + Shift + Z") && InStr(hEntry.body, "Sector Z"))
         hasRemSnakeHint := true
 }
 Assert("HelpCenter Remote catalog includes rfeat-easter-snake without leaking to Primary or Tray buttons",
