@@ -17,11 +17,40 @@ enum class AsteroidsPhase {
     GAME_OVER
 }
 
+enum class BlasterMode {
+    ASTEROIDS,
+    ALIEN_BLASTER
+}
+
+enum class AlienShipKind {
+    SCOUT,
+    RAIDER,
+    CRUISER
+}
+
 enum class AsteroidsPowerUpKind(val label: String) {
     RAPID("RAPID"),
     SPREAD("SPREAD"),
-    SHIELD("SHIELD")
+    SHIELD("SHIELD"),
+    WEAPON_UP("WPN+")
 }
+
+data class AlienShip(
+    val id: Int,
+    var x: Float,
+    var y: Float,
+    val baseX: Float,
+    var vx: Float,
+    var vy: Float,
+    val kind: AlienShipKind,
+    var hp: Int,
+    val maxHp: Int,
+    val radius: Float,
+    val phaseRad: Float,
+    val swayAmp: Float,
+    val swayFreq: Float,
+    var fireTimerSec: Float
+)
 
 data class ArcadeRectF(
     val left: Float,
@@ -95,6 +124,10 @@ class AsteroidsEngine(
 ) {
     var phase: AsteroidsPhase = AsteroidsPhase.IDLE
         private set
+    var mode: BlasterMode = BlasterMode.ASTEROIDS
+    var weaponTier: Int = 1
+    var beamActive: Boolean = false
+        private set
     var worldWidth: Float = 1080f
         private set
     var worldHeight: Float = 1920f
@@ -129,6 +162,7 @@ class AsteroidsEngine(
     var inputTurnLeft: Boolean = false
     var inputTurnRight: Boolean = false
     var inputThrust: Boolean = false
+    var inputMoveDown: Boolean = false
     var inputFiring: Boolean = false
     var touchAimActive: Boolean = false
     var touchTargetX: Float = 0f
@@ -136,6 +170,7 @@ class AsteroidsEngine(
     var autoFireEnabled: Boolean = false
 
     val rocks: MutableList<AsteroidRock> = mutableListOf()
+    val aliens: MutableList<AlienShip> = mutableListOf()
     val bolts: MutableList<BlasterBolt> = mutableListOf()
     var saucer: UfoSaucer? = null
     val powerUps: MutableList<AsteroidsPowerUp> = mutableListOf()
@@ -143,8 +178,12 @@ class AsteroidsEngine(
     val popups: MutableList<AsteroidsScorePopup> = mutableListOf()
 
     private var nextRockId = 1
+    private var nextAlienId = 1
     private var saucerSpawnTimerSec = 14f
     private var waveTransitionTimerSec = 0f
+    private var beamHoldSec = 0f
+    private var beamDmgCooldownSec = 0f
+    private var alienTimeSec = 0f
 
     fun startNewSession(
         widthPx: Int,
@@ -163,7 +202,13 @@ class AsteroidsEngine(
         score = 0
         wave = 1
         lives = 3
+        weaponTier = 1
+        beamActive = false
+        beamHoldSec = 0f
+        beamDmgCooldownSec = 0f
+        alienTimeSec = 0f
         rocks.clear()
+        aliens.clear()
         bolts.clear()
         saucer = null
         powerUps.clear()
@@ -172,6 +217,7 @@ class AsteroidsEngine(
         inputTurnLeft = false
         inputTurnRight = false
         inputThrust = false
+        inputMoveDown = false
         inputFiring = false
         touchAimActive = false
         saucerSpawnTimerSec = 14f
@@ -180,8 +226,67 @@ class AsteroidsEngine(
         resetShipCenter()
         phase = AsteroidsPhase.PLAYING
         if (!clearInitialRocks) {
-            spawnWave(wave)
+            if (mode == BlasterMode.ALIEN_BLASTER) {
+                spawnAlienWave(wave)
+            } else {
+                spawnWave(wave)
+            }
         }
+    }
+
+    fun toggleMode(): BlasterMode {
+        mode = if (mode == BlasterMode.ASTEROIDS) BlasterMode.ALIEN_BLASTER else BlasterMode.ASTEROIDS
+        if (phase != AsteroidsPhase.IDLE) {
+            startNewSession(
+                widthPx = worldWidth.toInt(),
+                heightPx = worldHeight.toInt(),
+                screenDensity = density,
+                initialHighScore = highScore,
+                bumperRect = pillBumper
+            )
+        }
+        return mode
+    }
+
+    fun upgradeWeaponTier(): Int {
+        weaponTier = min(5, weaponTier + 1)
+        return weaponTier
+    }
+
+    fun spawnAlien(
+        x: Float,
+        y: Float,
+        kind: AlienShipKind = AlienShipKind.SCOUT,
+        hp: Int = when (kind) {
+            AlienShipKind.CRUISER -> 3
+            AlienShipKind.RAIDER -> 1
+            AlienShipKind.SCOUT -> 1
+        },
+        vy: Float = 45f * density
+    ): AlienShip {
+        val r = when (kind) {
+            AlienShipKind.CRUISER -> 22f * density
+            AlienShipKind.RAIDER -> 16f * density
+            AlienShipKind.SCOUT -> 14f * density
+        }
+        val alien = AlienShip(
+            id = nextAlienId++,
+            x = x,
+            y = y,
+            baseX = x,
+            vx = 0f,
+            vy = vy,
+            kind = kind,
+            hp = max(1, hp),
+            maxHp = max(1, hp),
+            radius = r,
+            phaseRad = 0f,
+            swayAmp = if (kind == AlienShipKind.RAIDER) 48f * density else 0f,
+            swayFreq = if (kind == AlienShipKind.RAIDER) 2.3f else 0f,
+            fireTimerSec = 1.4f
+        )
+        aliens.add(alien)
+        return alien
     }
 
     fun updateDisplayMetrics(widthPx: Int, heightPx: Int, screenDensity: Float, bumperRect: ArcadeRectF? = null) {
@@ -224,7 +329,9 @@ class AsteroidsEngine(
 
     fun stop() {
         phase = AsteroidsPhase.IDLE
+        beamActive = false
         rocks.clear()
+        aliens.clear()
         bolts.clear()
         saucer = null
         powerUps.clear()
@@ -286,6 +393,42 @@ class AsteroidsEngine(
 
     fun firePlayerBolt(ignoreCooldown: Boolean = false): Boolean {
         if (phase != AsteroidsPhase.PLAYING) return false
+        if (mode == BlasterMode.ALIEN_BLASTER) {
+            if (weaponTier >= 5) {
+                beamActive = true
+                beamHoldSec = 0.36f
+                return true
+            }
+            if (!ignoreCooldown && fireCooldownSec > 0f) return false
+            val spd = 540f * density
+            when (weaponTier) {
+                1 -> {
+                    fireCooldownSec = 0.21f
+                    bolts.add(BlasterBolt(shipX, shipY - shipRadius - 4f * density, 0f, -spd, 1.2f, false))
+                }
+                2 -> {
+                    fireCooldownSec = 0.19f
+                    val offX = 9f * density
+                    bolts.add(BlasterBolt(shipX - offX, shipY - shipRadius - 2f * density, 0f, -spd, 1.2f, false))
+                    bolts.add(BlasterBolt(shipX + offX, shipY - shipRadius - 2f * density, 0f, -spd, 1.2f, false))
+                }
+                3 -> {
+                    fireCooldownSec = 0.175f
+                    for (dAng in floatArrayOf(-0.18f, 0f, 0.18f)) {
+                        val a = (-PI / 2.0).toFloat() + dAng
+                        bolts.add(BlasterBolt(shipX + cos(a) * (shipRadius + 4f * density), shipY + sin(a) * (shipRadius + 4f * density), cos(a) * spd, sin(a) * spd, 1.2f, false))
+                    }
+                }
+                else -> {
+                    fireCooldownSec = 0.125f
+                    for (dAng in floatArrayOf(-0.28f, -0.14f, 0f, 0.14f, 0.28f)) {
+                        val a = (-PI / 2.0).toFloat() + dAng
+                        bolts.add(BlasterBolt(shipX + cos(a) * (shipRadius + 4f * density), shipY + sin(a) * (shipRadius + 4f * density), cos(a) * (spd * 1.06f), sin(a) * (spd * 1.06f), 1.2f, false))
+                    }
+                }
+            }
+            return true
+        }
         if (!ignoreCooldown && fireCooldownSec > 0f) return false
 
         val cooldown = if (rapidTimerSec > 0f) 0.11f else 0.22f
@@ -320,6 +463,11 @@ class AsteroidsEngine(
         rapidTimerSec = max(0f, rapidTimerSec - dt)
         spreadTimerSec = max(0f, spreadTimerSec - dt)
         fireCooldownSec = max(0f, fireCooldownSec - dt)
+
+        if (mode == BlasterMode.ALIEN_BLASTER) {
+            stepAlienBlaster(dt)
+            return
+        }
 
         // Ship steering & thrust
         val turnRate = 3.8f
@@ -504,6 +652,10 @@ class AsteroidsEngine(
         }
 
         // Decay visuals
+        decayVisuals(dt)
+    }
+
+    private fun decayVisuals(dt: Float) {
         val partIter = particles.iterator()
         while (partIter.hasNext()) {
             val p = partIter.next()
@@ -518,6 +670,248 @@ class AsteroidsEngine(
             pp.y -= 26f * density * dt
             pp.lifeSec -= dt
             if (pp.lifeSec <= 0f) popIter.remove()
+        }
+    }
+
+    private fun stepAlienBlaster(dt: Float) {
+        alienTimeSec += dt
+        shipAngleRad = (-PI / 2.0).toFloat() // Fixed forward-facing ship (NEVER rotates)
+        beamHoldSec = max(0f, beamHoldSec - dt)
+        beamDmgCooldownSec = max(0f, beamDmgCooldownSec - dt)
+
+        val moveSpd = 320f * density
+        if (touchAimActive) {
+            val dx = touchTargetX - shipX
+            val dy = touchTargetY - shipY
+            shipVx = (dx * 9f).coerceIn(-460f * density, 460f * density)
+            shipVy = (dy * 9f).coerceIn(-460f * density, 460f * density)
+        } else {
+            var ix = (if (inputTurnRight) 1f else 0f) - (if (inputTurnLeft) 1f else 0f)
+            var iy = (if (inputMoveDown) 1f else 0f) - (if (inputThrust) 1f else 0f)
+            if (ix != 0f && iy != 0f) {
+                ix *= 0.70710678f
+                iy *= 0.70710678f
+            }
+            shipVx = ix * moveSpd
+            shipVy = iy * moveSpd
+        }
+
+        val padX = 24f * density
+        val minY = 76f * density
+        val maxY = max(minY + 40f, worldHeight - 24f * density)
+        shipX = (shipX + shipVx * dt).coerceIn(padX, max(padX, worldWidth - padX))
+        shipY = (shipY + shipVy * dt).coerceIn(minY, maxY)
+        shipAngleRad = (-PI / 2.0).toFloat()
+
+        val wantsFire = inputFiring || autoFireEnabled || touchAimActive
+        if (weaponTier >= 5) {
+            beamActive = wantsFire || beamHoldSec > 0f
+            if (beamActive && beamDmgCooldownSec <= 0f) {
+                beamDmgCooldownSec = 0.08f
+                val beamHit = aliens.filter { al ->
+                    al.y < shipY && abs(al.x - shipX) <= al.radius + 15f * density
+                }
+                for (al in beamHit) {
+                    damageAlien(al, 1)
+                }
+            }
+        } else {
+            beamActive = false
+            if (wantsFire) {
+                firePlayerBolt()
+            }
+        }
+
+        // Advance bolts (non-wrapping)
+        val boltIter = bolts.iterator()
+        while (boltIter.hasNext()) {
+            val b = boltIter.next()
+            b.x += b.vx * dt
+            b.y += b.vy * dt
+            b.ttlSec -= dt
+            if (b.ttlSec <= 0f || b.x < -30f || b.x > worldWidth + 30f || b.y < 30f || b.y > worldHeight + 30f) {
+                boltIter.remove()
+            }
+        }
+
+        // Advance oncoming alien ships & downward plasma fire
+        val hitAliens = mutableListOf<AlienShip>()
+        val usedBolts = mutableSetOf<BlasterBolt>()
+        for (al in aliens) {
+            al.y += al.vy * dt
+            if (al.swayAmp > 0f && al.swayFreq > 0f) {
+                al.x = (al.baseX + sin(alienTimeSec * al.swayFreq + al.phaseRad) * al.swayAmp)
+                    .coerceIn(padX, max(padX, worldWidth - padX))
+            }
+            if (al.y > worldHeight + 30f * density) {
+                al.y = 58f * density
+            }
+            al.fireTimerSec -= dt
+            if (al.fireTimerSec <= 0f && al.y > 70f * density && al.y < worldHeight - 80f * density) {
+                al.fireTimerSec = max(0.85f, (if (al.kind == AlienShipKind.CRUISER) 1.3f else 1.8f) - wave * 0.07f)
+                val bSpd = (230f + wave * 12f) * density
+                bolts.add(BlasterBolt(al.x, al.y + al.radius, 0f, bSpd, 2.5f, fromSaucer = true))
+            }
+        }
+
+        // Collisions: bolts vs aliens & enemy bolts vs ship
+        for (b in bolts) {
+            if (b.fromSaucer) {
+                if (invulnTimerSec <= 0f && hypot(b.x - shipX, b.y - shipY) <= shipRadius + 4f * density) {
+                    usedBolts.add(b)
+                    if (shieldTimerSec > 0f) {
+                        shieldTimerSec = 0f
+                        invulnTimerSec = 1.2f
+                        popups.add(AsteroidsScorePopup(shipX, shipY - 16f * density, "SHIELD", 0.85f, 0.85f, 0xFF38BDF8.toInt()))
+                    } else {
+                        damageShip()
+                    }
+                }
+                continue
+            }
+            for (al in aliens) {
+                if (!hitAliens.contains(al) && hypot(b.x - al.x, b.y - al.y) <= al.radius + 5f * density) {
+                    hitAliens.add(al)
+                    usedBolts.add(b)
+                    break
+                }
+            }
+        }
+        bolts.removeAll(usedBolts)
+        for (al in hitAliens) {
+            damageAlien(al, 1)
+        }
+
+        // Collisions: ship vs aliens
+        if (invulnTimerSec <= 0f && phase == AsteroidsPhase.PLAYING) {
+            val hitAl = aliens.firstOrNull { al ->
+                hypot(shipX - al.x, shipY - al.y) <= shipRadius + al.radius * 0.85f
+            }
+            if (hitAl != null) {
+                if (shieldTimerSec > 0f) {
+                    shieldTimerSec = 0f
+                    invulnTimerSec = 1.2f
+                    damageAlien(hitAl, hitAl.hp)
+                } else {
+                    damageShip()
+                }
+            }
+        }
+
+        // Power-ups fall downward & pickup
+        val puIter = powerUps.iterator()
+        while (puIter.hasNext()) {
+            val pu = puIter.next()
+            pu.x = (pu.x + pu.vx * dt).coerceIn(padX, max(padX, worldWidth - padX))
+            pu.y += pu.vy * dt
+            pu.ttlSec -= dt
+            if (hypot(pu.x - shipX, pu.y - shipY) <= shipRadius + 18f * density) {
+                applyPowerUp(pu)
+                puIter.remove()
+            } else if (pu.ttlSec <= 0f || pu.y > worldHeight + 30f * density) {
+                puIter.remove()
+            }
+        }
+
+        // Advance wave when all aliens cleared
+        if (aliens.isEmpty() && phase == AsteroidsPhase.PLAYING) {
+            if (waveTransitionTimerSec <= 0f) {
+                waveTransitionTimerSec = 0.9f
+            } else {
+                waveTransitionTimerSec -= dt
+                if (waveTransitionTimerSec <= 0f) {
+                    wave += 1
+                    spawnAlienWave(wave)
+                }
+            }
+        }
+
+        decayVisuals(dt)
+    }
+
+    private fun damageAlien(al: AlienShip, dmg: Int) {
+        if (!aliens.contains(al)) return
+        al.hp -= dmg
+        if (al.hp > 0) {
+            spawnBurst(al.x, al.y, 4, 0xFFF59E0B.toInt())
+            return
+        }
+        aliens.remove(al)
+        val pts = when (al.kind) {
+            AlienShipKind.CRUISER -> 180
+            AlienShipKind.RAIDER -> 90
+            AlienShipKind.SCOUT -> 50
+        }
+        val col = when (al.kind) {
+            AlienShipKind.CRUISER -> 0xFFF59E0B.toInt()
+            AlienShipKind.RAIDER -> 0xFFE879F9.toInt()
+            AlienShipKind.SCOUT -> 0xFF38BDF8.toInt()
+        }
+        awardScore(pts, al.x, al.y, col)
+        spawnBurst(al.x, al.y, if (al.kind == AlienShipKind.CRUISER) 14 else 8, col)
+        val dropChance = when (al.kind) {
+            AlienShipKind.CRUISER -> 0.85f
+            AlienShipKind.RAIDER -> 0.35f
+            AlienShipKind.SCOUT -> 0.22f
+        }
+        if (random.nextFloat() < dropChance) {
+            val k = if (random.nextFloat() < 0.75f) AsteroidsPowerUpKind.WEAPON_UP else AsteroidsPowerUpKind.SHIELD
+            powerUps.add(AsteroidsPowerUp(k, al.x, al.y, 0f, 68f * density, 10f))
+        }
+    }
+
+    private fun spawnAlienWave(waveNum: Int) {
+        aliens.clear()
+        val padX = 48f * density
+        val cx = worldWidth / 2f
+        // 1. V-wedge scouts
+        val scoutCount = min(7, 3 + waveNum)
+        val half = (scoutCount - 1) / 2f
+        for (i in 0 until scoutCount) {
+            val off = i - half
+            val ax = (cx + off * 46f * density).coerceIn(padX, max(padX, worldWidth - padX))
+            val ay = (84f + abs(off) * 24f) * density
+            aliens.add(
+                AlienShip(
+                    id = nextAlienId++,
+                    x = ax, y = ay, baseX = ax, vx = 0f, vy = (40f + waveNum * 5f) * density,
+                    kind = AlienShipKind.SCOUT, hp = 1, maxHp = 1, radius = 14f * density,
+                    phaseRad = i * 0.6f, swayAmp = 12f * density, swayFreq = 1.4f,
+                    fireTimerSec = 1.1f + random.nextFloat() * 0.9f
+                )
+            )
+        }
+        // 2. Sine-wave raiders
+        val raiderCount = min(5, 1 + waveNum)
+        for (i in 1..raiderCount) {
+            val ax = ((worldWidth / (raiderCount + 1)) * i).coerceIn(padX, max(padX, worldWidth - padX))
+            val ay = (56f - i * 16f) * density
+            val rHp = if (waveNum >= 3) 2 else 1
+            aliens.add(
+                AlienShip(
+                    id = nextAlienId++,
+                    x = ax, y = ay, baseX = ax, vx = 0f, vy = (48f + waveNum * 5f) * density,
+                    kind = AlienShipKind.RAIDER, hp = rHp, maxHp = rHp, radius = 16f * density,
+                    phaseRad = i * 1.3f, swayAmp = 48f * density, swayFreq = 2.3f,
+                    fireTimerSec = 0.95f + random.nextFloat() * 0.8f
+                )
+            )
+        }
+        // 3. Armored cruisers
+        val cruiserCount = min(3, 1 + (waveNum - 1) / 2)
+        for (i in 1..cruiserCount) {
+            val ax = ((worldWidth / (cruiserCount + 1)) * i).coerceIn(padX, max(padX, worldWidth - padX))
+            val ay = 42f * density
+            val cHp = 3 + (waveNum - 1) / 2
+            aliens.add(
+                AlienShip(
+                    id = nextAlienId++,
+                    x = ax, y = ay, baseX = ax, vx = 0f, vy = (26f + waveNum * 3f) * density,
+                    kind = AlienShipKind.CRUISER, hp = cHp, maxHp = cHp, radius = 22f * density,
+                    phaseRad = i * 0.9f, swayAmp = 22f * density, swayFreq = 1.0f,
+                    fireTimerSec = 1.3f + random.nextFloat() * 0.7f
+                )
+            )
         }
     }
 
@@ -551,21 +945,39 @@ class AsteroidsEngine(
 
     private fun dropPowerUp(x: Float, y: Float, guaranteed: Boolean) {
         if (!guaranteed && random.nextFloat() > 0.35f) return
-        val values = AsteroidsPowerUpKind.entries
+        val values = arrayOf(AsteroidsPowerUpKind.RAPID, AsteroidsPowerUpKind.SPREAD, AsteroidsPowerUpKind.SHIELD)
         spawnPowerUp(values[random.nextInt(values.size)], x, y)
     }
 
     private fun applyPowerUp(pu: AsteroidsPowerUp) {
-        when (pu.kind) {
-            AsteroidsPowerUpKind.RAPID -> rapidTimerSec = 9f
-            AsteroidsPowerUpKind.SPREAD -> spreadTimerSec = 9f
-            AsteroidsPowerUpKind.SHIELD -> shieldTimerSec = 10f
+        val label = when (pu.kind) {
+            AsteroidsPowerUpKind.RAPID -> {
+                rapidTimerSec = 9f
+                pu.kind.label
+            }
+            AsteroidsPowerUpKind.SPREAD -> {
+                spreadTimerSec = 9f
+                pu.kind.label
+            }
+            AsteroidsPowerUpKind.SHIELD -> {
+                shieldTimerSec = 10f
+                pu.kind.label
+            }
+            AsteroidsPowerUpKind.WEAPON_UP -> {
+                if (weaponTier < 5) {
+                    weaponTier += 1
+                    if (weaponTier == 5) "BEAM LASER!" else "WPN T$weaponTier"
+                } else {
+                    awardScore(150, pu.x, pu.y, 0xFF38BDF8.toInt())
+                    "MAX WPN +150"
+                }
+            }
         }
         popups.add(
             AsteroidsScorePopup(
                 x = pu.x,
                 y = pu.y,
-                text = pu.kind.label,
+                text = label,
                 lifeSec = 1.0f,
                 maxLifeSec = 1.0f,
                 colorRgb = 0xFF34D399.toInt()
@@ -605,7 +1017,7 @@ class AsteroidsEngine(
 
     private fun resetShipCenter() {
         shipX = worldWidth / 2f
-        shipY = worldHeight / 2f
+        shipY = if (mode == BlasterMode.ALIEN_BLASTER) worldHeight * 0.80f else worldHeight / 2f
         shipVx = 0f
         shipVy = 0f
         shipAngleRad = (-PI / 2.0).toFloat()

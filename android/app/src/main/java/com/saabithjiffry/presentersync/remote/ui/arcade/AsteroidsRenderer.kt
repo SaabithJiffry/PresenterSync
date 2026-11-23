@@ -24,24 +24,36 @@ class AsteroidsOverlayView(
 
     private val vectorPath = Path()
 
-    override fun buildScoreboardBadge(): String = "ASTEROIDS"
+    override fun buildScoreboardBadge(): String =
+        if (engine.mode == BlasterMode.ALIEN_BLASTER) "ALIEN BLASTER" else "ASTEROIDS"
 
     override fun buildScoreboardStats(): String {
         val perks = buildString {
-            if (engine.rapidTimerSec > 0f) append(" · RAPID")
-            if (engine.spreadTimerSec > 0f) append(" · SPREAD")
-            if (engine.shieldTimerSec > 0f) append(" · SHIELD")
+            if (engine.mode == BlasterMode.ALIEN_BLASTER) {
+                append(if (engine.weaponTier >= 5) " · WPN T5 BEAM" else " · WPN T${engine.weaponTier}")
+                if (engine.shieldTimerSec > 0f) append(" · SHIELD")
+            } else {
+                if (engine.rapidTimerSec > 0f) append(" · RAPID")
+                if (engine.spreadTimerSec > 0f) append(" · SPREAD")
+                if (engine.shieldTimerSec > 0f) append(" · SHIELD")
+            }
         }
         return "Score ${engine.score} · Best ${engine.highScore} · W${engine.wave} · ${"♥".repeat(engine.lives.coerceAtLeast(0))}$perks"
     }
 
     override fun buildExtraChipLabel(): String {
-        return if (engine.autoFireEnabled) "Auto: ON" else "Auto: OFF"
+        return if (engine.mode == BlasterMode.ALIEN_BLASTER) "Mode: Alien" else "Mode: Asteroids"
     }
 
-    override fun buildPauseTitle(): String = "ASTEROIDS PAUSED"
+    override fun buildPauseTitle(): String =
+        if (engine.mode == BlasterMode.ALIEN_BLASTER) "ALIEN BLASTER PAUSED" else "ASTEROIDS PAUSED"
 
-    override fun buildPauseSubtitle(): String = "Drag to steer & fire, or use WASD/Arrows + Space"
+    override fun buildPauseSubtitle(): String =
+        if (engine.mode == BlasterMode.ALIEN_BLASTER) {
+            "Drag or use WASD/Arrows for 2D movement · Tap/Space to fire · M to switch mode"
+        } else {
+            "Drag to steer & fire, or use WASD/Arrows + Space · M to switch mode"
+        }
 
     override fun buildGameOverSubtitle(): String = "Wave ${engine.wave} · Score ${engine.score} · Best ${engine.highScore}"
 
@@ -50,7 +62,7 @@ class AsteroidsOverlayView(
     override fun isGameOver(): Boolean = engine.phase == AsteroidsPhase.GAME_OVER
 
     override fun onExtraTopAction() {
-        engine.autoFireEnabled = !engine.autoFireEnabled
+        engine.toggleMode()
     }
 
     override fun onTogglePause() {
@@ -81,6 +93,10 @@ class AsteroidsOverlayView(
                 engine.inputThrust = isDown
                 return true
             }
+            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_S -> {
+                engine.inputMoveDown = isDown
+                return true
+            }
             KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_BUTTON_A -> {
                 if (isDown && engine.phase == AsteroidsPhase.GAME_OVER) {
                     onRestartGame()
@@ -102,7 +118,13 @@ class AsteroidsOverlayView(
                 }
                 return true
             }
-            KeyEvent.KEYCODE_F, KeyEvent.KEYCODE_BUTTON_Y -> {
+            KeyEvent.KEYCODE_M, KeyEvent.KEYCODE_BUTTON_Y -> {
+                if (isDown && event.repeatCount == 0) {
+                    engine.toggleMode()
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_F -> {
                 if (isDown && event.repeatCount == 0) {
                     engine.autoFireEnabled = !engine.autoFireEnabled
                 }
@@ -145,22 +167,81 @@ class AsteroidsOverlayView(
         fillPaint.color = withAlpha(if (isDark) 0x070B14 else 0x0F172A, if (isDark) 132 else 112)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fillPaint)
 
-        // Mic Pill Bumper silhouette (Live/Muted color outline)
-        engine.pillBumper?.let { b ->
-            val bumperColor = if (isMicMuted) palette.mutedBg else palette.liveBg
-            workRect.set(b.left, b.top, b.right, b.bottom)
-            val rad = (b.bottom - b.top) / 2f
-            fillPaint.color = withAlpha(bumperColor, 38)
-            canvas.drawRoundRect(workRect, rad, rad, fillPaint)
-            strokePaint.color = withAlpha(bumperColor, 180)
-            strokePaint.strokeWidth = 2f * d
-            canvas.drawRoundRect(workRect, rad, rad, strokePaint)
+        // Mic Pill Bumper silhouette (Asteroid Blaster mode only)
+        if (engine.mode == BlasterMode.ASTEROIDS) {
+            engine.pillBumper?.let { b ->
+                val bumperColor = if (isMicMuted) palette.mutedBg else palette.liveBg
+                workRect.set(b.left, b.top, b.right, b.bottom)
+                val rad = (b.bottom - b.top) / 2f
+                fillPaint.color = withAlpha(bumperColor, 38)
+                canvas.drawRoundRect(workRect, rad, rad, fillPaint)
+                strokePaint.color = withAlpha(bumperColor, 180)
+                strokePaint.strokeWidth = 2f * d
+                canvas.drawRoundRect(workRect, rad, rad, strokePaint)
 
-            boldPaint.textSize = 9.5f * d
-            boldPaint.color = withAlpha(bumperColor, 175)
-            boldPaint.textAlign = Paint.Align.CENTER
-            val fm = boldPaint.fontMetrics
-            canvas.drawText("MIC BUMPER", workRect.centerX(), workRect.centerY() - (fm.ascent + fm.descent) / 2f, boldPaint)
+                boldPaint.textSize = 9.5f * d
+                boldPaint.color = withAlpha(bumperColor, 175)
+                boldPaint.textAlign = Paint.Align.CENTER
+                val fm = boldPaint.fontMetrics
+                canvas.drawText("MIC BUMPER", workRect.centerX(), workRect.centerY() - (fm.ascent + fm.descent) / 2f, boldPaint)
+            }
+        }
+
+        // Alien Blaster: Tier 5 Neon Beam Laser + Alien enemy ships
+        if (engine.mode == BlasterMode.ALIEN_BLASTER) {
+            if (engine.beamActive && engine.weaponTier >= 5 && engine.lives > 0) {
+                val beamTop = 54f * d
+                val beamBottom = engine.shipY - engine.shipRadius
+                if (beamBottom > beamTop) {
+                    workRect.set(engine.shipX - 15f * d, beamTop, engine.shipX + 15f * d, beamBottom)
+                    fillPaint.color = withAlpha(0x38BDF8, 72)
+                    canvas.drawRoundRect(workRect, 8f * d, 8f * d, fillPaint)
+
+                    workRect.set(engine.shipX - 7f * d, beamTop, engine.shipX + 7f * d, beamBottom)
+                    fillPaint.color = withAlpha(0x06B6D4, 210)
+                    canvas.drawRoundRect(workRect, 4f * d, 4f * d, fillPaint)
+
+                    workRect.set(engine.shipX - 2.5f * d, beamTop, engine.shipX + 2.5f * d, beamBottom)
+                    fillPaint.color = withAlpha(0xFFFFFF, 250)
+                    canvas.drawRoundRect(workRect, 2f * d, 2f * d, fillPaint)
+                }
+            }
+
+            for (al in engine.aliens) {
+                val rgb = when (al.kind) {
+                    AlienShipKind.CRUISER -> 0xF59E0B
+                    AlienShipKind.RAIDER -> 0xE879F9
+                    AlienShipKind.SCOUT -> 0x38BDF8
+                }
+                val r = al.radius
+                if (al.kind == AlienShipKind.CRUISER) {
+                    workRect.set(al.x - r, al.y - r * 0.55f, al.x + r, al.y + r * 0.55f)
+                    fillPaint.color = withAlpha(rgb, 80)
+                    canvas.drawRoundRect(workRect, 6f * d, 6f * d, fillPaint)
+                    strokePaint.color = withAlpha(rgb, 245)
+                    strokePaint.strokeWidth = 2f * d
+                    canvas.drawRoundRect(workRect, 6f * d, 6f * d, strokePaint)
+                    if (al.maxHp > 1) {
+                        boldPaint.textSize = 9.5f * d
+                        boldPaint.color = withAlpha(0xFFFFFF, 245)
+                        boldPaint.textAlign = Paint.Align.CENTER
+                        val fm = boldPaint.fontMetrics
+                        canvas.drawText("x${al.hp}", al.x, al.y - (fm.ascent + fm.descent) / 2f, boldPaint)
+                    }
+                } else {
+                    vectorPath.reset()
+                    vectorPath.moveTo(al.x, al.y + r)
+                    vectorPath.lineTo(al.x - r, al.y - r * 0.7f)
+                    vectorPath.lineTo(al.x, al.y - r * 0.2f)
+                    vectorPath.lineTo(al.x + r, al.y - r * 0.7f)
+                    vectorPath.close()
+                    fillPaint.color = withAlpha(rgb, 70)
+                    canvas.drawPath(vectorPath, fillPaint)
+                    strokePaint.color = withAlpha(rgb, 245)
+                    strokePaint.strokeWidth = 2f * d
+                    canvas.drawPath(vectorPath, strokePaint)
+                }
+            }
         }
 
         // Power-up HUD pills
@@ -169,6 +250,7 @@ class AsteroidsOverlayView(
                 AsteroidsPowerUpKind.RAPID -> 0xF59E0B
                 AsteroidsPowerUpKind.SPREAD -> 0x38BDF8
                 AsteroidsPowerUpKind.SHIELD -> 0x34D399
+                AsteroidsPowerUpKind.WEAPON_UP -> 0x0EA5E9
             }
             val pw = 56f * d
             val ph = 22f * d

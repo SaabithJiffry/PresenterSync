@@ -3,11 +3,13 @@ package com.saabithjiffry.presentersync.remote
 import android.view.WindowManager
 import com.saabithjiffry.presentersync.remote.config.ArcadeHighScoresCodec
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
+import com.saabithjiffry.presentersync.remote.ui.arcade.AlienShipKind
 import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeOverlayHost
 import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeRectF
 import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeVaultManager
 import com.saabithjiffry.presentersync.remote.ui.arcade.AsteroidsEngine
 import com.saabithjiffry.presentersync.remote.ui.arcade.AsteroidsPowerUpKind
+import com.saabithjiffry.presentersync.remote.ui.arcade.BlasterMode
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -149,5 +151,81 @@ class ArcadeVaultAndAsteroidsTest {
         assertNotNull(rock)
         repeat(15) { eng.step(0.016f) }
         assertTrue("Expected bumper deflection vy < 0, got ${rock.vy}", rock.vy < 0f)
+    }
+
+    @Test
+    fun alienBlasterMode_fixedUpwardShip_2dMovement_alienWaves_weaponTiers1To5_andBeamKill() {
+        val eng = AsteroidsEngine(random = Random(77))
+        eng.startNewSession(
+            widthPx = 1080,
+            heightPx = 1920,
+            screenDensity = 2f,
+            initialHighScore = 0
+        )
+        assertEquals(BlasterMode.ASTEROIDS, eng.mode)
+
+        // Toggle into Alien Blaster mode -> spawns alien wave, clears rocks, resets weaponTier = 1
+        assertEquals(BlasterMode.ALIEN_BLASTER, eng.toggleMode())
+        assertEquals(1, eng.weaponTier)
+        assertTrue("Expected alien wave spawned", eng.aliens.size >= 5)
+        assertTrue("Expected zero asteroids in Alien mode", eng.rocks.isEmpty())
+
+        // Fixed forward angle (-PI/2) + full 2D movement (right + up, then left + down)
+        eng.aliens.clear()
+        eng.bolts.clear()
+        val x0 = eng.shipX
+        val y0 = eng.shipY
+        eng.shipAngleRad = 0.75f // must be locked back to -PI/2
+        eng.inputTurnRight = true
+        eng.inputThrust = true
+        repeat(5) { eng.step(0.02f) }
+        assertEquals((-Math.PI / 2.0).toFloat(), eng.shipAngleRad, 0.001f)
+        assertTrue("Expected ship moved right (+X)", eng.shipX > x0)
+        assertTrue("Expected ship moved forward/up (-Y)", eng.shipY < y0)
+
+        val x1 = eng.shipX
+        val y1 = eng.shipY
+        eng.inputTurnRight = false
+        eng.inputThrust = false
+        eng.inputTurnLeft = true
+        eng.inputMoveDown = true
+        repeat(5) { eng.step(0.02f) }
+        assertEquals((-Math.PI / 2.0).toFloat(), eng.shipAngleRad, 0.001f)
+        assertTrue("Expected ship moved left (-X)", eng.shipX < x1)
+        assertTrue("Expected ship moved backward/down (+Y)", eng.shipY > y1)
+        eng.inputTurnLeft = false
+        eng.inputMoveDown = false
+
+        // Escalating weapon tiers 1 -> 2 -> 3 -> 4 (5-spread) -> 5 (Beam Laser)
+        eng.bolts.clear()
+        eng.firePlayerBolt(ignoreCooldown = true)
+        assertEquals(1, eng.bolts.size)
+
+        eng.upgradeWeaponTier()
+        eng.bolts.clear()
+        eng.firePlayerBolt(ignoreCooldown = true)
+        assertEquals(2, eng.bolts.size)
+
+        eng.upgradeWeaponTier()
+        eng.bolts.clear()
+        eng.firePlayerBolt(ignoreCooldown = true)
+        assertEquals(3, eng.bolts.size)
+
+        eng.upgradeWeaponTier()
+        eng.bolts.clear()
+        eng.firePlayerBolt(ignoreCooldown = true)
+        assertEquals(5, eng.bolts.size)
+
+        assertEquals(5, eng.upgradeWeaponTier())
+
+        // Tier 5 Neon Beam Laser vaporizes alien cruiser & awards score
+        eng.aliens.clear()
+        eng.bolts.clear()
+        eng.spawnAlien(eng.shipX, eng.shipY - 220f, AlienShipKind.CRUISER, hp = 2, vy = 0f)
+        eng.firePlayerBolt(ignoreCooldown = true)
+        repeat(8) { eng.step(0.04f) }
+        assertTrue("Expected Tier 5 beam active", eng.beamActive)
+        assertTrue("Expected cruiser vaporized by Beam Laser", eng.aliens.isEmpty())
+        assertTrue("Expected cruiser kill score >= 180", eng.score >= 180)
     }
 }

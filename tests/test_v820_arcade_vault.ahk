@@ -201,6 +201,75 @@ GameAsteroids.SetTestMicPillRect({ x: 200, y: 200, w: 120, h: 40 })
 bumperAst := GameAsteroids.SpawnAsteroid(192.0, 220.0, 80.0, 0.0, 1)
 GameAsteroids.StepSimulation(0.05, false)
 AssertTrue(bumperAst.vx < 0.0, "Mic Pill Bumper elastically deflects asteroid away from Mic pill", "vx=" bumperAst.vx)
+
+; 9. M5A.2 Alien Blaster mode: mode toggle, fixed upward angle (-PI/2), 2D X+Y movement, alien waves, weapon escalation 1..5 (Beam Laser), alien kill scoring
+GameAsteroids.ToggleBlasterMode()
+alienSnap0 := GameAsteroids.GetStateSnapshot()
+AssertTrue(alienSnap0.blasterMode = "alien" && alienSnap0.weaponTier == 1 && alienSnap0.alienCount >= 5 && alienSnap0.asteroidCount == 0,
+    "ToggleBlasterMode switches cleanly to Alien Blaster mode and spawns alien wave",
+    "mode=" alienSnap0.blasterMode " tier=" alienSnap0.weaponTier " aliens=" alienSnap0.alienCount)
+
+; Fixed upward angle (-PI/2) + full 2D X+Y movement
+GameAsteroids._aliens := []
+GameAsteroids._bullets := []
+startX := GameAsteroids._ship.x
+startY := GameAsteroids._ship.y
+GameAsteroids._ship.angle := 0.85 ; attempt to rotate — must be snapped back to -PI/2
+GameAsteroids._ship.vx := 200.0
+GameAsteroids._ship.vy := -150.0
+GameAsteroids.StepSimulation(0.05, false)
+movedShip := GameAsteroids.GetStateSnapshot().ship
+AssertTrue(Abs(movedShip.angle - (-1.57079632679)) < 0.001 && movedShip.x > startX && movedShip.y < startY,
+    "Alien Blaster ship stays fixed forward (-PI/2) while moving freely in 2D X+Y",
+    "ang=" movedShip.angle " dx=" (movedShip.x - startX) " dy=" (movedShip.y - startY))
+GameAsteroids._ship.vx := 0.0
+GameAsteroids._ship.vy := 0.0
+
+; Escalating weapon tiers 1 -> 2 -> 3 -> 4 -> 5 (Beam Laser)
+GameAsteroids._bullets := []
+GameAsteroids._ship.fireCdMs := 0.0
+GameAsteroids.FireBullet(true)
+bT1 := GameAsteroids._bullets.Length
+GameAsteroids.UpgradeWeaponForTest()
+GameAsteroids._bullets := []
+GameAsteroids._ship.fireCdMs := 0.0
+GameAsteroids.FireBullet(true)
+bT2 := GameAsteroids._bullets.Length
+GameAsteroids.UpgradeWeaponForTest()
+GameAsteroids._bullets := []
+GameAsteroids._ship.fireCdMs := 0.0
+GameAsteroids.FireBullet(true)
+bT3 := GameAsteroids._bullets.Length
+GameAsteroids.UpgradeWeaponForTest()
+GameAsteroids._bullets := []
+GameAsteroids._ship.fireCdMs := 0.0
+GameAsteroids.FireBullet(true)
+bT4 := GameAsteroids._bullets.Length
+GameAsteroids.UpgradeWeaponForTest()
+t5 := GameAsteroids.GetStateSnapshot().weaponTier
+AssertTrue(bT1 == 1 && bT2 == 2 && bT3 == 3 && bT4 == 5 && t5 == 5,
+    "Alien Blaster weapon tiers escalate cleanly 1->2->3->5 spread->Tier 5 Beam",
+    "t1=" bT1 " t2=" bT2 " t3=" bT3 " t4=" bT4 " t5=" t5)
+
+; Tier 5 Neon Beam Laser vaporizes alien ship & awards score
+GameAsteroids._aliens := []
+GameAsteroids._bullets := []
+GameAsteroids._score := 0
+GameAsteroids.SpawnAlienForTest(GameAsteroids._ship.x, GameAsteroids._ship.y - 140.0, "cruiser", 2, 0.0)
+GameAsteroids.FireBullet(true)
+Loop 6
+    GameAsteroids.StepSimulation(0.05, false)
+beamSnap := GameAsteroids.GetStateSnapshot()
+AssertTrue(beamSnap.beamActive && beamSnap.alienCount == 0 && beamSnap.score >= 180,
+    "Alien Blaster Tier 5 Neon Beam Laser vaporizes alien cruiser and awards score",
+    "beam=" beamSnap.beamActive " aliens=" beamSnap.alienCount " score=" beamSnap.score)
+
+; Toggle back to Asteroid mode cleanly
+GameAsteroids.ToggleBlasterMode()
+backSnap := GameAsteroids.GetStateSnapshot()
+AssertTrue(backSnap.blasterMode = "asteroids" && backSnap.asteroidCount >= 5 && backSnap.alienCount == 0,
+    "ToggleBlasterMode switches back cleanly to Asteroid Blaster mode")
+
 GameAsteroids.Stop()
 AssertTrue(!GameAsteroids.IsActive && !HudArcadeBase.IsAnyGameActive(), "GameAsteroids.Stop clears active game cleanly")
 

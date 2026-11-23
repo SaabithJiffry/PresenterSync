@@ -23,11 +23,20 @@ class GameAsteroids {
 
     static _ship := ""
     static _asteroids := []
+    static _aliens := []
     static _bullets := []
     static _powerups := []
     static _particles := []
     static _popups := []
     static _saucer := ""
+
+    static _blasterMode := "asteroids" ; "asteroids" | "alien"
+    static _weaponTier := 1            ; 1..5 in Alien Blaster mode
+    static _beamActive := false
+    static _beamHoldMs := 0.0
+    static _beamDmgCdMs := 0.0
+    static _alienTimeSec := 0.0
+    static _waveDelayMs := 0.0
 
     static _score := 0
     static _highScore := 0
@@ -119,6 +128,8 @@ class GameAsteroids {
             { key: "$Space", fn: (*) => GameAsteroids.FireBullet(true) },
             { key: "$f", fn: (*) => (GameAsteroids._autoFire := !GameAsteroids._autoFire) },
             { key: "$b", fn: (*) => (GameAsteroids._micBumper := !GameAsteroids._micBumper) },
+            { key: "$m", fn: (*) => GameAsteroids.ToggleBlasterMode() },
+            { key: "$+m", fn: (*) => GameAsteroids.ToggleBlasterMode() },
             { key: "$p", fn: (*) => GameAsteroids.TogglePause() },
             { key: "$r", fn: (*) => (GameAsteroids.Phase = "gameover" ? GameAsteroids._ResetRun() : 0) },
             { key: "$Escape", fn: (*) => GameAsteroids.Stop() }
@@ -158,13 +169,62 @@ class GameAsteroids {
         }
     }
 
+    static ToggleBlasterMode() {
+        if (!this.IsActive)
+            return this._blasterMode
+        this._blasterMode := (this._blasterMode = "asteroids") ? "alien" : "asteroids"
+        this._ResetRun()
+        return this._blasterMode
+    }
+
+    static SetModeForTest(mode) {
+        this._blasterMode := (StrLower(mode) = "alien") ? "alien" : "asteroids"
+        if (this.IsActive)
+            this._ResetRun()
+        return this._blasterMode
+    }
+
+    static UpgradeWeaponForTest() {
+        this._weaponTier := Min(5, this._weaponTier + 1)
+        return this._weaponTier
+    }
+
+    static SpawnAlienForTest(x, y, kind := "scout", hp := 1, vy := 45.0) {
+        r := (kind = "cruiser") ? 22.0 : ((kind = "raider") ? 16.0 : 14.0)
+        alien := {
+            x: Float(x),
+            y: Float(y),
+            baseX: Float(x),
+            vx: 0.0,
+            vy: Float(vy),
+            kind: kind,
+            hp: Max(1, Integer(hp)),
+            maxHp: Max(1, Integer(hp)),
+            radius: r,
+            phase: 0.0,
+            amp: (kind = "raider") ? 48.0 : 0.0,
+            freq: (kind = "raider") ? 2.4 : 0.0,
+            fireCdMs: 1400.0
+        }
+        this._aliens.Push(alien)
+        return alien
+    }
+
     static _ResetRun() {
         W := this._surf.W, H := this._surf.H
         this._score := 0
         this._wave := 1
         this._lives := 3
+        this._weaponTier := 1
+        this._beamActive := false
+        this._beamHoldMs := 0.0
+        this._beamDmgCdMs := 0.0
+        this._alienTimeSec := 0.0
+        this._waveDelayMs := 0.0
         this._mouseActive := false
         this._mouseDown := false
+        this._asteroids := []
+        this._aliens := []
         this._bullets := []
         this._powerups := []
         this._particles := []
@@ -172,15 +232,19 @@ class GameAsteroids {
         this._saucer := { active: false, x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, radius: 16.0, fireCdMs: 1400.0 }
         this._saucerTimerMs := 9000.0
         this._RespawnShip(true)
-        this._SpawnWave(1)
+        if (this._blasterMode = "alien")
+            this._SpawnAlienWave(1)
+        else
+            this._SpawnWave(1)
         this.Phase := "playing"
     }
 
     static _RespawnShip(initial := false) {
         W := this._surf.W, H := this._surf.H
+        isAlien := (this._blasterMode = "alien")
         this._ship := {
             x: Float(W) / 2.0,
-            y: Float(H) / 2.0,
+            y: isAlien ? (Float(H) * 0.80) : (Float(H) / 2.0),
             vx: 0.0,
             vy: 0.0,
             angle: -1.57079632679,
@@ -191,6 +255,55 @@ class GameAsteroids {
             spreadMs: 0.0,
             invulnMs: 2200.0,
             fireCdMs: 0.0
+        }
+    }
+
+    static _SpawnAlienWave(waveNum) {
+        this._aliens := []
+        W := Float(this._surf.W)
+        cx := W / 2.0
+        ; 1. V-wedge scouts
+        scoutCount := Min(7, 3 + waveNum)
+        half := (scoutCount - 1) / 2.0
+        Loop scoutCount {
+            idx := A_Index - 1
+            off := idx - half
+            ax := Max(48.0, Min(W - 48.0, cx + off * 62.0))
+            ay := 84.0 + Abs(off) * 26.0
+            this._aliens.Push({
+                x: ax, y: ay, baseX: ax, vx: 0.0, vy: 42.0 + waveNum * 6.0,
+                kind: "scout", hp: 1, maxHp: 1, radius: 14.0,
+                phase: idx * 0.6, amp: 14.0, freq: 1.4,
+                fireCdMs: 1100.0 + Random(0, 900)
+            })
+        }
+        ; 2. Sine-wave raiders
+        raiderCount := Min(5, 1 + waveNum)
+        Loop raiderCount {
+            idx := A_Index
+            ax := Max(72.0, Min(W - 72.0, (W / (raiderCount + 1)) * idx))
+            ay := 56.0 - (idx * 18.0)
+            rHp := (waveNum >= 3) ? 2 : 1
+            this._aliens.Push({
+                x: ax, y: ay, baseX: ax, vx: 0.0, vy: 50.0 + waveNum * 5.0,
+                kind: "raider", hp: rHp, maxHp: rHp, radius: 16.0,
+                phase: idx * 1.3, amp: 58.0, freq: 2.3,
+                fireCdMs: 950.0 + Random(0, 800)
+            })
+        }
+        ; 3. Armored multi-HP cruisers
+        cruiserCount := Min(3, 1 + Floor((waveNum - 1) / 2))
+        Loop cruiserCount {
+            idx := A_Index
+            ax := Max(80.0, Min(W - 80.0, (W / (cruiserCount + 1)) * idx))
+            ay := 42.0
+            cHp := 3 + Floor((waveNum - 1) / 2)
+            this._aliens.Push({
+                x: ax, y: ay, baseX: ax, vx: 0.0, vy: 28.0 + waveNum * 3.0,
+                kind: "cruiser", hp: cHp, maxHp: cHp, radius: 22.0,
+                phase: idx * 0.9, amp: 26.0, freq: 1.0,
+                fireCdMs: 1300.0 + Random(0, 700)
+            })
         }
     }
 
@@ -252,9 +365,19 @@ class GameAsteroids {
     }
 
     static SpawnPowerUp(x, y, kind := "") {
-        kinds := ["RAPID", "SPREAD", "SHIELD"]
-        k := (kind != "") ? kind : kinds[Random(1, 3)]
-        pu := { x: Float(x), y: Float(y), vx: Float(Random(-30, 30)), vy: 28.0, kind: k, radius: 16.0, ttlMs: 9000.0 }
+        if (kind = "") {
+            if (this._blasterMode = "alien")
+                k := (Random(1, 100) <= 75) ? "WEAPON_UP" : "SHIELD"
+            else {
+                kinds := ["RAPID", "SPREAD", "SHIELD"]
+                k := kinds[Random(1, 3)]
+            }
+        } else {
+            k := kind
+        }
+        vx := (this._blasterMode = "alien") ? 0.0 : Float(Random(-30, 30))
+        vy := (this._blasterMode = "alien") ? 72.0 : 28.0
+        pu := { x: Float(x), y: Float(y), vx: vx, vy: vy, kind: k, radius: 16.0, ttlMs: 9000.0 }
         this._powerups.Push(pu)
         return pu
     }
@@ -267,6 +390,41 @@ class GameAsteroids {
         if (!this.IsActive || this.Phase != "playing")
             return false
         s := this._ship
+        if (this._blasterMode = "alien") {
+            if (this._weaponTier >= 5) {
+                this._beamActive := true
+                this._beamHoldMs := 360.0
+                return true
+            }
+            if (!manualBurst && s.fireCdMs > 0.0)
+                return false
+            if (manualBurst && s.fireCdMs > 70.0)
+                return false
+            tier := this._weaponTier
+            spd := 640.0
+            if (tier == 1) {
+                s.fireCdMs := 210.0
+                this._bullets.Push({ x: s.x, y: s.y - s.radius - 4.0, vx: 0.0, vy: -spd, ttlMs: 1200.0, isEnemy: false })
+            } else if (tier == 2) {
+                s.fireCdMs := 190.0
+                this._bullets.Push({ x: s.x - 9.0, y: s.y - s.radius - 2.0, vx: 0.0, vy: -spd, ttlMs: 1200.0, isEnemy: false })
+                this._bullets.Push({ x: s.x + 9.0, y: s.y - s.radius - 2.0, vx: 0.0, vy: -spd, ttlMs: 1200.0, isEnemy: false })
+            } else if (tier == 3) {
+                s.fireCdMs := 175.0
+                for _, off in [-0.18, 0.0, 0.18] {
+                    a := -1.57079632679 + off
+                    this._bullets.Push({ x: s.x + Cos(a) * (s.radius + 4.0), y: s.y + Sin(a) * (s.radius + 4.0), vx: Cos(a) * spd, vy: Sin(a) * spd, ttlMs: 1200.0, isEnemy: false })
+                }
+            } else {
+                s.fireCdMs := 125.0
+                for _, off in [-0.28, -0.14, 0.0, 0.14, 0.28] {
+                    a := -1.57079632679 + off
+                    this._bullets.Push({ x: s.x + Cos(a) * (s.radius + 4.0), y: s.y + Sin(a) * (s.radius + 4.0), vx: Cos(a) * (spd * 1.06), vy: Sin(a) * (spd * 1.06), ttlMs: 1200.0, isEnemy: false })
+                }
+            }
+            return true
+        }
+
         if (!manualBurst && s.fireCdMs > 0.0)
             return false
         if (manualBurst && s.fireCdMs > 90.0)
@@ -317,6 +475,11 @@ class GameAsteroids {
             s.spreadMs := Max(0.0, s.spreadMs - dtMs)
         if (s.fireCdMs > 0.0)
             s.fireCdMs := Max(0.0, s.fireCdMs - dtMs)
+
+        if (this._blasterMode = "alien") {
+            this._StepAlienSimulation(dt, dtMs, W, H, readHardwareInput)
+            return
+        }
 
         s.thrusting := false
         if (readHardwareInput) {
@@ -532,6 +695,250 @@ class GameAsteroids {
         }
     }
 
+    static _StepAlienSimulation(dt, dtMs, W, H, readHardwareInput) {
+        s := this._ship
+        s.angle := -1.57079632679 ; Fixed forward-facing ship (NEVER rotates)
+        this._alienTimeSec += dt
+        if (this._beamHoldMs > 0.0)
+            this._beamHoldMs := Max(0.0, this._beamHoldMs - dtMs)
+        if (this._beamDmgCdMs > 0.0)
+            this._beamDmgCdMs := Max(0.0, this._beamDmgCdMs - dtMs)
+
+        fireNow := false
+        if (readHardwareInput) {
+            mvL := GetKeyState("Left", "P") || GetKeyState("a", "P")
+            mvR := GetKeyState("Right", "P") || GetKeyState("d", "P")
+            mvU := GetKeyState("Up", "P") || GetKeyState("w", "P")
+            mvD := GetKeyState("Down", "P") || GetKeyState("s", "P")
+            fireNow := GetKeyState("Space", "P") || this._mouseDown || this._autoFire
+
+            gp := HudArcadeBase.PollXInput()
+            if (IsObject(gp)) {
+                if ((gp.btn & 0x0004) || gp.lx < -9000)
+                    mvL := true
+                if ((gp.btn & 0x0008) || gp.lx > 9000)
+                    mvR := true
+                if ((gp.btn & 0x0001) || gp.ly > 9000)
+                    mvU := true
+                if ((gp.btn & 0x0002) || gp.ly < -9000)
+                    mvD := true
+                if (gp.btn & 0x1000)
+                    fireNow := true
+            }
+            if (mvL || mvR || mvU || mvD)
+                this._mouseActive := false
+
+            moveSpd := 380.0
+            if (this._mouseActive) {
+                dx := this._mouseX - s.x
+                dy := this._mouseY - s.y
+                s.vx := Max(-520.0, Min(520.0, dx * 9.0))
+                s.vy := Max(-520.0, Min(520.0, dy * 9.0))
+            } else {
+                ix := (mvR ? 1.0 : 0.0) - (mvL ? 1.0 : 0.0)
+                iy := (mvD ? 1.0 : 0.0) - (mvU ? 1.0 : 0.0)
+                if (ix != 0.0 && iy != 0.0) {
+                    ix *= 0.70710678
+                    iy *= 0.70710678
+                }
+                s.vx := ix * moveSpd
+                s.vy := iy * moveSpd
+            }
+            s.thrusting := (Abs(s.vx) > 20.0 || Abs(s.vy) > 20.0)
+        } else {
+            s.thrusting := (Abs(s.vx) > 20.0 || Abs(s.vy) > 20.0)
+        }
+
+        ; Full 2D ship movement clamped cleanly inside the arena
+        s.x := Max(24.0, Min(W - 24.0, s.x + s.vx * dt))
+        s.y := Max(76.0, Min(H - 24.0, s.y + s.vy * dt))
+        s.angle := -1.57079632679
+
+        if (this._weaponTier >= 5) {
+            this._beamActive := (fireNow || this._beamHoldMs > 0.0)
+            if (this._beamActive && this._beamDmgCdMs <= 0.0) {
+                this._beamDmgCdMs := 80.0
+                aIdx := this._aliens.Length
+                while (aIdx >= 1) {
+                    al := this._aliens[aIdx]
+                    if (al.y < s.y && Abs(al.x - s.x) <= (al.radius + 15.0)) {
+                        this._DamageAlien(aIdx, 1)
+                    }
+                    aIdx -= 1
+                }
+            }
+        } else {
+            this._beamActive := false
+            if (fireNow)
+                this.FireBullet(false)
+        }
+
+        ; Bullets move (non-wrapping in Alien Blaster mode)
+        idx := this._bullets.Length
+        while (idx >= 1) {
+            b := this._bullets[idx]
+            b.ttlMs -= dtMs
+            b.x += b.vx * dt
+            b.y += b.vy * dt
+            if (b.ttlMs <= 0.0 || b.x < -30.0 || b.x > W + 30.0 || b.y < 30.0 || b.y > H + 30.0) {
+                this._bullets.RemoveAt(idx)
+            }
+            idx -= 1
+        }
+
+        ; Update oncoming Alien ships, enemy plasma bolts, and bullet/ship collisions
+        aIdx := this._aliens.Length
+        while (aIdx >= 1) {
+            al := this._aliens[aIdx]
+            al.y += al.vy * dt
+            if (al.amp > 0.0 && al.freq > 0.0) {
+                al.x := Max(28.0, Min(W - 28.0, al.baseX + Sin(this._alienTimeSec * al.freq + al.phase) * al.amp))
+            }
+            if (al.y > H + 30.0) {
+                al.y := 58.0
+            }
+            al.fireCdMs -= dtMs
+            if (al.fireCdMs <= 0.0 && al.y > 70.0 && al.y < H - 80.0) {
+                al.fireCdMs := Max(850.0, ((al.kind = "cruiser") ? 1300.0 : 1800.0) - this._wave * 70.0)
+                bSpd := 260.0 + this._wave * 14.0
+                this._bullets.Push({ x: al.x, y: al.y + al.radius, vx: 0.0, vy: bSpd, ttlMs: 2600.0, isEnemy: true })
+            }
+
+            hitByBullet := false
+            bIdx := this._bullets.Length
+            while (bIdx >= 1) {
+                b := this._bullets[bIdx]
+                if (!b.isEnemy && ((b.x - al.x) ** 2 + (b.y - al.y) ** 2) <= (al.radius + 5.0) ** 2) {
+                    this._bullets.RemoveAt(bIdx)
+                    hitByBullet := true
+                    break
+                }
+                bIdx -= 1
+            }
+            if (hitByBullet) {
+                this._DamageAlien(aIdx, 1)
+                aIdx -= 1
+                continue
+            }
+
+            if (s.invulnMs <= 0.0 && ((s.x - al.x) ** 2 + (s.y - al.y) ** 2) <= (al.radius + s.radius - 2.0) ** 2) {
+                if (s.shieldMs > 0.0) {
+                    s.shieldMs := 0.0
+                    s.invulnMs := 1200.0
+                    this._popups.Push({ x: s.x, y: s.y - 16.0, text: "SHIELD", ttlMs: 800.0, col: 0xFF38BDF8 })
+                    this._DamageAlien(aIdx, al.hp)
+                } else {
+                    this._DamageShip()
+                    if (this.Phase = "gameover")
+                        return
+                }
+            }
+            aIdx -= 1
+        }
+
+        ; Enemy plasma bolts hitting ship
+        bIdx := this._bullets.Length
+        while (bIdx >= 1) {
+            b := this._bullets[bIdx]
+            if (b.isEnemy && s.invulnMs <= 0.0 && ((b.x - s.x) ** 2 + (b.y - s.y) ** 2) <= (s.radius + 4.0) ** 2) {
+                this._bullets.RemoveAt(bIdx)
+                if (s.shieldMs > 0.0) {
+                    s.shieldMs := 0.0
+                    s.invulnMs := 1200.0
+                    this._popups.Push({ x: s.x, y: s.y - 16.0, text: "SHIELD", ttlMs: 800.0, col: 0xFF38BDF8 })
+                } else {
+                    this._DamageShip()
+                    if (this.Phase = "gameover")
+                        return
+                }
+            }
+            bIdx -= 1
+        }
+
+        ; Power-up drops (WEAPON_UP & SHIELD)
+        pIdx := this._powerups.Length
+        while (pIdx >= 1) {
+            pu := this._powerups[pIdx]
+            pu.ttlMs -= dtMs
+            pu.x := Max(24.0, Min(W - 24.0, pu.x + pu.vx * dt))
+            pu.y += pu.vy * dt
+            if (pu.ttlMs <= 0.0 || pu.y > H + 24.0) {
+                this._powerups.RemoveAt(pIdx)
+                pIdx -= 1
+                continue
+            }
+            if (((pu.x - s.x) ** 2 + (pu.y - s.y) ** 2) <= (s.radius + pu.radius + 4.0) ** 2) {
+                if (pu.kind = "WEAPON_UP") {
+                    if (this._weaponTier < 5) {
+                        this._weaponTier += 1
+                        lbl := (this._weaponTier == 5) ? "BEAM LASER!" : ("WPN TIER " this._weaponTier)
+                        this._popups.Push({ x: pu.x, y: pu.y, text: lbl, ttlMs: 1100.0, col: 0xFF38BDF8 })
+                    } else {
+                        this._AddScore(150, pu.x, pu.y, 0xFF38BDF8)
+                    }
+                } else {
+                    s.shieldMs := 12000.0
+                    this._popups.Push({ x: pu.x, y: pu.y, text: "SHIELD", ttlMs: 900.0, col: 0xFF34D399 })
+                }
+                this._powerups.RemoveAt(pIdx)
+            }
+            pIdx -= 1
+        }
+
+        ; Particles & popups
+        idx := this._particles.Length
+        while (idx >= 1) {
+            pt := this._particles[idx]
+            pt.ttlMs -= dtMs
+            if (pt.ttlMs <= 0.0)
+                this._particles.RemoveAt(idx)
+            else {
+                pt.x += pt.vx * dt
+                pt.y += pt.vy * dt
+            }
+            idx -= 1
+        }
+        idx := this._popups.Length
+        while (idx >= 1) {
+            pp := this._popups[idx]
+            pp.ttlMs -= dtMs
+            if (pp.ttlMs <= 0.0)
+                this._popups.RemoveAt(idx)
+            else
+                pp.y -= 24.0 * dt
+            idx -= 1
+        }
+
+        ; Advance Alien wave when cleared
+        if (this._aliens.Length == 0) {
+            this._waveDelayMs += dtMs
+            if (this._waveDelayMs >= 900.0) {
+                this._waveDelayMs := 0.0
+                this._wave += 1
+                this._SpawnAlienWave(this._wave)
+            }
+        }
+    }
+
+    static _DamageAlien(idx, dmg := 1) {
+        if (idx < 1 || idx > this._aliens.Length)
+            return
+        al := this._aliens[idx]
+        al.hp -= dmg
+        if (al.hp > 0) {
+            this._SpawnExplosion(al.x, al.y, 0xFFF59E0B, 4)
+            return
+        }
+        this._aliens.RemoveAt(idx)
+        pts := (al.kind = "cruiser") ? 180 : ((al.kind = "raider") ? 90 : 50)
+        col := (al.kind = "cruiser") ? 0xFFF59E0B : ((al.kind = "raider") ? 0xFFE879F9 : 0xFF38BDF8)
+        this._AddScore(pts, al.x, al.y, col)
+        this._SpawnExplosion(al.x, al.y, col, (al.kind = "cruiser") ? 14 : 8)
+        dropChance := (al.kind = "cruiser") ? 85 : ((al.kind = "raider") ? 35 : 22)
+        if (Random(1, 100) <= dropChance)
+            this.SpawnPowerUp(al.x, al.y)
+    }
+
     static _ResolveMicPillBounce(a, rect) {
         cx := Max(Float(rect.x), Min(a.x, Float(rect.x + rect.w)))
         cy := Max(Float(rect.y), Min(a.y, Float(rect.y + rect.h)))
@@ -610,6 +1017,10 @@ class GameAsteroids {
         return {
             active: this.IsActive,
             phase: this.Phase,
+            blasterMode: this._blasterMode,
+            weaponTier: this._weaponTier,
+            alienCount: this._aliens.Length,
+            beamActive: this._beamActive,
             score: this._score,
             highScore: this._highScore,
             wave: this._wave,
@@ -622,6 +1033,10 @@ class GameAsteroids {
         }
     }
 
+    static GetStateSnapshot() {
+        return this.GetSnapshot()
+    }
+
     static _RenderFrame() {
         if (!IsObject(this._surf) || !this._surf.pGraphics)
             return
@@ -629,8 +1044,8 @@ class GameAsteroids {
         g := this._surf.pGraphics
         W := this._surf.W, H := this._surf.H
 
-        ; Optional Mic Pill Bumper halo highlight when enabled
-        if (this._micBumper) {
+        ; Optional Mic Pill Bumper halo highlight when enabled (Asteroid Blaster mode)
+        if (this._blasterMode = "asteroids" && this._micBumper) {
             mr := HudArcadeBase.GetLiveMicPillRect(this._cfg, this._state)
             if (IsObject(mr))
                 HudArcadeBase.StrokeRoundedRect(g, mr.x - 3, mr.y - 3, mr.w + 6, mr.h + 6, 12.0, 0x9938BDF8, 2.0)
@@ -665,13 +1080,50 @@ class GameAsteroids {
             HudArcadeBase.StrokeRoundedRect(g, sc.x - 9.0, sc.y - 12.0, 18.0, 9.0, 5.0, 0xFFBAE6FD, 1.5)
         }
 
+        ; Draw Alien Blaster enemies & Tier 5 Neon Beam Laser
+        if (this._blasterMode = "alien") {
+            if (this._beamActive && this._weaponTier >= 5 && this._lives > 0) {
+                s := this._ship
+                beamTop := 54.0
+                beamH := Max(0.0, s.y - s.radius - beamTop)
+                if (beamH > 0.0) {
+                    HudArcadeBase.FillRoundedRect(g, s.x - 14.0, beamTop, 28.0, beamH, 8.0, 0x4438BDF8)
+                    HudArcadeBase.FillRoundedRect(g, s.x - 7.0, beamTop, 14.0, beamH, 5.0, 0xCC06B6D4)
+                    HudArcadeBase.FillRoundedRect(g, s.x - 2.5, beamTop, 5.0, beamH, 2.0, 0xFFFFFFFF)
+                }
+            }
+            for _, al in this._aliens {
+                col := (al.kind = "cruiser") ? 0xFFF59E0B : ((al.kind = "raider") ? 0xFFE879F9 : 0xFF38BDF8)
+                pAlPen := 0
+                DllCall("gdiplus\GdipCreatePen1", "UInt", col, "Float", 2.0, "Int", 2, "Ptr*", &pAlPen)
+                try {
+                    if (pAlPen) {
+                        r := al.radius
+                        if (al.kind = "cruiser") {
+                            HudArcadeBase.FillRoundedRect(g, al.x - r, al.y - r * 0.55, r * 2.0, r * 1.1, 6.0, 0x55F59E0B)
+                            HudArcadeBase.StrokeRoundedRect(g, al.x - r, al.y - r * 0.55, r * 2.0, r * 1.1, 6.0, col, 2.0)
+                            if (al.maxHp > 1)
+                                Gdip.DrawText(g, "x" al.hp, "Segoe UI", 7.5, 1, 0xFFFFFFFF, al.x - 16.0, al.y - 8.0, 32.0, 16.0, 1, 1, 0, false)
+                        } else {
+                            alBuf := Buffer(32, 0)
+                            NumPut("Float", al.x, "Float", al.y + r, "Float", al.x - r, "Float", al.y - r * 0.7, "Float", al.x, "Float", al.y - r * 0.2, "Float", al.x + r, "Float", al.y - r * 0.7, alBuf, 0)
+                            DllCall("gdiplus\GdipDrawPolygon", "Ptr", g, "Ptr", pAlPen, "Ptr", alBuf, "Int", 4)
+                        }
+                    }
+                } finally {
+                    if (pAlPen)
+                        DllCall("gdiplus\GdipDeletePen", "Ptr", pAlPen)
+                }
+            }
+        }
+
         ; Draw Power-Up HUD pills
         for _, pu in this._powerups {
-            col := (pu.kind = "RAPID") ? 0xCCF59E0B : ((pu.kind = "SPREAD") ? 0xCC10B981 : 0xCC3B82F6)
-            HudArcadeBase.FillRoundedRect(g, pu.x - 20.0, pu.y - 10.0, 40.0, 20.0, 8.0, col)
-            HudArcadeBase.StrokeRoundedRect(g, pu.x - 20.0, pu.y - 10.0, 40.0, 20.0, 8.0, 0xFFFFFFFF, 1.2)
-            lbl := (pu.kind = "RAPID") ? "RPD" : ((pu.kind = "SPREAD") ? "SPR" : "SHD")
-            Gdip.DrawText(g, lbl, "Segoe UI", 7.5, 1, 0xFFFFFFFF, pu.x - 20.0, pu.y - 10.0, 40.0, 20.0, 1, 1, 0, false)
+            col := (pu.kind = "WEAPON_UP") ? 0xCC0EA5E9 : ((pu.kind = "RAPID") ? 0xCCF59E0B : ((pu.kind = "SPREAD") ? 0xCC10B981 : 0xCC3B82F6))
+            HudArcadeBase.FillRoundedRect(g, pu.x - 22.0, pu.y - 10.0, 44.0, 20.0, 8.0, col)
+            HudArcadeBase.StrokeRoundedRect(g, pu.x - 22.0, pu.y - 10.0, 44.0, 20.0, 8.0, 0xFFFFFFFF, 1.2)
+            lbl := (pu.kind = "WEAPON_UP") ? "WPN+" : ((pu.kind = "RAPID") ? "RPD" : ((pu.kind = "SPREAD") ? "SPR" : "SHD"))
+            Gdip.DrawText(g, lbl, "Segoe UI", 7.5, 1, 0xFFFFFFFF, pu.x - 22.0, pu.y - 10.0, 44.0, 20.0, 1, 1, 0, false)
         }
 
         ; Draw Bullets & Particles
@@ -729,9 +1181,16 @@ class GameAsteroids {
 
         isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
         micMuted := (IsObject(this._state) && this._state.HasOwnProp("isMuted")) ? (this._state.isMuted ? 1 : 0) : -1
-        stats := Format("SCORE {}  •  BEST {}  •  WAVE {}  •  LIVES {}", this._score, this._highScore, this._wave, this._lives)
-        hints := "MOUSE/ARROWS STEER • CLICK/SPACE FIRE • B BUMPER (" (this._micBumper ? "ON" : "OFF") ") • P PAUSE • ESC EXIT"
-        HudArcadeBase.DrawScoreboardPill(g, W, "ASTEROID BLASTER", stats, hints, isDark, micMuted)
+        if (this._blasterMode = "alien") {
+            wpnTxt := (this._weaponTier >= 5) ? "WPN T5 BEAM" : ("WPN T" this._weaponTier)
+            stats := Format("SCORE {}  •  BEST {}  •  WAVE {}  •  LIVES {}  •  {}", this._score, this._highScore, this._wave, this._lives, wpnTxt)
+            hints := "[M] Mode: Alien • ARROWS/WASD/MOUSE 2D MOVE • CLICK/SPACE FIRE • P PAUSE • ESC EXIT"
+            HudArcadeBase.DrawScoreboardPill(g, W, "ALIEN BLASTER", stats, hints, isDark, micMuted)
+        } else {
+            stats := Format("SCORE {}  •  BEST {}  •  WAVE {}  •  LIVES {}", this._score, this._highScore, this._wave, this._lives)
+            hints := "[M] Mode: Asteroids • MOUSE/ARROWS STEER • B BUMPER (" (this._micBumper ? "ON" : "OFF") ") • P PAUSE • ESC EXIT"
+            HudArcadeBase.DrawScoreboardPill(g, W, "ASTEROID BLASTER", stats, hints, isDark, micMuted)
+        }
 
         if (this.Phase = "paused")
             HudArcadeBase.DrawOverlayCard(g, W, H, "PAUSED", "Score: " this._score "  |  Wave: " this._wave, "Press P to Resume or Esc to Exit", 0xFF38BDF8, isDark)
