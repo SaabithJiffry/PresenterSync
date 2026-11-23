@@ -293,7 +293,20 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
         extract_ahk_block(remote_src, "class RemoteConfig"),
         extract_ahk_block(remote_src, "class RemoteState"),
         extract_ahk_block(remote_src, "GetRemoteEffectiveAlpha("),
+        extract_ahk_block(remote_src, "RefreshRemoteMicHudAlpha("),
+        extract_ahk_block(remote_src, "SyncRemoteBreathTimer("),
+        extract_ahk_block(remote_src, "RemoteIdleDimTick("),
+        extract_ahk_block(remote_src, "NotifyRemoteActivity("),
         extract_ahk_block(remote_src, "ConnectToRemoteOBS("),
+        extract_ahk_block(remote_src, "SendRemoteRelaySyncRequest("),
+        extract_ahk_block(remote_src, "_SendRemoteRelayAction("),
+        extract_ahk_block(remote_src, "OnRemoteBridgeHandshakeTimeout("),
+        extract_ahk_block(remote_src, "StartRemoteBridgeHandshakeWatchdog("),
+        extract_ahk_block(remote_src, "HandleRemoteAuthFailure("),
+        extract_ahk_block(remote_src, "ApplyRemoteRelayTelemetryPacket("),
+        extract_ahk_block(remote_src, "ForceRemoteReconnectNow("),
+        extract_ahk_block(remote_src, "OnRemotePongWatchdogTimeout("),
+        extract_ahk_block(remote_src, "SendRemotePingWithWatchdog("),
         extract_ahk_block(remote_src, "ShouldStopLanFailoverForWan("),
         extract_ahk_block(remote_src, "TryPromoteRemoteWanToLan("),
         extract_ahk_block(remote_src, "FailoverToNextCandidate("),
@@ -305,12 +318,17 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
         extract_ahk_block(remote_src, "SyncRemoteBridgeTelemetry("),
         extract_ahk_block(remote_src, "RemoveToolTip("),
         extract_ahk_block(remote_src, "OnRemoteClickerMute("),
+        extract_ahk_block(remote_src, "_SetRemoteHotkeyState("),
+        extract_ahk_block(remote_src, "SendRemoteBridgeDeckCommand("),
         extract_ahk_block(remote_src, "RegisterRemotePointerHotkey("),
         extract_ahk_block(remote_src, "UnregisterRemotePointerHotkey("),
         extract_ahk_block(remote_src, "ExitRemoteApp("),
         extract_ahk_block(remote_src, "RegisterRemoteAppHotkeys("),
         extract_ahk_block(remote_src, "UnregisterRemoteAppHotkeys("),
         extract_ahk_block(remote_src, "ToggleRemotePointerMute("),
+        extract_ahk_block(remote_src, "CreateThemedRemoteDialog("),
+        extract_ahk_block(remote_src, "AddThemedCtrl("),
+        extract_ahk_block(remote_src, "BindRemoteDialogClose("),
         extract_ahk_block(remote_src, "ChangeRemotePointerKeyUI("),
         extract_ahk_block(remote_src, "ChangeRemoteAppHotkeysUI("),
         extract_ahk_block(remote_src, "BuildRemoteHelpStatusLine("),
@@ -334,6 +352,7 @@ def build_ahk_harness(auth_port, noauth_port, result_path, work_dir):
 #Include "{lib_dir}\\OBS_Network.ahk"
 #Include "{lib_dir}\\GUI_Config.ahk"
 #Include "{lib_dir}\\RemoteBridgeClient.ahk"
+#Include "{lib_dir}\\HudArcadeBase.ahk"
 
 global g_RemoteCli := ParseRemoteCliArgs([])
 Gdip.Startup()

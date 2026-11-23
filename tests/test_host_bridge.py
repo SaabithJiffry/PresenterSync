@@ -215,8 +215,13 @@ def main() -> int:
         # Test CloseRemote broadcast
         with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
             f.write("CLOSE_REMOTE")
-        m4 = ws_recv_json(s_ok, buf_ok)
-        assert m4["type"] == "close_remote" and m4["command"] == "CloseRemote"
+        m4 = None
+        for _ in range(6):
+            pkt = ws_recv_json(s_ok, buf_ok)
+            if pkt.get("type") == "close_remote":
+                m4 = pkt
+                break
+        assert m4 is not None and m4["type"] == "close_remote" and m4["command"] == "CloseRemote"
         print("[PASS] WS receives CloseRemote signal from SendCloseRemoteSignal")
 
         ws_send_text(s_ok, json.dumps({"type": "ping"}))
