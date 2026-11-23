@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 8.7.0
+; Version: 8.7.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 8.7.0.0
+;@Ahk2Exe-SetVersion 8.7.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -31,6 +31,7 @@ ProcessSetPriority "High"
 #Include <Arcade\GameGridMazePack>
 #Include <Arcade\GameMissileDefense>
 #Include <Arcade\GameBlockDrop>
+#Include <Arcade\GameSpacePinball>
 
 g_RemoteCli := ParseRemoteCliArgs(A_Args)
 g_RemoteMutex := AcquireRemoteInstanceMutex(g_RemoteCli.instanceName)
@@ -550,6 +551,7 @@ ArcadeVault.RegisterGame("tron", "Neon Light Cycles (TRON)", "!^+t", "Ctrl+Alt+S
 ArcadeVault.RegisterGame("pac_grid", "Neon Pac-Grid", "!^+c", "Ctrl+Alt+Shift+C", (c, s) => GamePacGrid.Toggle(c, s), () => GamePacGrid.Stop())
 ArcadeVault.RegisterGame("missile_defense", "Missile Defense", "!^+m", "Ctrl+Alt+Shift+M", (c, s) => GameMissileDefense.Toggle(c, s), () => GameMissileDefense.Stop())
 ArcadeVault.RegisterGame("block_drop", "Neon Block Drop", "!^+d", "Ctrl+Alt+Shift+D", (c, s) => GameBlockDrop.Toggle(c, s), () => GameBlockDrop.Stop())
+ArcadeVault.RegisterGame("pinball", "Space Cadet Pinball", "!^+p", "Ctrl+Alt+Shift+P", (c, s) => GameSpacePinball.Toggle(c, s), () => GameSpacePinball.Stop())
 ArcadeVault.BindVaultHotkey(AppConfig, AppState)
 StartBackgroundUpdateChecker(AppConfig, "PresenterSync_Remote.exe")
 

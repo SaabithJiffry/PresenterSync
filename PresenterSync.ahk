@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 8.7.0
+; Version: 8.7.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -12,7 +12,7 @@
 ;@Ahk2Exe-AddResource *10 assets\PresenterSync.ico, FAVICON_ICO
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 8.7.0.0
+;@Ahk2Exe-SetVersion 8.7.1.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1
@@ -32,6 +32,7 @@ SetKeyDelay -1, -1
 #Include <Arcade\GameGridMazePack>
 #Include <Arcade\GameMissileDefense>
 #Include <Arcade\GameBlockDrop>
+#Include <Arcade\GameSpacePinball>
 
 if (A_Args.Length > 0) {
     cliCmd := ParseHostCliArgs(A_Args)
@@ -640,6 +641,7 @@ BindSystemHotkeys(cfg, state) {
     ArcadeVault.RegisterGame("pac_grid", "Neon Pac-Grid", "!^+c", "Ctrl+Alt+Shift+C", (c, s) => GamePacGrid.Toggle(c, s), () => GamePacGrid.Stop())
     ArcadeVault.RegisterGame("missile_defense", "Missile Defense", "!^+m", "Ctrl+Alt+Shift+M", (c, s) => GameMissileDefense.Toggle(c, s), () => GameMissileDefense.Stop())
     ArcadeVault.RegisterGame("block_drop", "Neon Block Drop", "!^+d", "Ctrl+Alt+Shift+D", (c, s) => GameBlockDrop.Toggle(c, s), () => GameBlockDrop.Stop())
+    ArcadeVault.RegisterGame("pinball", "Space Cadet Pinball", "!^+p", "Ctrl+Alt+Shift+P", (c, s) => GameSpacePinball.Toggle(c, s), () => GameSpacePinball.Stop())
     ArcadeVault.BindVaultHotkey(cfg, state)
 }
 BindSystemHotkeys(AppConfig, AppState)
