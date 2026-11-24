@@ -2360,7 +2360,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     btnNewPair := ccGui.Add("Button", "x580 y132 w100 h28", "New Code")
     Theme.RegisterControl(ccGui, btnCopyPair, "Button", "tabButton")
     Theme.RegisterControl(ccGui, btnNewPair, "Button", "tabButton")
-    btnCopyPair.OnEvent("Click", (*) => (A_Clipboard := edPairCode.Value, TrayTip("Copied Pairing Code: " edPairCode.Value, "PresenterSync", 1)))
+    btnCopyPair.OnEvent("Click", (*) => (A_Clipboard := edPairCode.Value, TrayTip("Internet Pairing Code copied to clipboard.", "PresenterSync", 1)))
     btnNewPair.OnEvent("Click", (*) => (
         cfg.InternetPairingCode := GenerateInternetPairingCode(),
         cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode),
@@ -2388,7 +2388,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     Theme.RegisterControl(ccGui, edLanStr, "Edit")
     btnCopyLan := ccGui.Add("Button", "x580 y212 w100 h28", "Copy LAN")
     Theme.RegisterControl(ccGui, btnCopyLan, "Button", "tabButton")
-    btnCopyLan.OnEvent("Click", (*) => (A_Clipboard := edLanStr.Value, TrayTip("Copied LAN String: " edLanStr.Value, "PresenterSync", 1)))
+    btnCopyLan.OnEvent("Click", (*) => (A_Clipboard := edLanStr.Value, TrayTip("Universal LAN string copied to clipboard.", "PresenterSync", 1)))
 
     remNote := "Note: PresenterSync Remote stays a dedicated 1-tier Mic HUD on your secondary device. WAN Relay payloads are AES-256-GCM encrypted and work with https://ntfy.sh or a self-hosted ntfy server."
     Theme.RegisterControl(ccGui, ccGui.Add("Text", "x32 y258 w648 h42", remNote), "Text", "tabMuted")

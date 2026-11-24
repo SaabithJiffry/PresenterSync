@@ -189,7 +189,9 @@ class ArcadeVault {
         dlg.MarginY := 16
         dlg.BackColor := "090B10"
         Theme.NamedWindows["SectorZTerminal"] := dlg
-        if (IsSet(ApplyWindowCaptureAffinity)) {
+        if (IsSet(ProtectWindowFromCapture)) {
+            try ProtectWindowFromCapture(dlg.Hwnd, true)
+        } else if (IsSet(ApplyWindowCaptureAffinity)) {
             try ApplyWindowCaptureAffinity(dlg.Hwnd, true)
         } else {
             try DllCall("SetWindowDisplayAffinity", "Ptr", dlg.Hwnd, "UInt", 0x11, "Int")

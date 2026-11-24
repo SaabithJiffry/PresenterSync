@@ -1914,7 +1914,12 @@ InitRemoteHUD(cfg, state) {
             SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     }
     ApplyHudClickThroughStyle(cfg, state)
-    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
+    excl := cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true
+    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, excl)
+    if (state.HasOwnProp("quickDeckGui") && IsObject(state.quickDeckGui)) {
+        try if (WinExist("ahk_id " state.quickDeckGui.Hwnd))
+            ApplyWindowCaptureAffinity(state.quickDeckGui.Hwnd, excl)
+    }
     UpdateAutoDodgeTimer(cfg, state)
     UpdateRemoteIdleDimTimer(cfg, state)
 
@@ -2069,6 +2074,7 @@ WM_REMOTE_DPICHANGED(cfg, state, wParam, lParam, msg, hwnd) {
     state.savedY := newTop
     state.MicGui.Move(newLeft, newTop, state.baseWidth, state.baseHeight)
     ApplyMicAppearance(cfg, state)
+    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
 }
 
 RefreshRemoteHudAppearance(cfg, state) {
@@ -2087,7 +2093,12 @@ RefreshRemoteHudAppearance(cfg, state) {
         SetTimer state.breathTimerFn, 0
     }
     ApplyHudClickThroughStyle(cfg, state)
-    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
+    excl := cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true
+    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, excl)
+    if (state.HasOwnProp("quickDeckGui") && IsObject(state.quickDeckGui)) {
+        try if (WinExist("ahk_id " state.quickDeckGui.Hwnd))
+            ApplyWindowCaptureAffinity(state.quickDeckGui.Hwnd, excl)
+    }
     UpdateAutoDodgeTimer(cfg, state)
     UpdateRemoteIdleDimTimer(cfg, state)
     UpdateRemoteTouchDeckUI(cfg, state)

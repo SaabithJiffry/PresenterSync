@@ -683,7 +683,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode),
         editPair.Value := cfg.InternetPairingCode,
         (IsObject(state) ? UpdateHostInternetRelay(cfg, state) : 0),
-        TrayTip("Generated new Internet Pairing Code: " cfg.InternetPairingCode, "Pairing Code Updated", 1)
+        TrayTip("New Internet Pairing Code generated.", "Pairing Code Updated", 1)
     ))
 
     OnNetModeChanged(*) {
@@ -743,7 +743,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     Theme.RegisterControl(dlg, btnCopyWeb, "Button")
     btnCopyWeb.OnEvent("Click", (*) => (
         A_Clipboard := webRemoteUrl,
-        TrayTip("Web Remote URL copied: " webRemoteUrl, "Copied!", 1)
+        TrayTip("Web Remote URL copied to clipboard.", "Copied!", 1)
     ))
     editWebUrl.GetPos(, &webY, , &webH)
     leftBottom := webY + webH
@@ -922,14 +922,14 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
 
     btnCopySession.OnEvent("Click", (*) => (
         A_Clipboard := cfg.SessionPairingCode,
-        TrayTip("Copied Session Code: " cfg.SessionPairingCode, "PresenterSync", 1)
+        TrayTip("Session Code copied to clipboard.", "PresenterSync", 1)
     ))
     btnNewSession.OnEvent("Click", (*) => (
         RotateHostSessionPairingCode(cfg, false),
         editSession.Value := cfg.SessionPairingCode,
         RefreshQrBitmap(),
         RefreshBridgeDevices(),
-        TrayTip("Generated new Session Code & QR: " cfg.SessionPairingCode, "PresenterSync", 1)
+        TrayTip("New Session Code & QR generated.", "PresenterSync", 1)
     ))
 
     footerTop := Max(leftBottom, rightBottom) + 12

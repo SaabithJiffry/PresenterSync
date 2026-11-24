@@ -241,6 +241,8 @@ class DiagnosticLogger {
             for _, b in [btnRefresh, btnCopy, btnOpenDir, btnClear, btnClose]
                 Theme.RegisterControl(vGui, b, "Button")
         }
+        if (IsSet(ProtectWindowFromCapture))
+            try ProtectWindowFromCapture(vGui.Hwnd, true)
 
         btnRefresh.OnEvent("Click", (*) => (edLog.Value := DiagnosticLogger.GetRecentLogTail(60000)))
         btnCopy.OnEvent("Click", (*) => (A_Clipboard := edLog.Value, TrayTip("Diagnostic log copied to clipboard.", "PresenterSync", 1)))

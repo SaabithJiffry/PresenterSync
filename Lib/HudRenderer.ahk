@@ -1719,6 +1719,7 @@ ToggleSecondaryMicHud(cfg, state := "", *) {
     cfg.WriteBool("Settings", "ShowSecondaryMicHud", cfg.ShowSecondaryMicHud)
     if (IsObject(state)) {
         UpdateHudVisibility(cfg, state)
+        ApplyHudCaptureExclusion(cfg, state)
         if (state.HasOwnProp("breathTimerFn") && state.breathTimerFn) {
             if (IsAnyMicHudVisible(cfg) && state.isMuted)
                 SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
@@ -2001,6 +2002,8 @@ ToggleHudAutoDodge(cfg, state := "", *) {
 ApplyWindowCaptureAffinity(hwnd, exclude := true) {
     if (!hwnd)
         return false
+    if (IsSet(ProtectWindowFromCapture))
+        return ProtectWindowFromCapture(hwnd, exclude)
     try return !!DllCall("user32\SetWindowDisplayAffinity", "Ptr", hwnd, "UInt", exclude ? 0x00000011 : 0x00000000, "Int")
     catch
         return false
@@ -2864,6 +2867,8 @@ WM_DPICHANGED(state, wParam, lParam, msg, hwnd) {
     newLeft := NumGet(lParam, 0, "Int")
     newTop := NumGet(lParam, 4, "Int")
     UpdateHudLayout(state, newLeft, newTop)
+    if (state.HasOwnProp("hudCfg") && IsObject(state.hudCfg))
+        ApplyHudCaptureExclusion(state.hudCfg, state)
 }
 
 WM_DISPLAYCHANGE(cfg, state, *) {

@@ -537,6 +537,7 @@ ToggleIndicator(cfg, state, *) {
 
     BuildTrayMenu(cfg, state)
     UpdateHudVisibility(cfg, state)
+    ApplyHudCaptureExclusion(cfg, state)
     if (IsAnyMicHudVisible(cfg) && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
     else

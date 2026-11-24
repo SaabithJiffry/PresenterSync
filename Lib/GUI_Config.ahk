@@ -663,12 +663,15 @@ class Theme {
         DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 36, "UInt*", &txtColor, "Int", 4)
     }
 
-    static ApplyToWindow(guiObj, isDark := "") {
+    static ApplyToWindow(guiObj, isDark := "", excludeFromCapture := "") {
         this.EnsureInitialized()
         if (isDark = "")
             isDark := this.IsDarkMode()
         this.ApplyMenuTheme(isDark)
         this.ApplyTitleBarTheme(guiObj.Hwnd, isDark)
+        shouldExclude := (excludeFromCapture != "") ? !!excludeFromCapture : true
+        if (IsSet(ProtectWindowFromCapture))
+            try ProtectWindowFromCapture(guiObj.Hwnd, shouldExclude)
         try guiObj.Opt("+0x02000000") ; WS_CLIPCHILDREN prevents parent redraw from erasing themed children
         guiObj.BackColor := isDark ? UIConstants.DARK_BG : UIConstants.LIGHT_BG
         guiObj.SetFont("s10 w400 " (isDark ? "c" UIConstants.DARK_TEXT : "c" UIConstants.LIGHT_TEXT), this.UiFont)
@@ -2617,6 +2620,7 @@ ImportPortableSettingsBundle(cfg, state, sourcePath) {
         return { ok: false, appliedCount: 0, error: err.Message }
     }
 }
+#Include "%A_LineFile%\..\CaptureSafety.ahk"
 #Include "%A_LineFile%\..\HudRenderer.ahk"
 #Include "%A_LineFile%\..\SetupWizard.ahk"
 #Include "%A_LineFile%\..\ControlCenter.ahk"

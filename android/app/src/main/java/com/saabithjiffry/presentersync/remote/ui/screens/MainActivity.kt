@@ -6,9 +6,11 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.KeyEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -33,9 +35,14 @@ class MainActivity : ComponentActivity() {
         captureDeepLink(intent)
         handleAutoStartIntent(intent)
         val app = application as PresenterSyncRemoteApp
+        syncActivityCaptureExclusion(app.configStore.current.hideFromScreenCapture)
 
         setContent {
             val cfg by app.configStore.config.collectAsStateWithLifecycle()
+
+            LaunchedEffect(cfg.hideFromScreenCapture) {
+                syncActivityCaptureExclusion(cfg.hideFromScreenCapture)
+            }
 
             PresenterSyncTheme(themeMode = cfg.themeMode) {
                 RemoteDashboardScreen(
@@ -76,8 +83,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun syncActivityCaptureExclusion(hideFromScreenCapture: Boolean) {
+        if (hideFromScreenCapture) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
     companion object {
         const val EXTRA_AUTO_START_HUD = "com.saabithjiffry.presentersync.remote.EXTRA_AUTO_START_HUD"
+
+        internal fun computeActivitySecureFlags(currentFlags: Int, hideFromScreenCapture: Boolean): Int {
+            return if (hideFromScreenCapture) {
+                currentFlags or WindowManager.LayoutParams.FLAG_SECURE
+            } else {
+                currentFlags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+            }
+        }
     }
 
     private fun captureDeepLink(intent: Intent?) {

@@ -106,6 +106,24 @@ for _, k in ["MicGui", "SecondaryMicGui", "RecGui", "ChatGui", "StudioGui", "Sce
         try st.%k%.Destroy()
 }
 
+; 4. CaptureSafety OS-build fallback + Theme.ApplyToWindow auto-protection + secret-free TrayTips
+AssertTrue(CaptureSafety.ResolveDesiredAffinity(true, 19041) == 0x11, "CaptureSafety resolves WDA_EXCLUDEFROMCAPTURE (0x11) on >=19041")
+AssertTrue(CaptureSafety.ResolveDesiredAffinity(true, 18363) == 0x01, "CaptureSafety falls back to WDA_MONITOR (0x01) on legacy <19041")
+AssertTrue(CaptureSafety.ResolveDesiredAffinity(false, 19041) == 0x00, "CaptureSafety resolves WDA_NONE (0x00) when exclude=false")
+
+dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "CaptureSafetyThemeTest")
+Theme.ApplyToWindow(dlg)
+dlg.Show("x-32000 y-32000 w160 h60 NoActivate")
+affDlg := GetWinAffinity(dlg.Hwnd)
+AssertTrue(affDlg.ok && affDlg.aff == 0x11, "Theme.ApplyToWindow automatically protects dialogs from capture (0x11)")
+Theme.UnregisterWindow(dlg)
+dlg.Destroy()
+
+setupSrc := FileRead(A_ScriptDir "\..\Lib\SetupWizard.ahk", "UTF-8")
+ccSrc := FileRead(A_ScriptDir "\..\Lib\ControlCenter.ahk", "UTF-8")
+AssertTrue(!RegExMatch(setupSrc, "TrayTip\([^`n]*(InternetPairingCode|SessionPairingCode|webRemoteUrl)"), "SetupWizard TrayTips do not leak pairing secrets or URLs")
+AssertTrue(!RegExMatch(ccSrc, "TrayTip\([^`n]*(edPairCode\.Value|edLanStr\.Value)"), "ControlCenter TrayTips do not leak pairing codes or LAN strings")
+
 try FileDelete(tmpIni)
 try FileAppend("PASS=" passed " FAIL=" failed "`n", "*")
 ExitApp(failed > 0 ? 1 : 0)
