@@ -11,6 +11,8 @@ class SessionTimeline {
     static _NextSeq := 1
     static AutosaveFile := A_ScriptDir "\logs\SessionTimeline_active.jsonl"
     static EnableAutosave := true
+    static _PendingAutosaveLines := []
+    static _AutosaveTimerFn := ""
 
     static _EnsureInit() {
         if (this.SessionStartUtc = "")
@@ -155,9 +157,42 @@ class SessionTimeline {
             . ',"details":"' this._EscapeJson(entry.details) '"}'
     }
 
-    static _AppendAutosave(entry) {
+    static FlushAutosave() {
+        if (IsObject(this._AutosaveTimerFn))
+            try SetTimer(this._AutosaveTimerFn, 0)
+        if (this._PendingAutosaveLines.Length == 0 || !this.EnableAutosave || Trim(String(this.AutosaveFile)) = "") {
+            this._PendingAutosaveLines := []
+            return true
+        }
+        batch := ""
+        for _, ln in this._PendingAutosaveLines
+            batch .= ln
+        this._PendingAutosaveLines := []
+        if (batch = "")
+            return true
+        try {
+            SplitPath(this.AutosaveFile, , &parentDir)
+            if (parentDir != "" && !DirExist(parentDir))
+                DirCreate(parentDir)
+            FileAppend(batch, this.AutosaveFile, "UTF-8")
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static _AppendAutosave(entry, defer := false) {
         if (!this.EnableAutosave || Trim(String(this.AutosaveFile)) = "")
             return false
+        if (defer) {
+            this._PendingAutosaveLines.Push(this._SerializeEntryJson(entry) "`n")
+            if (!IsObject(this._AutosaveTimerFn))
+                this._AutosaveTimerFn := ObjBindMethod(this, "FlushAutosave")
+            SetTimer(this._AutosaveTimerFn, -1500)
+            return true
+        }
+        if (this._PendingAutosaveLines.Length > 0)
+            this.FlushAutosave()
         try {
             SplitPath(this.AutosaveFile, , &parentDir)
             if (parentDir != "" && !DirExist(parentDir))
@@ -170,6 +205,7 @@ class SessionTimeline {
     }
 
     static RecoverFromAutosave(filePath := "") {
+        this.FlushAutosave()
         target := (Trim(String(filePath)) != "") ? Trim(String(filePath)) : this.AutosaveFile
         if (target = "" || !FileExist(target))
             return 0
@@ -229,6 +265,9 @@ class SessionTimeline {
     }
 
     static ClearAutosave(filePath := "") {
+        if (IsObject(this._AutosaveTimerFn))
+            try SetTimer(this._AutosaveTimerFn, 0)
+        this._PendingAutosaveLines := []
         target := (Trim(String(filePath)) != "") ? Trim(String(filePath)) : this.AutosaveFile
         if (target = "")
             return false
@@ -254,7 +293,7 @@ class SessionTimeline {
         }
     }
 
-    static Record(category, summary, state := "", details := "", offsetSecOverride := -1, utcOverride := "") {
+    static Record(category, summary, state := "", details := "", offsetSecOverride := -1, utcOverride := "", deferAutosave := false) {
         this._EnsureInit()
         cat := Trim(String(category))
         if (cat = "")
@@ -285,7 +324,7 @@ class SessionTimeline {
         this.Entries.Push(entry)
         while (this.Entries.Length > this.MAX_ENTRIES)
             this.Entries.RemoveAt(1)
-        this._AppendAutosave(entry)
+        this._AppendAutosave(entry, deferAutosave)
         return entry
     }
 
@@ -370,6 +409,7 @@ class SessionTimeline {
         content := (fmt = "md" || fmt = "markdown")
             ? this.ExportMarkdownSummary("PresenterSync Session Timeline Summary", categoryFilter)
             : this.ExportChapterCsv(categoryFilter)
+        this.FlushAutosave()
         try {
             SplitPath(cleanPath, , &parentDir)
             if (parentDir != "" && !DirExist(parentDir))

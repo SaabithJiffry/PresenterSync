@@ -1477,6 +1477,8 @@ class Config {
     savedSecondaryX := "Default"
     savedSecondaryY := "Default"
     _lastBackupTick := 0
+    _deferredWrites := Map()
+    _deferredWriteTimerFn := ""
 
     __New(filePath := "") {
         this.ConfigFile := (filePath != "") ? filePath : A_ScriptDir "\MicOverlay_Config.ini"
@@ -1529,16 +1531,23 @@ class Config {
     }
 
     Read(section, key, defaultVal := "") {
+        k := section "`n" key
+        if (this._deferredWrites.Has(k))
+            return String(this._deferredWrites[k].val)
         return IniRead(this.ConfigFile, section, key, defaultVal)
     }
 
     Write(section, key, val) {
+        k := section "`n" key
+        if (this._deferredWrites.Has(k))
+            this._deferredWrites.Delete(k)
         IniWrite(val, this.ConfigFile, section, key)
         this.BackupToFile(false)
     }
 
     ReadBool(section, key, defaultValue := 0) {
-        value := IniRead(this.ConfigFile, section, key, defaultValue)
+        k := section "`n" key
+        value := this._deferredWrites.Has(k) ? this._deferredWrites[k].val : IniRead(this.ConfigFile, section, key, defaultValue)
         switch (StrLower(String(value))) {
             case "1", "true", "yes", "on":
                 return true
@@ -1552,22 +1561,52 @@ class Config {
     }
 
     ReadInt(section, key, defaultValue := 0) {
-        value := IniRead(this.ConfigFile, section, key, defaultValue)
+        value := this.Read(section, key, defaultValue)
         try return Integer(value)
         catch
             return defaultValue
     }
 
     ReadFloat(section, key, defaultValue := 1.0) {
-        value := IniRead(this.ConfigFile, section, key, defaultValue)
+        value := this.Read(section, key, defaultValue)
         try return Float(value)
         catch
             return defaultValue
     }
 
     WriteBool(section, key, value) {
+        k := section "`n" key
+        if (this._deferredWrites.Has(k))
+            this._deferredWrites.Delete(k)
         IniWrite(value ? 1 : 0, this.ConfigFile, section, key)
         this.BackupToFile(false)
+    }
+
+    WriteBoolDeferred(section, key, value, delayMs := 250) {
+        k := section "`n" key
+        this._deferredWrites[k] := { sec: section, key: key, val: (value ? 1 : 0) }
+        if (!IsObject(this._deferredWriteTimerFn))
+            this._deferredWriteTimerFn := ObjBindMethod(this, "FlushDeferredWrites")
+        SetTimer(this._deferredWriteTimerFn, -Max(1, Integer(delayMs)))
+    }
+
+    FlushDeferredWrites() {
+        if (IsObject(this._deferredWriteTimerFn))
+            try SetTimer(this._deferredWriteTimerFn, 0)
+        if (this._deferredWrites.Count == 0)
+            return 0
+        pending := this._deferredWrites
+        this._deferredWrites := Map()
+        written := 0
+        for _, entry in pending {
+            try {
+                IniWrite(entry.val, this.ConfigFile, entry.sec, entry.key)
+                written += 1
+            }
+        }
+        if (written > 0)
+            try this.BackupToFile(false)
+        return written
     }
 
     Load() {
@@ -2309,7 +2348,7 @@ class OverlayState {
 
     StopAllTimers() {
         static timerProps := [
-            "dragTimerFn", "breathTimerFn", "voiceMeterTimerFn", "mutedVoiceTimerFn",
+            "dragTimerFn", "breathTimerFn", "_muteAnimTimerFn", "voiceMeterTimerFn", "mutedVoiceTimerFn",
             "coreAudioWatchdogFn", "safetyWatchdogFn", "recTimerFn", "presenterTimerFn",
             "streamTimerFn", "autoDodgeTimerFn", "obsTimerFn", "relayTimerFn",
             "sceneMarqueeTimerFn", "zoomTimerFn", "releaseSyncTimerFn", "autoProfileTimerFn"

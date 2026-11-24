@@ -1723,11 +1723,9 @@ class HostCompanionBridge {
             case "toggle_mute":
                 ok := ExecuteHostRemoteToggleMute(this.cfg, this.state)
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_mute","ok":' (ok ? "true" : "false") '}')
-                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "set_mute":
                 targetMuted := _HB_JsonExtractBool(msg, "isMuted", this.state.isMuted)
                 ExecuteHostRemoteSetMute(this.cfg, this.state, targetMuted)
-                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "ppt_next":
                 ok := ExecuteHostRemotePptCommand(this.cfg, this.state, "next")
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"ppt_next","ok":' (ok ? "true" : "false") '}')
@@ -1741,7 +1739,6 @@ class HostCompanionBridge {
             case "toggle_record":
                 ok := ExecuteHostToggleRecord(this.cfg, this.state)
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_record","ok":' (ok ? "true" : "false") '}')
-                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "pause_record":
                 ok := ExecuteHostPauseRecord(this.cfg, this.state)
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"pause_record","ok":' (ok ? "true" : "false") '}')
@@ -1761,7 +1758,6 @@ class HostCompanionBridge {
                 else if (IsSet(TriggerObsSceneTransition))
                     ok := TriggerObsSceneTransition(this.cfg, this.state, true)
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"transition_scene","ok":' (ok ? "true" : "false") '}')
-                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "toggle_standby":
                 ok := ExecuteHostToggleStandby(this.cfg, this.state)
                 this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_standby","ok":' (ok ? "true" : "false") '}')

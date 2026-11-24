@@ -102,7 +102,14 @@ class WebSocket {
 			NumPut('ptr', pws := ObjPtr(self), 'ptr', msg_gui.Hwnd, 'uint', wm_ahkmsg, 'uint', InitialSize, 'ptr', hHeap,
 				'ptr', cache := DllCall('HeapAlloc', 'ptr', hHeap, 'uint', 0, 'uptr', InitialSize, 'ptr'), 'uptr', 0, 'uptr', InitialSize,
 				'ptr', pHeapReAlloc, 'ptr', pSendMessageW, 'ptr', pWinHttpWebSocketReceive, 'ptr', pPostMessageW,
-				contexts[pws] := context := Buffer(12 * A_PtrSize)), self.__send_queue := []
+				contexts[pws] := context := Buffer(12 * A_PtrSize))
+			self.__send_queue := []
+			self.__pending_sends := []
+			self.__rx_queue := []
+			self.__rx_drain_armed := false
+			self.__tx_drain_armed := false
+			self.__rx_drain_fn := drain_rx.Bind(pws)
+			self.__tx_drain_fn := drain_tx.Bind(pws)
 			context.DefineProp('__Delete', { call: self => DllCall('HeapFree', 'ptr', hHeap, 'uint', 0, 'ptr', NumGet(self, 3 * A_PtrSize + 8, 'ptr')) })
 			DllCall('Winhttp\WinHttpSetOption', 'ptr', self, 'uint', 45, 'ptr*', context.Ptr, 'uint', A_PtrSize)
 			; Subscribe to READ_COMPLETE (0x80000) | WRITE_COMPLETE (0x100000) | REQUEST_ERROR (0x200000 on x64)
@@ -115,39 +122,145 @@ class WebSocket {
 			static map_has := Map.Prototype.Has
 			if (lp == 6) {	; WINHTTP_CALLBACK_STATUS_REQUEST_ERROR (posted async with wp = ObjPtr(ws))
 				if !map_has(contexts, wp) || (ws := ObjFromPtrAddRef(wp)).readyState != 1
-					return
-				return ws.onError(12030)
+					return 0
+				ws.__rx_queue.Push({ kind: 6, err: 12030 })
+				if !ws.__rx_drain_armed
+					ws.__rx_drain_armed := true, SetTimer(ws.__rx_drain_fn, -1)
+				return 0
 			}
 			if !map_has(contexts, ws := NumGet(wp, 'ptr')) || (ws := ObjFromPtrAddRef(ws)).readyState != 1
-				return
+				return 0
 			switch lp {
 				case 5:		; WRITE_COMPLETE
 					try ws.__send_queue.Pop()
+					if (ws.HasOwnProp('__pending_sends') && ws.__pending_sends.Length > 0 && !ws.__tx_drain_armed)
+						ws.__tx_drain_armed := true, SetTimer(ws.__tx_drain_fn, -1)
+					return 0
 				case 4:		; WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE
 					if err := NumGet(wp, A_PtrSize, 'uint')
-						return ws.onError(err)
-					rea := ws.QueryCloseStatus(), ws.shutdown()
-					return ws.onClose(rea.status, rea.reason)
+						ws.__rx_queue.Push({ kind: 6, err: err })
+					else {
+						rea := ws.QueryCloseStatus()
+						ws.__rx_queue.Push({ kind: 4, status: rea.status, reason: rea.reason })
+					}
+					if !ws.__rx_drain_armed
+						ws.__rx_drain_armed := true, SetTimer(ws.__rx_drain_fn, -1)
+					return 0
 				default:	; WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE
 					data := NumGet(wp, A_PtrSize, 'ptr')
 					size := NumGet(wp, 2 * A_PtrSize, 'uptr')
 					if lp == 2
-						return ws.onMessage(StrGet(data, size, 'utf-8'))
-					else return ws.onData(data, size)
+						ws.__rx_queue.Push({ kind: 2, text: StrGet(data, size, 'utf-8') })
+					else {
+						copyBuf := Buffer(size)
+						if (size > 0)
+							DllCall('msvcrt\memcpy', 'ptr', copyBuf.Ptr, 'ptr', data, 'uptr', size, 'cdecl')
+						ws.__rx_queue.Push({ kind: 0, buf: copyBuf, size: size })
+					}
+					if !ws.__rx_drain_armed
+						ws.__rx_drain_armed := true, SetTimer(ws.__rx_drain_fn, -1)
+					return 1
+			}
+		}
+
+		static drain_rx(pws) {
+			static map_has := Map.Prototype.Has
+			if !map_has(contexts, pws)
+				return
+			ws := ObjFromPtrAddRef(pws)
+			ws.__rx_drain_armed := false
+			while (map_has(contexts, pws) && ws.__rx_queue.Length > 0) {
+				item := ws.__rx_queue.RemoveAt(1)
+				switch item.kind {
+					case 2:
+						if (ws.readyState == 1)
+							ws.onMessage(item.text)
+					case 0:
+						if (ws.readyState == 1)
+							ws.onData(item.buf.Ptr, item.size)
+					case 4:
+						ws.shutdown()
+						ws.onClose(item.status, item.reason)
+						return
+					case 6:
+						if (ws.readyState == 1)
+							ws.onError(item.err)
+						return
+				}
+			}
+		}
+
+		static drain_tx(pws) {
+			static map_has := Map.Prototype.Has
+			if !map_has(contexts, pws)
+				return
+			ws := ObjFromPtrAddRef(pws)
+			ws.__tx_drain_armed := false
+			if (ws.readyState != 1 || !ws.Ptr) {
+				ws.__pending_sends := []
+				return
+			}
+			while (map_has(contexts, pws) && ws.readyState == 1 && ws.Ptr && ws.__pending_sends.Length > 0) {
+				item := ws.__pending_sends[1]
+				ws.__send_queue.InsertAt(1, item.buf)
+				err := DllCall('Winhttp\WinHttpWebSocketSend', 'ptr', ws, 'uint', item.type, 'ptr', item.buf, 'uint', item.size, 'uint')
+				if (err == 0) {
+					ws.__pending_sends.RemoveAt(1)
+				} else if (err == 4317) {
+					try ws.__send_queue.RemoveAt(1)
+					item.retries += 1
+					if (item.retries <= 60) {
+						ws.__tx_drain_armed := true
+						SetTimer(ws.__tx_drain_fn, -15)
+						return
+					}
+					ws.__pending_sends.RemoveAt(1)
+					ws.onError(4317)
+					return
+				} else {
+					try ws.__send_queue.RemoveAt(1)
+					ws.__pending_sends.RemoveAt(1)
+					ws.onError(err)
+					return
+				}
 			}
 		}
 
 		static async_send(self, type, buf, size) {
 			if (self.readyState != 1)
 				Throw WebSocket.Error('websocket is disconnected')
+			if (!self.HasOwnProp('__pending_sends'))
+				self.__pending_sends := []
+			if (self.__pending_sends.Length > 0) {
+				if (self.__pending_sends.Length >= 128)
+					return self.onError(4317)
+				self.__pending_sends.Push({ type: type, buf: buf, size: size, retries: 0 })
+				if (self.HasOwnProp('__tx_drain_fn') && !self.__tx_drain_armed)
+					self.__tx_drain_armed := true, SetTimer(self.__tx_drain_fn, -1)
+				return
+			}
 			(q := self.__send_queue).InsertAt(1, buf)
-			while (err := DllCall('Winhttp\WinHttpWebSocketSend', 'ptr', self, 'uint', type, 'ptr', buf, 'uint', size, 'uint')) = 4317 && A_Index < 60
-				Sleep(15)
-			if err
-				q.RemoveAt(1), self.onError(err)
+			err := DllCall('Winhttp\WinHttpWebSocketSend', 'ptr', self, 'uint', type, 'ptr', buf, 'uint', size, 'uint')
+			if (err == 4317) {
+				try q.RemoveAt(1)
+				self.__pending_sends.Push({ type: type, buf: buf, size: size, retries: 1 })
+				if (self.HasOwnProp('__tx_drain_fn') && !self.__tx_drain_armed)
+					self.__tx_drain_armed := true, SetTimer(self.__tx_drain_fn, -15)
+			} else if (err) {
+				try q.RemoveAt(1)
+				self.onError(err)
+			}
 		}
 
 		static async_shutdown(self) {
+			if (self.HasOwnProp('__rx_drain_fn') && IsObject(self.__rx_drain_fn))
+				try SetTimer(self.__rx_drain_fn, 0)
+			if (self.HasOwnProp('__tx_drain_fn') && IsObject(self.__tx_drain_fn))
+				try SetTimer(self.__tx_drain_fn, 0)
+			self.__rx_drain_armed := false
+			self.__tx_drain_armed := false
+			self.__rx_queue := []
+			self.__pending_sends := []
 			if self.Ptr
 				DllCall('Winhttp\WinHttpSetOption', 'ptr', self, 'uint', 45, 'ptr*', 0, 'uint', A_PtrSize)
 			(WebSocket.Prototype.shutdown)(self)

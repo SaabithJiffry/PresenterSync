@@ -8,6 +8,7 @@
 
 #Requires AutoHotkey v2.0
 #SingleInstance Off
+#MaxThreadsPerHotkey 3
 ;@Ahk2Exe-SetMainIcon assets\PresenterSync.ico
 ;@Ahk2Exe-AddResource *10 assets\PresenterSync.ico, FAVICON_ICO
 ;@Ahk2Exe-SetProductName PresenterSync
@@ -101,6 +102,9 @@ ShutdownHostApp(*) {
     }
     if (IsSet(HideStageNudgeBanner))
         try HideStageNudgeBanner()
+    if (IsSet(AppConfig) && IsObject(AppConfig) && AppConfig.HasMethod("FlushDeferredWrites"))
+        try AppConfig.FlushDeferredWrites()
+    try SessionTimeline.FlushAutosave()
     try SessionTimeline.ClearAutosave()
     try StopHostCompanionBridge()
     try HudArcadeBase.StopActiveGame()
@@ -928,7 +932,7 @@ TriggerMute(cfg, state, fromHudClick := false) {
     if (inHold)
         return false
     now := A_TickCount
-    if (now - lastTick < 150) ; 150ms hardware debounce shield
+    if (!fromHudClick && lastTick != 0 && (now - lastTick < 35)) ; 35ms hardware bounce shield; 0ms for HUD clicks
         return false
     lastTick := now
 
@@ -936,19 +940,26 @@ TriggerMute(cfg, state, fromHudClick := false) {
         return
     }
 
-    inHold := true
-    try {
-        if (!fromHudClick && cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk) {
+    if (!fromHudClick && cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk) {
+        inHold := true
+        try {
             ExecutePushToTalkHoldCycle(cfg, state, (m) => ExecuteHostRemoteSetMute(cfg, state, m), cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")
             lastTick := A_TickCount
-        } else if (DispatchHostMuteToggle(cfg, state)) {
-            if (!fromHudClick && WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
-                DispatchHostMuteToggle(cfg, state)
-                lastTick := A_TickCount
+        } finally {
+            inHold := false
+        }
+    } else if (DispatchHostMuteToggle(cfg, state)) {
+        if (!fromHudClick && cfg.HasOwnProp("EnablePushToMute") && cfg.EnablePushToMute) {
+            inHold := true
+            try {
+                if (WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
+                    DispatchHostMuteToggle(cfg, state)
+                    lastTick := A_TickCount
+                }
+            } finally {
+                inHold := false
             }
         }
-    } finally {
-        inHold := false
     }
 }
 

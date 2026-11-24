@@ -801,7 +801,7 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
         if (!PublishInternetRelayPacket(topic, pktStr, GetEffectiveRelayBaseUrl(cfg), mockWs)) {
             ToolTip "PresenterSync Remote: Internet Relay unreachable"
-            SetTimer () => ToolTip(), -2000
+            SetTimer ClearObsNetworkToolTip, -2000
             return false
         }
         return true
@@ -812,7 +812,7 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
         payload := '{"type":"set_mute","isMuted":' (targetMuted ? "true" : "false") ',"deviceId":"' devId '","source":"hud"}'
         if (!TrySendWsText(state.obsWs, payload)) {
             ToolTip "PresenterSync Remote: Host Bridge disconnected"
-            SetTimer () => ToolTip(), -2000
+            SetTimer ClearObsNetworkToolTip, -2000
             return false
         }
         return true
@@ -820,13 +820,13 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
 
     if (!IsObject(state) || !IsObject(state.obsWs)) {
         ToolTip "PresenterSync Remote: Not connected to OBS host"
-        SetTimer () => ToolTip(), -2000
+        SetTimer ClearObsNetworkToolTip, -2000
         return false
     }
     escMic := EscapeJsonStr(cfg.TargetMicName)
     if (!SendObsRequest(state.obsWs, "SetInputMute", "RemoteClickerSetMute", '{"inputName":"' escMic '","inputMuted":' (targetMuted ? "true" : "false") '}')) {
         ToolTip "PresenterSync Remote: Not connected to OBS host"
-        SetTimer () => ToolTip(), -2000
+        SetTimer ClearObsNetworkToolTip, -2000
         return false
     }
     return true
@@ -839,7 +839,7 @@ DispatchRemoteMuteToggle(cfg, state) {
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
         if (!PublishInternetRelayPacket(topic, pktStr, GetEffectiveRelayBaseUrl(cfg), mockWs)) {
             ToolTip "PresenterSync Remote: Internet Relay unreachable"
-            SetTimer () => ToolTip(), -2000
+            SetTimer ClearObsNetworkToolTip, -2000
             return false
         }
         return true
@@ -850,7 +850,7 @@ DispatchRemoteMuteToggle(cfg, state) {
         payload := '{"type":"toggle_mute","deviceId":"' devId '","source":"clicker"}'
         if (!TrySendWsText(state.obsWs, payload)) {
             ToolTip "PresenterSync Remote: Host Bridge disconnected"
-            SetTimer () => ToolTip(), -2000
+            SetTimer ClearObsNetworkToolTip, -2000
             return false
         }
         return true
@@ -858,7 +858,7 @@ DispatchRemoteMuteToggle(cfg, state) {
 
     if (!SendObsToggleInputMute(state.obsWs, cfg.TargetMicName, "RemoteClickerMute")) {
         ToolTip "PresenterSync Remote: Not connected to OBS host"
-        SetTimer () => ToolTip(), -2000
+        SetTimer ClearObsNetworkToolTip, -2000
         return false
     }
     return true
@@ -1704,6 +1704,21 @@ TriggerObsSceneTransition(cfg, state, fromHudClick := false) {
             curScene := state.HasOwnProp("currentSceneName") ? state.currentSceneName : ""
             prevProg := state.HasOwnProp("previousProgramScene") ? state.previousProgramScene : ""
             targetScene := (prevScene != "" && prevScene != curScene) ? prevScene : prevProg
+            if (targetScene = "" && state.HasOwnProp("sceneList") && IsObject(state.sceneList) && state.sceneList.Length >= 2) {
+                curIdx := 0
+                for idx, scName in state.sceneList {
+                    if (scName == curScene) {
+                        curIdx := idx
+                        break
+                    }
+                }
+                nextIdx := (curIdx > 0) ? (Mod(curIdx, state.sceneList.Length) + 1) : 1
+                cand := state.sceneList[nextIdx]
+                if (cand == curScene && state.sceneList.Length >= 2)
+                    cand := state.sceneList[(Mod(nextIdx, state.sceneList.Length) + 1)]
+                if (cand != "" && cand != curScene)
+                    targetScene := cand
+            }
             if (targetScene != "") {
                 dispatched := SendObsRequest(state.obsWs, "SetCurrentProgramScene", "HostSceneTransition", '{"sceneName":"' EscapeJsonStr(targetScene) '"}')
                 detail := "ws:SetCurrentProgramScene:" targetScene
@@ -1711,7 +1726,7 @@ TriggerObsSceneTransition(cfg, state, fromHudClick := false) {
         }
     }
     if (!dispatched && WinExist("ahk_exe obs64.exe") && cfg.HasOwnProp("ObsTransitionHotkey") && cfg.ObsTransitionHotkey != "None" && cfg.ObsTransitionHotkey != "") {
-        ControlSendFast(cfg.ObsTransitionHotkey, "ahk_exe obs64.exe", 0)
+        ControlSendFast(cfg.ObsTransitionHotkey, "ahk_exe obs64.exe", 10)
         dispatched := true
         detail := "controlsend:" cfg.ObsTransitionHotkey
     }
@@ -2325,8 +2340,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             if (RegExMatch(msg, '"inputName"\s*:\s*"((?:[^"\\]|\\.)*)"', &matchInput) && UnescapeJsonStr(matchInput[1]) == cfg.targetMicName) {
                 if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                     isMutedOBS := (matchMuted[1] == "true")
-                    PushObsMuteToZoom(cfg, state, isMutedOBS)
                     SyncUIState(cfg, state, isMutedOBS)
+                    PushObsMuteToZoom(cfg, state, isMutedOBS)
                 }
             }
         }
@@ -2402,6 +2417,16 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
                 ToolTip("PresenterSync: Audio source '" cfg.targetMicName "' not found in OBS")
                 SetTimer(ClearObsNetworkToolTip, -2500)
+            }
+        }
+        else if (InStr(msg, '"requestId":"HostSceneTransition"') || InStr(msg, '"requestId": "HostSceneTransition"')) {
+            if (RegExMatch(msg, '"result"\s*:\s*false')) {
+                if (IsSet(DiagnosticLogger))
+                    DiagnosticLogger.RecordBreadcrumb("OBS", "HostSceneTransitionFailed", SubStr(msg, 1, 200))
+                if (!IsSet(g_IsTestMode) || !g_IsTestMode) {
+                    ToolTip("PresenterSync: OBS scene transition failed (check Studio Mode / scenes)")
+                    SetTimer(ClearObsNetworkToolTip, -2500)
+                }
             }
         }
         else if (InStr(msg, '"requestId":"InitRecState"') || InStr(msg, '"requestId": "InitRecState"')
@@ -2673,7 +2698,7 @@ ZoomStateMonitor(cfg, state) {
 UpdateZoomMonitorTimer(cfg, state) {
     if (!IsObject(state) || !state.HasOwnProp("zoomTimerFn") || !IsObject(state.zoomTimerFn))
         return
-    if (cfg.EnableZoom || cfg.EnableWS)
+    if (cfg.EnableZoom || cfg.AudioRoutingMode == 3)
         SetTimer state.zoomTimerFn, UIConstants.ZOOM_POLL_INTERVAL_MS
     else
         SetTimer state.zoomTimerFn, 0

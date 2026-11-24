@@ -409,7 +409,7 @@ SyncSceneState(cfg, state, sceneName) {
         }
         _NotifyHostTelemetryChanged(cfg, state, true)
         if (IsSet(SessionTimeline) && (cfg is Config))
-            SessionTimeline.Record("Scene", "Scene -> " sceneName, state, (state.HasOwnProp("obsConnected") && state.obsConnected) ? "OBS Program" : "")
+            SessionTimeline.Record("Scene", "Scene -> " sceneName, state, (state.HasOwnProp("obsConnected") && state.obsConnected) ? "OBS Program" : "", -1, "", true)
         if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
             try state.refreshHelpFn.Call()
     }
@@ -729,21 +729,80 @@ GetMuteAudioCueTones(isMuted) {
         : { f1: 520, d1: 65, f2: 880, d2: 95 }
 }
 
+_BuildDualToneWavBuffer(f1, d1Ms, f2, d2Ms, sampleRate := 22050, amp := 0.24) {
+    n1 := Max(1, Round(sampleRate * d1Ms / 1000.0))
+    nGap := Max(0, Round(sampleRate * 8 / 1000.0))
+    n2 := Max(1, Round(sampleRate * d2Ms / 1000.0))
+    totalSamples := n1 + nGap + n2
+    dataBytes := totalSamples * 2
+    buf := Buffer(44 + dataBytes, 0)
+
+    ; Standard 44-byte RIFF/WAVE 16-bit mono PCM header
+    NumPut("UInt", 0x46464952, buf, 0)         ; "RIFF"
+    NumPut("UInt", 36 + dataBytes, buf, 4)
+    NumPut("UInt", 0x45564157, buf, 8)         ; "WAVE"
+    NumPut("UInt", 0x20746D66, buf, 12)        ; "fmt "
+    NumPut("UInt", 16, buf, 16)
+    NumPut("UShort", 1, buf, 20)               ; PCM
+    NumPut("UShort", 1, buf, 22)               ; Mono
+    NumPut("UInt", sampleRate, buf, 24)
+    NumPut("UInt", sampleRate * 2, buf, 28)
+    NumPut("UShort", 2, buf, 32)
+    NumPut("UShort", 16, buf, 34)
+    NumPut("UInt", 0x61746164, buf, 36)        ; "data"
+    NumPut("UInt", dataBytes, buf, 40)
+
+    rampSamples := Max(1, Round(sampleRate * 0.005))
+    twoPi := 6.283185307179586
+    maxVal := 32767.0 * amp
+
+    Loop n1 {
+        i := A_Index - 1
+        env := Min(1.0, (i + 1) / rampSamples, (n1 - i) / rampSamples)
+        smp := Max(-32767, Min(32767, Round(maxVal * env * Sin(twoPi * f1 * i / sampleRate))))
+        NumPut("Short", smp, buf, 44 + (i * 2))
+    }
+    off2 := n1 + nGap
+    Loop n2 {
+        j := A_Index - 1
+        env := Min(1.0, (j + 1) / rampSamples, (n2 - j) / rampSamples)
+        smp := Max(-32767, Min(32767, Round(maxVal * env * Sin(twoPi * f2 * j / sampleRate))))
+        NumPut("Short", smp, buf, 44 + ((off2 + j) * 2))
+    }
+    return buf
+}
+
+_ClearHudToolTip() {
+    ToolTip()
+}
+
 PlayMuteAudioCue(isMuted, async := true) {
-    if (async) {
-        SetTimer(() => PlayMuteAudioCue(isMuted, false), -1)
-        return
+    static wavMuted := ""
+    static wavLive := ""
+    if (isMuted) {
+        if (!IsObject(wavMuted)) {
+            tM := GetMuteAudioCueTones(true)
+            wavMuted := _BuildDualToneWavBuffer(tM.f1, tM.d1, tM.f2, tM.d2)
+        }
+        wavBuf := wavMuted
+    } else {
+        if (!IsObject(wavLive)) {
+            tL := GetMuteAudioCueTones(false)
+            wavLive := _BuildDualToneWavBuffer(tL.f1, tL.d1, tL.f2, tL.d2)
+        }
+        wavBuf := wavLive
     }
-    tones := GetMuteAudioCueTones(isMuted)
-    try {
-        SoundBeep(tones.f1, tones.d1)
-        SoundBeep(tones.f2, tones.d2)
-    }
+    if (IsSet(g_IsTestMode) && g_IsTestMode)
+        return true
+    flags := async ? 0x00000007 : 0x00000006 ; SND_MEMORY | SND_NODEFAULT | (SND_ASYNC or SND_SYNC)
+    try return !!DllCall("winmm\PlaySoundW", "Ptr", wavBuf.Ptr, "Ptr", 0, "UInt", flags, "Int")
+    catch
+        return false
 }
 
 ShowMuteToast(isMuted) {
     ToolTip(isMuted ? "Mic: MUTED" : "Mic: LIVE")
-    SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+    SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
 }
 
 ToggleBoolSetting(cfg, state, propName, remoteSection := "Appearance", primarySection := "Settings") {
@@ -1148,7 +1207,7 @@ VoiceMeterTick(cfg, state, readerFn := "") {
         state.voicePeak := newPeak
         if (primValid)
             ApplyMicAppearance(cfg, state)
-        else if (secValid)
+        if (secValid)
             ApplySecondaryMicAppearance(cfg, state)
     }
 }
@@ -1568,7 +1627,10 @@ SyncUIState(cfg, state, obsIsMuted) {
     if (state.isMuted != obsIsMuted) {
         state.isMuted := obsIsMuted
         cfg.IsMuted := obsIsMuted
-        cfg.WriteBool("Settings", "IsMuted", state.isMuted)
+        if (cfg.HasMethod("WriteBoolDeferred"))
+            cfg.WriteBoolDeferred("Settings", "IsMuted", state.isMuted, 250)
+        else
+            cfg.WriteBool("Settings", "IsMuted", state.isMuted)
         if (!obsIsMuted) {
             state.voiceWhileMuted := false
             state.mutedVoiceAboveSince := 0
@@ -1580,6 +1642,7 @@ SyncUIState(cfg, state, obsIsMuted) {
                 state.deadMicWarn := false
             state._deadMicSinceTick := 0
         }
+        BroadcastHostRelayMuteState(cfg, state)
         PlayMuteAnimation(cfg, state)
         UpdateVoiceMeterTimer(cfg, state)
         UpdateMutedVoiceMonitorTimer(cfg, state)
@@ -1588,8 +1651,7 @@ SyncUIState(cfg, state, obsIsMuted) {
         if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
             ShowMuteToast(obsIsMuted)
         if (IsSet(SessionTimeline) && (cfg is Config))
-            SessionTimeline.Record("Mic", obsIsMuted ? "Mic Muted" : "Mic Live", state, cfg.targetMicName)
-        BroadcastHostRelayMuteState(cfg, state)
+            SessionTimeline.Record("Mic", obsIsMuted ? "Mic Muted" : "Mic Live", state, cfg.targetMicName, -1, "", true)
     }
 }
 
@@ -2155,6 +2217,78 @@ UpdateHudVisibility(cfg, state) {
 }
 
 ; --- HUD ANIMATIONS ---
+_StepMuteAnimation(state) {
+    if (!IsObject(state) || !state.HasOwnProp("_muteAnimCfg") || !IsObject(state._muteAnimCfg)) {
+        if (IsObject(state) && state.HasOwnProp("_muteAnimTimerFn") && IsObject(state._muteAnimTimerFn))
+            try SetTimer(state._muteAnimTimerFn, 0)
+        return
+    }
+    cfg := state._muteAnimCfg
+    mySeq := state.HasOwnProp("_muteAnimSeq") ? state._muteAnimSeq : -1
+    if (state.animSeq != mySeq || state.isDraggingHud || (state.HasOwnProp("isDraggingSecondaryHud") && state.isDraggingSecondaryHud) || !IsAnyMicHudVisible(cfg)) {
+        if (state.HasOwnProp("_muteAnimTimerFn") && IsObject(state._muteAnimTimerFn))
+            try SetTimer(state._muteAnimTimerFn, 0)
+        return
+    }
+
+    hasPrimGui := state.HasOwnProp("MicGui") && IsGuiValid(state.MicGui)
+    hasSecGui := state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui)
+    primVis := hasPrimGui && !IsHudSuppressed(cfg)
+    secVis := hasSecGui && !IsSecondaryHudSuppressed(cfg)
+    if (!primVis && !secVis) {
+        if (state.HasOwnProp("_muteAnimTimerFn") && IsObject(state._muteAnimTimerFn))
+            try SetTimer(state._muteAnimTimerFn, 0)
+        return
+    }
+
+    dur := Max(1, state.HasOwnProp("_muteAnimDurationMs") ? Integer(state._muteAnimDurationMs) : 120)
+    elapsed := Max(0, A_TickCount - state._muteAnimStartTick)
+    t := Min(1.0, Float(elapsed) / Float(dur))
+
+    targetPrimAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
+    targetSecAlpha := (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
+
+    if (t >= 1.0) {
+        if (state.HasOwnProp("_muteAnimTimerFn") && IsObject(state._muteAnimTimerFn))
+            try SetTimer(state._muteAnimTimerFn, 0)
+        state._breathStepAlpha := state.baseAlpha
+        state.currentAlpha := targetPrimAlpha
+        state.secondaryCurrentAlpha := targetSecAlpha
+        if (primVis)
+            ApplyMicAppearance(cfg, state, state.savedX, state.savedY, state.baseWidth, state.baseHeight, state.currentAlpha)
+        if (secVis) {
+            secPos := ComputeSecondaryMicLayout(cfg, state)
+            ApplySecondaryMicAppearance(cfg, state, secPos.x, secPos.y, state.baseWidth, state.baseHeight, state.secondaryCurrentAlpha)
+        }
+        if (state.isMuted && IsAnyMicHudVisible(cfg) && (!state.HasOwnProp("activeHost") || state.obsConnected)) {
+            state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
+            SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
+        } else if (state.HasOwnProp("breathTimerFn") && IsObject(state.breathTimerFn)) {
+            SetTimer state.breathTimerFn, 0
+        }
+        return
+    }
+
+    scaleFrac := (1.0 - t) * (1.0 - t)
+    widthInc := (cfg.ShowText ? UIConstants.POP_WIDTH_INC_TEXT : UIConstants.POP_WIDTH_INC_ICON) * cfg.IndicatorScale
+    heightInc := UIConstants.POP_HEIGHT_INC * cfg.IndicatorScale
+    popWidth := Round(state.baseWidth + (widthInc * 2.0 * scaleFrac))
+    popHeight := Round(state.baseHeight + (heightInc * 2.0 * scaleFrac))
+    offsetX := Round((popWidth - state.baseWidth) / 2)
+    offsetY := Round((popHeight - state.baseHeight) / 2)
+
+    state._breathStepAlpha := state.baseAlpha
+    state.currentAlpha := targetPrimAlpha
+    state.secondaryCurrentAlpha := targetSecAlpha
+
+    if (primVis)
+        ApplyMicAppearance(cfg, state, state.savedX - offsetX, state.savedY - offsetY, popWidth, popHeight, targetPrimAlpha, state.isMuted)
+    if (secVis) {
+        secPos := ComputeSecondaryMicLayout(cfg, state)
+        ApplySecondaryMicAppearance(cfg, state, secPos.x - offsetX, secPos.y - offsetY, popWidth, popHeight, targetSecAlpha, state.isMuted)
+    }
+}
+
 PlayMuteAnimation(cfg, state) {
     if (!IsObject(state))
         return
@@ -2166,6 +2300,8 @@ PlayMuteAnimation(cfg, state) {
     primVis := hasPrimGui && !IsHudSuppressed(cfg)
     secVis := hasSecGui && !IsSecondaryHudSuppressed(cfg)
     if (!primVis && !secVis) {
+        if (state.HasOwnProp("_muteAnimTimerFn") && IsObject(state._muteAnimTimerFn))
+            try SetTimer(state._muteAnimTimerFn, 0)
         if (state.HasOwnProp("breathTimerFn") && state.breathTimerFn)
             SetTimer state.breathTimerFn, 0
         state._breathStepAlpha := state.baseAlpha
@@ -2173,82 +2309,26 @@ PlayMuteAnimation(cfg, state) {
         state.secondaryCurrentAlpha := (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
         if (hasPrimGui)
             ApplyMicAppearance(cfg, state)
+        if (hasSecGui)
+            ApplySecondaryMicAppearance(cfg, state)
         return
     }
 
     state.animSeq += 1
-    mySeq := state.animSeq
-
     if (state.HasOwnProp("breathTimerFn") && state.breathTimerFn)
         SetTimer state.breathTimerFn, 0
-    baseX := state.savedX
-    baseY := state.savedY
-    secPos := ComputeSecondaryMicLayout(cfg, state)
-    secBaseX := secPos.x
-    secBaseY := secPos.y
 
-    fadeStep := Round(state.baseAlpha / UIConstants.FADE_STEPS)
-    widthIncrement := (cfg.ShowText ? UIConstants.POP_WIDTH_INC_TEXT : UIConstants.POP_WIDTH_INC_ICON) * cfg.IndicatorScale
-    heightIncrement := UIConstants.POP_HEIGHT_INC * cfg.IndicatorScale
-    prevMuted := !state.isMuted
-    stepAlpha := state.HasOwnProp("_breathStepAlpha") ? state._breathStepAlpha : state.currentAlpha
+    state._muteAnimSeq := state.animSeq
+    state._muteAnimStartTick := A_TickCount
+    state._muteAnimDurationMs := 120
+    state._muteAnimCfg := cfg
+    if (!state.HasOwnProp("_muteAnimTimerFn") || !IsObject(state._muteAnimTimerFn))
+        state._muteAnimTimerFn := _StepMuteAnimation.Bind(state)
 
-    Loop UIConstants.FADE_STEPS {
-        if (state.animSeq != mySeq || state.isDraggingHud || (state.HasOwnProp("isDraggingSecondaryHud") && state.isDraggingSecondaryHud) || !IsAnyMicHudVisible(cfg))
-            return
-        stepAlpha := Max(0, stepAlpha - fadeStep)
-        state._breathStepAlpha := stepAlpha
-        state.currentAlpha := stepAlpha
-        state.secondaryCurrentAlpha := stepAlpha
-
-        popWidth := Round(state.baseWidth + (A_Index * widthIncrement))
-        popHeight := Round(state.baseHeight + (A_Index * heightIncrement))
-        offsetX := Round((popWidth - state.baseWidth) / 2)
-        offsetY := Round((popHeight - state.baseHeight) / 2)
-
-        if (primVis)
-            ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, stepAlpha, prevMuted)
-        if (secVis)
-            ApplySecondaryMicAppearance(cfg, state, secBaseX - offsetX, secBaseY - offsetY, popWidth, popHeight, stepAlpha, prevMuted)
-        Sleep UIConstants.FADE_SLEEP_MS
-    }
-
-    Loop UIConstants.FADE_STEPS {
-        if (state.animSeq != mySeq || state.isDraggingHud || (state.HasOwnProp("isDraggingSecondaryHud") && state.isDraggingSecondaryHud) || !IsAnyMicHudVisible(cfg))
-            return
-        stepAlpha := Min(state.baseAlpha, stepAlpha + fadeStep)
-        state._breathStepAlpha := stepAlpha
-        state.currentAlpha := stepAlpha
-        state.secondaryCurrentAlpha := stepAlpha
-
-        popWidth := Round((state.baseWidth + (UIConstants.FADE_STEPS * widthIncrement)) - (A_Index * widthIncrement))
-        popHeight := Round((state.baseHeight + (UIConstants.FADE_STEPS * heightIncrement)) - (A_Index * heightIncrement))
-        offsetX := Round((popWidth - state.baseWidth) / 2)
-        offsetY := Round((popHeight - state.baseHeight) / 2)
-
-        if (primVis)
-            ApplyMicAppearance(cfg, state, baseX - offsetX, baseY - offsetY, popWidth, popHeight, stepAlpha, state.isMuted)
-        if (secVis)
-            ApplySecondaryMicAppearance(cfg, state, secBaseX - offsetX, secBaseY - offsetY, popWidth, popHeight, stepAlpha, state.isMuted)
-        Sleep UIConstants.FADE_SLEEP_MS
-    }
-
-    if (state.animSeq != mySeq || !IsAnyMicHudVisible(cfg))
-        return
-
-    state._breathStepAlpha := state.baseAlpha
-    state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
-    state.secondaryCurrentAlpha := (state.HasOwnProp("secondaryIsAutoDodged") && state.secondaryIsAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
-    if (primVis)
-        ApplyMicAppearance(cfg, state, state.savedX, state.savedY, state.baseWidth, state.baseHeight, state.currentAlpha)
-    else if (secVis)
-        ApplySecondaryMicAppearance(cfg, state, secPos.x, secPos.y, state.baseWidth, state.baseHeight, state.secondaryCurrentAlpha)
-
-    if (state.isMuted && IsAnyMicHudVisible(cfg) && (!state.HasOwnProp("activeHost") || state.obsConnected)) {
-        state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
-        SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
-    } else {
-        SetTimer state.breathTimerFn, 0
+    _StepMuteAnimation(state)
+    if (state.animSeq == state._muteAnimSeq && !state.isDraggingHud && !(state.HasOwnProp("isDraggingSecondaryHud") && state.isDraggingSecondaryHud) && IsAnyMicHudVisible(cfg)) {
+        if ((A_TickCount - state._muteAnimStartTick) < state._muteAnimDurationMs)
+            SetTimer(state._muteAnimTimerFn, 16)
     }
 }
 
@@ -2401,7 +2481,7 @@ TryConfirmStopRecording(cfg, state, nowTick := "") {
         state.stopRecConfirmUntil := nowTick + UIConstants.STOP_RECORD_CONFIRM_WINDOW_MS
         if (!IsSet(g_IsTestMode) || !g_IsTestMode) {
             try ToolTip("Click REC again within 3s to STOP recording")
-            try SetTimer(() => ToolTip(), -UIConstants.STOP_RECORD_CONFIRM_WINDOW_MS)
+            try SetTimer(_ClearHudToolTip, -UIConstants.STOP_RECORD_CONFIRM_WINDOW_MS)
         }
         return false
     }
@@ -2438,7 +2518,7 @@ HandleHudPillClick(cfg, state, hwnd) {
         }
         if ((!IsSet(g_IsTestMode) || !g_IsTestMode) && cfg.HasOwnProp("EnableWS") && cfg.EnableWS && cfg.HasOwnProp("EnableZoom") && cfg.EnableZoom) {
             ToolTip(GetRecBreakdownText(state))
-            SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+            SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
         }
         return retTag
     }
@@ -2471,7 +2551,7 @@ HandleHudPillClick(cfg, state, hwnd) {
             reconnStr := (state.HasOwnProp("streamReconnecting") && state.streamReconnecting) ? " (Reconnecting)" : ""
             tip := Format("Stream: {}{} | Congestion: {}% | Skipped Frames: {}", statusLbl, reconnStr, congPct, skp)
             ToolTip(tip)
-            SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+            SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
         }
         return "stream_readonly"
     }
@@ -2502,7 +2582,7 @@ ApplyDraggedSecondaryPosition(cfg, state, rawX, rawY) {
     return pos
 }
 
-WaitPillLongPressWithProgress(startMX, startMY, downTick, holdMs, visualDelayMs, tapMaxMs, onProgressFn := "") {
+WaitPillLongPressWithProgress(startMX, startMY, downTick, holdMs, visualDelayMs, tapMaxMs, onProgressFn := "", onHoldCompleteFn := "") {
     ; Shared 16ms long-press tracker with drag break (>4px) and guaranteed 0.0 reset in finally.
     lastProg := -1.0
     try {
@@ -2512,6 +2592,13 @@ WaitPillLongPressWithProgress(startMX, startMY, downTick, holdMs, visualDelayMs,
                 return { verdict: "drag", elapsedMs: A_TickCount - downTick }
             elapsed := A_TickCount - downTick
             if (elapsed >= holdMs) {
+                if (IsObject(onHoldCompleteFn)) {
+                    if (IsObject(onProgressFn))
+                        onProgressFn.Call(0.0)
+                    onHoldCompleteFn.Call()
+                    KeyWait "LButton"
+                    return { verdict: "hold_handled", elapsedMs: elapsed }
+                }
                 if (IsObject(onProgressFn))
                     onProgressFn.Call(1.0)
                 KeyWait "LButton"
@@ -2568,7 +2655,11 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
                     ApplySecondaryMicAppearance(cfg, state)
                 }
             }
-            secRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, 350, UpdateSecondaryMicHold)
+            secRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, UIConstants.MIC_LONG_PRESS_MS, UpdateSecondaryMicHold, (*) => HandleHudPillClick(cfg, state, hwnd))
+            if (secRes.verdict = "hold_handled") {
+                CoordMode("Mouse", prevMouseMode)
+                return
+            }
             if (secRes.verdict = "tap" || secRes.verdict = "hold") {
                 CoordMode("Mouse", prevMouseMode)
                 HandleHudPillClick(cfg, state, hwnd)
@@ -2623,7 +2714,11 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
                 ApplyMicAppearance(cfg, state)
             }
         }
-        micRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, 350, UpdateMicHold)
+        micRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, UIConstants.MIC_LONG_PRESS_MS, UpdateMicHold, (*) => HandleHudPillClick(cfg, state, hwnd))
+        if (micRes.verdict = "hold_handled") {
+            CoordMode("Mouse", prevMouseMode)
+            return
+        }
         if (micRes.verdict = "tap" || micRes.verdict = "hold") {
             CoordMode("Mouse", prevMouseMode)
             HandleHudPillClick(cfg, state, hwnd)
@@ -2654,7 +2749,7 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
                     SyncStudioState(cfg, state, nextStudio)
             } else {
                 ToolTip("Hold Studio pill (0.6s) to toggle Studio Mode")
-                SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+                SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
             }
             return
         }
@@ -2677,8 +2772,26 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
                 ExecuteHostPauseRecord(cfg, state)
             } else {
                 ToolTip("Hold longer to stop recording")
-                SetTimer(() => ToolTip(), -UIConstants.TOOLTIP_DURATION_MS)
+                SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
             }
+            return
+        }
+        dragInitiated := true
+    }
+
+    if (clickActionsEnabled && IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd) {
+        sceneMoved := false
+        while (GetKeyState("LButton", "P")) {
+            MouseGetPos(&mx, &my)
+            if (Abs(mx - startMX) > 4 || Abs(my - startMY) > 4) {
+                sceneMoved := true
+                break
+            }
+            Sleep(8)
+        }
+        if (!sceneMoved) {
+            CoordMode("Mouse", prevMouseMode)
+            HandleHudPillClick(cfg, state, hwnd)
             return
         }
         dragInitiated := true

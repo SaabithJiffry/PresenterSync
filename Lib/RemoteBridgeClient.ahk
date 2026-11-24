@@ -995,7 +995,7 @@ StopAllRemoteTimers(state) {
     if (!IsObject(state))
         return 0
     static timerProps := [
-        "dragTimerFn", "breathTimerFn", "autoDodgeTimerFn", "idleDimTimerFn",
+        "dragTimerFn", "breathTimerFn", "_muteAnimTimerFn", "autoDodgeTimerFn", "idleDimTimerFn",
         "reconnectTimerFn", "heartbeatTimerFn", "lanRepromoteTimerFn",
         "presenterTickFn", "recTickFn", "rebuildTrayFn"
     ]
@@ -1430,6 +1430,21 @@ ExecuteRemoteDirectObsTransition(cfg, state) {
         : (state.HasOwnProp("currentSceneName") ? Trim(state.currentSceneName) : "")
     prevProg := state.HasOwnProp("previousProgramScene") ? Trim(state.previousProgramScene) : ""
     targetSc := (prevSc != "" && prevSc != curSc) ? prevSc : prevProg
+    if (targetSc = "" && state.HasOwnProp("scenes") && IsObject(state.scenes) && state.scenes.Length >= 2) {
+        curIdx := 0
+        for idx, scName in state.scenes {
+            if (scName == curSc) {
+                curIdx := idx
+                break
+            }
+        }
+        nextIdx := (curIdx > 0) ? (Mod(curIdx, state.scenes.Length) + 1) : 1
+        cand := state.scenes[nextIdx]
+        if (cand == curSc && state.scenes.Length >= 2)
+            cand := state.scenes[(Mod(nextIdx, state.scenes.Length) + 1)]
+        if (cand != "" && cand != curSc)
+            targetSc := cand
+    }
     if (targetSc != "") {
         ok := SendObsRequest(state.obsWs, "SetCurrentProgramScene", "RemoteSceneTransition", '{"sceneName":"' EscapeJsonStr(targetSc) '"}')
         if (ok)

@@ -10,6 +10,7 @@
 
 #Requires AutoHotkey v2.0
 #SingleInstance Off
+#MaxThreadsPerHotkey 3
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
@@ -47,13 +48,15 @@ DiagnosticLogger.Init("PresenterSync_Remote")
 Gdip.Startup()
 ProcessSelfUpdateStartupCleanup(A_Args)
 ShutdownRemoteApp(*) {
-    global AppState, g_RemoteMutex
+    global AppState, AppConfig, g_RemoteMutex
     if (IsSet(AppState) && IsObject(AppState)) {
         try AppState.StopAllTimers()
         try CloseRemoteWebSocket(AppState, false)
     }
     if (IsSet(HideStageNudgeBanner))
         try HideStageNudgeBanner()
+    if (IsSet(AppConfig) && IsObject(AppConfig) && AppConfig.HasMethod("FlushDeferredWrites"))
+        try AppConfig.FlushDeferredWrites()
     try HudArcadeBase.StopActiveGame()
     try ReleaseRemoteInstanceMutex(g_RemoteMutex)
     try Theme.Shutdown()
@@ -132,6 +135,8 @@ class RemoteConfig {
     savedY := "Default"
     savedXRatio := ""
     savedYRatio := ""
+    _deferredWrites := Map()
+    _deferredWriteTimerFn := ""
 
     __New(filePath := "") {
         global g_RemoteCli
@@ -147,15 +152,22 @@ class RemoteConfig {
     }
 
     Read(section, key, defaultVal := "") {
+        k := section "`n" key
+        if (this._deferredWrites.Has(k))
+            return String(this._deferredWrites[k].val)
         return IniRead(this.ConfigFile, section, key, defaultVal)
     }
 
     Write(section, key, val) {
+        k := section "`n" key
+        if (this._deferredWrites.Has(k))
+            this._deferredWrites.Delete(k)
         IniWrite(val, this.ConfigFile, section, key)
     }
 
     ReadBool(section, key, defaultValue := 0) {
-        value := IniRead(this.ConfigFile, section, key, defaultValue)
+        k := section "`n" key
+        value := this._deferredWrites.Has(k) ? this._deferredWrites[k].val : IniRead(this.ConfigFile, section, key, defaultValue)
         switch (StrLower(String(value))) {
             case "1", "true", "yes", "on":
                 return true
@@ -169,21 +181,49 @@ class RemoteConfig {
     }
 
     ReadInt(section, key, defaultValue := 0) {
-        value := IniRead(this.ConfigFile, section, key, defaultValue)
+        value := this.Read(section, key, defaultValue)
         try return Integer(value)
         catch
             return defaultValue
     }
 
     ReadFloat(section, key, defaultValue := 1.0) {
-        value := IniRead(this.ConfigFile, section, key, defaultValue)
+        value := this.Read(section, key, defaultValue)
         try return Float(value)
         catch
             return defaultValue
     }
 
     WriteBool(section, key, value) {
+        k := section "`n" key
+        if (this._deferredWrites.Has(k))
+            this._deferredWrites.Delete(k)
         IniWrite(value ? 1 : 0, this.ConfigFile, section, key)
+    }
+
+    WriteBoolDeferred(section, key, value, delayMs := 250) {
+        k := section "`n" key
+        this._deferredWrites[k] := { sec: section, key: key, val: (value ? 1 : 0) }
+        if (!IsObject(this._deferredWriteTimerFn))
+            this._deferredWriteTimerFn := ObjBindMethod(this, "FlushDeferredWrites")
+        SetTimer(this._deferredWriteTimerFn, -Max(1, Integer(delayMs)))
+    }
+
+    FlushDeferredWrites() {
+        if (IsObject(this._deferredWriteTimerFn))
+            try SetTimer(this._deferredWriteTimerFn, 0)
+        if (this._deferredWrites.Count == 0)
+            return 0
+        pending := this._deferredWrites
+        this._deferredWrites := Map()
+        written := 0
+        for _, entry in pending {
+            try {
+                IniWrite(entry.val, this.ConfigFile, entry.sec, entry.key)
+                written += 1
+            }
+        }
+        return written
     }
 
     Load() {
@@ -1536,10 +1576,16 @@ SyncRemoteMuteState(cfg, state, newMuted) {
         NotifyRemoteActivity(cfg, state)
         state.isMuted := newMuted
         cfg.IsMuted := newMuted
-        cfg.WriteBool("Settings", "IsMuted", newMuted)
+        if (cfg.HasMethod("WriteBoolDeferred"))
+            cfg.WriteBoolDeferred("Settings", "IsMuted", newMuted, 250)
+        else
+            cfg.WriteBool("Settings", "IsMuted", newMuted)
         if (!newMuted)
             state.voiceWhileMuted := false
         PlayMuteAnimation(cfg, state)
+        UpdateRemoteTouchDeckUI(cfg, state)
+        if (state.HasMethod("NotifyTrayStatus"))
+            state.NotifyTrayStatus()
         if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
             PlayMuteAudioCue(newMuted)
         if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
@@ -1635,7 +1681,14 @@ _SendRemoteRelayAction(cfg, state, cmd, data := "1") {
 }
 
 SendRemoteBridgeDeckCommand(cfg, state, actionType) {
+    static lastTransTick := 0
     actLow := StrLower(Trim(String(actionType)))
+    if (actLow = "transition_scene") {
+        now := A_TickCount
+        if (lastTransTick != 0 && (now - lastTransTick < 35))
+            return false
+        lastTransTick := now
+    }
     if (actLow = "toggle_record" || actLow = "stop_record") {
         if (!TryConfirmRemoteStopRecording(cfg, state))
             return false
@@ -1730,7 +1783,7 @@ OnRemoteClickerMute(cfg, state, thisHotkeyOrFromHud := "", *) {
     if (inHold)
         return
     now := A_TickCount
-    if (now - lastTick < 150) ; 150ms hardware debounce shield
+    if (!fromHudClick && lastTick != 0 && (now - lastTick < 35)) ; 35ms hardware bounce shield; 0ms for HUD clicks
         return
     lastTick := now
 
@@ -1740,19 +1793,26 @@ OnRemoteClickerMute(cfg, state, thisHotkeyOrFromHud := "", *) {
         return
     }
 
-    inHold := true
-    try {
-        if (!fromHudClick && cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk) {
+    if (!fromHudClick && cfg.HasOwnProp("EnablePushToTalk") && cfg.EnablePushToTalk) {
+        inHold := true
+        try {
             ExecutePushToTalkHoldCycle(cfg, state, (m) => DispatchRemoteSetMute(cfg, state, m), cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")
             lastTick := A_TickCount
-        } else if (DispatchRemoteMuteToggle(cfg, state)) {
-            if (!fromHudClick && WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
-                DispatchRemoteMuteToggle(cfg, state)
-                lastTick := A_TickCount
+        } finally {
+            inHold := false
+        }
+    } else if (DispatchRemoteMuteToggle(cfg, state)) {
+        if (!fromHudClick && cfg.HasOwnProp("EnablePushToMute") && cfg.EnablePushToMute) {
+            inHold := true
+            try {
+                if (WaitPushToMuteRelease(cfg, cfg.HwMuteHotkey, state.HasOwnProp("keyWaitFn") ? state.keyWaitFn : "")) {
+                    DispatchRemoteMuteToggle(cfg, state)
+                    lastTick := A_TickCount
+                }
+            } finally {
+                inHold := false
             }
         }
-    } finally {
-        inHold := false
     }
 }
 
@@ -1887,7 +1947,11 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
                 ApplyMicAppearance(cfg, state)
             }
         }
-        micRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, 350, UpdateRemoteMicHold)
+        micRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, UIConstants.MIC_LONG_PRESS_MS, UpdateRemoteMicHold, (*) => HandleRemoteHudClick(cfg, state))
+        if (micRes.verdict = "hold_handled") {
+            CoordMode("Mouse", prevMouseMode)
+            return
+        }
         if (micRes.verdict = "tap" || micRes.verdict = "hold") {
             CoordMode("Mouse", prevMouseMode)
             HandleRemoteHudClick(cfg, state)
@@ -1965,7 +2029,7 @@ HandleRemoteHudClick(cfg, state) {
         return false
     if (!cfg.EnablePointerMute) {
         ToolTip("PresenterSync Remote: Pointer mute control is OFF")
-        SetTimer(() => ToolTip(), -1500)
+        SetTimer(RemoveToolTip, -1500)
         return false
     }
     OnRemoteClickerMute(cfg, state, true)
