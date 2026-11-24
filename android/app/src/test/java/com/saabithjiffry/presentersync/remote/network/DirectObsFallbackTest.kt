@@ -59,6 +59,34 @@ class DirectObsFallbackTest {
         assertFalse(manager.uiState.value.isMuted)
     }
 
+    @Test
+    fun resolveNonStudioTransitionTargetPrioritizesPreviewThenPrevProgramThenScenesCycle() {
+        assertEquals(
+            "Slides",
+            ConnectionManager.resolveNonStudioTransitionTarget(
+                ConnectionUiState(activeScene = "Main", previewScene = "Slides", previousProgramScene = "Intro", scenes = listOf("Main", "Intro", "Closing"))
+            )
+        )
+        assertEquals(
+            "Intro",
+            ConnectionManager.resolveNonStudioTransitionTarget(
+                ConnectionUiState(activeScene = "Main", previewScene = "Main", previousProgramScene = "Intro", scenes = listOf("Main", "Closing"))
+            )
+        )
+        assertEquals(
+            "Closing",
+            ConnectionManager.resolveNonStudioTransitionTarget(
+                ConnectionUiState(activeScene = "Main", previewScene = "", previousProgramScene = "", scenes = listOf("Intro", "Main", "Closing"))
+            )
+        )
+        assertEquals(
+            "",
+            ConnectionManager.resolveNonStudioTransitionTarget(
+                ConnectionUiState(activeScene = "Main", previewScene = "", previousProgramScene = "", scenes = listOf("Main"))
+            )
+        )
+    }
+
     private class InMemoryPrefsContext : ContextWrapper(null) {
         private val prefs = InMemorySharedPreferences()
         override fun getApplicationContext(): Context = this

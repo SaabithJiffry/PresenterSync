@@ -355,7 +355,8 @@ def main() -> int:
                     )
                     print("[PASS] Browser Web Remote paired and entered Connected state")
 
-                    # Tap-to-mute round-trip (#micBtn -> host -> #micLbl changes to MIC MUTED)
+                    # Tap-to-mute round-trip + keyed scene DOM identity check
+                    cdp.eval_js("window.__refSceneBtn = document.querySelector('#scenes button');")
                     before_lbl = cdp.eval_js("document.getElementById('micLbl').textContent")
                     cdp.eval_js("document.getElementById('micBtn').click()")
                     ec.wait_for_condition(
@@ -365,6 +366,11 @@ def main() -> int:
                     )
                     after_lbl = cdp.eval_js("document.getElementById('micLbl').textContent")
                     assert after_lbl == "MIC MUTED", f"Expected MIC MUTED after tap, got {after_lbl}"
+                    dom_ok = cdp.eval_js(
+                        "Boolean(window.__refSceneBtn && document.querySelector('#scenes button') === window.__refSceneBtn "
+                        "&& parseFloat(getComputedStyle(document.getElementById('scaleBtn')).minHeight) >= 44)"
+                    )
+                    assert dom_ok is True, "Scene DOM node was replaced across mute update or button.sm min-height < 44px"
                     # Toggle back live
                     cdp.eval_js("document.getElementById('micBtn').click()")
                     ec.wait_for_condition(
@@ -372,7 +378,7 @@ def main() -> int:
                         lambda: cdp.eval_js("document.getElementById('micLbl').textContent") == "MIC LIVE",
                         timeout=5.0,
                     )
-                    print("[PASS] Live tap-to-mute WebSocket round-trip verified")
+                    print("[PASS] Live tap-to-mute WebSocket round-trip, keyed scene DOM identity & >=44px touch targets verified")
 
                     # Cycle scale to 1.25x & verify CSS var
                     cdp.eval_js(

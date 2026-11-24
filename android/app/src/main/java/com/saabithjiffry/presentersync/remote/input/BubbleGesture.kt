@@ -42,7 +42,8 @@ data class BubbleGestureConfig(
     val veryLongPressAction: BubbleGestureAction = BubbleGestureAction.NONE,
     val longPressDurationMs: Long = 600L,
     val veryLongPressDurationMs: Long = 1400L,
-    val doubleTapTimeoutMs: Long = 260L
+    val doubleTapTimeoutMs: Long = 260L,
+    val fastSingleTapBypass: Boolean = false
 ) {
     fun clampedLongMs(): Long = longPressDurationMs.coerceIn(300L, 2000L)
 
@@ -50,6 +51,10 @@ data class BubbleGestureConfig(
         val longMs = clampedLongMs()
         return veryLongPressDurationMs.coerceIn(longMs + 300L, 4000L)
     }
+
+    fun shouldBypassDoubleTapDelay(): Boolean =
+        doubleTapAction == BubbleGestureAction.NONE ||
+            (singleTapAction != BubbleGestureAction.NONE && fastSingleTapBypass)
 }
 
 interface GestureScheduler {
@@ -173,6 +178,11 @@ class BubbleGestureRecognizer(
             (config.longPressAction != BubbleGestureAction.NONE || config.veryLongPressAction != BubbleGestureAction.NONE)
         ) {
             inSecondTap = false
+            if (config.veryLongPressAction != BubbleGestureAction.NONE && elapsed >= config.clampedVeryLongMs()) {
+                listener.onActionTriggered("Very Long Press", config.veryLongPressAction)
+            } else if (config.longPressAction != BubbleGestureAction.NONE) {
+                listener.onActionTriggered("Long Press", config.longPressAction)
+            }
             return
         }
 
@@ -186,7 +196,7 @@ class BubbleGestureRecognizer(
             return
         }
 
-        if (config.doubleTapAction == BubbleGestureAction.NONE) {
+        if (config.shouldBypassDoubleTapDelay()) {
             if (config.singleTapAction != BubbleGestureAction.NONE) {
                 listener.onActionTriggered("Single Tap", config.singleTapAction)
             }

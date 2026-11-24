@@ -5,8 +5,10 @@ import com.saabithjiffry.presentersync.remote.config.PairingUriBuilder
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.input.BubbleGestureAction
 import com.saabithjiffry.presentersync.remote.network.DualProbeResult
+import com.saabithjiffry.presentersync.remote.service.BackgroundMediaActionDebouncer
 import com.saabithjiffry.presentersync.remote.service.BackgroundMediaKeyMapper
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -87,5 +89,18 @@ class BackgroundClickerAndDualProbeTest {
             "Host Bridge (:4456): UNREACHABLE | Direct OBS (:4455): UNREACHABLE",
             DualProbeResult(false, "Host Bridge (:4456): UNREACHABLE", false, "Direct OBS (:4455): UNREACHABLE").formatSummary()
         )
+    }
+
+    @Test
+    fun backgroundMediaActionDebouncer_blocksDuplicateBurstWithinWindowAndAllowsDistinctOrExpired() {
+        var now = 1000L
+        val debouncer = BackgroundMediaActionDebouncer(debounceMs = 150L, clockMs = { now })
+
+        assertTrue(debouncer.shouldDispatch(BubbleGestureAction.TOGGLE_MUTE))
+        now += 40L
+        assertFalse(debouncer.shouldDispatch(BubbleGestureAction.TOGGLE_MUTE))
+        assertTrue(debouncer.shouldDispatch(BubbleGestureAction.SLIDE_NEXT))
+        now += 155L
+        assertTrue(debouncer.shouldDispatch(BubbleGestureAction.SLIDE_NEXT))
     }
 }

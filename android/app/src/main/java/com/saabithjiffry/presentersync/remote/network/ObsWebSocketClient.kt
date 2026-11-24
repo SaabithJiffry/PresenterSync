@@ -20,6 +20,7 @@ interface ObsSessionCallbacks {
     fun onProgramSceneChanged(sceneName: String) {}
     fun onPreviewSceneChanged(sceneName: String) {}
     fun onSceneListChanged(scenes: List<String>) {}
+    fun onSceneTransitionError(requestId: String, code: Int, comment: String) {}
     fun onMicError()
     fun onMicRecovered()
     fun onCloseRemoteSignal()
@@ -274,6 +275,13 @@ class ObsWebSocketClient(
                             if (curPrev.isNotEmpty()) {
                                 callbacks.onPreviewSceneChanged(curPrev)
                             }
+                        }
+                    }
+                    "RemoteSceneTransition", "RemoteSwitchScene" -> {
+                        if (!resultOk) {
+                            val errCode = reqStatus?.optInt("code", -1) ?: -1
+                            val errComment = reqStatus?.optString("comment", "").orEmpty()
+                            callbacks.onSceneTransitionError(reqId, errCode, errComment)
                         }
                     }
                 }

@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.KeyEvent
 import android.widget.Toast
@@ -118,6 +119,13 @@ import kotlinx.coroutines.launch
 
 internal const val STOP_RECORD_CONFIRM_WINDOW_MS = 3000L
 
+private inline fun directorRunWithCooldown(lastTapMs: LongArray, cooldownMs: Long = 200L, block: () -> Unit) {
+    val now = SystemClock.elapsedRealtime()
+    if (now - lastTapMs[0] < cooldownMs) return
+    lastTapMs[0] = now
+    block()
+}
+
 internal data class StopRecordTapResult(
     val shouldExecuteStop: Boolean,
     val nextPendingUntilMs: Long
@@ -161,6 +169,7 @@ internal fun DirectorDeckAndTimerCard(
     var nudgeDraft by remember { mutableStateOf("") }
     var customMinDraft by remember { mutableStateOf("12") }
     var pendingStopRecordUntilMs by remember { mutableStateOf(0L) }
+    val deckTapGate = remember { LongArray(1) }
     val isRecording = conn.recState != 0
     val isConfirmingStop = isRecording && pendingStopRecordUntilMs > 0L
 
@@ -226,7 +235,7 @@ internal fun DirectorDeckAndTimerCard(
                     )
                 }
                 Button(
-                    onClick = onToggleStandby,
+                    onClick = { directorRunWithCooldown(deckTapGate) { onToggleStandby() } },
                     contentPadding = CompactExplorerButtonPadding,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (conn.isStandby) Color(0xFFD97706) else MaterialTheme.colorScheme.secondary
@@ -276,7 +285,7 @@ internal fun DirectorDeckAndTimerCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(
-                    onClick = onPauseRecord,
+                    onClick = { directorRunWithCooldown(deckTapGate) { onPauseRecord() } },
                     contentPadding = CompactExplorerButtonPadding,
                     modifier = Modifier.weight(1f)
                 ) {
@@ -288,7 +297,7 @@ internal fun DirectorDeckAndTimerCard(
                     )
                 }
                 OutlinedButton(
-                    onClick = onSplitRecord,
+                    onClick = { directorRunWithCooldown(deckTapGate) { onSplitRecord() } },
                     contentPadding = CompactExplorerButtonPadding,
                     modifier = Modifier.weight(1f)
                 ) {
@@ -311,7 +320,7 @@ internal fun DirectorDeckAndTimerCard(
                             val selected = sceneName == conn.activeScene
                             FilterChip(
                                 selected = selected,
-                                onClick = { onSwitchScene(sceneName) },
+                                onClick = { directorRunWithCooldown(deckTapGate) { onSwitchScene(sceneName) } },
                                 label = { Text(sceneName, maxLines = 1, softWrap = false) }
                             )
                         }
@@ -353,17 +362,19 @@ internal fun DirectorDeckAndTimerCard(
                 listOf(5, 10, 15, 45).forEach { mins ->
                     FilterChip(
                         selected = conn.timerPresetSec == mins * 60 && conn.timerState != "stopped",
-                        onClick = { onTimerCommand("timer_start", mins * 60) },
+                        onClick = { directorRunWithCooldown(deckTapGate) { onTimerCommand("timer_start", mins * 60) } },
                         label = { Text("${mins}m") }
                     )
                 }
                 OutlinedButton(
                     onClick = {
-                        if (conn.timerState == "stopped") {
-                            val sec = (customMinDraft.trim().toIntOrNull()?.coerceIn(1, 240) ?: 10) * 60
-                            onTimerCommand("timer_start", sec)
-                        } else {
-                            onTimerCommand("timer_pause", 0)
+                        directorRunWithCooldown(deckTapGate) {
+                            if (conn.timerState == "stopped") {
+                                val sec = (customMinDraft.trim().toIntOrNull()?.coerceIn(1, 240) ?: 10) * 60
+                                onTimerCommand("timer_start", sec)
+                            } else {
+                                onTimerCommand("timer_pause", 0)
+                            }
                         }
                     },
                     contentPadding = CompactExplorerButtonPadding
@@ -377,7 +388,7 @@ internal fun DirectorDeckAndTimerCard(
                     )
                 }
                 OutlinedButton(
-                    onClick = { onTimerCommand("timer_reset", conn.timerPresetSec) },
+                    onClick = { directorRunWithCooldown(deckTapGate) { onTimerCommand("timer_reset", conn.timerPresetSec) } },
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Reset")
@@ -398,8 +409,10 @@ internal fun DirectorDeckAndTimerCard(
                 )
                 OutlinedButton(
                     onClick = {
-                        val sec = (customMinDraft.trim().toIntOrNull()?.coerceIn(1, 240) ?: 10) * 60
-                        onTimerCommand("timer_start", sec)
+                        directorRunWithCooldown(deckTapGate) {
+                            val sec = (customMinDraft.trim().toIntOrNull()?.coerceIn(1, 240) ?: 10) * 60
+                            onTimerCommand("timer_start", sec)
+                        }
                     },
                     contentPadding = CompactExplorerButtonPadding
                 ) {
@@ -420,7 +433,7 @@ internal fun DirectorDeckAndTimerCard(
             ) {
                 listOf("Slow Down", "Check Chat", "2m Left").forEach { quick ->
                     OutlinedButton(
-                        onClick = { onSendNudge(quick) },
+                        onClick = { directorRunWithCooldown(deckTapGate) { onSendNudge(quick) } },
                         contentPadding = CompactExplorerButtonPadding
                     ) {
                         Text(quick, maxLines = 1, softWrap = false)
@@ -441,10 +454,12 @@ internal fun DirectorDeckAndTimerCard(
                 )
                 Button(
                     onClick = {
-                        val clean = nudgeDraft.trim()
-                        if (clean.isNotEmpty()) {
-                            onSendNudge(clean)
-                            nudgeDraft = ""
+                        directorRunWithCooldown(deckTapGate) {
+                            val clean = nudgeDraft.trim()
+                            if (clean.isNotEmpty()) {
+                                onSendNudge(clean)
+                                nudgeDraft = ""
+                            }
                         }
                     },
                     contentPadding = CompactExplorerButtonPadding

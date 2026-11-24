@@ -7,8 +7,34 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.view.KeyEvent
+import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.input.BubbleGestureAction
+
+class BackgroundMediaActionDebouncer(
+    private val debounceMs: Long = AppConstants.CLICKER_DEBOUNCE_MS,
+    private val clockMs: () -> Long = { System.currentTimeMillis() }
+) {
+    private var lastAction: BubbleGestureAction? = null
+    private var lastActionAtMs: Long = -debounceMs
+
+    @Synchronized
+    fun shouldDispatch(action: BubbleGestureAction): Boolean {
+        val now = clockMs()
+        if (action == lastAction && (now - lastActionAtMs) < debounceMs) {
+            return false
+        }
+        lastAction = action
+        lastActionAtMs = now
+        return true
+    }
+
+    @Synchronized
+    fun reset() {
+        lastAction = null
+        lastActionAtMs = -debounceMs
+    }
+}
 
 object BackgroundMediaKeyMapper {
     fun resolveKeyAction(keyCode: Int, config: RemoteConfig): BubbleGestureAction? {
@@ -36,11 +62,20 @@ object BackgroundMediaKeyMapper {
 
 class BackgroundMediaClickerController(
     context: Context,
+    debounceMs: Long = AppConstants.CLICKER_DEBOUNCE_MS,
+    clockMs: () -> Long = { System.currentTimeMillis() },
     private val onAction: (BubbleGestureAction) -> Unit
 ) {
     private val appContext = context.applicationContext
+    private val debouncer = BackgroundMediaActionDebouncer(debounceMs, clockMs)
     private var mediaSession: MediaSession? = null
     private var currentConfig: RemoteConfig = RemoteConfig()
+
+    private fun dispatchDebounced(action: BubbleGestureAction) {
+        if (debouncer.shouldDispatch(action)) {
+            onAction(action)
+        }
+    }
 
     fun update(config: RemoteConfig) {
         currentConfig = config
@@ -67,30 +102,30 @@ class BackgroundMediaClickerController(
                         mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
                     } ?: return super.onMediaButtonEvent(mediaButtonIntent)
 
-                    if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0) {
-                        val action = BackgroundMediaKeyMapper.resolveKeyAction(keyEvent.keyCode, currentConfig)
-                        if (action != null) {
-                            onAction(action)
-                            return true
+                    val action = BackgroundMediaKeyMapper.resolveKeyAction(keyEvent.keyCode, currentConfig)
+                    if (action != null) {
+                        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0) {
+                            dispatchDebounced(action)
                         }
+                        return true
                     }
                     return super.onMediaButtonEvent(mediaButtonIntent)
                 }
 
                 override fun onPlay() {
-                    BackgroundMediaKeyMapper.resolveKeyAction(KeyEvent.KEYCODE_MEDIA_PLAY, currentConfig)?.let(onAction)
+                    BackgroundMediaKeyMapper.resolveKeyAction(KeyEvent.KEYCODE_MEDIA_PLAY, currentConfig)?.let(::dispatchDebounced)
                 }
 
                 override fun onPause() {
-                    BackgroundMediaKeyMapper.resolveKeyAction(KeyEvent.KEYCODE_MEDIA_PAUSE, currentConfig)?.let(onAction)
+                    BackgroundMediaKeyMapper.resolveKeyAction(KeyEvent.KEYCODE_MEDIA_PAUSE, currentConfig)?.let(::dispatchDebounced)
                 }
 
                 override fun onSkipToNext() {
-                    BackgroundMediaKeyMapper.resolveKeyAction(KeyEvent.KEYCODE_MEDIA_NEXT, currentConfig)?.let(onAction)
+                    BackgroundMediaKeyMapper.resolveKeyAction(KeyEvent.KEYCODE_MEDIA_NEXT, currentConfig)?.let(::dispatchDebounced)
                 }
 
                 override fun onSkipToPrevious() {
-                    BackgroundMediaKeyMapper.resolveKeyAction(KeyEvent.KEYCODE_MEDIA_PREVIOUS, currentConfig)?.let(onAction)
+                    BackgroundMediaKeyMapper.resolveKeyAction(KeyEvent.KEYCODE_MEDIA_PREVIOUS, currentConfig)?.let(::dispatchDebounced)
                 }
             })
 
@@ -98,7 +133,7 @@ class BackgroundMediaClickerController(
                 override fun onAdjustVolume(direction: Int) {
                     val action = BackgroundMediaKeyMapper.resolveVolumeStepAction(direction, currentConfig)
                     if (action != null) {
-                        onAction(action)
+                        dispatchDebounced(action)
                     }
                 }
             }
@@ -122,6 +157,7 @@ class BackgroundMediaClickerController(
     }
 
     fun release() {
+        debouncer.reset()
         val session = mediaSession ?: return
         mediaSession = null
         try {

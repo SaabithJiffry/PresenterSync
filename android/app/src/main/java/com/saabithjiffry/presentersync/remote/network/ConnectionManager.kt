@@ -865,6 +865,19 @@ class ConnectionManager(
                     _uiState.value = _uiState.value.copy(scenes = scenes)
                 }
 
+                override fun onSceneTransitionError(requestId: String, code: Int, comment: String) {
+                    if (gen != generation.get()) return
+                    DiagnosticLogger.recordBreadcrumb(
+                        "OBS",
+                        "SceneTransitionError",
+                        "$requestId code=$code $comment".trim()
+                    )
+                    _events.tryEmit(
+                        RemoteEvent.ToastMessage("OBS scene transition failed (check Studio Mode / scenes)")
+                    )
+                    obsClient?.sendGetCurrentProgramScene()
+                }
+
                 override fun onMicError() {
                     if (gen != generation.get()) return
                     _uiState.value = _uiState.value.copy(connStatus = ConnStatus.MIC_ERROR)
@@ -1342,11 +1355,7 @@ class ConnectionManager(
             bridgeAction = { it.sendSwitchScene(sceneName, source) },
             obsAction = { obs ->
                 val clean = sceneName.trim()
-                val ok = obs.sendSetCurrentProgramScene(clean)
-                if (ok && clean.isNotEmpty()) {
-                    updateProgramSceneState(clean)
-                }
-                ok
+                obs.sendSetCurrentProgramScene(clean)
             },
             relayAction = { it.sendSwitchScene(sceneName) }
         )
@@ -1359,15 +1368,9 @@ class ConnectionManager(
                 if (cur.studioModeActive) {
                     obs.sendTriggerStudioModeTransition()
                 } else {
-                    val target = if (cur.previewScene.isNotBlank() && cur.previewScene != cur.activeScene) {
-                        cur.previewScene
-                    } else {
-                        cur.previousProgramScene
-                    }
+                    val target = resolveNonStudioTransitionTarget(cur)
                     if (target.isNotBlank()) {
-                        val ok = obs.sendSetCurrentProgramScene(target)
-                        if (ok) updateProgramSceneState(target)
-                        ok
+                        obs.sendSetCurrentProgramScene(target)
                     } else {
                         false
                     }
@@ -1783,5 +1786,24 @@ class ConnectionManager(
         const val HEALTH_PROBE_TIMEOUT_MS = 500L
         const val PONG_TIMEOUT_MS = 2500L
         const val WAKE_STALENESS_MS = 25_000L
+
+        internal fun resolveNonStudioTransitionTarget(state: ConnectionUiState): String {
+            val active = state.activeScene.trim()
+            val preview = state.previewScene.trim()
+            if (preview.isNotBlank() && preview != active) return preview
+            val prevProg = state.previousProgramScene.trim()
+            if (prevProg.isNotBlank() && prevProg != active) return prevProg
+            val scenes = state.scenes
+            if (scenes.size >= 2) {
+                val curIdx = scenes.indexOfFirst { it == active }
+                val nextIdx = if (curIdx >= 0) (curIdx + 1) % scenes.size else 0
+                var candidate = scenes[nextIdx].trim()
+                if (candidate == active) {
+                    candidate = scenes[(nextIdx + 1) % scenes.size].trim()
+                }
+                if (candidate.isNotBlank() && candidate != active) return candidate
+            }
+            return ""
+        }
     }
 }

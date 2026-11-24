@@ -232,4 +232,41 @@ class ObsWebSocketClientTest {
         )
         assertTrue(micErrLatch.await(1, TimeUnit.SECONDS))
     }
+
+    @Test
+    fun reportsSceneTransitionErrorWhenTransitionRequestFails() {
+        val sceneErrLatch = CountDownLatch(1)
+        val errInfo = AtomicReference<Triple<String, Int, String>>()
+        val client = ObsWebSocketClient(
+            httpClient = httpClient,
+            wsUrl = "ws://127.0.0.1:1/",
+            password = "",
+            targetMicName = "Mic/Aux",
+            callbacks = object : ObsSessionCallbacks {
+                override fun onIdentified() {}
+                override fun onAuthFailed() {}
+                override fun onMuteStateChanged(muted: Boolean) {}
+                override fun onMicError() {}
+                override fun onMicRecovered() {}
+                override fun onCloseRemoteSignal() {}
+                override fun onDisconnected(reason: String) {}
+                override fun onSceneTransitionError(requestId: String, code: Int, comment: String) {
+                    errInfo.set(Triple(requestId, code, comment))
+                    sceneErrLatch.countDown()
+                }
+            }
+        )
+
+        client.handleRawMessage(
+            null,
+            JSONObject().put("op", 7).put(
+                "d",
+                JSONObject()
+                    .put("requestId", "RemoteSceneTransition")
+                    .put("requestStatus", JSONObject().put("result", false).put("code", 507).put("comment", "Studio mode disabled"))
+            ).toString()
+        )
+        assertTrue(sceneErrLatch.await(1, TimeUnit.SECONDS))
+        assertEquals(Triple("RemoteSceneTransition", 507, "Studio mode disabled"), errInfo.get())
+    }
 }

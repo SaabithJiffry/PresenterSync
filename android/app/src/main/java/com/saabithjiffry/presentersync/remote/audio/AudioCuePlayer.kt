@@ -3,6 +3,8 @@ package com.saabithjiffry.presentersync.remote.audio
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.PI
 import kotlin.math.cos
@@ -22,78 +24,103 @@ data class ToneSegment(
  */
 class AudioCuePlayer {
     private val playSeq = AtomicInteger(0)
+    private val trackLock = Any()
+    private val waitLock = Object()
+    private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "PresenterSync-AudioCue").apply { isDaemon = true }
+    }
 
     @Volatile
     private var activeTrack: AudioTrack? = null
 
     fun playMuteCue(isMuted: Boolean) {
+        if (executor.isShutdown) return
         val seq = playSeq.incrementAndGet()
         val (first, second) = computeTones(isMuted)
-        val pcm = generateDualTonePcm(
-            sampleRate = SAMPLE_RATE,
-            f1Hz = first.frequencyHz,
-            d1Ms = first.durationMs,
-            f2Hz = second.frequencyHz,
-            d2Ms = second.durationMs
-        )
-        Thread({
-            if (playSeq.get() != seq) return@Thread
-            releaseActiveTrack()
-            var track: AudioTrack? = null
-            try {
-                val attrs = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
-                val format = AudioFormat.Builder()
-                    .setSampleRate(SAMPLE_RATE)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-                val byteCount = pcm.size * 2
-                track = AudioTrack.Builder()
-                    .setAudioAttributes(attrs)
-                    .setAudioFormat(format)
-                    .setTransferMode(AudioTrack.MODE_STATIC)
-                    .setBufferSizeInBytes(byteCount)
-                    .build()
-                if (track.state != AudioTrack.STATE_INITIALIZED || playSeq.get() != seq) {
-                    runCatching { track.release() }
-                    return@Thread
-                }
-                track.write(pcm, 0, pcm.size)
-                activeTrack = track
-                track.play()
-                val totalMs = first.durationMs + second.durationMs + 45L
-                Thread.sleep(totalMs)
-            } catch (_: Throwable) {
-            } finally {
-                if (track != null) {
-                    if (activeTrack === track) {
-                        activeTrack = null
+        val pcm = if (isMuted) mutedPcm else livePcm
+        synchronized(waitLock) {
+            waitLock.notifyAll()
+        }
+        releaseActiveTrack()
+
+        runCatching {
+            executor.execute {
+                if (playSeq.get() != seq) return@execute
+                var track: AudioTrack? = null
+                try {
+                    val attrs = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                    val format = AudioFormat.Builder()
+                        .setSampleRate(SAMPLE_RATE)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                    val byteCount = pcm.size * 2
+                    track = AudioTrack.Builder()
+                        .setAudioAttributes(attrs)
+                        .setAudioFormat(format)
+                        .setTransferMode(AudioTrack.MODE_STATIC)
+                        .setBufferSizeInBytes(byteCount)
+                        .build()
+                    if (track.state != AudioTrack.STATE_INITIALIZED || playSeq.get() != seq) {
+                        runCatching { track.release() }
+                        return@execute
                     }
-                    runCatching {
-                        if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                            track.stop()
+                    track.write(pcm, 0, pcm.size)
+                    synchronized(trackLock) {
+                        if (playSeq.get() != seq) {
+                            runCatching { track.release() }
+                            return@execute
                         }
-                        track.release()
+                        activeTrack = track
+                    }
+                    track.play()
+                    val totalMs = first.durationMs + second.durationMs + 45L
+                    val deadlineMs = System.currentTimeMillis() + totalMs
+                    synchronized(waitLock) {
+                        while (playSeq.get() == seq) {
+                            val remaining = deadlineMs - System.currentTimeMillis()
+                            if (remaining <= 0L) break
+                            waitLock.wait(remaining)
+                        }
+                    }
+                } catch (_: Throwable) {
+                } finally {
+                    if (track != null) {
+                        synchronized(trackLock) {
+                            if (activeTrack === track) {
+                                activeTrack = null
+                            }
+                        }
+                        runCatching {
+                            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                                track.stop()
+                            }
+                            track.release()
+                        }
                     }
                 }
             }
-        }, "PresenterSync-AudioCue").apply {
-            isDaemon = true
-            start()
         }
     }
 
     fun release() {
         playSeq.incrementAndGet()
+        synchronized(waitLock) {
+            waitLock.notifyAll()
+        }
         releaseActiveTrack()
+        runCatching { executor.shutdownNow() }
     }
 
     private fun releaseActiveTrack() {
-        val prev = activeTrack ?: return
-        activeTrack = null
+        val prev = synchronized(trackLock) {
+            val t = activeTrack
+            activeTrack = null
+            t
+        } ?: return
         runCatching {
             if (prev.playState == AudioTrack.PLAYSTATE_PLAYING) {
                 prev.stop()
@@ -104,6 +131,28 @@ class AudioCuePlayer {
 
     companion object {
         const val SAMPLE_RATE = 44100
+
+        private val mutedPcm: ShortArray by lazy {
+            val (first, second) = computeTones(isMuted = true)
+            generateDualTonePcm(
+                sampleRate = SAMPLE_RATE,
+                f1Hz = first.frequencyHz,
+                d1Ms = first.durationMs,
+                f2Hz = second.frequencyHz,
+                d2Ms = second.durationMs
+            )
+        }
+
+        private val livePcm: ShortArray by lazy {
+            val (first, second) = computeTones(isMuted = false)
+            generateDualTonePcm(
+                sampleRate = SAMPLE_RATE,
+                f1Hz = first.frequencyHz,
+                d1Ms = first.durationMs,
+                f2Hz = second.frequencyHz,
+                d2Ms = second.durationMs
+            )
+        }
 
         fun computeTones(isMuted: Boolean): Pair<ToneSegment, ToneSegment> {
             return if (isMuted) {

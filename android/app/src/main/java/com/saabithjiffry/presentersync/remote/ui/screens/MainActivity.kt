@@ -55,6 +55,18 @@ class MainActivity : ComponentActivity() {
         handleAutoStartIntent(intent)
     }
 
+    override fun onPause() {
+        super.onPause()
+        focusedKeyController.resetHoldState()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) {
+            focusedKeyController.resetHoldState()
+        }
+    }
+
     private fun handleAutoStartIntent(intent: Intent?) {
         if (intent?.getBooleanExtra(EXTRA_AUTO_START_HUD, false) == true) {
             intent.removeExtra(EXTRA_AUTO_START_HUD)

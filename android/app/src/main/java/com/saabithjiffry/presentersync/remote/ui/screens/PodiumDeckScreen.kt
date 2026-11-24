@@ -3,6 +3,7 @@ package com.saabithjiffry.presentersync.remote.ui.screens
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -34,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,6 +57,13 @@ private val PodiumLiveEmerald = Color(0xFF107C10)
 private val PodiumMutedCrimson = Color(0xFFC42B1C)
 private val PodiumAmberAlert = Color(0xFFF59E0B)
 
+private inline fun podiumRunWithCooldown(lastTapMs: LongArray, cooldownMs: Long, block: () -> Unit) {
+    val now = SystemClock.elapsedRealtime()
+    if (now - lastTapMs[0] < cooldownMs) return
+    lastTapMs[0] = now
+    block()
+}
+
 private fun Context.findHostActivity(): Activity? {
     var ctx: Context = this
     while (ctx is ContextWrapper) {
@@ -71,6 +80,8 @@ fun PodiumDeckScreen(
 ) {
     val conn by app.connectionManager.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val muteTapGate = remember { LongArray(1) }
+    val deckTapGate = remember { LongArray(1) }
 
     BackHandler(onBack = onExitPodium)
 
@@ -100,11 +111,11 @@ fun PodiumDeckScreen(
         ) {
             PodiumMuteTouchSurface(
                 conn = conn,
-                onToggleMute = { app.connectionManager.toggleMuteFromHud() }
+                onToggleMute = { podiumRunWithCooldown(muteTapGate, 80L) { app.connectionManager.toggleMuteFromHud() } }
             )
 
             Button(
-                onClick = { app.connectionManager.sendTransitionScene("podium") },
+                onClick = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendTransitionScene("podium") } },
                 enabled = conn.connected,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -125,20 +136,20 @@ fun PodiumDeckScreen(
 
             PodiumSlidesAndNotesCard(
                 conn = conn,
-                onPrevSlide = { app.connectionManager.sendPptPrev("podium") },
-                onNextSlide = { app.connectionManager.sendPptNext("podium") },
-                onStartSlideshow = { app.connectionManager.sendStartSlideshow("podium") }
+                onPrevSlide = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendPptPrev("podium") } },
+                onNextSlide = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendPptNext("podium") } },
+                onStartSlideshow = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendStartSlideshow("podium") } }
             )
 
             PodiumTimerAndStandbyCard(
                 conn = conn,
-                onToggleStandby = { app.connectionManager.sendToggleStandby("podium") },
-                onTimerCommand = { action, sec -> app.connectionManager.sendTimerCommand(action, sec, "podium") }
+                onToggleStandby = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendToggleStandby("podium") } },
+                onTimerCommand = { action, sec -> podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendTimerCommand(action, sec, "podium") } }
             )
 
             PodiumQuickNudgeCard(
                 conn = conn,
-                onSendNudge = { nudge -> app.connectionManager.sendStageNudge(nudge) }
+                onSendNudge = { nudge -> podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendStageNudge(nudge) } }
             )
         }
     }

@@ -189,4 +189,47 @@ class BubbleGestureRecognizerTest {
         recognizer.onUp()
         assertTrue(actions.isEmpty())
     }
+
+    @Test
+    fun fastSingleTapBypassFiresImmediatelyAndLateLiftStillDispatchesLongPress() {
+        var now = 4000L
+        val scheduler = FakeGestureScheduler({ now }, { now = it })
+        val actions = mutableListOf<Pair<String, BubbleGestureAction>>()
+        val recognizer = BubbleGestureRecognizer(
+            scheduler = scheduler,
+            clockMs = { now },
+            listener = object : BubbleGestureRecognizer.Listener {
+                override fun onActionTriggered(gestureLabel: String, action: BubbleGestureAction) {
+                    actions.add(gestureLabel to action)
+                }
+
+                override fun onHoldStageChanged(stage: BubbleHoldStage, progressFraction: Float) {}
+            }
+        )
+
+        val bypassCfg = BubbleGestureConfig(
+            enabled = true,
+            singleTapAction = BubbleGestureAction.TOGGLE_MUTE,
+            doubleTapAction = BubbleGestureAction.OPEN_QUICK_MENU,
+            fastSingleTapBypass = true
+        )
+        recognizer.onDown(bypassCfg)
+        scheduler.advanceBy(45L)
+        recognizer.onUp()
+        assertEquals(listOf("Single Tap" to BubbleGestureAction.TOGGLE_MUTE), actions)
+        actions.clear()
+
+        // Simulate main looper starvation where longPress scheduler didn't run before UP at 650ms
+        val unscheduledHoldCfg = BubbleGestureConfig(
+            enabled = true,
+            singleTapAction = BubbleGestureAction.NONE,
+            doubleTapAction = BubbleGestureAction.NONE,
+            longPressAction = BubbleGestureAction.TOGGLE_MUTE,
+            longPressDurationMs = 600L
+        )
+        recognizer.onDown(unscheduledHoldCfg)
+        now += 650L
+        recognizer.onUp()
+        assertEquals(listOf("Long Press" to BubbleGestureAction.TOGGLE_MUTE), actions)
+    }
 }
