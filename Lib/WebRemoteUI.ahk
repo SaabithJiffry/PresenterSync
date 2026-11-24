@@ -110,7 +110,7 @@ BuildWebRemoteHtml(appVersion := "", activePort := 4456) {
         . '</div><button id="aboutCloseBtn" type="button" class="sm" aria-label="Close About">Close</button></div>'
         . '<div style="font-size:12.5px;line-height:1.5;color:#cbd5e1">'
         . '<b>Created by Saabith Jiffry</b><br>'
-        . 'Zero-install browser companion connected directly to your PresenterSync Primary Host Bridge. Controls microphone mute state, OBS scene transitions, PowerPoint navigation with live speaker notes, presenter countdown timer, and instant stage nudges.'
+        . 'Zero-install browser companion (incl. 1.25x scale) connected to your PresenterSync Primary Host Bridge (:4456). Supports tap-to-mute, OBS scene transitions, PowerPoint navigation with live speaker notes, countdown timer, stage nudges, Clean Disconnect, auto-reconnect + pong watchdog, and Direct OBS :4455 fallback with automatic :4456 bridge re-promotion.'
         . '</div>'
         . '<div class="modalLinks">'
         . '<a class="linkBtn" href="https://github.com/SaabithJiffry/PresenterSync" target="_blank" rel="noopener noreferrer">GitHub Repository</a>'

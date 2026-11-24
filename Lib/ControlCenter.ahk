@@ -605,12 +605,12 @@ ShowAboutWindow(cfg := "", state := "", *) {
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
     primCapsText := "Full presenter host suite engineered for live lecturing, streaming & hybrid classrooms.`r`n`r`n"
         . "CORE PRIMARY HOST CAPABILITIES:`r`n"
-        . Chr(0x2022) " 4-Tier Live HUD Stack & Secondary Mic Pill: Mic (w/ CoreAudio VU bar), Rec, Conf Chat, Studio Mode, Scene, Stream & VCam pills, plus toggleable primary-only Secondary Mic Pill (0.25x-5.0x scale).`r`n"
+        . Chr(0x2022) " 4-Tier Live HUD Stack & Secondary Mic Pill: Mic (VU bar + perimeter hold), Rec (click Start/Pause/Resume, hold Stop + OBS timer sync), Studio (hold bar), calm Scene marquee (+ right-click Live switch), read-only Stream & VCam pills, plus Secondary Mic Pill (incl. 1.25x scale).`r`n"
         . Chr(0x2022) " Director Deck, Standby BRB, Countdown Timer & Stage Nudge: Multi-device OBS scenes, chapter split/pause, synchronized timer, silent floating alerts & Push-to-Talk mode.`r`n"
         . Chr(0x2022) " Session Timeline & Chapter Export: Bounded 2,000-entry timeline exporting to Video Editor CSV chapters, Markdown tables & YouTube timestamps.`r`n"
-        . Chr(0x2022) " 3 Audio Routing Modes & Clicker Control: OBS VB-Cable, Direct Conf (Zoom/Teams/Meet) & Dual Sync + Cough Hold, Mutual Exclusion Shield & PowerPoint forwarding.`r`n"
-        . Chr(0x2022) " Remote Companion Host (UDP :4457, Bridge :4456 & WAN Relay): Zero-config LAN discovery, mDNS failover & Internet Pairing across Windows & Android Smart Board/Phone clients.`r`n"
-        . Chr(0x2022) " Custom Hex Colors, Control Center, Guided Setup Wizard, Named App-Trigger Profiles & SHA-256 GitHub Self-Updater."
+        . Chr(0x2022) " 3 Audio Routing Modes & Clicker Control: OBS VB-Cable, Direct Conf (Zoom/Teams/Meet) & Dual Sync, 1-click Capture Keystroke buttons, Cough Hold, Mutual Exclusion Shield & PPT forwarding.`r`n"
+        . Chr(0x2022) " Remote Companion Host (Bridge :4456, UDP :4457 & WAN Relay): Zero-config LAN/mDNS/QR pairing for Windows, Android & Zero-Install Browser Web Remote (favicon, About, Clean Disconnect, Direct OBS :4455 fallback).`r`n"
+        . Chr(0x2022) " Reorganized Tray Menus, Custom Hex Colors, Control Center, Guided Setup Wizard & SHA-256 GitHub Self-Updater."
     AddHelpGuideEdit(aboutGui, 20, 214, 430, 224, primCapsText)
 
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)

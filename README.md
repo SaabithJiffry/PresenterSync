@@ -12,11 +12,11 @@
 
 ### 1. Adaptive Floating Mic, 4-Tier HUD & Privacy Capture Exclusion
 * **Adaptive 4-Tier Host Stack (`PresenterSync.exe`):**
-  * **Tier 1:** High-contrast `LIVE` / `MUTED` Mic pill with live **CoreAudio Voice Activity VU Meter**, **Speaking-While-Muted Alert**, perimeter hold toggle (`MicGui`), `1.25x` crisp scale option, and optional **Timer / `BRB` / `REC` Pill Mini-Badges** (`ShowPillMiniBadges`).
-  * **Tier 2:** Recording status (`REC` / `PAUSED` / `NOT REC`) with **True OBS Recording Elapsed Timer Sync**, short-click Pause/Unpause & perimeter hold Stop (`RecGui`), plus universal UIA **Unread Chat Counter** (`CHAT` / `X NEW`) for Zoom, Microsoft Teams, and Google Meet (with Meet background-tab alert).
-  * **Tier 3:** OBS **Studio Mode** toggle with perimeter hold bar (`StudioGui`) + calm, seamless scrolling **Active Program Scene** marquee pill (short-click opens live Scene Switcher menu).
-  * **Tier 4:** Optional **OBS Live Stream Health** read-only pill (`OFFLINE` / `LIVE` / `RECONNECT` / `DROP WARN`) + **Virtual Camera (`VCAM`)** controls.
-* **Reorganized Tray Menus & Capture Keystroke Buttons:** Streamlined Windows System Tray hierarchy and 1-click **Capture Keystroke** buttons in Control Center / Settings for zero-guesswork hotkey binding.
+  * **Tier 1:** High-contrast `LIVE` / `MUTED` Mic pill with live **CoreAudio Voice Activity VU Meter**, **Speaking-While-Muted Alert**, short-click OR animated perimeter hold (`600ms`) toggle (`MicGui` on Windows Primary & Windows Remote), crisp **`1.25x` indicator scale** option across all 4 programs, and optional **Timer / `BRB` / `REC` Pill Mini-Badges** (`ShowPillMiniBadges`).
+  * **Tier 2:** Recording status (`REC` / `PAUSED` / `NOT REC`) with **True OBS Recording Elapsed Timer Sync** (`GetRecordStatus` monotonic anchor), short-click Start / Pause / Resume + long-press (`900ms`) Stop with animated perimeter countdown bar (`RecGui`), plus universal UIA **Unread Chat Counter** (`CHAT` / `X NEW`) for Zoom, Microsoft Teams, and Google Meet (with Meet background-tab alert).
+  * **Tier 3:** OBS **Studio Mode** toggle with animated perimeter hold bar (`StudioGui`, `600ms`) + calm, seamless zero-jump scrolling **Active Program Scene** marquee pill (`SceneGui`: left-click triggers native Preview ↔ Program scene transition; right-click opens the floating Scene Switcher popup for direct Live Program switching).
+  * **Tier 4:** Strictly read-only **OBS Live Stream Health** pill (`OFFLINE` / `LIVE` / `RECONNECT` / `DROP WARN` — clicking pops a status tooltip only and never accidentally starts or stops a live broadcast) + **Virtual Camera (`VCAM`)** controls.
+* **Reorganized Tray Menus & Capture Keystroke Buttons:** Streamlined Windows System Tray hierarchies across both Primary and Windows Remote, plus 1-click **Capture Keystroke** buttons beside all **43** shortcut inputs in Control Center and settings dialogs (while preserving manual text entry).
 * **Toggleable Secondary Independent Mic Pill (Primary App Only):** Toggle **Show Secondary Mic Pill (Mic-Only)** from the System Tray or Control Center Tab 4 (`HUD & Theme`). Renders **only** the Mic pill layer (`LIVE`/`MUTED`, voice meter, custom colors, breathing pulse), drags and snaps independently into `[SecondaryPosition]`, syncs live mute state with the Primary stack, and stays strictly off Remote companion builds.
 * **Screen-Share Capture Exclusion:** Toggleable `WDA_EXCLUDEFROMCAPTURE` on Windows (`ExcludeFromCapture` / `ExcludeSecondaryFromCapture`) and `FLAG_SECURE` on Android (`hideFromScreenCapture`) keeps floating HUDs and Stage Nudges invisible to OBS Display/Window Capture and screen shares.
 * **Interactive & Non-Intrusive:** Short-click any pill for instant action; left-drag for `14px` magnetic edge/window snapping; optional **Auto-Dodge on Hover**, **Click-Through Mode** (hold `Alt` to drag), and **Custom `#RRGGBB` Hex Theme Colors** with automatic WCAG contrast.
@@ -40,7 +40,7 @@
 
 ### 4. Multi-Remote Companions (`Windows`, `Android`, `Zero-Install Browser Web Remote`) & AES-256-GCM WAN Relay
 * **Simultaneous Multi-Remote Host Bridge (`TCP :4456`, fallback `4458..4465`) & Classroom UDP Discovery (`:4457`):** Pair multiple Android devices, Windows Remotes (`-Instance <name>`), and Web Remotes simultaneously, with Standalone Cutoff mode (`EnableRemoteConnections=false` closes listening ports cleanly) and Firewall/UIPI probes.
-* **Zero-Install Browser Web Remote (`http://<host-ip>:4456/`):** Self-contained dark-themed HTML5/CSS3/ES6 companion (`Lib\WebRemoteUI.ahk`) for iOS, iPadOS, macOS, Linux, and Chromebooks with Session Code auth, `localStorage` token persistence, tap-to-mute support, branding & About drawer, Clean Disconnect, auto-reconnect, and Direct OBS `:4455` fallback.
+* **Zero-Install Browser Web Remote (`http://<host-ip>:4456/`):** Self-contained dark-themed HTML5/CSS3/ES6 companion (`Lib\WebRemoteUI.ahk`) for iOS, iPadOS, macOS, Linux, and Chromebooks with Session Code auth, `localStorage` token persistence, tap-to-mute & deck fixes, **`1.25x` scale**, PresenterSync `/favicon.ico` + SVG branding, dark-themed About modal, Clean Disconnect + host unregistration, exponential-backoff auto-reconnect + `3s` pong watchdog resync, and automatic **Direct OBS `:4455` fallback** with `8s` `/health` `:4456` auto-repromotion (matching Android failover parity).
 * **Direct OBS `:4455` Failover & Automatic `:4456` Bridge Re-Promotion:** If Host Bridge drops (`1,800ms` timeout), Remotes fail over automatically to Direct OBS `:4455` (with local `BRB` & Timer fallback) and probe `:4456` every `8,000ms` to re-promote seamlessly when the Host returns.
 * **Authenticated AES-256-GCM WAN Relay:** Cross-platform `bcrypt.dll` (`Lib\Crypto.ahk`) <-> Kotlin `RelayCrypto.kt` (`AES/GCM/NoPadding`) with 96-bit IV, 128-bit auth tag, replay protection, custom self-hosted Relay Base URL (`RelayBaseUrl`), and full WAN telemetry parity.
 * **Windows Remote Ergonomics (`PresenterSync_Remote.exe`):** `WM_POWERBROADCAST` wake & `WM_DISPLAYCHANGE` hotplug recovery, dual `:4456/health` + `:4455` probe, Touch-Friendly Quick Deck (`ShowRemoteTouchDeckGUI`), Saved Host Profiles, `"Paste Pairing URI"`, Slide & OBS Transition hotkeys, `LockHudPosition`, 10s idle auto-dim, `savedXRatio`/`savedYRatio` screen-ratio persistence, Error Log viewer, and pill mini-badges.
@@ -48,7 +48,7 @@
   * **Smart Board High-DPI Canvas (`MicPillCanvasView` / `MicPillRenderMetrics`):** `0.5x–5.0x` sub-linear optical border scaling, tonal gradient sheen, knockout mute slash, auto-fit label, and timer/`BRB`/`REC`/amber alert mini-badges.
   * **Full-Screen OLED Podium Deck (`PodiumDeckScreen`):** Pure `#000000` lectern mode with `FLAG_KEEP_SCREEN_ON`, oversized Mute/Unmute surface, OBS Transition, Slides (`Prev`/`Next`/`F5` + Speaker Notes), Timer, `BRB`, and Stage Nudge chips.
   * **2x1 Home Screen App Widget (`PresenterSyncWidgetProvider`), Silent Waveform Haptics (`HapticAlertPlayer`), & Background BT Media Clicker (`BackgroundMediaClickerController`):** Native `MediaSession` + `VolumeProvider` clicker capture, Battery Optimization check, Share Pairing QR dialog, Error Log viewer, and dual `:4456`/`:4455` probe.
-* **1-Tap In-App Self-Updaters & Sector Z Diagnostic Vault:** GitHub Releases + `SHA256SUMS.txt` verification on Windows & Android, plus a confidential RAM-locked diagnostic subsystem waiting behind Sector Z clearance.
+* **1-Tap In-App Self-Updaters:** GitHub Releases + `SHA256SUMS.txt` verification on Windows & Android.
 
 ---
 
@@ -93,7 +93,6 @@ Allow Private Network inbound **TCP `4455`** (if direct OBS), **TCP `4456`** (Ho
 | **Primary Host** | `Ctrl + Shift + F12` | Show / Hide Primary HUD Stack |
 | **Primary Host** | `Ctrl + Alt + Shift + F12` | Suspend / Resume All Hotkeys |
 | **Primary Host** | `Alt + Shift + F12` | Exit PresenterSync |
-| **Primary + Remote** | `Ctrl + Alt + Shift + Z` | Sector Z Diagnostic Terminal *(0 Credits on boot)* |
 | **Windows Remote** | `Ctrl + F12` | Toggle Pointer Mute Control ON/OFF (HUD stays synced) |
 | **Windows Remote** | `Alt + Shift + F12` | Exit PresenterSync Remote |
 
@@ -118,14 +117,13 @@ PresenterSync/
 │   ├── WebRemoteUI.ahk             # Zero-install self-contained HTML5/CSS3/ES6 Web Remote served on :4456
 │   ├── RemoteBridgeClient.ahk      # Windows Remote LAN UDP discovery, DHCP IP-shift follower, ratio & failover
 │   ├── OBS_Network.ahk             # OBS WebSocket v5, Transition, Watchdogs, Director Deck, AES-256-GCM WAN Relay
-│   ├── HudSnakeGame.ahk            # Playable translucent desktop Snake engine (keyboard + XInput/D-Pad)
 │   ├── UIA.ahk / WebSocket.ahk / Crypto.ahk / Gdip.ahk / QrCode.ahk
 ├── android/                        # Kotlin + Jetpack Compose Remote Companion (API 26..34+)
 │   └── app/src/main/.../remote/
 │       ├── ui/screens/             # MainActivity, MainShellChrome, StatusAndHudScreen, PodiumDeckScreen,
 │       │                           # HudAppearanceScreen, PointerSettingsScreen, HelpCenterScreen, ConnectionDialogScreen
 │       ├── ui/overlay/             # MicPillCanvasView, MicPillRenderMetrics, FloatingMicOverlayManager,
-│       │                           # FloatingToastBannerManager, HudSnakeOverlayView, HudSnakeEngine
+│       │                           # FloatingToastBannerManager
 │       ├── network/                # ConnectionManager, HostBridgeClient, ObsWebSocketClient, RelayClient,
 │       │                           # RelayCrypto, UdpHostDiscoveryClient, DualEndpointProbe, AppUpdater
 │       ├── config/                 # RemoteConfig, PairingUriBuilder, QuickNudgePresetHelper, DiagnosticLogger
@@ -133,8 +131,8 @@ PresenterSync/
 │       ├── service/                # FloatingHudForegroundService, HapticAlertPlayer, BackgroundMediaClickerController,
 │       │                           # QuickToggleTileService
 │       └── widget/                 # PresenterSyncWidgetProvider (2x1 Home Screen App Widget)
-├── tests/                          # 32 AutoHotkey v2 suites (incl. 353-check master suite) +
-│                                   # 9 Python live multi-process E2E & cross-language AES-GCM suites
+├── tests/                          # 41 AutoHotkey v2 suites (incl. 353-check master suite) +
+│                                   # 12 Python live multi-process E2E & cross-language AES-GCM suites
 └── dist/                           # Portable PresenterSync.exe, PresenterSync_Remote.exe, PresenterSync_Remote.apk
 ```
 
@@ -144,7 +142,7 @@ PresenterSync/
 
 * **Windows (AutoHotkey v2):** `41` automated suites including `tests\test_master_suite.ahk` (`353` checks covering HUD rendering, OBS WS v5, UIA, Bridge, Watchdogs, Timeline, and Diagnostics) plus dedicated `v7.0.1`–`v8.8.0` feature & static audit suites.
 * **Cross-Process & Cross-Language E2E (Python):** `12` live multi-process suites (`test_host_bridge.py`, `test_multi_remote_e2e.py`, `test_real_handlers_e2e.py`, `test_udp_discovery_e2e.py`, `test_v762_cross_lang_crypto.py`, `test_windows_self_updater_e2e.py`, and `test_e2e_01`..`06`) verifying Web Remote, Crash Failover & Re-Promotion, Sleep/Wake & Rapid Transition Stress, Standalone Cutoff, PTT Mutual Exclusion, CLI `WM_COPYDATA`, Watchdogs, and AES-256-GCM parity.
-* **Android (JVM & Lint):** Full `testDebugUnitTest` + `lintDebug` (`0` errors).
+* **Android (JVM & Lint):** `147` JVM unit tests (`testDebugUnitTest`) + `lintDebug` (`0` errors).
 
 ---
 

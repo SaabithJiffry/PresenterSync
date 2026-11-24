@@ -2833,12 +2833,12 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
     remCapsText := "Streamlined companion engineered strictly for Smart Boards & secondary PCs.`r`n`r`n"
         . "WHAT REMOTE INCLUDES:`r`n"
-        . "• Dedicated 1-Tier LIVE / MUTED Mic HUD: Syncs via OBS WebSocket v5 (Port 4455) OR Mode 2 Host Relay Bridge (Conferencing-Only setup).`r`n"
-        . "• Host Deck Control (Bridge): Remote Scene switching, Standby / `"BRB`" Curtain, Host Recording controls, Countdown Timer & Stage Nudge.`r`n"
+        . "• Dedicated 1-Tier LIVE / MUTED Mic HUD: Short-click or perimeter hold toggle, synced OBS recording timer, via OBS WebSocket v5 (Port 4455) OR Mode 2 Host Bridge.`r`n"
+        . "• Host Deck Control & Failover: Remote Scene switching, Standby / `"BRB`" curtain, Touch Quick Deck, Countdown Timer, Stage Nudge, & Direct OBS :4455 failover w/ :4456 auto-repromotion.`r`n"
         . "• Zero-Config LAN & WAN Discovery: Scan Classroom LAN (UDP :4457 + mDNS failover) or Internet Pairing Code PS-XXXX-XXXX with safe heartbeat.`r`n"
-        . "• Clicker & Mic Modes: Assign mute button, Cough Hold (Push-to-Mute >= 350ms), Push-to-Talk (hold to unmute), Clicker Tester & Ctrl+F12.`r`n"
-        . "• Large-Board Visuals & Themes: 0.25x-5.0x scale, Dark/Light/System theme, 5 palettes + Custom Hex colors, monochrome icons, pulse & toast.`r`n"
-        . "• Smart Ergonomics & System: 14px Magnetic Snap, Auto-Dodge hover ghost, Click-Through (hold Alt), Startup (OFF by default) & SHA-256 Updates.`r`n`r`n"
+        . "• Clicker & Mic Modes: Assign mute button (1-click Capture Keystroke), Cough Hold (>= 350ms), Push-to-Talk (hold to unmute), Clicker Tester & Ctrl+F12.`r`n"
+        . "• Large-Board Visuals & Themes: 0.25x-5.0x (incl. 1.25x) scale, Dark/Light/System theme, 5 palettes + Custom Hex colors, monochrome icons, pulse & toast.`r`n"
+        . "• Smart Ergonomics & System: Reorganized Tray menu, 14px Magnetic Snap, Auto-Dodge, Click-Through (hold Alt), Startup (OFF by default) & SHA-256 Updates.`r`n`r`n"
         . "STREAMLINED BY DESIGN (HOST-ONLY MODULES OMITTED):`r`n"
         . "• Omits multi-tier overlay panels, secondary desktop pills, CoreAudio voice bar, UIA meeting monitoring, Control Center, Setup Wizard, and PowerPoint forwarding."
     AddHelpGuideEdit(aboutGui, 20, 214, 430, 214, remCapsText)

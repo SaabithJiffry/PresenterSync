@@ -221,7 +221,7 @@ fun AboutUpdateDialog(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Strict 1-Tier Android Smart Board & Phone Mic Companion featuring Classroom UDP Discovery (:4457), LAN ↔ WAN failover, Wireless OBS Director Deck, Synchronized Presenter Countdown Timer, Silent Stage Nudge, Push-to-Talk Mode, Custom Hex Themes, Guided Onboarding Wizard, CameraX + ZXing QR pairing, and SHA-256 self-updater.",
+                                text = "Strict 1-Tier Android Smart Board & Phone Mic Companion (0.5x–5.0x scale incl. 1.25x) featuring Full-Screen OLED Podium Deck, 2×1 Home Widget, drift-free OBS recording timer sync, Classroom UDP Discovery (:4457), Direct OBS :4455 failover with :4456 auto-repromotion, LAN ↔ WAN AES-256-GCM Relay, Wireless Director Deck, Presenter Countdown Timer, Silent Stage Nudge, Push-to-Talk Mode, Custom Hex Themes, CameraX + ZXing QR pairing, and SHA-256 self-updater.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
