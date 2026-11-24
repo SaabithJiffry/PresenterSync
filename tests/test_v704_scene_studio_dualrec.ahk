@@ -54,6 +54,9 @@ cfgReloaded := Config(tmpIni)
 AssertTrue(cfgReloaded.EnableWS == true && cfgReloaded.EnableZoom == true, "Config.Load preserves simultaneous EnableWS + EnableZoom")
 
 st := OverlayState(cfg)
+cfg.EnableRemoteConnections := false
+st.obsTimerFn := ""
+st.zoomTimerFn := ""
 okCC := ApplyControlCenterSettings(cfg, st, { EnableWS: true, EnableZoom: true, ShowText: true }, false)
 AssertTrue(okCC == true && cfg.EnableWS == true && cfg.EnableZoom == true, "ApplyControlCenterSettings allows simultaneous EnableWS + EnableZoom")
 

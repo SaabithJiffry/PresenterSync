@@ -50,6 +50,7 @@ if ($ArgumentList.Count -gt 0) { $params.ArgumentList = $ArgumentList }
 if ($WorkingDirectory -ne "") { $params.WorkingDirectory = $WorkingDirectory }
 
 $proc = Start-Process @params
+$null = $proc.Handle
 $timeoutMs = $TimeoutSeconds * 1000
 
 if (-not $proc.WaitForExit($timeoutMs)) {

@@ -727,8 +727,8 @@ class GameMissileDefense {
         for _, pp in this._popups
             Gdip.DrawText(g, pp.text, "Segoe UI", 9.0, 1, pp.col, pp.x - 56.0, pp.y - 12.0, 112.0, 24.0, 1, 1, 0, false)
 
-        isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
-        micMuted := (IsObject(this._state) && this._state.HasOwnProp("isMuted")) ? (this._state.isMuted ? 1 : 0) : -1
+        isDark := HudArcadeBase.ResolveDarkMode(this._cfg)
+        micMuted := HudArcadeBase.ResolveMicMuted(this._state)
         alive := this._CountAlivePylons()
         comboStr := (this._combo > 1) ? ("x" this._combo) : "x1"
         stats := Format("SCORE {}  •  BEST {}  •  WAVE {}  •  PYLONS {}/4  •  COMBO {}", this._score, this._highScore, this._wave, alive, comboStr)

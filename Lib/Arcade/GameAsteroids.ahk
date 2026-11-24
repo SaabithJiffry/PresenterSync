@@ -1179,23 +1179,27 @@ class GameAsteroids {
         for _, pp in this._popups
             Gdip.DrawText(g, pp.text, "Segoe UI", 9.0, 1, pp.col, pp.x - 36.0, pp.y - 12.0, 72.0, 24.0, 1, 1, 0, false)
 
-        isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
-        micMuted := (IsObject(this._state) && this._state.HasOwnProp("isMuted")) ? (this._state.isMuted ? 1 : 0) : -1
+        isDark := HudArcadeBase.ResolveDarkMode(this._cfg)
+        micMuted := HudArcadeBase.ResolveMicMuted(this._state)
         if (this._blasterMode = "alien") {
             wpnTxt := (this._weaponTier >= 5) ? "WPN T5 BEAM" : ("WPN T" this._weaponTier)
-            stats := Format("SCORE {}  •  BEST {}  •  WAVE {}  •  LIVES {}  •  {}", this._score, this._highScore, this._wave, this._lives, wpnTxt)
-            hints := "[M] Mode: Alien • ARROWS/WASD/MOUSE 2D MOVE • CLICK/SPACE FIRE • P PAUSE • ESC EXIT"
+            stats := Format("SCORE {}  •  BEST {}  •  WAVE {}  •  LIVES {}  •  {}  •  MODE: ALIEN [M]", this._score, this._highScore, this._wave, this._lives, wpnTxt)
+            hints := "M → Asteroid Blaster  •  Arrows / WASD / Mouse: 2D Move  •  Space / Click: Fire  •  P: Pause  •  Esc: Exit"
             HudArcadeBase.DrawScoreboardPill(g, W, "ALIEN BLASTER", stats, hints, isDark, micMuted)
         } else {
-            stats := Format("SCORE {}  •  BEST {}  •  WAVE {}  •  LIVES {}", this._score, this._highScore, this._wave, this._lives)
-            hints := "[M] Mode: Asteroids • MOUSE/ARROWS STEER • B BUMPER (" (this._micBumper ? "ON" : "OFF") ") • P PAUSE • ESC EXIT"
+            stats := Format("SCORE {}  •  BEST {}  •  WAVE {}  •  LIVES {}  •  MODE: ASTEROIDS [M]", this._score, this._highScore, this._wave, this._lives)
+            hints := "M → Alien Blaster  •  Mouse / Arrows: Steer  •  Space / Click: Fire  •  B: Bumper (" (this._micBumper ? "ON" : "OFF") ")  •  P: Pause  •  Esc: Exit"
             HudArcadeBase.DrawScoreboardPill(g, W, "ASTEROID BLASTER", stats, hints, isDark, micMuted)
         }
 
-        if (this.Phase = "paused")
-            HudArcadeBase.DrawOverlayCard(g, W, H, "PAUSED", "Score: " this._score "  |  Wave: " this._wave, "Press P to Resume or Esc to Exit", 0xFF38BDF8, isDark)
-        else if (this.Phase = "gameover")
-            HudArcadeBase.DrawOverlayCard(g, W, H, "GAME OVER", "Final Score: " this._score "  (Best: " this._highScore ")", "Press R or Left-Click to Retry  •  Esc to Exit", 0xFFEF4444, isDark)
+        if (this.Phase = "paused") {
+            curLbl := (this._blasterMode = "alien") ? "Alien Blaster" : "Asteroid Blaster"
+            nextLbl := (this._blasterMode = "alien") ? "Asteroid Blaster" : "Alien Blaster"
+            HudArcadeBase.DrawOverlayCard(g, W, H, "PAUSED", "Score: " this._score "  |  Wave: " this._wave "  |  Mode: " curLbl, "Press P: Resume  •  M → " nextLbl "  •  Esc: Exit", 0xFF38BDF8, isDark)
+        } else if (this.Phase = "gameover") {
+            nextLbl := (this._blasterMode = "alien") ? "Asteroid Blaster" : "Alien Blaster"
+            HudArcadeBase.DrawOverlayCard(g, W, H, "GAME OVER", "Final Score: " this._score "  (Best: " this._highScore ")", "Press R or Left-Click to Retry  •  M → " nextLbl "  •  Esc to Exit", 0xFFEF4444, isDark)
+        }
 
         alpha := (IsObject(this._cfg) && this._cfg.HasOwnProp("OpacityLevel")) ? this._cfg.OpacityLevel : 235
         HudArcadeBase.PresentFrame(this._surf, alpha)

@@ -20,7 +20,8 @@ IsAnyMicHudVisible(cfg) {
 }
 
 ComputeSecondaryMicLayout(cfg, state) {
-    w := (IsObject(state) && state.HasOwnProp("baseWidth") && state.baseWidth > 0) ? state.baseWidth : UIConstants.BASE_WIDTH_ONLY
+    defaultW := (IsObject(cfg) && cfg.HasOwnProp("ShowText") && cfg.ShowText) ? UIConstants.BASE_WIDTH_TEXT : UIConstants.BASE_WIDTH_ICON
+    w := (IsObject(state) && state.HasOwnProp("baseWidth") && state.baseWidth > 0) ? state.baseWidth : defaultW
     h := (IsObject(state) && state.HasOwnProp("baseHeight") && state.baseHeight > 0) ? state.baseHeight : UIConstants.BASE_HEIGHT
     rawX := (IsObject(cfg) && cfg.HasOwnProp("savedSecondaryX")) ? cfg.savedSecondaryX : "Default"
     rawY := (IsObject(cfg) && cfg.HasOwnProp("savedSecondaryY")) ? cfg.savedSecondaryY : "Default"

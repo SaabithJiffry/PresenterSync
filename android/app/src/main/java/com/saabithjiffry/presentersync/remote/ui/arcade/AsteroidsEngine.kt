@@ -39,7 +39,7 @@ data class AlienShip(
     val id: Int,
     var x: Float,
     var y: Float,
-    val baseX: Float,
+    var baseX: Float,
     var vx: Float,
     var vy: Float,
     val kind: AlienShipKind,
@@ -300,6 +300,15 @@ class AsteroidsEngine(
             for (r in rocks) {
                 r.x *= sx
                 r.y *= sy
+            }
+            for (a in aliens) {
+                a.x *= sx
+                a.y *= sy
+                a.baseX *= sx
+            }
+            for (p in powerUps) {
+                p.x *= sx
+                p.y *= sy
             }
             for (b in bolts) {
                 b.x *= sx

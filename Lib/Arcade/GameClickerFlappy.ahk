@@ -660,22 +660,23 @@ class GameClickerFlappy {
         for _, pp in this._popups
             Gdip.DrawText(g, pp.text, "Segoe UI", 9.0, 1, pp.col, pp.x - 56.0, pp.y - 12.0, 112.0, 24.0, 1, 1, 0, false)
 
-        isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
-        micMuted := (IsObject(this._state) && this._state.HasOwnProp("isMuted")) ? (this._state.isMuted ? 1 : 0) : -1
+        isDark := HudArcadeBase.ResolveDarkMode(this._cfg)
+        micMuted := HudArcadeBase.ResolveMicMuted(this._state)
         titleTxt := (this._mode = "wave") ? "GRAVITY WAVE" : "CLICKER FLAPPY"
-        modeChip := (this._mode = "wave") ? "WAVE [M]" : "FLAP [M]"
+        modeChip := (this._mode = "wave") ? "WAVE (M → Flap)" : "FLAP (M → Wave)"
         stats := Format("SCORE {}  •  BEST {}  •  MODE: {}", this._score, this._highScore, modeChip)
-        hint := "Clicker Slide / Space / Up / Click: Flap or Hold  •  M / Right-Click: Mode  •  P: Pause  •  Esc: Exit"
+        hint := "Clicker Slide / Space / Up / Click: Flap or Hold  •  M / Right-Click: Switch Mode  •  P: Pause  •  Esc: Exit"
         HudArcadeBase.DrawScoreboardPill(g, W, titleTxt, stats, hint, isDark, micMuted)
 
         if (this.Phase = "paused") {
+            switchHint := (this._mode = "wave") ? "Press P: Resume   •   M: Classic Flap   •   Esc: Exit" : "Press P: Resume   •   M: Gravity Wave   •   Esc: Exit"
             HudArcadeBase.DrawOverlayCard(g, W, H, "PAUSED",
-                Format("Score: {}   •   Best: {}   •   Mode: {}", this._score, this._highScore, modeChip),
-                "Press P to Resume   •   M to Switch Mode   •   Esc to Exit", 0xFF38BDF8, isDark)
+                Format("Score: {}   •   Best: {}   •   Mode: {}", this._score, this._highScore, (this._mode = "wave") ? "Gravity Wave" : "Classic Flap"),
+                switchHint, 0xFF38BDF8, isDark)
         } else if (this.Phase = "gameover") {
             HudArcadeBase.DrawOverlayCard(g, W, H, "GATE COLLISION",
                 Format("Final Score: {}   •   High Score: {}", this._score, this._highScore),
-                "Press R, Space, Clicker Slide, or Left-Click to Fly Again   •   Esc to Exit", 0xFFEF4444, isDark)
+                "Press R, Space, or Click: Fly Again   •   M: Switch Mode   •   Esc: Exit", 0xFFEF4444, isDark)
         }
 
         HudArcadeBase.PresentFrame(this._surf)

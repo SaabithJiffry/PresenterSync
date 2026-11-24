@@ -815,8 +815,8 @@ class GameBrickBreaker {
         for _, pp in this._popups
             Gdip.DrawText(g, pp.text, "Segoe UI", 9.0, 1, pp.col, pp.x - 42.0, pp.y - 12.0, 84.0, 24.0, 1, 1, 0, false)
 
-        isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
-        micMuted := (IsObject(this._state) && this._state.HasOwnProp("isMuted")) ? (this._state.isMuted ? 1 : 0) : -1
+        isDark := HudArcadeBase.ResolveDarkMode(this._cfg)
+        micMuted := HudArcadeBase.ResolveMicMuted(this._state)
         stats := Format("SCORE {}  •  BEST {}  •  WAVE {}  •  LIVES {}", this._score, this._highScore, this._wave, this._lives)
         hints := "MOUSE/ARROWS/A-D MOVE • CLICK/SPACE LAUNCH & LASER • P PAUSE • ESC EXIT"
         HudArcadeBase.DrawScoreboardPill(g, W, "BRICK BREAKER", stats, hints, isDark, micMuted)
@@ -1308,15 +1308,15 @@ class GameCyberPong {
         for _, pp in this._popups
             Gdip.DrawText(g, pp.text, "Segoe UI", 9.0, 1, pp.col, pp.x - 40.0, pp.y - 12.0, 80.0, 24.0, 1, 1, 0, false)
 
-        isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
-        micMuted := (IsObject(this._state) && this._state.HasOwnProp("isMuted")) ? (this._state.isMuted ? 1 : 0) : -1
-        modeLbl := this._twoPlayer ? "2P DUEL" : "1P vs AI"
+        isDark := HudArcadeBase.ResolveDarkMode(this._cfg)
+        micMuted := HudArcadeBase.ResolveMicMuted(this._state)
+        modeLbl := this._twoPlayer ? "MODE: 2P DUEL (2 → 1P AI)" : "MODE: 1P AI (2 → 2P)"
         stats := Format("P1 {} : {} {}  •  RALLY {}  •  SCORE {} (BEST {})  •  {}", this._leftScore, this._rightScore, this._twoPlayer ? "P2" : "AI", this._rally, this._score, this._highScore, modeLbl)
-        hints := "MOUSE/W-S/ARROWS MOVE • 2 TOGGLE 1P/2P • FIRST TO 7 • P PAUSE • ESC EXIT"
+        hints := "Mouse / W-S / Arrows: Move  •  2: Toggle 1P / 2P Split  •  First to 7  •  P: Pause  •  Esc: Exit"
         HudArcadeBase.DrawScoreboardPill(g, W, "CYBER PONG", stats, hints, isDark, micMuted)
 
         if (this.Phase = "paused")
-            HudArcadeBase.DrawOverlayCard(g, W, H, "PAUSED", "Set: " this._leftScore " - " this._rightScore "  |  Rally: " this._rally, "Press P to Resume  •  2 Toggle 1P/2P  •  Esc to Exit", 0xFF38BDF8, isDark)
+            HudArcadeBase.DrawOverlayCard(g, W, H, "PAUSED", "Set: " this._leftScore " - " this._rightScore "  |  Rally: " this._rally, "Press P to Resume  •  2: Switch 1P/2P  •  Esc to Exit", 0xFF38BDF8, isDark)
         else if (this.Phase = "gameover")
             HudArcadeBase.DrawOverlayCard(g, W, H, this._winner " WINS SET!", "Final Set: " this._leftScore " - " this._rightScore "  |  Score: " this._score " (Best: " this._highScore ")", "Press R or Left-Click for Next Set  •  Esc to Exit", 0xFF10B981, isDark)
 

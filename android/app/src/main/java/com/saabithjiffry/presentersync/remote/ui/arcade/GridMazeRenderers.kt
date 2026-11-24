@@ -394,7 +394,7 @@ class PacGridOverlayView(
     }
 
     override fun buildExtraChipLabel(): String {
-        return if (expandedView) "View: Full" else "View: Center"
+        return if (expandedView) "Full (F→Center)" else "Center (F→Full)"
     }
 
     override fun buildPauseTitle(): String = "NEON PAC-GRID PAUSED"

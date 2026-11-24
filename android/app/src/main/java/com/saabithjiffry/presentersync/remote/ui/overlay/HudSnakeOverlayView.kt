@@ -578,9 +578,9 @@ class HudSnakeOverlayView(
         canvas.save()
         canvas.clipRect(clipLeft, clipTop, clipRight, clipBottom)
 
-        if (ensureSnakeLayer(width, height)) {
-            val lCanvas = snakeLayerCanvas!!
-            val lBitmap = snakeLayerBitmap!!
+        val lCanvas = if (ensureSnakeLayer(width, height)) snakeLayerCanvas else null
+        val lBitmap = snakeLayerBitmap
+        if (lCanvas != null && lBitmap != null) {
             lBitmap.eraseColor(Color.TRANSPARENT)
             prevDirtyBounds = null
 

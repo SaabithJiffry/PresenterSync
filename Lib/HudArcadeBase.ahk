@@ -161,11 +161,35 @@ class HudArcadeBase {
         return ""
     }
 
+    static ResolveDarkMode(cfg := "") {
+        if (IsObject(cfg) && cfg.HasOwnProp("ThemeMode")) {
+            mode := StrLower(Trim(cfg.ThemeMode))
+            if (mode = "dark")
+                return true
+            if (mode = "light")
+                return false
+        }
+        if (IsSet(Theme)) {
+            try return !!Theme.IsDarkMode()
+        }
+        return true
+    }
+
+    static ResolveMicMuted(state := "") {
+        if (!IsObject(state))
+            return -1
+        if (state.HasOwnProp("isMuted"))
+            return state.isMuted ? 1 : 0
+        if (state.HasOwnProp("IsMuted"))
+            return state.IsMuted ? 1 : 0
+        return -1
+    }
+
     static PauseHostPolling(state) {
         saved := Map()
         if (!IsObject(state))
             return saved
-        for _, prop in ["obsTimerFn", "zoomTimerFn", "autoDodgeTimerFn", "mutedVoiceTimerFn"] {
+        for _, prop in ["obsTimerFn", "relayTimerFn", "zoomTimerFn", "streamTimerFn", "recTimerFn", "autoDodgeTimerFn", "voiceMeterTimerFn", "mutedVoiceTimerFn", "reconnectTimerFn", "heartbeatTimerFn"] {
             if (state.HasOwnProp(prop) && IsObject(state.%prop%)) {
                 try SetTimer(state.%prop%, 0)
                 saved[prop] := true
@@ -178,15 +202,37 @@ class HudArcadeBase {
         if (!IsObject(state) || !IsObject(saved))
             return
         if (saved.Has("obsTimerFn") && state.HasOwnProp("obsTimerFn") && IsObject(state.obsTimerFn)) {
-            if (IsObject(cfg) && cfg.HasOwnProp("EnableWS") && cfg.EnableWS)
-                try SetTimer(state.obsTimerFn, UIConstants.OBS_POLL_INTERVAL_MS)
+            if (IsObject(cfg) && cfg.HasOwnProp("EnableWS") && cfg.EnableWS && (!state.HasOwnProp("obsConnected") || !state.obsConnected))
+                try SetTimer(state.obsTimerFn, -150)
+        }
+        if (saved.Has("streamTimerFn") && state.HasOwnProp("streamTimerFn") && IsObject(state.streamTimerFn)) {
+            if (state.HasOwnProp("streamState") && state.streamState != 0)
+                try SetTimer(state.streamTimerFn, UIConstants.STREAM_POLL_INTERVAL_MS)
+        }
+        if (saved.Has("recTimerFn") && state.HasOwnProp("recTimerFn") && IsObject(state.recTimerFn)) {
+            if (state.HasOwnProp("recState") && state.recState == 1)
+                try SetTimer(state.recTimerFn, 1000)
         }
         if (saved.Has("zoomTimerFn") && IsSet(UpdateZoomMonitorTimer))
             try UpdateZoomMonitorTimer(cfg, state)
         if (saved.Has("autoDodgeTimerFn") && IsSet(UpdateAutoDodgeTimer))
             try UpdateAutoDodgeTimer(cfg, state)
+        if (saved.Has("voiceMeterTimerFn") && IsSet(UpdateVoiceMeterTimer))
+            try UpdateVoiceMeterTimer(cfg, state)
         if (saved.Has("mutedVoiceTimerFn") && IsSet(UpdateMutedVoiceMonitorTimer))
             try UpdateMutedVoiceMonitorTimer(cfg, state)
+        if (saved.Has("relayTimerFn") && IsSet(UpdateHostInternetRelay))
+            try UpdateHostInternetRelay(cfg, state)
+        if (saved.Has("reconnectTimerFn") && state.HasOwnProp("reconnectTimerFn") && IsObject(state.reconnectTimerFn)) {
+            if (!state.HasOwnProp("obsConnected") || !state.obsConnected)
+                try SetTimer(state.reconnectTimerFn, -150)
+        }
+        if (saved.Has("heartbeatTimerFn") && state.HasOwnProp("heartbeatTimerFn") && IsObject(state.heartbeatTimerFn)) {
+            if (state.HasOwnProp("obsConnected") && state.obsConnected) {
+                hbMs := (IsObject(cfg) && cfg.HasOwnProp("HeartbeatSeconds") && cfg.HeartbeatSeconds >= 10) ? cfg.HeartbeatSeconds * 1000 : 30000
+                try SetTimer(state.heartbeatTimerFn, hbMs)
+            }
+        }
     }
 
     static PollXInput() {
@@ -413,27 +459,36 @@ class HudArcadeBase {
     static DrawScoreboardPill(pGraphics, W, title, statsText, hintText, isDark := true, micMuted := -1) {
         if (!pGraphics)
             return
-        pillW := Min(Float(W) - 40.0, Max(420.0, Float(StrLen(statsText) + StrLen(title) + StrLen(hintText)) * 7.2 + 120.0))
+        leftStr := title "   |   " statsText
+        micReserve := (micMuted >= 0) ? 132.0 : 36.0
+        pillW := Min(Float(W) - 36.0, Max(380.0, Float(StrLen(leftStr)) * 6.8 + micReserve))
         pillH := 42.0
         px := (Float(W) - pillW) / 2.0
         py := 12.0
         bgArgb := isDark ? 0xDC111622 : 0xECF8FAFC
         brdArgb := isDark ? 0x6694A3B8 : 0x80475569
         txMain := isDark ? 0xFFF1F5F9 : 0xFF0F172A
-        txSub := isDark ? 0xFF94A3B8 : 0xFF475569
 
         this.FillRoundedRect(pGraphics, px, py, pillW, pillH, 14.0, bgArgb)
         this.StrokeRoundedRect(pGraphics, px, py, pillW, pillH, 14.0, brdArgb, 1.4)
 
-        leftStr := title "   |   " statsText
-        Gdip.DrawText(pGraphics, leftStr, "Segoe UI", 9.5, 1, txMain, px + 14.0, py, pillW - 140.0, pillH, 0, 1, 0, true)
+        Gdip.DrawText(pGraphics, leftStr, "Segoe UI", 9.5, 1, txMain, px + 14.0, py, pillW - (micMuted >= 0 ? 124.0 : 28.0), pillH, 0, 1, 0, true)
         if (micMuted >= 0) {
             micCol := micMuted ? 0xFFEF4444 : 0xFF10B981
             micTxt := micMuted ? "MIC: MUTED" : "MIC: LIVE"
             Gdip.DrawText(pGraphics, micTxt, "Segoe UI", 8.5, 1, micCol, px + pillW - 105.0, py, 92.0, pillH, 2, 1, 0, false)
         }
-        if (hintText != "")
-            Gdip.DrawText(pGraphics, hintText, "Segoe UI", 8.0, 0, txSub, px, py + pillH + 3.0, pillW, 18.0, 1, 1, 0, false)
+        if (hintText != "") {
+            hintW := Min(Float(W) - 36.0, Max(pillW, Float(StrLen(hintText)) * 6.2 + 36.0))
+            hx := (Float(W) - hintW) / 2.0
+            hy := py + pillH + 5.0
+            hintBg := isDark ? 0xCC0F172A : 0xE6F8FAFC
+            hintBrd := isDark ? 0x4894A3B8 : 0x60475569
+            hintTx := isDark ? 0xFFE2E8F0 : 0xFF1E293B
+            this.FillRoundedRect(pGraphics, hx, hy, hintW, 22.0, 9.0, hintBg)
+            this.StrokeRoundedRect(pGraphics, hx, hy, hintW, 22.0, 9.0, hintBrd, 1.0)
+            Gdip.DrawText(pGraphics, hintText, "Segoe UI", 8.2, 1, hintTx, hx + 10.0, hy, hintW - 20.0, 22.0, 1, 1, 0, true)
+        }
     }
 
     static DrawOverlayCard(pGraphics, W, H, title, subLine, hintLine, accentArgb := 0xFF38BDF8, isDark := true) {

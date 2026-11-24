@@ -33,12 +33,16 @@ class FlappyWaveOverlayView(
     }
 
     override fun buildExtraChipLabel(): String {
-        return if (engine.mode == FlappyMode.GRAVITY_WAVE) "Mode: Wave" else "Mode: Flap"
+        return if (engine.mode == FlappyMode.GRAVITY_WAVE) "Wave (M→Flap)" else "Flap (M→Wave)"
     }
 
-    override fun buildPauseTitle(): String = "CLICKER FLAPPY PAUSED"
+    override fun buildPauseTitle(): String =
+        if (engine.mode == FlappyMode.GRAVITY_WAVE) "GRAVITY WAVE PAUSED" else "CLICKER FLAPPY PAUSED"
 
-    override fun buildPauseSubtitle(): String = "Tap/Hold screen or press Clicker Slide / Space / Up"
+    override fun buildPauseSubtitle(): String {
+        val target = if (engine.mode == FlappyMode.GRAVITY_WAVE) "Classic Flap" else "Gravity Wave"
+        return "Tap/Hold or Clicker Slide / Space · M / chip → $target"
+    }
 
     override fun buildGameOverSubtitle(): String = "Score ${engine.score} · Best ${engine.highScore}"
 

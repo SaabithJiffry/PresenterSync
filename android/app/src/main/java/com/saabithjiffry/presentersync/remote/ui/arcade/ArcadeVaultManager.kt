@@ -31,7 +31,7 @@ object ArcadeVaultManager {
         ArcadeGameEntry(
             id = "asteroids",
             title = "Asteroid Blaster",
-            subtitle = "Vector thruster shooter with UFO saucers, power-ups & Mic Pill bumper",
+            subtitle = "Vector asteroids & Alien Blaster waves with power-ups & Mic Pill bumper",
             badge = "SECTOR Z-02"
         ),
         ArcadeGameEntry(

@@ -20,6 +20,7 @@ READY_FILE = os.path.join(REPO_DIR, "tests", "_udp_disc_ready.json")
 TEMP_FILES = [
     READY_FILE,
     READY_FILE + ".cmd",
+    READY_FILE + ".cmd.tmp",
     READY_FILE + ".power",
     os.path.join(REPO_DIR, "tests", "_udp_client_probe.ahk"),
     os.path.join(REPO_DIR, "tests", "_udp_client_probe.out"),
@@ -158,16 +159,20 @@ JSON_Dump_Simple(bLen, shifted, newIp, hAddr, bPort, okGood, okBad) {{
         assert probe_res["healthGood"] is True and probe_res["healthBad"] is False
         print(f"[PASS] Windows Remote DiscoverPublicHostsUdp + DHCP IP-shift auto-follow -> {probe_res['hostAddress']}")
 
+        def write_cmd(text: str) -> None:
+            tmp_cmd = READY_FILE + ".cmd.tmp"
+            with open(tmp_cmd, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp_cmd, READY_FILE + ".cmd")
+
         # 6. Simulate Windows sleep & resume (WM_POWERBROADCAST 0x4 -> 0x7)
-        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
-            f.write("POWER_SUSPEND")
+        write_cmd("POWER_SUSPEND")
         t_ps = time.time()
         while not os.path.exists(READY_FILE + ".power"):
             if time.time() - t_ps > 5:
                 raise TimeoutError("Timed out waiting for POWER_SUSPEND handling")
             time.sleep(0.03)
-        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
-            f.write("POWER_RESUME")
+        write_cmd("POWER_RESUME")
 
         t_pw = time.time()
         while True:
@@ -197,8 +202,7 @@ JSON_Dump_Simple(bLen, shifted, newIp, hAddr, bPort, okGood, okBad) {{
         assert wake_beacon["hostUuid"] == host_uuid
         print("[PASS] Windows power resume rebound listeners, sent sync_resync over WS, & answered post-wake UDP probe")
 
-        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
-            f.write("STOP")
+        write_cmd("STOP")
         proc.wait(timeout=5)
         print("=== ALL M6 UDP DISCOVERY & POWER RECOVERY E2E CHECKS PASSED ===")
         return 0

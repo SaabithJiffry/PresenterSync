@@ -318,6 +318,8 @@ class FloatingMicOverlayManager(
         stopBreathing()
         muteTransitionAnimator?.cancel()
         muteTransitionAnimator = null
+        activeTouchController?.onCancel()
+        activeTouchController = null
         handler.removeCallbacks(restoreDodgeRunnable)
         handler.removeCallbacks(idleDimRunnable)
         isAutoDodged = false

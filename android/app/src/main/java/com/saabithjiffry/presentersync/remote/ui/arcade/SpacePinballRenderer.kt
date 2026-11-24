@@ -90,19 +90,29 @@ class SpacePinballOverlayView(
                 return true
             }
             KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_DPAD_DOWN -> {
-                engine.setPlungerHeld(isDown)
+                if (isDown) {
+                    if (event.repeatCount == 0) {
+                        if (engine.phase == SpacePinballPhase.GAME_OVER) {
+                            engine.resetMatch()
+                        } else if (engine.phase == SpacePinballPhase.PLAYING) {
+                            engine.setPlungerHeld(true)
+                        }
+                    }
+                } else {
+                    engine.setPlungerHeld(false)
+                }
                 return true
             }
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_X -> {
-                if (isDown) engine.nudge()
+                if (isDown && event.repeatCount == 0) engine.nudge()
                 return true
             }
             KeyEvent.KEYCODE_P -> {
-                if (isDown) engine.togglePause()
+                if (isDown && event.repeatCount == 0) engine.togglePause()
                 return true
             }
             KeyEvent.KEYCODE_R -> {
-                if (isDown) engine.resetMatch()
+                if (isDown && event.repeatCount == 0) engine.resetMatch()
                 return true
             }
         }
@@ -136,7 +146,15 @@ class SpacePinballOverlayView(
                     return true
                 }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_CANCEL -> {
+                plungerPointerId = -1
+                engine.setPlungerHeld(false)
+                touchLeftDown = false
+                touchRightDown = false
+                syncFlippers()
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val idx = event.actionIndex
                 val pid = event.getPointerId(idx)
                 if (pid == plungerPointerId) {

@@ -122,7 +122,10 @@ if (serveMode) {
     _PollTestCmd() {
         if (!FileExist(cmdFile))
             return
-        cmd := Trim(FileRead(cmdFile, "UTF-8"))
+        cmd := ""
+        try cmd := Trim(FileRead(cmdFile, "UTF-8"))
+        if (cmd = "")
+            return
         try FileDelete(cmdFile)
         if (cmd = "CLOSE_REMOTE") {
             SendCloseRemoteSignal(cfg, st)

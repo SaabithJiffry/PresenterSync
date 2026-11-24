@@ -151,6 +151,14 @@ x1AtZero := Float(scPad) - 0.0
 x2AtWrap := (Float(scPad) - st.sceneMarqueeSpan) + st.sceneMarqueeSpan
 AssertTrue(Abs(x2AtWrap - x1AtZero) < 0.001, "#6 Wrap seam continuity error < 0.001px", "diff=" Abs(x2AtWrap - x1AtZero))
 
+; Isolate deterministic manual tick simulation from live 25ms SetTimer jitter
+if (st.HasOwnProp("sceneMarqueeTimerFn") && st.sceneMarqueeTimerFn)
+    SetTimer(st.sceneMarqueeTimerFn, 0)
+st.sceneMarqueePhase := "pause_start"
+st.sceneMarqueeTicks := 0
+st.sceneMarqueeOffset := 0.0
+st.sceneMarqueeLastTick := 0
+
 Loop 59
     SceneMarqueeTick(cfg, st)
 AssertTrue(st.sceneMarqueePhase = "pause_start" && st.sceneMarqueeOffset == 0.0, "#6 Marquee stays paused for first 59 ticks (1.5s)")

@@ -48,7 +48,7 @@ GetPrimaryHudAnatomyItems() {
             tier: "Tier 3 (OBS WebSocket v5 — Upper-Middle Row Right)",
             summary: "Displays the currently live OBS Program scene name with a calm, seamless horizontal marquee for long names.",
             states: "• Dark Slate Pill: Shows active OBS Program Scene name; automatically scrolls left/right when wider than the pill.",
-            actions: "• Short-Click: Opens a floating Popup Scene Switcher menu so you can switch OBS scenes without leaving PowerPoint.`r`n• Left-Drag: Moves the entire HUD stack.`r`n• Right-Click: Opens the full tray menu.",
+            actions: "• Short-Click: Triggers a Preview → Program transition (Studio Mode) or opens the Quick Scene Switcher when Studio Mode is off.`r`n• Left-Drag: Moves the entire HUD stack.`r`n• Right-Click: Opens the full Scene Switcher popup menu.",
             configWhere: "• Tray -> Show Extra HUDs`r`n• Tray -> Enable OBS WebSocket Sync`r`n• Control Center -> HUD & Theme tab"
         },
         {

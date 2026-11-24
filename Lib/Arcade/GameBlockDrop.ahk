@@ -639,8 +639,8 @@ class GameBlockDrop {
         H := Float(this._surf.H)
         HudArcadeBase.BeginFrame(this._surf)
 
-        isDark := (IsObject(this._cfg) && this._cfg.HasOwnProp("HudTheme")) ? (this._cfg.HudTheme != "light") : true
-        micMuted := (IsObject(this._state) && this._state.HasOwnProp("obsMuted")) ? (this._state.obsMuted ? 1 : 0) : -1
+        isDark := HudArcadeBase.ResolveDarkMode(this._cfg)
+        micMuted := HudArcadeBase.ResolveMicMuted(this._state)
 
         stats := "SCORE " this._score "   BEST " this._highScore "   LVL " this._level "   LINES " this._lines
         hints := "Arrows/WASD Move  •  Up/X/Z Rotate  •  Space Hard Drop  •  C/Shift Hold  •  P Pause  •  Esc Exit"

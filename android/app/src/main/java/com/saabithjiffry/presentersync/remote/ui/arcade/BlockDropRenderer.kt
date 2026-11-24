@@ -83,19 +83,21 @@ class BlockDropOverlayView(
         return when (keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_A -> engine.move(-1)
             KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_D -> engine.move(1)
-            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_X -> engine.rotate(1)
-            KeyEvent.KEYCODE_Z, KeyEvent.KEYCODE_BUTTON_B -> engine.rotate(-1)
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_X -> if (event.repeatCount == 0) engine.rotate(1) else true
+            KeyEvent.KEYCODE_Z, KeyEvent.KEYCODE_BUTTON_B -> if (event.repeatCount == 0) engine.rotate(-1) else true
             KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_BUTTON_A -> {
-                engine.hardDrop()
+                if (event.repeatCount == 0) {
+                    if (engine.phase == BlockDropPhase.GAME_OVER) engine.resetMatch() else engine.hardDrop()
+                }
                 true
             }
-            KeyEvent.KEYCODE_C, KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> engine.hold()
+            KeyEvent.KEYCODE_C, KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> if (event.repeatCount == 0) engine.hold() else true
             KeyEvent.KEYCODE_P -> {
-                engine.togglePause()
+                if (event.repeatCount == 0) engine.togglePause()
                 true
             }
             KeyEvent.KEYCODE_R -> {
-                engine.resetMatch()
+                if (event.repeatCount == 0) engine.resetMatch()
                 true
             }
             else -> false
@@ -150,7 +152,15 @@ class BlockDropOverlayView(
                 }
                 return true
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_CANCEL -> {
+                if (softDropDrag) {
+                    engine.setSoftDrop(false)
+                }
+                softDropDrag = false
+                dragMovedCols = false
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
                 if (softDropDrag) {
                     engine.setSoftDrop(false)
                 }
@@ -159,7 +169,7 @@ class BlockDropOverlayView(
                 if (!dragMovedCols && !softDropDrag && abs(totalDx) < 18f * d && abs(totalDy) < 18f * d) {
                     engine.rotate(1)
                     invalidate()
-                } else if (totalDy > 95f * d && abs(totalDy) > abs(totalDx) * 1.4f && event.actionMasked == MotionEvent.ACTION_UP) {
+                } else if (totalDy > 95f * d && abs(totalDy) > abs(totalDx) * 1.4f) {
                     engine.hardDrop()
                     invalidate()
                 }

@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 9.0.0
+; Version: 9.0.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 9.0.0.0
+;@Ahk2Exe-SetVersion 9.0.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -415,6 +415,7 @@ class RemoteState {
     discoverPort := 4457
     _lanCycleStartTick := 0
     _didUdpShiftFollow := false
+    remoteDeckHotIfFn := ""
     rebuildTrayFn := ""
     syncTrayStatusFn := ""
     refreshHelpFn := ""

@@ -802,8 +802,8 @@ class GameSpacePinball {
 
         pG := this._surf.pGraphics
         W := Float(this._surf.W), H := Float(this._surf.H)
-        isDark := IsObject(this._cfg) ? !!this._cfg.IsDarkMode : true
-        micMuted := (IsObject(this._state) && this._state.HasOwnProp("IsMuted")) ? (this._state.IsMuted ? 1 : 0) : -1
+        isDark := HudArcadeBase.ResolveDarkMode(this._cfg)
+        micMuted := HudArcadeBase.ResolveMicMuted(this._state)
 
         this._GetTableTransform(&ox, &oy, &sc)
         if (this._nudgeShake > 0.0) {

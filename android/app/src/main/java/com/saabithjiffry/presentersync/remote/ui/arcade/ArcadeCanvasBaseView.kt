@@ -321,13 +321,22 @@ abstract class ArcadeCanvasBaseView(
 
             val btnH = 30f * d
             val btnY = sbY + (sbH - btnH) / 2f
-            val extraW = if (extraLabel != null) 82f * d else 0f
+            boldPaint.textSize = 11.5f * d
+            val extraW = if (extraLabel != null) {
+                max(88f * d, min(168f * d, boldPaint.measureText(extraLabel) + 20f * d))
+            } else {
+                0f
+            }
             val pauseW = 72f * d
             val exitW = 58f * d
             val rightW = (if (extraLabel != null) extraW + 6f * d else 0f) + pauseW + exitW + 14f * d
             val rightStart = sbX + sbW - rightW
 
             boldPaint.textSize = 12f * d
+            val statsAvail = (rightStart - (sbX + 5f * d + bW) - 12f * d).coerceAtLeast(40f * d)
+            while (boldPaint.measureText(statsTxt) > statsAvail && boldPaint.textSize > 9.5f * d) {
+                boldPaint.textSize -= 0.5f * d
+            }
             boldPaint.color = txtArgb
             boldPaint.textAlign = Paint.Align.CENTER
             val sFm = boldPaint.fontMetrics

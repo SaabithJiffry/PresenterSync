@@ -228,4 +228,35 @@ class ArcadeVaultAndAsteroidsTest {
         assertTrue("Expected cruiser vaporized by Beam Laser", eng.aliens.isEmpty())
         assertTrue("Expected cruiser kill score >= 180", eng.score >= 180)
     }
+
+    @Test
+    fun asteroidsEngine_updateDisplayMetrics_rescalesAliensAndPowerUps() {
+        val eng = AsteroidsEngine(random = Random(77))
+        eng.mode = BlasterMode.ALIEN_BLASTER
+        eng.startNewSession(
+            widthPx = 1000,
+            heightPx = 2000,
+            screenDensity = 2f,
+            clearInitialRocks = true
+        )
+        val alien = eng.spawnAlien(x = 400f, y = 600f, kind = AlienShipKind.RAIDER, hp = 2, vy = 0f)
+        eng.powerUps.add(
+            com.saabithjiffry.presentersync.remote.ui.arcade.AsteroidsPowerUp(
+                kind = AsteroidsPowerUpKind.WEAPON_UP,
+                x = 250f,
+                y = 500f,
+                vx = 0f,
+                vy = 0f,
+                ttlSec = 10f
+            )
+        )
+
+        eng.updateDisplayMetrics(widthPx = 2000, heightPx = 1000, screenDensity = 2f)
+
+        assertEquals(800f, alien.x, 0.01f)
+        assertEquals(300f, alien.y, 0.01f)
+        assertEquals(800f, alien.baseX, 0.01f)
+        assertEquals(500f, eng.powerUps[0].x, 0.01f)
+        assertEquals(250f, eng.powerUps[0].y, 0.01f)
+    }
 }

@@ -253,12 +253,15 @@ class CyberPongOverlayView(
     }
 
     override fun buildExtraChipLabel(): String {
-        return if (engine.twoPlayerMode) "Mode: 2P Split" else "Mode: 1P AI"
+        return if (engine.twoPlayerMode) "2P (2→1P AI)" else "1P AI (2→2P)"
     }
 
     override fun buildPauseTitle(): String = "CYBER PONG PAUSED"
 
-    override fun buildPauseSubtitle(): String = "Drag paddle (or both halves in 2P Split) · First to 7"
+    override fun buildPauseSubtitle(): String {
+        val target = if (engine.twoPlayerMode) "1P vs AI" else "2P Split"
+        return "Drag paddle${if (engine.twoPlayerMode) " (both halves)" else ""} · First to 7 · 2 / chip → $target"
+    }
 
     override fun buildGameOverSubtitle(): String {
         val win = if (engine.winnerLabel.isNotEmpty()) "${engine.winnerLabel} WINS! · " else ""

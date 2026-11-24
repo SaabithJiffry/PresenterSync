@@ -661,8 +661,8 @@ class GameLightCycles {
                 DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
         }
 
-        isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
-        micMuted := (IsObject(this._state) && this._state.HasOwnProp("isMuted")) ? (this._state.isMuted ? 1 : 0) : -1
+        isDark := HudArcadeBase.ResolveDarkMode(this._cfg)
+        micMuted := HudArcadeBase.ResolveMicMuted(this._state)
         stats := Format("SCORE {}  •  BEST {}  •  ROUND {} (STREAK {})  •  BOOST {}%",
             this._score, this._highScore, this._round, this._streak, Round(this._boostCharge))
         hint := "Arrows / WASD: Steer  •  Space / Shift: Turbo Boost  •  P: Pause  •  R: Retry  •  Esc: Exit"
@@ -1686,8 +1686,8 @@ class GamePacGrid {
         for _, pp in this._popups
             Gdip.DrawText(g, pp.text, "Segoe UI", 9.0, 1, pp.col, pp.x - 42.0, pp.y - 10.0, 84.0, 20.0, 1, 1, 0, false)
 
-        isDark := IsSet(Theme) ? Theme.IsDarkMode() : true
-        micMuted := (IsObject(this._state) && this._state.HasOwnProp("isMuted")) ? (this._state.isMuted ? 1 : 0) : -1
+        isDark := HudArcadeBase.ResolveDarkMode(this._cfg)
+        micMuted := HudArcadeBase.ResolveMicMuted(this._state)
         modeLabel := (this._frightenedSec > 0.0) ? Format("FRIGHT ({:.1f}s)", this._frightenedSec) : StrUpper(this._waveMode)
         viewLabel := this._expandedMode ? "[F] View: Full" : "[F] View: Center"
         stats := Format("SCORE {}  •  BEST {}  •  LIVES {}  •  LVL {}  •  MODE: {}  •  {}",
@@ -1698,7 +1698,7 @@ class GamePacGrid {
         if (this.Phase = "paused") {
             HudArcadeBase.DrawOverlayCard(g, m.W, m.H, "PAC-GRID PAUSED",
                 Format("Score: {}   •   Best: {}   •   Lives: {}   •   Level: {}", this._score, this._highScore, this._lives, this._level),
-                "Press P to Resume   •   Esc to Exit", 0xFF38BDF8, isDark)
+                "Press P to Resume   •   F: Toggle Center/Full   •   Esc to Exit", 0xFF38BDF8, isDark)
         } else if (this.Phase = "gameover") {
             HudArcadeBase.DrawOverlayCard(g, m.W, m.H, "GAME OVER — CAUGHT IN THE GRID",
                 Format("Final Score: {}   •   High Score: {}   •   Level: {}", this._score, this._highScore, this._level),

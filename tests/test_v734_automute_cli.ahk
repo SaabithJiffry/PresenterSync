@@ -51,6 +51,9 @@ cfg := Config(tmpIni)
 st := OverlayState(cfg)
 st.suppressNudgeBanners := true
 cfg.EnableWS := true
+cfg.EnableRemoteConnections := false
+st.obsTimerFn := ""
+st.zoomTimerFn := ""
 cfg.AudioRoutingMode := 1
 cfg.targetMicName := "Mic/Aux"
 

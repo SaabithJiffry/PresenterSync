@@ -42,7 +42,7 @@ class AsteroidsOverlayView(
     }
 
     override fun buildExtraChipLabel(): String {
-        return if (engine.mode == BlasterMode.ALIEN_BLASTER) "Mode: Alien" else "Mode: Asteroids"
+        return if (engine.mode == BlasterMode.ALIEN_BLASTER) "Alien (M→Asteroids)" else "Asteroids (M→Alien)"
     }
 
     override fun buildPauseTitle(): String =
@@ -50,12 +50,15 @@ class AsteroidsOverlayView(
 
     override fun buildPauseSubtitle(): String =
         if (engine.mode == BlasterMode.ALIEN_BLASTER) {
-            "Drag or use WASD/Arrows for 2D movement · Tap/Space to fire · M to switch mode"
+            "Drag or WASD/Arrows 2D move · Tap/Space fire · M / chip → Asteroid Blaster"
         } else {
-            "Drag to steer & fire, or use WASD/Arrows + Space · M to switch mode"
+            "Drag to steer & fire, or WASD/Arrows + Space · M / chip → Alien Blaster"
         }
 
-    override fun buildGameOverSubtitle(): String = "Wave ${engine.wave} · Score ${engine.score} · Best ${engine.highScore}"
+    override fun buildGameOverSubtitle(): String {
+        val mLabel = if (engine.mode == BlasterMode.ALIEN_BLASTER) "Alien" else "Asteroids"
+        return "$mLabel · Wave ${engine.wave} · Score ${engine.score} · Best ${engine.highScore}"
+    }
 
     override fun isGamePaused(): Boolean = engine.phase == AsteroidsPhase.PAUSED
 

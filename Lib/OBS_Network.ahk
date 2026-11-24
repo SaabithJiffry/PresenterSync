@@ -2295,7 +2295,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         TrySendWsText(ws, identifyJson)
     }
     else if (opCode == 2) {
-        SetTimer state.obsTimerFn, 0
+        if (IsObject(state) && state.HasOwnProp("obsTimerFn") && IsObject(state.obsTimerFn))
+            SetTimer state.obsTimerFn, 0
         state.obsConnected := true
         escMic := EscapeJsonStr(cfg.targetMicName)
         SendObsRequest(ws, "GetInputMute", "InitState", '{"inputName":"' escMic '"}')
@@ -2670,6 +2671,8 @@ ZoomStateMonitor(cfg, state) {
 }
 
 UpdateZoomMonitorTimer(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("zoomTimerFn") || !IsObject(state.zoomTimerFn))
+        return
     if (cfg.EnableZoom || cfg.EnableWS)
         SetTimer state.zoomTimerFn, UIConstants.ZOOM_POLL_INTERVAL_MS
     else
