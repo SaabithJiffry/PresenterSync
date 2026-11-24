@@ -328,7 +328,8 @@ jobs:
           cat release-upload/SHA256SUMS.txt
           ls -la release-upload
           TAG_NAME="${GITHUB_REF_NAME}"
-          git tag -l --format="%(contents)" "$TAG_NAME" > RELEASE_NOTES.md || true
+          git fetch --force origin "refs/tags/${TAG_NAME}:refs/tags/${TAG_NAME}"
+          git for-each-ref --format="%(contents)" "refs/tags/${TAG_NAME}" > RELEASE_NOTES.md || true
           [ -s RELEASE_NOTES.md ] || printf "Release %s\n" "$TAG_NAME" > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
 
