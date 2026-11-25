@@ -641,6 +641,16 @@ class Theme {
         return hFont
     }
 
+    static IsHighContrastActive() {
+        buf := Buffer(16, 0)
+        NumPut("UInt", 16, buf, 0)
+        try {
+            if (DllCall("user32\SystemParametersInfoW", "UInt", 0x0042, "UInt", 16, "Ptr", buf.Ptr, "UInt", 0, "Int"))
+                return !!(NumGet(buf, 4, "UInt") & 0x1)
+        }
+        return false
+    }
+
     static IsDarkMode() {
         if (this.OverrideMode = "dark")
             return true

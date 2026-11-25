@@ -2053,11 +2053,40 @@ GetRemoteHudPixelReadout(cfg, state) {
     return GetHudPixelReadout(cfg, state)
 }
 
+IsRemoteTypingFocusActive() {
+    try {
+        fc := ControlGetFocus("A")
+        if (fc) {
+            cls := ControlGetClassNN(fc)
+            if (RegExMatch(cls, "i)^(Edit|RichEdit|Scintilla|ComboBox|TEdit|TMemo)"))
+                return true
+        }
+    }
+    try {
+        fgHwnd := DllCall("user32\GetForegroundWindow", "Ptr")
+        if (fgHwnd) {
+            tid := DllCall("user32\GetWindowThreadProcessId", "Ptr", fgHwnd, "Ptr", 0, "UInt")
+            gti := Buffer(72, 0)
+            NumPut("UInt", 72, gti, 0)
+            if (DllCall("user32\GetGUIThreadInfo", "UInt", tid, "Ptr", gti.Ptr, "Int")) {
+                flags := NumGet(gti, 4, "UInt")
+                if (flags & 0x1) ; GUI_CARETBLINKING
+                    return true
+            }
+        }
+    }
+    return false
+}
+
 OnRemoteClickerMute(cfg, state, thisHotkeyOrFromHud := "", *) {
     if (!cfg.EnablePointerMute)
         return
 
     fromHudClick := (thisHotkeyOrFromHud == true)
+    if (!fromHudClick && StrLower(Trim(String(cfg.HwMuteHotkey))) = "b" && IsRemoteTypingFocusActive()) {
+        try Send("{Blind}b")
+        return
+    }
     static lastTick := 0
     static inHold := false
     if (inHold)
@@ -2487,6 +2516,7 @@ ShowRemoteTouchDeckGUI(cfg, state, *) {
         return dlgRes.existing
     }
     deckGui := dlgRes.gui
+    try WinSetExStyle("+0x08000000", "ahk_id " deckGui.Hwnd) ; WS_EX_NOACTIVATE (focus-free Quick Deck 2.0)
     ApplyWindowCaptureAffinity(deckGui.Hwnd, (IsObject(cfg) && cfg.HasOwnProp("ExcludeFromCapture")) ? cfg.ExcludeFromCapture : true)
 
     deckGui.SetFont("s10 w700", Theme.UiFont)
