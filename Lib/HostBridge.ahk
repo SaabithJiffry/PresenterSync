@@ -462,7 +462,7 @@ class HostCompanionBridge {
             return false
         prevTcp := (this.boundTcpPort > 0) ? this.boundTcpPort : this.requestedTcpPort
         prevUdp := (this.boundUdpPort > 0) ? this.boundUdpPort : this.requestedUdpPort
-        prevDisc := (this.boundDiscoverPort > 0) ? this.boundDiscoverPort : this.requestedDiscoverPort
+        prevDisc := (this.requestedDiscoverPort > 0) ? this.requestedDiscoverPort : this.boundDiscoverPort
 
         if (this.tcpListenSock != -1) {
             try DllCall("ws2_32\closesocket", "Ptr", this.tcpListenSock)
@@ -763,6 +763,20 @@ class HostCompanionBridge {
             return 0
         this.stateSeq += 1
         return this._BroadcastJsonToAuthenticated(this._BuildSyncResyncJson(reason))
+    }
+
+    BroadcastObsFallbackUpdate(cfg := "") {
+        if (!this.running)
+            return 0
+        useCfg := IsObject(cfg) ? cfg : this.cfg
+        if (!IsObject(useCfg) || !useCfg.HasOwnProp("EnableWS") || !useCfg.EnableWS)
+            return 0
+        micName := (useCfg.HasOwnProp("targetMicName") && Trim(String(useCfg.targetMicName)) != "")
+            ? Trim(String(useCfg.targetMicName))
+            : "Mic/Aux"
+        obsPass := useCfg.HasOwnProp("obsPassword") ? String(useCfg.obsPassword) : ""
+        payload := '{"type":"obs_fallback_update","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"obsFallback":{"port":4455,"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(obsPass) '"}}'
+        return this._BroadcastJsonToAuthenticated(payload)
     }
 
     BroadcastStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B") {
@@ -1901,6 +1915,8 @@ class HostCompanionBridge {
             if (caps.Length > 0)
                 c.capabilities := caps
             this._QueueWsFrame(c, 0x1, this._BuildAuthOkJson(c))
+            if (msgObj.Has("clientFallbackState") && (msgObj["clientFallbackState"] is Map))
+                this._ReconcileClientFallbackState(c, msgObj["clientFallbackState"])
             this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             if (IsSet(SessionTimeline))
                 SessionTimeline.Record("Remote", "Remote Joined: " (c.deviceName != "" ? c.deviceName : c.deviceId), this.state, c.platform)
@@ -1917,6 +1933,14 @@ class HostCompanionBridge {
         }
         if (msgType = "sync_req") {
             this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            return
+        }
+        if (msgType = "reconcile_fallback_state") {
+            fbObj := (msgObj.Has("clientFallbackState") && (msgObj["clientFallbackState"] is Map)) ? msgObj["clientFallbackState"] : msgObj
+            if (this._ReconcileClientFallbackState(c, fbObj))
+                this.BroadcastMuteState(this.cfg, this.state)
+            else
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             return
         }
         if (msgType = "disconnect") {
@@ -2030,6 +2054,56 @@ class HostCompanionBridge {
                 ok := BroadcastHostStageNudge(this.cfg, this.state, nMsg, nSnd, nAcc != "" ? nAcc : "F59E0B")
                 this._QueueCmdResult(c, "stage_nudge", ok, cmdId)
         }
+    }
+
+    _ReconcileClientFallbackState(c, fbObj) {
+        if (!IsObject(this.state) || !(fbObj is Map))
+            return false
+        if (!JsonCodec.GetBool(fbObj, "fromDirectObsFallback", false))
+            return false
+        changed := false
+
+        fbStandby := JsonCodec.GetBool(fbObj, "isStandby", false)
+        hostStandby := (this.state.HasOwnProp("isStandby") && this.state.isStandby)
+        if (fbStandby && !hostStandby) {
+            prevScene := Trim(JsonCodec.GetStr(fbObj, "previousScene"))
+            if (prevScene = "")
+                prevScene := (this.state.HasOwnProp("currentSceneName") && this.state.currentSceneName != "" && this.state.currentSceneName != "Scene")
+                    ? String(this.state.currentSceneName)
+                    : "Scene"
+            wasMuted := JsonCodec.GetBool(fbObj, "wasMuted", false)
+            brbScene := Trim(JsonCodec.GetStr(fbObj, "standbyScene"))
+            if (brbScene = "")
+                brbScene := (IsObject(this.cfg) && this.cfg.HasOwnProp("StandbySceneName") && this.cfg.StandbySceneName != "") ? String(this.cfg.StandbySceneName) : "BRB"
+            this.state.standbySnapshot := {
+                muted: wasMuted,
+                scene: prevScene,
+                recWasActive: (this.state.HasOwnProp("recState") && this.state.recState == 1)
+            }
+            this.state.isStandby := true
+            if (!this.state.HasOwnProp("currentSceneName") || this.state.currentSceneName = "" || this.state.currentSceneName = "Scene")
+                this.state.currentSceneName := brbScene
+            changed := true
+        }
+
+        fbTimerSt := StrLower(Trim(JsonCodec.GetStr(fbObj, "timerState")))
+        hostTimerSt := this.state.HasOwnProp("timerState") ? StrLower(Trim(String(this.state.timerState))) : "stopped"
+        if ((fbTimerSt = "running" || fbTimerSt = "paused" || fbTimerSt = "overtime") && (hostTimerSt = "stopped" || hostTimerSt = "")) {
+            fbRem := JsonCodec.GetInt(fbObj, "timerRemainingSec", 600)
+            fbPreset := JsonCodec.GetInt(fbObj, "timerPresetSec", 600)
+            this.state.timerState := fbTimerSt
+            this.state.timerRemainingSec := fbRem
+            this.state.timerPresetSec := (fbPreset > 0) ? fbPreset : 600
+            if ((fbTimerSt = "running" || fbTimerSt = "overtime") && this.state.HasOwnProp("presenterTimerFn") && this.state.presenterTimerFn)
+                try SetTimer(this.state.presenterTimerFn, 1000)
+            changed := true
+        }
+
+        if (changed && IsSet(DiagnosticLogger)) {
+            devLabel := (IsObject(c) && c.HasOwnProp("deviceId")) ? c.deviceId : "remote"
+            try DiagnosticLogger.RecordBreadcrumb("Bridge", "FallbackStateReconciled", "dev=" devLabel " brb=" (this.state.isStandby ? 1 : 0) " tmr=" this.state.timerState)
+        }
+        return changed
     }
 
     _BuildStateFieldsJson() {
@@ -2202,6 +2276,13 @@ HostBridgeBroadcastMuteState(cfg, state) {
     return 0
 }
 
+HostBridgeBroadcastObsFallback(cfg := "") {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.BroadcastObsFallbackUpdate(cfg)
+    return 0
+}
+
 HostBridgeBroadcastStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B") {
     global g_HostCompanionBridge
     if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
@@ -2302,7 +2383,7 @@ BuildHostPairingUri(cfg, candidateIps := "", bridgePortOverride := 0) {
     PushHost(A_ComputerName ".local")
 
     hostStr := ""
-    limit := Min(hosts.Length, 4)
+    limit := Min(hosts.Length, 12)
     Loop limit {
         hostStr .= (A_Index > 1 ? "," : "") hosts[A_Index]
     }

@@ -79,7 +79,7 @@ object UdpHostDiscoveryClient {
         val merged = linkedSetOf<String>()
         merged.add(matched.hostIp.trim())
         for (ep in existing) {
-            if (merged.size >= 4) break
+            if (merged.size >= 12) break
             val h = ep.host.trim()
             if (h.isNotEmpty() && merged.none { it.equals(h, ignoreCase = true) }) {
                 merged.add(h)
@@ -202,5 +202,32 @@ object UdpHostDiscoveryClient {
                 true
             }
         }.getOrDefault(false)
+    }
+
+    fun bridgeFallbackSweepPorts(preferredPort: Int = AppConstants.DEFAULT_BRIDGE_PORT): List<Int> {
+        val pref = if (preferredPort in 1..65535) preferredPort else AppConstants.DEFAULT_BRIDGE_PORT
+        val out = linkedSetOf<Int>()
+        out.add(pref)
+        out.add(AppConstants.DEFAULT_BRIDGE_PORT)
+        for (p in 4458..4465) {
+            out.add(p)
+        }
+        return out.toList()
+    }
+
+    suspend fun sweepHostBridgePort(
+        httpClient: OkHttpClient,
+        host: String,
+        preferredPort: Int,
+        expectedHostUuid: String = "",
+        timeoutMs: Long = AppConstants.LAN_REPROMOTE_PROBE_TIMEOUT_MS
+    ): Int? {
+        val ports = if (preferredPort in 4456..4465) bridgeFallbackSweepPorts(preferredPort) else listOf(preferredPort)
+        for (port in ports) {
+            if (probeHostBridgeHealth(httpClient, host, port, expectedHostUuid, timeoutMs)) {
+                return port
+            }
+        }
+        return null
     }
 }

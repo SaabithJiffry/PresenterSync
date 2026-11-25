@@ -77,7 +77,7 @@ class UdpDiscoveryTest {
     }
 
     @Test
-    fun followHostUuidIpShiftPrependsNewIpAndDeduplicatesUpToFour() {
+    fun followHostUuidIpShiftPrependsNewIpAndDeduplicatesUpToTwelve() {
         val beacons = listOf(
             DiscoveredPublicHost("other-uuid", "OtherRoom", "192.168.1.10", 4456, 4455, "LAN", 1, "6.6.0"),
             DiscoveredPublicHost("UUID-TARGET-99", "MainLaptop", "10.0.4.77", 4458, 4455, "LAN", 1, "6.6.0")
@@ -97,7 +97,7 @@ class UdpDiscoveryTest {
             currentBridgePort = 4456
         )
         assertNotNull(shifted)
-        assertEquals("10.0.4.77, 192.168.1.42, h3.local, h4.local", shifted!!.first)
+        assertEquals("10.0.4.77, 192.168.1.42, h3.local, h4.local, h5.local", shifted!!.first)
         assertEquals(4458, shifted.second)
     }
 }

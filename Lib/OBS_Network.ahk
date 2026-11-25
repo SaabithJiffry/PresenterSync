@@ -2116,6 +2116,32 @@ ConnectToOBS(cfg, state) {
     }
 }
 
+ApplyHostObsCredentialsChange(cfg, state, oldPw, oldMic := "") {
+    if (!IsObject(cfg))
+        return false
+    pwChanged := (String(cfg.obsPassword) !== String(oldPw))
+    micChanged := (oldMic != "" && String(cfg.targetMicName) !== String(oldMic))
+    if (!pwChanged && !micChanged)
+        return false
+    if (IsSet(DiagnosticLogger))
+        try DiagnosticLogger.RecordBreadcrumb("OBS", "CredentialsChangedReconnect", "pw=" (pwChanged ? 1 : 0) " mic=" (micChanged ? 1 : 0))
+    if (IsObject(state) && cfg.HasOwnProp("EnableWS") && cfg.EnableWS) {
+        if (state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+            SafeCloseWebSocketDeferred(state.obsWs, 40)
+            state.obsWs := ""
+        }
+        if (state.HasOwnProp("obsConnected"))
+            state.obsConnected := false
+        if (state.HasOwnProp("obsTimerFn") && state.obsTimerFn)
+            SetTimer(state.obsTimerFn, -100)
+    }
+    if (IsSet(HostBridgeBroadcastObsFallback))
+        try HostBridgeBroadcastObsFallback(cfg)
+    if (IsObject(state))
+        try BroadcastHostRelayMuteState(cfg, state)
+    return true
+}
+
 HandleObsClose(cfg, state, ws, status, reason) {
     if IsObject(ws)
         try ws.shutdown()
@@ -2134,6 +2160,8 @@ HandleObsClose(cfg, state, ws, status, reason) {
             if (newPw != "") {
                 cfg.obsPassword := newPw
                 cfg.Write("Settings", "ObsPassword", newPw)
+                if (IsSet(HostBridgeBroadcastObsFallback))
+                    try HostBridgeBroadcastObsFallback(cfg)
                 BroadcastHostRelayMuteState(cfg, state)
                 if state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn
                     try state.refreshHelpFn.Call()

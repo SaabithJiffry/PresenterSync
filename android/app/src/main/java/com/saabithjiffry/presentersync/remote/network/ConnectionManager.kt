@@ -198,6 +198,20 @@ class ConnectionManager(
     internal var discoverPortOverride: Int = AppConstants.DEFAULT_DISCOVERY_PORT
     internal var failoverBudgetMs: Long = AppConstants.LAN_FAILOVER_DEADLINE_MS
     internal var repromoteIntervalMs: Long = BRIDGE_REPROMOTE_INTERVAL_MS
+    internal var requiredRepromoteProbes: Int = FailoverPolicy.REPROMOTE_REQUIRED_CONSECUTIVE_PROBES
+    internal var enableBridgePortSweep: Boolean = true
+    @Volatile
+    private var consecutiveHealthyRepromoteProbes: Int = 0
+    @Volatile
+    private var pendingFallbackReconcile: JSONObject? = null
+    @Volatile
+    private var recAnchorSec: Int = 0
+    @Volatile
+    private var recAnchorClockMs: Long = 0L
+    @Volatile
+    private var timerAnchorRemSec: Int = 600
+    @Volatile
+    private var timerAnchorClockMs: Long = 0L
 
     internal data class LocalStandbySnapshot(
         val previousScene: String,
@@ -281,6 +295,11 @@ class ConnectionManager(
             return
         }
         sendPingWithPongWatchdog(generation.get())
+        bridgeClient?.sendSyncRequest()
+        if (st.usingDirectObsFallback && FailoverPolicy.hasBridgeCredentials(configStore.current)) {
+            val activeGen = generation.get()
+            scope.launch { checkAndPromoteLanIfHealthy(activeGen) }
+        }
     }
 
     fun verifyOrReconnect() {
@@ -306,6 +325,8 @@ class ConnectionManager(
 
     fun stop() {
         generation.incrementAndGet()
+        consecutiveHealthyRepromoteProbes = 0
+        pendingFallbackReconcile = null
         cancelSessionJobs(
             includeConnectLoop = true,
             includeNetworkDebounce = true,
@@ -319,6 +340,7 @@ class ConnectionManager(
 
     fun reconnectNow() {
         val gen = generation.incrementAndGet()
+        consecutiveHealthyRepromoteProbes = 0
         cancelSessionJobs(includeConnectLoop = true)
         lastRxAtMs = -1L
         closeActiveClients()
@@ -575,6 +597,33 @@ class ConnectionManager(
 
             if (stopConnectLoop || gen != generation.get()) return
 
+            // Fallback port sweep (4456, 4458..4465) once per cycle if UDP discovery missed a port-shifted Host Bridge
+            if (enableBridgePortSweep &&
+                FailoverPolicy.hasBridgeCredentials(effectiveCfg) &&
+                effectiveCfg.bridgePort in 4456..4465
+            ) {
+                var foundSweptPort: Int? = null
+                for (cand in candidates) {
+                    if (gen != generation.get()) return
+                    val resolved = resolveCandidateHost(cand.host, 650L)
+                    val swept = UdpHostDiscoveryClient.sweepHostBridgePort(
+                        httpClient = httpClient,
+                        host = resolved,
+                        preferredPort = effectiveCfg.bridgePort,
+                        expectedHostUuid = effectiveCfg.pairedHostUuid
+                    )
+                    if (swept != null && swept != effectiveCfg.bridgePort) {
+                        foundSweptPort = swept
+                        break
+                    }
+                }
+                if (foundSweptPort != null && gen == generation.get()) {
+                    logInfo("Fallback Bridge port sweep found live Host Bridge on :$foundSweptPort")
+                    configStore.update { prev -> prev.copy(bridgePort = foundSweptPort) }
+                    continue
+                }
+            }
+
             // Fallback to Internet Relay if configured (matching ShouldRemoteFallbackToRelay)
             if (FailoverPolicy.hasWanFallbackConfigured(effectiveCfg)) {
                 val relayOutcome = attemptRelaySession(gen, effectiveCfg, isFallback = true)
@@ -687,6 +736,7 @@ class ConnectionManager(
             .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
             .build()
         var handshakeTimeoutJob: Job? = null
+        val fallbackToSend = pendingFallbackReconcile
         val client = HostBridgeClient(
             httpClient = bridgeHttp,
             wsBaseUrl = wsUrl,
@@ -694,14 +744,22 @@ class ConnectionManager(
             sessionCode = cfg.sessionPairingCode,
             deviceId = devId,
             deviceName = devName,
+            clientFallbackState = fallbackToSend,
             callbacks = object : HostBridgeCallbacks {
                 override fun onBridgeConnected(hostName: String) {
                     if (gen != generation.get()) return
                     handshakeTimeoutJob?.cancel()
+                    pendingFallbackReconcile = null
+                    consecutiveHealthyRepromoteProbes = 0
                     markRxActivity()
                     transitionToConnected(ChannelType.HOST_BRIDGE, "$hostName ($displayRaw)")
                     DiagnosticLogger.recordBreadcrumb("Connection", "HostBridgeConnected", "$hostName ($displayRaw)")
                     startHeartbeat(gen, cfg.heartbeatSeconds)
+                }
+
+                override fun onObsFallbackUpdated(port: Int, targetMic: String, password: String) {
+                    if (gen != generation.get()) return
+                    applyObsFallbackConfigUpdate(port, targetMic, password)
                 }
 
                 override fun onBridgeFrameReceived() {
@@ -856,6 +914,7 @@ class ConnectionManager(
                     if (gen != generation.get()) return
                     val prev = _uiState.value
                     val nextSec = if (recSeconds >= 0) recSeconds else if (recState == 0) 0 else prev.recSeconds
+                    anchorRecClock(nextSec, recState)
                     _uiState.value = prev.copy(recState = recState, recSeconds = nextSec)
                     updateLocalRecTicker(gen, recState)
                 }
@@ -1042,9 +1101,16 @@ class ConnectionManager(
 
     private fun startLanRepromotionMonitor(gen: Int) {
         lanRepromoteJob?.cancel()
+        consecutiveHealthyRepromoteProbes = 0
         lanRepromoteJob = scope.launch {
             while (gen == generation.get() && (_uiState.value.usingRelayFallback || _uiState.value.usingDirectObsFallback)) {
-                delay(repromoteIntervalMs.coerceAtLeast(1500L))
+                val req = requiredRepromoteProbes.coerceAtLeast(1)
+                val waitMs = if (consecutiveHealthyRepromoteProbes in 1 until req) {
+                    1500L
+                } else {
+                    repromoteIntervalMs.coerceAtLeast(1500L)
+                }
+                delay(waitMs)
                 if (gen != generation.get() || (!_uiState.value.usingRelayFallback && !_uiState.value.usingDirectObsFallback)) break
                 if (checkAndPromoteLanIfHealthy(gen)) break
             }
@@ -1055,10 +1121,13 @@ class ConnectionManager(
         if (gen != generation.get()) return false
         var cfg = configStore.current
         if (!FailoverPolicy.canRepromoteFromFallback(cfg, _uiState.value)) {
+            consecutiveHealthyRepromoteProbes = 0
             return false
         }
         cfg = refreshConfigForHostUuidShift(cfg, logShift = false)
         val candidates = EndpointParser.parseCandidateEndpoints(cfg.hostAddress, cfg.hostPort)
+        var matchedHost: String? = null
+        var matchedPort: Int = cfg.bridgePort
         for (cand in candidates) {
             if (gen != generation.get()) return false
             val host = resolveCandidateHost(cand.host, 900L)
@@ -1068,14 +1137,79 @@ class ConnectionManager(
                 bridgePort = cfg.bridgePort,
                 expectedHostUuid = cfg.pairedHostUuid
             )
-            if (healthy && gen == generation.get()) {
-                DiagnosticLogger.recordBreadcrumb("Bridge", "RepromoteHealthy", "host=$host:${cfg.bridgePort}")
-                logInfo("LAN Host Bridge recovered ($host:${cfg.bridgePort}); promoting back to HOST_BRIDGE")
-                reconnectNow()
-                return true
+            if (healthy) {
+                matchedHost = host
+                matchedPort = cfg.bridgePort
+                break
+            }
+            if (enableBridgePortSweep && cfg.bridgePort in 4456..4465) {
+                val sweptPort = UdpHostDiscoveryClient.sweepHostBridgePort(
+                    httpClient = httpClient,
+                    host = host,
+                    preferredPort = cfg.bridgePort,
+                    expectedHostUuid = cfg.pairedHostUuid
+                )
+                if (sweptPort != null) {
+                    matchedHost = host
+                    matchedPort = sweptPort
+                    break
+                }
             }
         }
-        return false
+        if (matchedHost == null || gen != generation.get()) {
+            consecutiveHealthyRepromoteProbes = 0
+            return false
+        }
+
+        val req = requiredRepromoteProbes.coerceAtLeast(1)
+        val nextStreak = consecutiveHealthyRepromoteProbes + 1
+        if (nextStreak < req) {
+            consecutiveHealthyRepromoteProbes = nextStreak
+            DiagnosticLogger.recordBreadcrumb("Bridge", "RepromoteArmed", "$nextStreak/$req host=$matchedHost:$matchedPort")
+            return false
+        }
+
+        consecutiveHealthyRepromoteProbes = 0
+        if (matchedPort != cfg.bridgePort) {
+            configStore.update { prev -> prev.copy(bridgePort = matchedPort) }
+        }
+        pendingFallbackReconcile = buildFallbackStateSnapshot()
+        DiagnosticLogger.recordBreadcrumb("Bridge", "RepromoteHealthy", "host=$matchedHost:$matchedPort")
+        logInfo("LAN Host Bridge recovered ($matchedHost:$matchedPort); promoting back to HOST_BRIDGE")
+        reconnectNow()
+        return true
+    }
+
+    private fun applyObsFallbackConfigUpdate(port: Int, targetMic: String, password: String) {
+        configStore.update { prev ->
+            val nextPort = if (port in 1..65535) port else prev.hostPort
+            val nextMic = targetMic.trim().ifBlank { prev.targetMicName }
+            prev.copy(
+                hostPort = nextPort,
+                targetMicName = nextMic,
+                obsPassword = password
+            )
+        }
+    }
+
+    private fun buildFallbackStateSnapshot(): JSONObject? {
+        val st = _uiState.value
+        if (!st.usingDirectObsFallback) return null
+        val tmrSt = st.timerState.lowercase()
+        val hasTmr = tmrSt == "running" || tmrSt == "paused" || tmrSt == "overtime"
+        if (!st.isStandby && !hasTmr) return null
+        val rem = computeMonotonicTimerRemaining(st)
+        val snap = localStandbySnapshot
+        return JSONObject().apply {
+            put("fromDirectObsFallback", true)
+            put("isStandby", st.isStandby)
+            put("standbyScene", st.standbyScene.ifBlank { "BRB" })
+            put("previousScene", snap?.previousScene ?: st.previousProgramScene)
+            put("wasMuted", snap?.wasMuted ?: false)
+            put("timerState", tmrSt)
+            put("timerRemainingSec", rem)
+            put("timerPresetSec", if (st.timerPresetSec > 0) st.timerPresetSec else 600)
+        }
     }
 
     internal var heartbeatIntervalOverrideMs: Long = 0L
@@ -1124,12 +1258,37 @@ class ConnectionManager(
         if (activeVoiceWarn && !prev.voiceWhileMuted && configStore.current.enableVoiceWhileMutedAlert) {
             _events.tryEmit(RemoteEvent.VoiceWhileMutedAlert)
         }
+        anchorRecClock(telemetry.recSeconds, telemetry.recState)
+        anchorPresenterClock(telemetry.timerRemainingSec, telemetry.timerState)
         updateLocalRecTicker(gen, telemetry.recState)
         updateLocalPresenterTimerTicker(gen, telemetry.timerState)
     }
 
+    internal fun anchorRecClock(recSeconds: Int, recState: Int = _uiState.value.recState) {
+        val safeSec = recSeconds.coerceAtLeast(0)
+        recAnchorSec = safeSec
+        recAnchorClockMs = if (recState == 1) clockMs() else 0L
+    }
+
+    internal fun anchorPresenterClock(remSec: Int, timerState: String = _uiState.value.timerState) {
+        timerAnchorRemSec = remSec
+        timerAnchorClockMs = if (timerState == "running" || timerState == "overtime") clockMs() else 0L
+    }
+
+    internal fun computeMonotonicTimerRemaining(cur: ConnectionUiState = _uiState.value): Int {
+        val now = clockMs()
+        if ((cur.timerState == "running" || cur.timerState == "overtime") && timerAnchorClockMs > 0L && now > timerAnchorClockMs) {
+            val elapsedSec = ((now - timerAnchorClockMs + 80L) / 1000L).toInt().coerceAtLeast(0)
+            return timerAnchorRemSec - elapsedSec
+        }
+        return cur.timerRemainingSec
+    }
+
     private fun updateLocalRecTicker(gen: Int, recState: Int) {
         if (recState == 1) {
+            if (recAnchorClockMs <= 0L) {
+                anchorRecClock(_uiState.value.recSeconds, recState)
+            }
             if (recTickerJob?.isActive != true) {
                 recTickerJob = scope.launch {
                     var obsResyncTicks = 0
@@ -1137,7 +1296,13 @@ class ConnectionManager(
                         delay(1000L)
                         val cur = _uiState.value
                         if (gen == generation.get() && cur.connected && cur.recState == 1) {
-                            _uiState.value = cur.copy(recSeconds = cur.recSeconds + 1)
+                            val nextSec = if (recAnchorClockMs > 0L && clockMs() > recAnchorClockMs) {
+                                val elapsedSec = ((clockMs() - recAnchorClockMs + 80L) / 1000L).toInt().coerceAtLeast(0)
+                                recAnchorSec + elapsedSec
+                            } else {
+                                cur.recSeconds + 1
+                            }
+                            _uiState.value = cur.copy(recSeconds = nextSec)
                             obsResyncTicks++
                             if (obsResyncTicks >= 15) {
                                 obsResyncTicks = 0
@@ -1148,12 +1313,16 @@ class ConnectionManager(
                 }
             }
         } else {
+            recAnchorClockMs = 0L
             recTickerJob?.cancel()
         }
     }
 
     private fun updateLocalPresenterTimerTicker(gen: Int, timerState: String) {
         if (timerState == "running" || timerState == "overtime") {
+            if (timerAnchorClockMs <= 0L) {
+                anchorPresenterClock(_uiState.value.timerRemainingSec, timerState)
+            }
             if (presenterTimerJob?.isActive != true) {
                 presenterTimerJob = scope.launch {
                     while (gen == generation.get() &&
@@ -1167,6 +1336,7 @@ class ConnectionManager(
                 }
             }
         } else {
+            timerAnchorClockMs = 0L
             presenterTimerJob?.cancel()
         }
     }
@@ -1175,8 +1345,14 @@ class ConnectionManager(
         val cur = _uiState.value
         if (cur.timerState != "running" && cur.timerState != "overtime") return false
         val prevRem = cur.timerRemainingSec
-        val nextSec = prevRem - 1
-        val enteredOvertime = (nextSec <= 0 && cur.timerState == "running")
+        val now = clockMs()
+        val nextSec = if (timerAnchorClockMs > 0L && now > timerAnchorClockMs) {
+            val elapsedSec = ((now - timerAnchorClockMs + 80L) / 1000L).toInt().coerceAtLeast(1)
+            timerAnchorRemSec - elapsedSec
+        } else {
+            prevRem - 1
+        }
+        val enteredOvertime = (prevRem > 0 && nextSec <= 0 && cur.timerState == "running")
         val nextState = if (nextSec <= 0) "overtime" else cur.timerState
         val updated = cur.copy(timerRemainingSec = nextSec, timerState = nextState)
         _uiState.value = updated
@@ -1188,7 +1364,7 @@ class ConnectionManager(
                     accentHex = "EF4444"
                 )
             )
-        } else if (prevRem == 121 && nextSec == 120) {
+        } else if (prevRem > 120 && nextSec <= 120) {
             _events.tryEmit(
                 RemoteEvent.StageNudge(
                     message = "2:00 Remaining",
@@ -1215,7 +1391,7 @@ class ConnectionManager(
                     rem = preset
                 } else {
                     preset = if (cur.timerPresetSec > 0) cur.timerPresetSec else 600
-                    rem = cur.timerRemainingSec
+                    rem = computeMonotonicTimerRemaining(cur)
                 }
                 val nextState = if (rem <= 0) "overtime" else "running"
                 _uiState.value = cur.copy(
@@ -1223,6 +1399,7 @@ class ConnectionManager(
                     timerRemainingSec = rem,
                     timerPresetSec = preset
                 )
+                anchorPresenterClock(rem, nextState)
                 DiagnosticLogger.recordBreadcrumb("Timer", "LocalTimerStart", "rem=${rem}s | preset=${preset}s")
                 updateLocalPresenterTimerTicker(activeGen, nextState)
                 true
@@ -1233,11 +1410,14 @@ class ConnectionManager(
                 }
                 if (cur.timerState == "running" || cur.timerState == "overtime") {
                     presenterTimerJob?.cancel()
-                    _uiState.value = cur.copy(timerState = "paused")
-                    DiagnosticLogger.recordBreadcrumb("Timer", "LocalTimerPause", "rem=${cur.timerRemainingSec}s")
+                    val snapRem = computeMonotonicTimerRemaining(cur)
+                    timerAnchorClockMs = 0L
+                    _uiState.value = cur.copy(timerState = "paused", timerRemainingSec = snapRem)
+                    DiagnosticLogger.recordBreadcrumb("Timer", "LocalTimerPause", "rem=${snapRem}s")
                 } else if (cur.timerState == "paused") {
                     val nextState = if (cur.timerRemainingSec <= 0) "overtime" else "running"
                     _uiState.value = cur.copy(timerState = nextState)
+                    anchorPresenterClock(cur.timerRemainingSec, nextState)
                     DiagnosticLogger.recordBreadcrumb("Timer", "LocalTimerResume", "rem=${cur.timerRemainingSec}s")
                     updateLocalPresenterTimerTicker(activeGen, nextState)
                 }
@@ -1245,6 +1425,7 @@ class ConnectionManager(
             }
             "timer_reset" -> {
                 presenterTimerJob?.cancel()
+                timerAnchorClockMs = 0L
                 val preset = if (durationSec > 0) durationSec else if (cur.timerPresetSec > 0) cur.timerPresetSec else 600
                 _uiState.value = cur.copy(
                     timerState = "stopped",

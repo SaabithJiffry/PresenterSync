@@ -1457,6 +1457,7 @@ class Config {
     SuspendHotkey := "^!+F12"
     RemoteInfoHotkey := "None"
     EnableRemoteConnections := true
+    IncludeVirtualAdapters := false
     HwMuteHotkey := "b"
     HwTransitionHotkey := "None"
 
@@ -1754,6 +1755,7 @@ class Config {
         this.ExitHotkey := this.Read("Settings", "ExitHotkey", "!+F12")
         this.RemoteInfoHotkey := this.Read("Settings", "RemoteInfoHotkey", "None")
         this.EnableRemoteConnections := this.ReadBool("Settings", "EnableRemoteConnections", true)
+        this.IncludeVirtualAdapters := this.ReadBool("Settings", "IncludeVirtualAdapters", false)
         this.SuspendHotkey := this.Read("Settings", "SuspendHotkey", "^!+F12")
         this.HwMuteHotkey := this.Read("Settings", "HwMuteHotkey", "b")
         this.HwTransitionHotkey := Trim(this.Read("Settings", "HwTransitionHotkey", ""))
@@ -1951,6 +1953,7 @@ class Config {
             { sec: "Settings", key: "QuickNudgePresets", prop: "QuickNudgePresets", kind: "str" },
             { sec: "Settings", key: "EnableRelayEncryption", prop: "EnableRelayEncryption", kind: "bool" },
             { sec: "Settings", key: "EnableRemoteConnections", prop: "EnableRemoteConnections", kind: "bool" },
+            { sec: "Settings", key: "IncludeVirtualAdapters", prop: "IncludeVirtualAdapters", kind: "bool" },
             { sec: "Settings", key: "RemoteInfoHotkey", prop: "RemoteInfoHotkey", kind: "str" },
             { sec: "Settings", key: "HwMuteHotkey", prop: "HwMuteHotkey", kind: "str" },
             { sec: "Settings", key: "HwTransitionHotkey", prop: "HwTransitionHotkey", kind: "str" },

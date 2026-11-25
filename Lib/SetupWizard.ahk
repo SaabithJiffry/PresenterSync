@@ -418,20 +418,38 @@ PromptForPassword(promptText := "Enter your OBS WebSocket Password:") {
     return savedPw
 }
 
-GetLocalNetworkEndpoints(includeAdapterNames := true) {
-    static cachedFull := "", cachedFullTick := 0
+IsVirtualOrVpnAdapterName(desc) {
+    clean := Trim(String(desc))
+    if (clean = "")
+        return false
+    return !!RegExMatch(clean, "i)(virtual|vmware|vbox|virtualbox|hyper-v|vethernet|wsl|wireguard|tailscale|zerotier|wintun|nordlynx|cisco|docker|pseudo|loopback|npcap|tap-|\btun\b|\bvpn\b)")
+}
+
+GetLocalNetworkEndpoints(includeAdapterNames := true, includeVirtual := "", bypassCache := false) {
+    static cachedFullPhys := "", cachedFullPhysTick := 0
+    static cachedFullAll := "", cachedFullAllTick := 0
     static cachedFast := "", cachedFastTick := 0
     now := A_TickCount
 
-    if (includeAdapterNames) {
-        if (IsObject(cachedFull) && (now - cachedFullTick) < 10000)
-            return cachedFull
-    } else {
-        if (IsObject(cachedFast) && (now - cachedFastTick) < 10000)
-            return cachedFast
+    allowVirtual := (includeVirtual != "")
+        ? !!includeVirtual
+        : (IsSet(AppConfig) && IsObject(AppConfig) && AppConfig.HasOwnProp("IncludeVirtualAdapters") ? !!AppConfig.IncludeVirtualAdapters : false)
+
+    if (!bypassCache) {
+        if (includeAdapterNames) {
+            if (allowVirtual && IsObject(cachedFullAll) && (now - cachedFullAllTick) < 10000)
+                return cachedFullAll
+            if (!allowVirtual && IsObject(cachedFullPhys) && (now - cachedFullPhysTick) < 10000)
+                return cachedFullPhys
+        } else {
+            if (IsObject(cachedFast) && (now - cachedFastTick) < 10000)
+                return cachedFast
+        }
     }
 
     res := {ips: [], details: []}
+    physIps := [], physDetails := []
+    virtIps := [], virtDetails := []
     seen := Map()
 
     AppendSysLanIps(targetRes, seenMap) {
@@ -461,27 +479,42 @@ GetLocalNetworkEndpoints(includeAdapterNames := true) {
             if !IsObject(adapter.IPAddress)
                 continue
             desc := String(adapter.Description)
-            isVirtual := RegExMatch(desc, "i)(virtual|vmware|vbox|hyper-v|pseudo|loopback|npcap|tap-)")
+            isVirtual := IsVirtualOrVpnAdapterName(desc)
             for ip in adapter.IPAddress {
                 ipStr := Trim(String(ip))
                 if (IsUsableLanIPv4(ipStr) && !seen.Has(ipStr)) {
                     seen[ipStr] := true
                     item := {name: desc, ip: ipStr, isVirtual: isVirtual}
                     if (!isVirtual) {
-                        res.ips.InsertAt(1, ipStr)
-                        res.details.InsertAt(1, item)
+                        physIps.Push(ipStr)
+                        physDetails.Push(item)
                     } else {
-                        res.ips.Push(ipStr)
-                        res.details.Push(item)
+                        virtIps.Push(ipStr)
+                        virtDetails.Push(item)
                     }
                 }
             }
         }
     }
+    for idx, ipStr in physIps {
+        res.ips.Push(ipStr)
+        res.details.Push(physDetails[idx])
+    }
+    if (allowVirtual || res.ips.Length == 0) {
+        for idx, ipStr in virtIps {
+            res.ips.Push(ipStr)
+            res.details.Push(virtDetails[idx])
+        }
+    }
     if (res.ips.Length == 0)
         AppendSysLanIps(res, seen)
-    cachedFull := res
-    cachedFullTick := now
+    if (allowVirtual) {
+        cachedFullAll := res
+        cachedFullAllTick := now
+    } else {
+        cachedFullPhys := res
+        cachedFullPhysTick := now
+    }
     return res
 }
 

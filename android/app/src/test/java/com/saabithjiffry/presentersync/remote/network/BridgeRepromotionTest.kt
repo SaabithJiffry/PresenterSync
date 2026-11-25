@@ -50,7 +50,7 @@ class BridgeRepromotionTest {
     }
 
     @Test
-    fun checkAndPromoteLanIfHealthyPromotesWhenHealthReturns200Ok() = runBlocking {
+    fun checkAndPromoteLanIfHealthyPromotesAfterTwoConsecutive200OkProbes() = runBlocking {
         val hostUuid = "host-uuid-repromote-1"
         configStore.update {
             it.copy(
@@ -67,9 +67,54 @@ class BridgeRepromotionTest {
                 .setResponseCode(200)
                 .setBody("""{"ok":true,"hostUuid":"$hostUuid","bridgePort":${server.port}}""")
         )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("""{"ok":true,"hostUuid":"$hostUuid","bridgePort":${server.port}}""")
+        )
 
-        val promoted = manager.checkAndPromoteLanIfHealthy(0)
-        assertTrue(promoted)
+        assertFalse("First healthy probe should arm 2-probe hysteresis without promoting", manager.checkAndPromoteLanIfHealthy(0))
+        assertTrue("Second consecutive healthy probe should promote back to HOST_BRIDGE", manager.checkAndPromoteLanIfHealthy(0))
+    }
+
+    @Test
+    fun checkAndPromoteLanIfHealthyResetsHysteresisAfter503() = runBlocking {
+        val hostUuid = "host-uuid-repromote-2"
+        configStore.update {
+            it.copy(
+                networkMode = NetworkMode.LAN,
+                hostAddress = "127.0.0.1",
+                hostPort = 4455,
+                bridgePort = server.port,
+                sessionPairingCode = "K7M-9P2",
+                pairedHostUuid = ""
+            )
+        }
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true,"hostUuid":"$hostUuid","bridgePort":${server.port}}"""))
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true,"hostUuid":"$hostUuid","bridgePort":${server.port}}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true,"hostUuid":"$hostUuid","bridgePort":${server.port}}"""))
+
+        assertFalse(manager.checkAndPromoteLanIfHealthy(0))
+        assertFalse(manager.checkAndPromoteLanIfHealthy(0))
+        assertFalse("503 failure must reset streak so next 200 only arms streak=1", manager.checkAndPromoteLanIfHealthy(0))
+        assertTrue(manager.checkAndPromoteLanIfHealthy(0))
+    }
+
+    @Test
+    fun bridgeFallbackSweepPortsInclude4456And4458To4465Without4457() {
+        val ports = UdpHostDiscoveryClient.bridgeFallbackSweepPorts(4456)
+        assertEquals(listOf(4456, 4458, 4459, 4460, 4461, 4462, 4463, 4464, 4465), ports)
+        assertFalse(ports.contains(4457))
+    }
+
+    @Test
+    fun monotonicTimerTickRecoversCorrectlyAfterClockJump() {
+        manager.executeLocalTimerCommand("timer_start", 130)
+        assertEquals(130, manager.uiState.value.timerRemainingSec)
+        clockMs.set(16_100L) // +6.1s from 10_000L anchor
+        assertTrue(manager.stepLocalPresenterTimerTick())
+        assertEquals(124, manager.uiState.value.timerRemainingSec)
     }
 
     @Test

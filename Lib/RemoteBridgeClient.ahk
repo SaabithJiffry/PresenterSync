@@ -11,9 +11,71 @@
 class RemoteBridgeConstants {
     static BRIDGE_CONNECT_TIMEOUT_MS := 1800
     static BRIDGE_REPROMOTE_INTERVAL_MS := 8000
+    static BRIDGE_REPROMOTE_REQUIRED_PROBES := 2
     static HEALTH_PROBE_TIMEOUT_MS := 500
     static PONG_TIMEOUT_MS := 2500
     static WAKE_STALENESS_MS := 25000
+}
+
+StepBridgeRepromoteHysteresis(state, healthy, requiredProbes := "") {
+    if (!IsObject(state))
+        return false
+    req := (requiredProbes != "" && IsInteger(requiredProbes))
+        ? Max(1, Integer(requiredProbes))
+        : RemoteBridgeConstants.BRIDGE_REPROMOTE_REQUIRED_PROBES
+    if (!healthy) {
+        state._repromoteHealthyStreak := 0
+        return false
+    }
+    streak := (state.HasOwnProp("_repromoteHealthyStreak") && IsInteger(state._repromoteHealthyStreak))
+        ? (Integer(state._repromoteHealthyStreak) + 1)
+        : 1
+    if (streak >= req) {
+        state._repromoteHealthyStreak := 0
+        return true
+    }
+    state._repromoteHealthyStreak := streak
+    return false
+}
+
+GetRemoteBridgeSweepPorts(preferredPort := 4456) {
+    pref := 4456
+    try pref := Integer(preferredPort)
+    if (pref < 1 || pref > 65535)
+        pref := 4456
+    ports := [pref]
+    seen := Map(pref, true)
+    if (!seen.Has(4456)) {
+        seen[4456] := true
+        ports.Push(4456)
+    }
+    Loop 8 {
+        p := 4457 + A_Index ; 4458..4465 (skips UDP discovery :4457)
+        if (!seen.Has(p)) {
+            seen[p] := true
+            ports.Push(p)
+        }
+    }
+    return ports
+}
+
+SweepHostBridgeFallbackPort(host, preferredPort := 4456, expectedUuid := "", timeoutMs := 450, probeFn := "") {
+    cleanHost := Trim(String(host))
+    if (cleanHost = "")
+        return { ok: false, port: "", probe: "" }
+    prefNum := 4456
+    try prefNum := Integer(preferredPort)
+    if (prefNum < 1 || prefNum > 65535)
+        prefNum := 4456
+    ports := (prefNum >= 4456 && prefNum <= 4465) ? GetRemoteBridgeSweepPorts(prefNum) : [prefNum]
+    for _, p in ports {
+        res := IsObject(probeFn)
+            ? probeFn.Call(cleanHost, p, expectedUuid, timeoutMs)
+            : ProbeHostBridgeHealth(cleanHost, p, expectedUuid, timeoutMs)
+        if (IsObject(res) && res.HasOwnProp("ok") && res.ok)
+            return { ok: true, port: String(p), probe: res }
+    }
+    return { ok: false, port: "", probe: "" }
 }
 
 MarkRemoteRxActivity(state, nowTick := "") {
@@ -642,7 +704,7 @@ FollowPairedHostIpShift(cfg, beacons) {
     seen := Map(StrLower(newIp), true)
     for _, ep in curEps {
         hLow := StrLower(Trim(ep.host))
-        if (hLow != "" && !seen.Has(hLow) && ordered.Length < 4) {
+        if (hLow != "" && !seen.Has(hLow) && ordered.Length < 12) {
             seen[hLow] := true
             ordered.Push(Trim(ep.host))
         }
@@ -1081,14 +1143,44 @@ _RBC_NextCmdId(cfg) {
     return _RBC_GetDeviceId(cfg) "-" cmdSeq
 }
 
-BuildRemoteBridgeAuthJson(cfg) {
+BuildRemoteFallbackStateJson(state) {
+    if (!IsObject(state))
+        return ""
+    isStb := (state.HasOwnProp("isStandby") && state.isStandby) ? true : false
+    tmrSt := state.HasOwnProp("timerState") ? StrLower(Trim(String(state.timerState))) : "stopped"
+    hasTmr := (tmrSt = "running" || tmrSt = "paused" || tmrSt = "overtime")
+    if (!isStb && !hasTmr)
+        return ""
+    prevScene := ""
+    wasMuted := false
+    if (state.HasOwnProp("standbySnapshot") && IsObject(state.standbySnapshot)) {
+        if (state.standbySnapshot.HasOwnProp("scene"))
+            prevScene := String(state.standbySnapshot.scene)
+        if (state.standbySnapshot.HasOwnProp("muted"))
+            wasMuted := !!state.standbySnapshot.muted
+    }
+    if (prevScene = "" && state.HasOwnProp("previousProgramScene"))
+        prevScene := String(state.previousProgramScene)
+    brbScene := (state.HasOwnProp("standbyScene") && state.standbyScene != "") ? String(state.standbyScene) : "BRB"
+    tRem := state.HasOwnProp("timerRemainingSec") ? Integer(state.timerRemainingSec) : 600
+    tPre := (state.HasOwnProp("timerPresetSec") && Integer(state.timerPresetSec) > 0) ? Integer(state.timerPresetSec) : 600
+    return '{"fromDirectObsFallback":true,"isStandby":' (isStb ? "true" : "false") ',"standbyScene":"' _RBC_JsonEscape(brbScene) '","previousScene":"' _RBC_JsonEscape(prevScene) '","wasMuted":' (wasMuted ? "true" : "false") ',"timerState":"' _RBC_JsonEscape(tmrSt) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre '}'
+}
+
+BuildRemoteBridgeSyncReqJson(cfg := "") {
+    devId := IsObject(cfg) ? _RBC_GetDeviceId(cfg) : "win-remote"
+    return '{"type":"sync_req","deviceId":"' _RBC_JsonEscape(devId) '"}'
+}
+
+BuildRemoteBridgeAuthJson(cfg, fallbackStateJson := "") {
     devId := _RBC_GetDeviceId(cfg)
     tok := cfg.HasOwnProp("SessionToken") ? Trim(cfg.SessionToken) : ""
     code := cfg.HasOwnProp("SessionPairingCode") ? Trim(cfg.SessionPairingCode) : ""
     devName := GetRemoteDisplayDeviceName(cfg)
     ver := (IsSet(UIConstants) && UIConstants.HasOwnProp("APP_VERSION")) ? UIConstants.APP_VERSION : ""
     caps := '["protocol_v2","cmd_dedup","set_state","ack_nack"]'
-    return '{"type":"auth","protocolVersion":2,"appVersion":"' _RBC_JsonEscape(ver) '","capabilities":' caps ',"token":"' _RBC_JsonEscape(tok) '","code":"' _RBC_JsonEscape(code) '","deviceId":"' _RBC_JsonEscape(devId) '","deviceName":"' _RBC_JsonEscape(devName) '","platform":"Windows"}'
+    fbField := (Trim(String(fallbackStateJson)) != "") ? (',"clientFallbackState":' fallbackStateJson) : ""
+    return '{"type":"auth","protocolVersion":2,"appVersion":"' _RBC_JsonEscape(ver) '","capabilities":' caps ',"token":"' _RBC_JsonEscape(tok) '","code":"' _RBC_JsonEscape(code) '","deviceId":"' _RBC_JsonEscape(devId) '","deviceName":"' _RBC_JsonEscape(devName) '","platform":"Windows"' fbField '}'
 }
 
 BuildRemoteBridgeToggleJson(cfg) {
@@ -1146,6 +1238,7 @@ ParseHostBridgeWsEvent(rawText) {
     reasonStr := JsonCodec.GetStr(obj, "reason")
     if (reasonStr = "")
         reasonStr := JsonCodec.GetStr(obj, "error")
+    obsFbMap := (obj.Has("obsFallback") && (obj["obsFallback"] is Map)) ? obj["obsFallback"] : ""
     return {
         kind: t,
         protocolVersion: JsonCodec.GetInt(obj, "protocolVersion", 1),
@@ -1155,6 +1248,10 @@ ParseHostBridgeWsEvent(rawText) {
         cmdId: JsonCodec.GetStr(obj, "cmdId"),
         code: JsonCodec.GetStr(obj, "code"),
         dedup: JsonCodec.GetBool(obj, "dedup", false),
+        hasObsFallback: IsObject(obsFbMap),
+        obsFallbackPort: IsObject(obsFbMap) ? JsonCodec.GetInt(obsFbMap, "port", 4455) : 0,
+        obsFallbackMic: IsObject(obsFbMap) ? JsonCodec.GetStr(obsFbMap, "targetMic") : "",
+        obsFallbackPassword: IsObject(obsFbMap) ? JsonCodec.GetStr(obsFbMap, "password") : "",
         hasMuted: JsonCodec.HasKey(obj, "isMuted"),
         isMuted: JsonCodec.GetBool(obj, "isMuted", false),
         routingMode: JsonCodec.GetInt(obj, "routingMode", 1),
@@ -1327,42 +1424,81 @@ CreateRemoteInstanceDesktopShortcut(cfg, instanceName := "", targetDir := "", sh
     }
 }
 
+AnchorRemoteRecClock(state, recSeconds, nowTick := "") {
+    if (!IsObject(state))
+        return
+    t := (nowTick != "") ? Integer(nowTick) : A_TickCount
+    sec := Max(0, Integer(recSeconds))
+    state.recSeconds := sec
+    state._recAnchorSec := sec
+    state._recAnchorTick := t
+}
+
+AnchorRemotePresenterClock(state, remSec, nowTick := "") {
+    if (!IsObject(state))
+        return
+    t := (nowTick != "") ? Integer(nowTick) : A_TickCount
+    sec := Integer(remSec)
+    state.timerRemainingSec := sec
+    state._timerAnchorRemSec := sec
+    state._timerAnchorTick := t
+}
+
 UpdateRemoteLocalRecTimer(state) {
     if (!IsObject(state))
         return
     if (state.HasOwnProp("recTickFn") && IsObject(state.recTickFn)) {
-        if (state.HasOwnProp("recState") && state.recState == 1)
+        if (state.HasOwnProp("recState") && state.recState == 1) {
+            if (!state.HasOwnProp("_recAnchorTick") || state._recAnchorTick <= 0)
+                AnchorRemoteRecClock(state, state.HasOwnProp("recSeconds") ? state.recSeconds : 0)
             SetTimer state.recTickFn, 1000
-        else
+        } else {
+            state._recAnchorTick := 0
             SetTimer state.recTickFn, 0
+        }
     }
 }
 
-RemoteLocalRecTick(cfg, state) {
+RemoteLocalRecTick(cfg, state, nowTick := "") {
     if (!IsObject(state) || !state.HasOwnProp("recState") || state.recState != 1) {
         if (IsObject(state) && state.HasOwnProp("recTickFn") && IsObject(state.recTickFn))
             SetTimer state.recTickFn, 0
         return false
     }
-    state.recSeconds := (state.HasOwnProp("recSeconds") ? Integer(state.recSeconds) : 0) + 1
+    t := (nowTick != "") ? Integer(nowTick) : A_TickCount
+    if (state.HasOwnProp("_recAnchorTick") && state._recAnchorTick > 0) {
+        elapsedSec := Max(0, (t - Integer(state._recAnchorTick) + 80) // 1000)
+        state.recSeconds := Max(0, Integer(state._recAnchorSec) + elapsedSec)
+    } else {
+        state.recSeconds := (state.HasOwnProp("recSeconds") ? Integer(state.recSeconds) : 0) + 1
+    }
     if (state.HasMethod("NotifyTrayStatus"))
         state.NotifyTrayStatus()
     return true
 }
 
-RemoteTimerTick(cfg, state) {
+RemoteTimerTick(cfg, state, nowTick := "") {
     if (!IsObject(state) || !state.HasOwnProp("timerState") || (state.timerState != "running" && state.timerState != "overtime")) {
         if (IsObject(state) && state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
             SetTimer state.presenterTickFn, 0
         return false
     }
     prevRem := state.HasOwnProp("timerRemainingSec") ? Integer(state.timerRemainingSec) : 0
-    state.timerRemainingSec := prevRem - 1
-    if (state.timerRemainingSec <= 0 && state.timerState = "running") {
+    t := (nowTick != "") ? Integer(nowTick) : A_TickCount
+    if (state.HasOwnProp("_timerAnchorTick") && state._timerAnchorTick > 0) {
+        elapsedSec := Max(0, (t - Integer(state._timerAnchorTick) + 80) // 1000)
+        state.timerRemainingSec := Integer(state._timerAnchorRemSec) - elapsedSec
+    } else {
+        state.timerRemainingSec := prevRem - 1
+    }
+    newRem := state.timerRemainingSec
+    if (prevRem > 0 && newRem <= 0 && state.timerState = "running") {
         state.timerState := "overtime"
         if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
-            ShowStageNudgeBanner("Time Up — Overtime (" FormatCountdownClock(state.timerRemainingSec) ")", "EF4444", 4500, "Timer")
-    } else if (prevRem == 121 && state.timerRemainingSec == 120) {
+            ShowStageNudgeBanner("Time Up — Overtime (" FormatCountdownClock(newRem) ")", "EF4444", 4500, "Timer")
+    } else if (newRem <= 0 && state.timerState = "running") {
+        state.timerState := "overtime"
+    } else if (prevRem > 120 && newRem <= 120) {
         if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
             ShowStageNudgeBanner("2:00 Remaining", "F59E0B", 4500, "Timer")
     }
@@ -1385,6 +1521,7 @@ ExecuteRemoteLocalTimerCommand(cfg, state, action, durationSec := 0) {
             state.timerRemainingSec := preset
         }
         state.timerState := (state.timerRemainingSec <= 0) ? "overtime" : "running"
+        AnchorRemotePresenterClock(state, state.timerRemainingSec)
         if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
             SetTimer state.presenterTickFn, 1000
     } else if (actLow = "timer_pause") {
@@ -1393,14 +1530,17 @@ ExecuteRemoteLocalTimerCommand(cfg, state, action, durationSec := 0) {
             return ExecuteRemoteLocalTimerCommand(cfg, state, "timer_start", 0)
         if (cur = "running" || cur = "overtime") {
             state.timerState := "paused"
+            state._timerAnchorTick := 0
             if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
                 SetTimer state.presenterTickFn, 0
         } else if (cur = "paused") {
             state.timerState := (state.timerRemainingSec <= 0) ? "overtime" : "running"
+            AnchorRemotePresenterClock(state, state.timerRemainingSec)
             if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
                 SetTimer state.presenterTickFn, 1000
         }
     } else if (actLow = "timer_reset") {
+        state._timerAnchorTick := 0
         if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn))
             SetTimer state.presenterTickFn, 0
         preset := (Integer(durationSec) > 0) ? Integer(durationSec) : ((state.HasOwnProp("timerPresetSec") && Integer(state.timerPresetSec) > 0) ? Integer(state.timerPresetSec) : 600)
@@ -1618,6 +1758,64 @@ HandleRemotePowerBroadcast(wParam, state, reconnectFn := "") {
     return ""
 }
 
+HandleRemoteWtsSessionChange(wParam, cfg, state, verifyFn := "") {
+    wp := Integer(wParam)
+    if (wp == 0x7) { ; WTS_SESSION_LOCK
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Power", "SessionLock", "WTS_SESSION_LOCK")
+        if (IsObject(state))
+            state.isSessionLocked := true
+        return "lock"
+    }
+    if (wp == 0x8) { ; WTS_SESSION_UNLOCK
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Power", "SessionUnlock", "WTS_SESSION_UNLOCK")
+        if (IsObject(state)) {
+            state.isSessionLocked := false
+            if (IsObject(verifyFn))
+                verifyFn.Call()
+            else if (state.HasOwnProp("reconnectTimerFn") && IsObject(state.reconnectTimerFn))
+                SetTimer(state.reconnectTimerFn, -50)
+        }
+        return "unlock"
+    }
+    return ""
+}
+
+ResolveHostIpv4(host) {
+    clean := Trim(String(host))
+    if (clean = "")
+        return 0
+    if (StrLower(clean) = "localhost")
+        clean := "127.0.0.1"
+    if (clean != "255.255.255.255") {
+        directIp := DllCall("ws2_32\inet_addr", "AStr", clean, "UInt")
+        if (directIp != 0xFFFFFFFF)
+            return directIp
+    }
+    wsaBuf := Buffer(408, 0)
+    if (DllCall("ws2_32\WSAStartup", "UShort", 0x0202, "Ptr", wsaBuf.Ptr, "Int") != 0)
+        return 0
+    ipOut := 0
+    pRes := 0
+    try {
+        hints := Buffer(A_PtrSize == 8 ? 48 : 32, 0)
+        NumPut("Int", 2, hints, 4)  ; AF_INET
+        NumPut("Int", 1, hints, 8)  ; SOCK_STREAM
+        NumPut("Int", 6, hints, 12) ; IPPROTO_TCP
+        if (DllCall("ws2_32\GetAddrInfoW", "WStr", clean, "Ptr", 0, "Ptr", hints.Ptr, "Ptr*", &pRes, "Int") == 0 && pRes) {
+            saPtr := NumGet(pRes, A_PtrSize == 8 ? 32 : 24, "Ptr")
+            if (saPtr)
+                ipOut := NumGet(saPtr, 4, "UInt")
+        }
+    } finally {
+        if (pRes)
+            try DllCall("ws2_32\FreeAddrInfoW", "Ptr", pRes)
+        try DllCall("ws2_32\WSACleanup")
+    }
+    return ipOut
+}
+
 ProbeRemoteTcpPort(host, port, timeoutMs := 750) {
     cleanHost := Trim(String(host))
     pNum := IsInteger(port) ? Integer(port) : 0
@@ -1625,8 +1823,8 @@ ProbeRemoteTcpPort(host, port, timeoutMs := 750) {
         return false
     if (IsLoopbackHost(cleanHost))
         return IsLocalTcpPortListening(pNum)
-    ipNum := DllCall("ws2_32\inet_addr", "AStr", cleanHost, "UInt")
-    if (ipNum == 0xFFFFFFFF)
+    ipNum := ResolveHostIpv4(cleanHost)
+    if (ipNum == 0 || ipNum == 0xFFFFFFFF)
         return false
     wsaBuf := Buffer(408, 0)
     if (DllCall("ws2_32\WSAStartup", "UShort", 0x0202, "Ptr", wsaBuf.Ptr, "Int") != 0)

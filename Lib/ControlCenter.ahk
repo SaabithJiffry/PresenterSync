@@ -782,6 +782,8 @@ SetRoutingMode(cfg, mode, *) {
 ChangeObsSettingsUI(cfg, state := "", *) {
     hasLiveRebind := (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
     SaveObsSettings(values, ctrls, dlg) {
+        oldPw := cfg.HasOwnProp("obsPassword") ? String(cfg.obsPassword) : ""
+        oldMic := cfg.HasOwnProp("targetMicName") ? String(cfg.targetMicName) : ""
         cfg.ObsMuteHotkey := (values["mute"] != "") ? values["mute"] : "None"
         cfg.ObsRecHotkey := (values["rec"] != "") ? values["rec"] : "^F9"
         cfg.ObsPauseHotkey := (values["pause"] != "") ? values["pause"] : "^F10"
@@ -796,6 +798,8 @@ ChangeObsSettingsUI(cfg, state := "", *) {
             cfg.obsPassword := values["pw"]
             cfg.Write("Settings", "ObsPassword", cfg.obsPassword)
         }
+        if (IsSet(ApplyHostObsCredentialsChange))
+            ApplyHostObsCredentialsChange(cfg, state, oldPw, oldMic)
         _ApplyLiveHotkeyRebindOrReload(state, dlg)
     }
 
@@ -1716,6 +1720,8 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
         return false
 
     invalidCount := 0
+    oldObsPw := cfg.HasOwnProp("obsPassword") ? String(cfg.obsPassword) : ""
+    oldObsMic := cfg.HasOwnProp("targetMicName") ? String(cfg.targetMicName) : ""
     if IsObject(vals) {
         if vals.HasOwnProp("AudioRoutingMode") {
             rm := Integer(vals.AudioRoutingMode)
@@ -1901,6 +1907,10 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.EnableRemoteConnections := !!vals.EnableRemoteConnections
             cfg.WriteBool("Settings", "EnableRemoteConnections", cfg.EnableRemoteConnections)
         }
+        if vals.HasOwnProp("IncludeVirtualAdapters") {
+            cfg.IncludeVirtualAdapters := !!vals.IncludeVirtualAdapters
+            cfg.WriteBool("Settings", "IncludeVirtualAdapters", cfg.IncludeVirtualAdapters)
+        }
 
         ; Uniform hotkey validation & persistence (Tabs 1, 2, 3, 6)
         for hkSpec in [
@@ -1945,6 +1955,8 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
         }
     }
 
+    if (IsSet(ApplyHostObsCredentialsChange))
+        ApplyHostObsCredentialsChange(cfg, state, oldObsPw, oldObsMic)
     SyncTelemetryBackendsFromConfig(cfg, state)
     return (invalidCount == 0)
 }
@@ -2406,7 +2418,9 @@ ShowControlCenterWindow(cfg, state := "", *) {
     btnCloseRem.OnEvent("Click", (*) => PromptCloseRemoteCompanion(cfg, state))
 
     chkEnableRemoteConn := ccGui.Add("Checkbox", "x32 y390 w648 h24" (cfg.EnableRemoteConnections ? " Checked" : ""), "Allow Remote Companion Connections (Uncheck for Standalone Cutoff Mode)")
+    chkIncludeVirtual := ccGui.Add("Checkbox", "x32 y418 w648 h24" (cfg.IncludeVirtualAdapters ? " Checked" : ""), "Include Virtual / VPN Adapters (WSL, WireGuard, Tailscale, Docker) in LAN Pairing")
     Theme.RegisterControl(ccGui, chkEnableRemoteConn, "Checkbox", "tabText")
+    Theme.RegisterControl(ccGui, chkIncludeVirtual, "Checkbox", "tabText")
 
     ; ==========================================================================
     ; TAB 6: PROFILES, SHORTCUTS & SYSTEM
@@ -2582,6 +2596,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
         edRelayBaseUrl.Value := (cfg.HasOwnProp("RelayBaseUrl") && cfg.RelayBaseUrl != "") ? cfg.RelayBaseUrl : "https://ntfy.sh"
         edQuickNudgePresets.Value := (cfg.HasOwnProp("QuickNudgePresets") && cfg.QuickNudgePresets != "") ? cfg.QuickNudgePresets : "2 min left|Wrap up|Check Mic|Q&A"
         chkEnableRemoteConn.Value := cfg.EnableRemoteConnections ? 1 : 0
+        chkIncludeVirtual.Value := cfg.IncludeVirtualAdapters ? 1 : 0
         edHkPpt.Value := cfg.PptHotkey
         edHkWs.Value := cfg.WsHotkey
         edHkZoom.Value := cfg.ZoomHotkey
@@ -2695,6 +2710,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
             RelayBaseUrl: edRelayBaseUrl.Value,
             QuickNudgePresets: edQuickNudgePresets.Value,
             EnableRemoteConnections: chkEnableRemoteConn.Value,
+            IncludeVirtualAdapters: chkIncludeVirtual.Value,
             PptHotkey: edHkPpt.Value,
             WsHotkey: edHkWs.Value,
             ZoomHotkey: edHkZoom.Value,

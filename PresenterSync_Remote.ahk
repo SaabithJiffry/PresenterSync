@@ -50,6 +50,11 @@ ProcessSelfUpdateStartupCleanup(A_Args)
 ShutdownRemoteApp(*) {
     global AppState, AppConfig, g_RemoteMutex
     if (IsSet(AppState) && IsObject(AppState)) {
+        if (AppState.HasOwnProp("wtsMsgGui") && IsObject(AppState.wtsMsgGui)) {
+            try DllCall("Wtsapi32\WTSUnRegisterSessionNotification", "Ptr", AppState.wtsMsgGui.Hwnd)
+            try AppState.wtsMsgGui.Destroy()
+            AppState.wtsMsgGui := ""
+        }
         try AppState.StopAllTimers()
         try CloseRemoteWebSocket(AppState, false)
     }
@@ -587,6 +592,9 @@ BuildRemoteTrayMenu(AppConfig, AppState)
 RegisterRemotePointerHotkey(AppConfig, AppState)
 RegisterRemoteAppHotkeys(AppConfig, AppState)
 OnMessage(0x0218, OnRemotePowerBroadcast.Bind(AppConfig, AppState))
+AppState.wtsMsgGui := Gui("-Caption +ToolWindow", "PresenterSync_RemoteWtsMsg")
+try DllCall("Wtsapi32\WTSRegisterSessionNotification", "Ptr", AppState.wtsMsgGui.Hwnd, "UInt", 0)
+OnMessage(0x02B1, (wParam, lParam, msg, hwnd) => HandleRemoteWtsSessionChange(wParam, AppConfig, AppState, VerifyOrReconnectRemote.Bind(AppConfig, AppState, "unlock")))
 ArcadeVault.RegisterGame("snake", "HUD Snake", "!^+s", "Ctrl+Alt+Shift+S", (c, s) => HudSnake.Toggle(c, s), () => HudSnake.Stop())
 ArcadeVault.RegisterGame("asteroids", "Asteroid Blaster", "!^+a", "Ctrl+Alt+Shift+A", (c, s) => GameAsteroids.Toggle(c, s), () => GameAsteroids.Stop())
 ArcadeVault.RegisterGame("brick_breaker", "Brick Breaker", "!^+b", "Ctrl+Alt+Shift+B", (c, s) => GameBrickBreaker.Toggle(c, s), () => GameBrickBreaker.Stop())
@@ -853,6 +861,7 @@ ConnectToRemoteOBS(cfg, state) {
     if (!state.HasOwnProp("_lanCycleStartTick") || state._lanCycleStartTick <= 0 || state.candidateIndex <= 1) {
         state._lanCycleStartTick := A_TickCount
         state._didUdpShiftFollow := false
+        state._didBridgePortSweep := false
     }
     if (state.candidates.Length == 0 || state.candidateIndex > state.candidates.Length) {
         state.candidates := BuildRemoteLanCandidateQueue(cfg)
@@ -880,7 +889,8 @@ ConnectToRemoteOBS(cfg, state) {
             close: HandleRemoteObsClose.Bind(cfg, state, candidate)
         }, true, "", isBridgeCand ? bridgeTimeoutMs : 2000) ; 1,800ms Bridge connect timeout for fast Direct OBS :4455 fallback
         if (isBridgeCand) {
-            if (!TrySendWsText(state.obsWs, BuildRemoteBridgeAuthJson(cfg)))
+            reconcileJson := state.HasOwnProp("_pendingFallbackReconcile") ? state._pendingFallbackReconcile : ""
+            if (!TrySendWsText(state.obsWs, BuildRemoteBridgeAuthJson(cfg, reconcileJson)))
                 Throw Error("Failed to send Bridge auth payload")
             StartRemoteBridgeHandshakeWatchdog(cfg, state, candidate, state.connGen, bridgeTimeoutMs)
         }
@@ -915,24 +925,59 @@ TryPromoteRemoteWanToLan(cfg, state) {
 
     bPort := (cfg.HasOwnProp("BridgePort") && IsInteger(cfg.BridgePort)) ? String(Integer(cfg.BridgePort)) : "4456"
     expectedUuid := cfg.HasOwnProp("PairedHostUuid") ? Trim(cfg.PairedHostUuid) : ""
-    for _, ep in ParseCandidateEndpoints(cfg.HostAddress, cfg.HostPort) {
+    anyHealthy := false
+    matchedPort := ""
+    eps := ParseCandidateEndpoints(cfg.HostAddress, cfg.HostPort)
+    for _, ep in eps {
         probe := ProbeHostBridgeHealth(ep.host, bPort, expectedUuid, RemoteBridgeConstants.HEALTH_PROBE_TIMEOUT_MS)
         if (IsObject(probe) && probe.ok) {
-            if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
-                SetTimer state.lanRepromoteTimerFn, 0
-            state.usingRelayFallback := false
-            state.usingDirectObsFallback := false
-            state._lanCycleStartTick := 0
-            state.candidates := BuildRemoteLanCandidateQueue(cfg)
-            state.candidateIndex := 1
-            CloseRemoteWebSocket(state, false)
-            state.obsConnected := false
-            state.NotifyTrayStatus()
-            SetTimer state.reconnectTimerFn, -30
-            return true
+            anyHealthy := true
+            matchedPort := bPort
+            break
         }
     }
-    return false
+    if (!anyHealthy && Integer(bPort) >= 4456 && Integer(bPort) <= 4465) {
+        for _, ep in eps {
+            sweep := SweepHostBridgeFallbackPort(ep.host, bPort, expectedUuid, RemoteBridgeConstants.HEALTH_PROBE_TIMEOUT_MS)
+            if (IsObject(sweep) && sweep.ok) {
+                anyHealthy := true
+                matchedPort := sweep.port
+                break
+            }
+        }
+    }
+
+    if (!anyHealthy) {
+        StepBridgeRepromoteHysteresis(state, false, RemoteBridgeConstants.BRIDGE_REPROMOTE_REQUIRED_PROBES)
+        return false
+    }
+
+    if (!StepBridgeRepromoteHysteresis(state, true, RemoteBridgeConstants.BRIDGE_REPROMOTE_REQUIRED_PROBES)) {
+        if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
+            SetTimer state.lanRepromoteTimerFn, 1500
+        return false
+    }
+
+    if (matchedPort != "" && matchedPort != bPort) {
+        cfg.BridgePort := matchedPort
+        if (cfg.HasMethod("Write"))
+            try cfg.Write("Connection", "BridgePort", matchedPort)
+    }
+    state._pendingFallbackReconcile := (state.HasOwnProp("usingDirectObsFallback") && state.usingDirectObsFallback)
+        ? BuildRemoteFallbackStateJson(state)
+        : ""
+    if (state.HasOwnProp("lanRepromoteTimerFn") && IsObject(state.lanRepromoteTimerFn))
+        SetTimer state.lanRepromoteTimerFn, 0
+    state.usingRelayFallback := false
+    state.usingDirectObsFallback := false
+    state._lanCycleStartTick := 0
+    state.candidates := BuildRemoteLanCandidateQueue(cfg)
+    state.candidateIndex := 1
+    CloseRemoteWebSocket(state, false)
+    state.obsConnected := false
+    state.NotifyTrayStatus()
+    SetTimer state.reconnectTimerFn, -30
+    return true
 }
 
 FailoverToNextCandidate(cfg, state, failedCandidate := "") {
@@ -1005,6 +1050,27 @@ FailoverToNextCandidate(cfg, state, failedCandidate := "") {
                 return
             }
         }
+        ; Sweep fallback Bridge TCP ports (4456, 4458..4465) once per LAN cycle when UDP broadcast is blocked
+        hasBridgeCreds := (cfg.HasOwnProp("SessionPairingCode") && Trim(cfg.SessionPairingCode) != "")
+            || (cfg.HasOwnProp("SessionToken") && Trim(cfg.SessionToken) != "")
+        curBPort := (cfg.HasOwnProp("BridgePort") && IsInteger(cfg.BridgePort)) ? Integer(cfg.BridgePort) : 4456
+        if (hasBridgeCreds && curBPort >= 4456 && curBPort <= 4465 && (!state.HasOwnProp("_didBridgePortSweep") || !state._didBridgePortSweep)) {
+            state._didBridgePortSweep := true
+            expUuid := cfg.HasOwnProp("PairedHostUuid") ? Trim(cfg.PairedHostUuid) : ""
+            for _, ep in ParseCandidateEndpoints(cfg.HostAddress, cfg.HostPort) {
+                sweepRes := SweepHostBridgeFallbackPort(ep.host, curBPort, expUuid, 450)
+                if (IsObject(sweepRes) && sweepRes.ok && sweepRes.port != "" && sweepRes.port != String(curBPort)) {
+                    cfg.BridgePort := sweepRes.port
+                    if (cfg.HasMethod("Write"))
+                        try cfg.Write("Connection", "BridgePort", sweepRes.port)
+                    state.candidates := BuildRemoteLanCandidateQueue(cfg)
+                    state.candidateIndex := 1
+                    SetTimer state.reconnectTimerFn, -30
+                    state.NotifyTrayStatus()
+                    return
+                }
+            }
+        }
         ; All LAN candidates exhausted: seamlessly bridge via Internet Relay if configured (e.g., Mode 2 Host without OBS)
         state.candidateIndex := 1
         state._lanCycleStartTick := 0
@@ -1050,6 +1116,37 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     FailoverToNextCandidate(cfg, state, candidate)
 }
 
+_ApplyRemoteObsFallbackCreds(cfg, ev) {
+    if (!IsObject(cfg) || !IsObject(ev) || !ev.HasOwnProp("hasObsFallback") || !ev.hasObsFallback)
+        return false
+    changed := false
+    if (ev.HasOwnProp("obsFallbackPort") && Integer(ev.obsFallbackPort) >= 1 && Integer(ev.obsFallbackPort) <= 65535) {
+        newPort := String(Integer(ev.obsFallbackPort))
+        if (cfg.HostPort != newPort) {
+            cfg.HostPort := newPort
+            if (cfg.HasMethod("Write"))
+                try cfg.Write("Connection", "HostPort", newPort)
+            changed := true
+        }
+    }
+    if (ev.HasOwnProp("obsFallbackMic") && Trim(ev.obsFallbackMic) != "") {
+        newMic := Trim(ev.obsFallbackMic)
+        if (cfg.TargetMicName != newMic) {
+            cfg.TargetMicName := newMic
+            if (cfg.HasMethod("Write"))
+                try cfg.Write("Connection", "TargetMicName", newMic)
+            changed := true
+        }
+    }
+    if (ev.HasOwnProp("obsFallbackPassword") && cfg.ObsPassword != ev.obsFallbackPassword) {
+        cfg.ObsPassword := ev.obsFallbackPassword
+        if (cfg.HasMethod("Write"))
+            try cfg.Write("Connection", "ObsPassword", ev.obsFallbackPassword)
+        changed := true
+    }
+    return changed
+}
+
 HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
     if (IsObject(ws) && ws.HasOwnProp("_psClosed") && ws._psClosed)
         return
@@ -1067,6 +1164,10 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             SetTimer state.reconnectTimerFn, 0
             CancelRemoteBridgeHandshakeWatchdog(state)
             state._lanCycleStartTick := 0
+            state._didBridgePortSweep := false
+            state._pendingFallbackReconcile := ""
+            if (ev.HasOwnProp("hasObsFallback") && ev.hasObsFallback)
+                _ApplyRemoteObsFallbackCreds(cfg, ev)
             if (ev.HasOwnProp("hostBootId") && ev.hostBootId != "" && ev.hostBootId != state.hostBootId) {
                 state.hostBootId := ev.hostBootId
                 state.lastStateSeq := 0
@@ -1139,6 +1240,9 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             }
             SyncRemoteMuteState(cfg, state, ev.isMuted)
             SyncRemoteBridgeTelemetry(cfg, state, ev)
+        } else if (ev.kind = "obs_fallback_update") {
+            if (ev.HasOwnProp("hasObsFallback") && ev.hasObsFallback)
+                _ApplyRemoteObsFallbackCreds(cfg, ev)
         } else if (ev.kind = "stage_nudge") {
             if (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)
                 ShowStageNudgeBanner(ev.message, (ev.accentHex != "" ? ev.accentHex : "F59E0B"), 4500, ev.sender)
@@ -1294,7 +1398,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 outSt := mRecOut[1]
                 if (outSt = "OBS_WEBSOCKET_OUTPUT_STARTED" || outSt = "OBS_WEBSOCKET_OUTPUT_RESUMED") {
                     if (state.recState == 0)
-                        state.recSeconds := 0
+                        AnchorRemoteRecClock(state, 0)
                     state.recState := 1
                     if (IsObject(ws))
                         SendObsRequest(ws, "GetRecordStatus", "InitRemoteRec")
@@ -1304,7 +1408,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                         SendObsRequest(ws, "GetRecordStatus", "InitRemoteRec")
                 } else if (outSt = "OBS_WEBSOCKET_OUTPUT_STOPPED") {
                     state.recState := 0
-                    state.recSeconds := 0
+                    AnchorRemoteRecClock(state, 0)
                 }
                 UpdateRemoteLocalRecTimer(state)
                 state.NotifyTrayStatus()
@@ -1396,9 +1500,9 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 act := (mAct[1] == "true")
                 pau := (RegExMatch(msg, '"outputPaused"\s*:\s*(true|false)', &mPau) && mPau[1] == "true")
                 if (RegExMatch(msg, '"outputDuration"\s*:\s*(\d+)', &mDur))
-                    state.recSeconds := Max(0, Integer(mDur[1]) // 1000)
+                    AnchorRemoteRecClock(state, Max(0, Integer(mDur[1]) // 1000))
                 else if (!act)
-                    state.recSeconds := 0
+                    AnchorRemoteRecClock(state, 0)
                 state.recState := act ? (pau ? 2 : 1) : 0
                 UpdateRemoteLocalRecTimer(state)
                 state.NotifyTrayStatus()
@@ -1541,6 +1645,7 @@ VerifyOrReconnectRemote(cfg, state, reason := "wake") {
     }
     if (IsRemoteUsingBridgeChannel(cfg, state)) {
         SendRemotePingWithWatchdog(cfg, state, "bridge")
+        TrySendWsText(state.obsWs, BuildRemoteBridgeSyncReqJson(cfg))
     } else if (IsRemoteUsingInternetChannel(cfg, state)) {
         SendRemoteRelaySyncRequest(cfg, state)
     } else {
@@ -1648,7 +1753,10 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
     prevScene := state.HasOwnProp("activeScene") ? state.activeScene : "Scene"
 
     state.recState := ev.HasOwnProp("recState") ? ev.recState : 0
-    state.recSeconds := ev.HasOwnProp("recSeconds") ? Max(0, ev.recSeconds) : 0
+    if (ev.HasOwnProp("recSeconds"))
+        AnchorRemoteRecClock(state, Max(0, Integer(ev.recSeconds)))
+    else
+        state.recSeconds := 0
     state.streamDropWarn := ev.HasOwnProp("streamDropWarn") ? !!ev.streamDropWarn : false
     state.voiceWhileMuted := (state.isMuted && ev.HasOwnProp("voiceWhileMuted")) ? !!ev.voiceWhileMuted : false
     if (ev.HasOwnProp("activeScene") && ev.activeScene != "")
@@ -1664,7 +1772,7 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
     if (ev.HasOwnProp("timerState") && ev.timerState != "")
         state.timerState := ev.timerState
     if (ev.HasOwnProp("timerRemainingSec"))
-        state.timerRemainingSec := Integer(ev.timerRemainingSec)
+        AnchorRemotePresenterClock(state, Integer(ev.timerRemainingSec))
     if (ev.HasOwnProp("timerPresetSec") && Integer(ev.timerPresetSec) > 0)
         state.timerPresetSec := Integer(ev.timerPresetSec)
     if (ev.HasOwnProp("slideIndex"))

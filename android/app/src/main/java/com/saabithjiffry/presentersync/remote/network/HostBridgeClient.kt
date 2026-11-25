@@ -45,6 +45,7 @@ interface HostBridgeCallbacks {
     fun onTelemetryChanged(telemetry: BridgeTelemetryState) {}
     fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {}
     fun onSyncResync(reason: String, hostUuid: String) {}
+    fun onObsFallbackUpdated(port: Int, targetMic: String, password: String) {}
     fun onCommandNack(action: String, code: String, reason: String, cmdId: String) {}
     fun onCloseRemoteSignal()
     fun onBridgeDisconnected(reason: String)
@@ -57,7 +58,8 @@ class HostBridgeClient(
     private val sessionCode: String,
     private val deviceId: String,
     private val deviceName: String,
-    private val callbacks: HostBridgeCallbacks
+    private val callbacks: HostBridgeCallbacks,
+    private val clientFallbackState: JSONObject? = null
 ) {
     @Volatile
     private var webSocket: WebSocket? = null
@@ -142,7 +144,25 @@ class HostBridgeClient(
                         if (refreshedToken.isNotEmpty()) {
                             callbacks.onBridgeSessionTokenRefreshed(refreshedToken)
                         }
+                        val obsFb = obj.optJSONObject("obsFallback")
+                        if (obsFb != null) {
+                            callbacks.onObsFallbackUpdated(
+                                port = obsFb.optInt("port", AppConstants.DEFAULT_OBS_PORT),
+                                targetMic = obsFb.optString("targetMic", ""),
+                                password = obsFb.optString("password", "")
+                            )
+                        }
                         callbacks.onBridgeConnected(hostName)
+                    }
+                    "obs_fallback_update" -> {
+                        val obsFb = obj.optJSONObject("obsFallback")
+                        if (obsFb != null) {
+                            callbacks.onObsFallbackUpdated(
+                                port = obsFb.optInt("port", AppConstants.DEFAULT_OBS_PORT),
+                                targetMic = obsFb.optString("targetMic", ""),
+                                password = obsFb.optString("password", "")
+                            )
+                        }
                     }
                     "auth_error" -> {
                         val err = obj.optString("error", "Bridge authentication failed")
@@ -265,6 +285,9 @@ class HostBridgeClient(
             put("deviceId", deviceId)
             put("deviceName", deviceName)
             put("platform", "Android")
+            if (clientFallbackState != null) {
+                put("clientFallbackState", clientFallbackState)
+            }
         }.toString()
         ws.send(payload)
     }

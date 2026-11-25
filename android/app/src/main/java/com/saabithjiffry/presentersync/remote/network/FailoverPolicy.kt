@@ -6,6 +6,8 @@ import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 
 object FailoverPolicy {
 
+    const val REPROMOTE_REQUIRED_CONSECUTIVE_PROBES = 2
+
     fun hasBridgeCredentials(cfg: RemoteConfig): Boolean =
         cfg.sessionToken.isNotBlank() || cfg.sessionPairingCode.isNotBlank()
 
