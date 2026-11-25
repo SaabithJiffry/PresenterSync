@@ -355,7 +355,7 @@ NotifyHelpRefresh(state) {
 }
 
 ToggleRemoteConnectionsCutoff(cfg, state := "", *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
     cfg.EnableRemoteConnections := !cfg.EnableRemoteConnections
     cfg.WriteBool("Settings", "EnableRemoteConnections", cfg.EnableRemoteConnections)
     if (!cfg.EnableRemoteConnections) {
@@ -368,13 +368,13 @@ ToggleRemoteConnectionsCutoff(cfg, state := "", *) {
             }
             state.relayConnected := false
         }
-        ToolTip("Standalone Mode: All Remote Connections Cut Off")
+        ShowCaptureSafeMicroToast("Standalone Mode: All Remote Connections Cut Off", UIConstants.TOOLTIP_DURATION_MS)
     } else {
         if (IsObject(state)) {
             StartHostCompanionBridge(cfg, state, cfg.BridgePort)
             UpdateHostInternetRelay(cfg, state)
         }
-        ToolTip("Remote Companion Connections: Enabled")
+        ShowCaptureSafeMicroToast("Remote Companion Connections: Enabled", UIConstants.TOOLTIP_DURATION_MS)
     }
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
@@ -400,7 +400,7 @@ ToggleSuspend(*) {
 }
 
 TogglePPT(cfg, state := "", *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
 
     cfg.EnablePPT := !cfg.EnablePPT
 
@@ -420,7 +420,7 @@ TogglePPT(cfg, state := "", *) {
 }
 
 ToggleMicOnly(cfg, state := "", *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
 
     cfg.EnableMicOnly := !cfg.EnableMicOnly
 
@@ -440,19 +440,19 @@ ToggleMicOnly(cfg, state := "", *) {
 }
 
 TogglePointerTransition(cfg, state := "", *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
     cfg.EnablePointerTransition := !cfg.EnablePointerTransition
     cfg.WriteBool("Settings", "EnablePointerTransition", cfg.EnablePointerTransition)
     if (IsObject(state) && state.HasOwnProp("rebindHotkeysFn") && state.rebindHotkeysFn)
         try state.rebindHotkeysFn.Call()
-    ToolTip("Pointer OBS Scene Transition: " (cfg.EnablePointerTransition ? "ON" : "OFF"))
+    ShowCaptureSafeMicroToast("Pointer OBS Scene Transition: " (cfg.EnablePointerTransition ? "ON" : "OFF"), UIConstants.TOOLTIP_DURATION_MS)
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 CyclePointerMode(cfg, state := "", *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
 
     if (cfg.EnablePPT) {
         cfg.EnablePPT := false
@@ -477,7 +477,7 @@ CyclePointerMode(cfg, state := "", *) {
 }
 
 ToggleWS(cfg, state, *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
 
     cfg.EnableWS := !cfg.EnableWS
 
@@ -509,7 +509,7 @@ ToggleWS(cfg, state, *) {
 }
 
 ToggleZoom(cfg, state, *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
 
     cfg.EnableZoom := !cfg.EnableZoom
 
@@ -551,24 +551,22 @@ ToggleIndicator(cfg, state, *) {
 }
 
 ToggleExtraHuds(cfg, state, *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
     cfg.ShowExtraHuds := !cfg.ShowExtraHuds
     cfg.WriteBool("Settings", "ShowExtraHuds", cfg.ShowExtraHuds)
 
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
-    ToolTip(cfg.ShowExtraHuds ? "Extra HUDs: ON" : "Extra HUDs: OFF")
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
+    ShowCaptureSafeMicroToast(cfg.ShowExtraHuds ? "Extra HUDs: ON" : "Extra HUDs: OFF", UIConstants.TOOLTIP_DURATION_MS)
 }
 
 ToggleSecondaryMicLive(cfg, state, *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
     ToggleSecondaryMicHud(cfg, state)
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
-    ToolTip(cfg.ShowSecondaryMicHud ? "Secondary Mic Pill: ON" : "Secondary Mic Pill: OFF")
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
+    ShowCaptureSafeMicroToast(cfg.ShowSecondaryMicHud ? "Secondary Mic Pill: ON" : "Secondary Mic Pill: OFF", UIConstants.TOOLTIP_DURATION_MS)
 }
 
 ToggleText(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowText", "Settings", RefreshHudAppearance, BuildTrayMenu, NotifyHelpRefresh)

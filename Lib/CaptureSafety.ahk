@@ -15,6 +15,8 @@ class CaptureSafety {
     static LastErrorCode := 0
     static LastMode := ""
     static ProtectedWindows := Map()
+    static _MicroToastGui := ""
+    static _MicroToastTimerFn := ""
 
     static GetOsBuildNumber(osVerOverride := "") {
         verStr := (osVerOverride != "") ? String(osVerOverride) : String(A_OSVersion)
@@ -170,6 +172,77 @@ class CaptureSafety {
             lastError: this.LastErrorCode
         }
     }
+
+    static HideMicroToast(*) {
+        if (IsObject(this._MicroToastTimerFn)) {
+            try SetTimer(this._MicroToastTimerFn, 0)
+        }
+        if (IsObject(this._MicroToastGui)) {
+            try this._MicroToastGui.Hide()
+        }
+    }
+
+    static ShowMicroToast(text, durationMs := 1800, anchorHwnd := 0, exclude := true) {
+        txt := Trim(String(text))
+        if (txt = "") {
+            this.HideMicroToast()
+            return false
+        }
+        try {
+            if (IsSet(Gdip))
+                Gdip.Startup()
+            if (!IsObject(this._MicroToastGui)) {
+                this._MicroToastGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 +E0x00000020 -DPIScale", "PresenterSync MicroToast")
+            }
+            this.ProtectWindow(this._MicroToastGui.Hwnd, exclude)
+
+            w := 240, h := 34
+            if (IsSet(Gdip)) {
+                measured := Gdip.MeasureTextWidthFloat(txt, "Segoe UI", 9.5, 1)
+                w := Max(110, Min(560, Round(measured) + 28))
+            } else {
+                w := Max(110, Min(560, StrLen(txt) * 8 + 28))
+            }
+
+            mx := 0, my := 0
+            if (anchorHwnd) {
+                try {
+                    WinGetPos(&ax, &ay, &aw, &ah, "ahk_id " anchorHwnd)
+                    mx := ax + Round((aw - w) / 2)
+                    my := ay - h - 8
+                }
+            }
+            if (mx == 0 && my == 0) {
+                try {
+                    CoordMode("Mouse", "Screen")
+                    MouseGetPos(&curX, &curY)
+                    mx := curX + 14
+                    my := curY - h - 14
+                } catch {
+                    mx := 40, my := 40
+                }
+            }
+            clamped := this.ClampRectToMonitors(mx, my, w, h)
+            x := clamped.x, y := clamped.y
+
+            if (IsSet(Gdip)) {
+                labelCfg := { text: txt, size: 9.5, bold: true, align: 1, color: 0xFFF8FAFC, x: 10, y: 0, w: w - 20, h: h }
+                Gdip.RenderPill(this._MicroToastGui.Hwnd, x, y, w, h, 0xEE1E293B, 0xFF64748B, 240, 10, "", labelCfg)
+            }
+            this._MicroToastGui.Show(Format("NoActivate x{} y{} w{} h{}", x, y, w, h))
+
+            if (!IsObject(this._MicroToastTimerFn))
+                this._MicroToastTimerFn := ObjBindMethod(CaptureSafety, "HideMicroToast")
+            try SetTimer(this._MicroToastTimerFn, 0)
+            if (durationMs > 0)
+                SetTimer(this._MicroToastTimerFn, -Integer(durationMs))
+            return true
+        } catch {
+            return false
+        }
+    }
 }
 
 ProtectWindowFromCapture(hwnd, exclude := true, osBuildOverride := "") => CaptureSafety.ProtectWindow(hwnd, exclude, osBuildOverride)
+ShowCaptureSafeMicroToast(text, durationMs := 1800, anchorHwnd := 0, exclude := true) => CaptureSafety.ShowMicroToast(text, durationMs, anchorHwnd, exclude)
+HideCaptureSafeMicroToast(*) => CaptureSafety.HideMicroToast()

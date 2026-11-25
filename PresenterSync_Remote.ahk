@@ -1921,8 +1921,7 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
     if (state.voiceWhileMuted && !prevVoiceWarn && (!cfg.HasOwnProp("EnableVoiceWhileMutedAlert") || cfg.EnableVoiceWhileMutedAlert)) {
         if ((A_TickCount - state._lastVoiceWarnTick) >= 5000) {
             state._lastVoiceWarnTick := A_TickCount
-            ToolTip("⚠ You're on mute — mic signal detected on Host")
-            SetTimer(RemoveToolTip, -2800)
+            ShowCaptureSafeMicroToast("⚠ You're on mute — mic signal detected on Host", 2800)
         }
     }
 
@@ -2036,7 +2035,7 @@ SendRemoteStageNudge(cfg, state, message) {
 ; --- REMOTE CLICKER MUTE TRANSMISSION ---
 
 RemoveToolTip() {
-    ToolTip()
+    HideCaptureSafeMicroToast()
 }
 
 OnRemoteClickerMute(cfg, state, thisHotkeyOrFromHud := "", *) {
@@ -2300,8 +2299,7 @@ HandleRemoteHudClick(cfg, state) {
     if (cfg.HasOwnProp("EnableHudClickActions") && !cfg.EnableHudClickActions)
         return false
     if (!cfg.EnablePointerMute) {
-        ToolTip("PresenterSync Remote: Pointer mute control is OFF")
-        SetTimer(RemoveToolTip, -1500)
+        ShowCaptureSafeMicroToast("PresenterSync Remote: Pointer mute control is OFF", 1500)
         return false
     }
     OnRemoteClickerMute(cfg, state, true)
@@ -2848,7 +2846,7 @@ ResetRemoteAppearanceAction(cfg, state, *) {
 }
 
 ToggleRemotePointerMute(cfg, state, *) {
-    ToolTip()
+    HideCaptureSafeMicroToast()
     cfg.EnablePointerMute := !cfg.EnablePointerMute
     cfg.WriteBool("Pointer", "EnablePointerMute", cfg.EnablePointerMute)
     if (cfg.EnablePointerMute) {

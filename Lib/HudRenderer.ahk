@@ -798,7 +798,8 @@ _BuildDualToneWavBuffer(f1, d1Ms, f2, d2Ms, sampleRate := 22050, amp := 0.24) {
 }
 
 _ClearHudToolTip() {
-    ToolTip()
+    if (IsSet(HideCaptureSafeMicroToast))
+        HideCaptureSafeMicroToast()
 }
 
 PlayMuteAudioCue(isMuted, async := true) {
@@ -826,8 +827,8 @@ PlayMuteAudioCue(isMuted, async := true) {
 }
 
 ShowMuteToast(isMuted) {
-    ToolTip(isMuted ? "Mic: MUTED" : "Mic: LIVE")
-    SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
+    if (IsSet(ShowCaptureSafeMicroToast))
+        ShowCaptureSafeMicroToast(isMuted ? "Mic: MUTED" : "Mic: LIVE", UIConstants.TOOLTIP_DURATION_MS)
 }
 
 ToggleBoolSetting(cfg, state, propName, remoteSection := "Appearance", primarySection := "Settings") {
@@ -1338,8 +1339,8 @@ MutedVoiceMonitorTick(cfg, state, readerFn := "") {
                 if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)) {
                     ShowStageNudgeBanner("You're on mute — mic signal detected!", "F59E0B", 3200, "Mic Alert")
                 } else {
-                    ToolTip("⚠ You're on mute — mic signal detected!")
-                    SetTimer(_ClearHudToolTip, -2800)
+                    if (IsSet(ShowCaptureSafeMicroToast))
+                        ShowCaptureSafeMicroToast("⚠ You're on mute — mic signal detected!", 2800)
                 }
             }
         }
@@ -2584,8 +2585,8 @@ TryConfirmStopRecording(cfg, state, nowTick := "") {
     if (nowTick >= state.stopRecConfirmUntil) {
         state.stopRecConfirmUntil := nowTick + UIConstants.STOP_RECORD_CONFIRM_WINDOW_MS
         if (!IsSet(g_IsTestMode) || !g_IsTestMode) {
-            try ToolTip("Click REC again within 3s to STOP recording")
-            try SetTimer(_ClearHudToolTip, -UIConstants.STOP_RECORD_CONFIRM_WINDOW_MS)
+            if (IsSet(ShowCaptureSafeMicroToast))
+                try ShowCaptureSafeMicroToast("Click REC again within 3s to STOP recording", UIConstants.STOP_RECORD_CONFIRM_WINDOW_MS)
         }
         return false
     }
@@ -2621,8 +2622,8 @@ HandleHudPillClick(cfg, state, hwnd) {
             retTag := "rec"
         }
         if ((!IsSet(g_IsTestMode) || !g_IsTestMode) && cfg.HasOwnProp("EnableWS") && cfg.EnableWS && cfg.HasOwnProp("EnableZoom") && cfg.EnableZoom) {
-            ToolTip(GetRecBreakdownText(state))
-            SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
+            if (IsSet(ShowCaptureSafeMicroToast))
+                ShowCaptureSafeMicroToast(GetRecBreakdownText(state), UIConstants.TOOLTIP_DURATION_MS)
         }
         return retTag
     }
@@ -2654,8 +2655,8 @@ HandleHudPillClick(cfg, state, hwnd) {
             skp := state.HasOwnProp("streamSkippedFrames") ? state.streamSkippedFrames : 0
             reconnStr := (state.HasOwnProp("streamReconnecting") && state.streamReconnecting) ? " (Reconnecting)" : ""
             tip := Format("Stream: {}{} | Congestion: {}% | Skipped Frames: {}", statusLbl, reconnStr, congPct, skp)
-            ToolTip(tip)
-            SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
+            if (IsSet(ShowCaptureSafeMicroToast))
+                ShowCaptureSafeMicroToast(tip, UIConstants.TOOLTIP_DURATION_MS)
         }
         return "stream_readonly"
     }
@@ -2852,8 +2853,8 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
                 else
                     SyncStudioState(cfg, state, nextStudio)
             } else {
-                ToolTip("Hold Studio pill (0.6s) to toggle Studio Mode")
-                SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
+                if (IsSet(ShowCaptureSafeMicroToast))
+                    ShowCaptureSafeMicroToast("Hold Studio pill (0.6s) to toggle Studio Mode", UIConstants.TOOLTIP_DURATION_MS)
             }
             return
         }
@@ -2875,8 +2876,8 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
             } else if (recRes.verdict = "tap") {
                 ExecuteHostPauseRecord(cfg, state)
             } else {
-                ToolTip("Hold longer to stop recording")
-                SetTimer(_ClearHudToolTip, -UIConstants.TOOLTIP_DURATION_MS)
+                if (IsSet(ShowCaptureSafeMicroToast))
+                    ShowCaptureSafeMicroToast("Hold longer to stop recording", UIConstants.TOOLTIP_DURATION_MS)
             }
             return
         }

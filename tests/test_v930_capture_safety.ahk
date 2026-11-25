@@ -102,6 +102,26 @@ try {
     AssertEq(resUnplug.x, 1800, "Unplugged Monitor 2 clamps X to 1920 - 120 = 1800")
     AssertEq(resUnplug.y, 120, "Unplugged Monitor 2 keeps valid Y=120")
 
+    ; 5. M3.2 Capture-Excluded GDI+ Micro-Toast & Zero-ToolTip() Audit
+    Gdip.Startup()
+    anchorGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000")
+    anchorGui.Show("x120 y120 w120 h40 NoActivate")
+    toastOk := ShowCaptureSafeMicroToast("M3.2 Capture-Safe Toast", 500, anchorGui.Hwnd, true)
+    AssertTrue(toastOk, "ShowCaptureSafeMicroToast should render cleanly")
+    AssertTrue(IsObject(CaptureSafety._MicroToastGui), "_MicroToastGui should be created")
+    AssertTrue(CaptureSafety.ProtectedWindows.Has(CaptureSafety._MicroToastGui.Hwnd), "_MicroToastGui must be capture-protected")
+    toastVer := CaptureSafety.VerifyHudProtection([CaptureSafety._MicroToastGui.Hwnd], true)
+    AssertEq(toastVer.okCount, 1, "_MicroToastGui must have active WDA capture protection")
+    HideCaptureSafeMicroToast()
+    anchorGui.Destroy()
+    Gdip.Shutdown()
+
+    for _, relPath in ["PresenterSync.ahk", "PresenterSync_Remote.ahk", "Lib\HudRenderer.ahk", "Lib\OBS_Network.ahk", "Lib\ArcadeVault.ahk"] {
+        srcText := FileRead(relPath, "UTF-8")
+        hasToolTip := RegExMatch(srcText, "m)(?:^|[^A-Za-z0-9_])ToolTip\(")
+        AssertEq(hasToolTip, 0, relPath " must contain zero native ToolTip() calls")
+    }
+
 } catch as err {
     g_Failed++
     g_FailMessages.Push("UNCAUGHT EXCEPTION: " err.Message " (" err.File ":" err.Line ")")

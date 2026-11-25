@@ -930,7 +930,8 @@ UnescapeJsonStr(str) {
 }
 
 ClearObsNetworkToolTip() {
-    ToolTip()
+    if (IsSet(HideCaptureSafeMicroToast))
+        HideCaptureSafeMicroToast()
 }
 
 TrySendWsText(ws, payload) {
@@ -2534,8 +2535,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         }
         else if (InStr(msg, '"requestId":"HostClickerMute"') || InStr(msg, '"requestId": "HostClickerMute"')) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
-                ToolTip("PresenterSync: Audio source '" cfg.targetMicName "' not found in OBS")
-                SetTimer(ClearObsNetworkToolTip, -2500)
+                if (IsSet(ShowCaptureSafeMicroToast))
+                    ShowCaptureSafeMicroToast("PresenterSync: Audio source '" cfg.targetMicName "' not found in OBS", 2500)
             }
         }
         else if (InStr(msg, '"requestId":"HostSceneTransition"') || InStr(msg, '"requestId": "HostSceneTransition"')) {
@@ -2543,8 +2544,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                 if (IsSet(DiagnosticLogger))
                     DiagnosticLogger.RecordBreadcrumb("OBS", "HostSceneTransitionFailed", SubStr(msg, 1, 200))
                 if (!IsSet(g_IsTestMode) || !g_IsTestMode) {
-                    ToolTip("PresenterSync: OBS scene transition failed (check Studio Mode / scenes)")
-                    SetTimer(ClearObsNetworkToolTip, -2500)
+                    if (IsSet(ShowCaptureSafeMicroToast))
+                        ShowCaptureSafeMicroToast("PresenterSync: OBS scene transition failed (check Studio Mode / scenes)", 2500)
                 }
             }
         }

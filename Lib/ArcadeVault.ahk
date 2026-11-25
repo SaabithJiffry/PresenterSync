@@ -127,8 +127,8 @@ class ArcadeVault {
         this.IsUnlocked := true
         this._RebindGameHotkeys(this._cfg, this._state)
         if (notify && (!IsSet(g_IsTestMode) || !g_IsTestMode)) {
-            ToolTip("ACCESS GRANTED // 99 CREDITS")
-            SetTimer(() => ToolTip(), -2200)
+            if (IsSet(ShowCaptureSafeMicroToast))
+                ShowCaptureSafeMicroToast("ACCESS GRANTED // 99 CREDITS", 2200)
         }
         this._RefreshOpenAboutWindow()
         return true
@@ -139,8 +139,8 @@ class ArcadeVault {
         HudArcadeBase.StopActiveGame()
         this._UnbindGameHotkeys()
         if (notify && (!IsSet(g_IsTestMode) || !g_IsTestMode)) {
-            ToolTip("VAULT LOCKED // 0 CREDITS")
-            SetTimer(() => ToolTip(), -1600)
+            if (IsSet(ShowCaptureSafeMicroToast))
+                ShowCaptureSafeMicroToast("VAULT LOCKED // 0 CREDITS", 1600)
         }
         this._RefreshOpenAboutWindow()
         return true
