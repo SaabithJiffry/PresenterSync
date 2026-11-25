@@ -204,24 +204,37 @@ class ConnectionManagerWakeRecoveryTest {
                 manager.uiState.value.connected && manager.uiState.value.activeHost.contains("WAKE-FRESH-PC")
             }
         )
-        assertTrue("Stale wake > 25s must force reconnect instead of sending ping", firstSocketMsgs.isEmpty())
+        assertTrue(
+            "Stale wake > 25s must force reconnect instead of sending ping",
+            firstSocketMsgs.none { JSONObject(it).optString("type") == "ping" }
+        )
     }
 
     @Test
     fun authErrorWithStaleTokenRetriesAutomaticallyWithSessionPairingCode() {
         val retryConnected = CountDownLatch(1)
 
+        val firstAuth = java.util.concurrent.atomic.AtomicReference<JSONObject>()
+        val secondAuth = java.util.concurrent.atomic.AtomicReference<JSONObject>()
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send("""{"type":"auth_error","error":"Unauthorized"}""")
-                webSocket.close(1000, "stale")
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val obj = JSONObject(text)
+                if (obj.optString("type") == "auth") {
+                    firstAuth.set(obj)
+                    webSocket.send("""{"type":"auth_error","error":"Unauthorized"}""")
+                    webSocket.close(1000, "stale")
+                }
             }
         }))
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send("""{"type":"auth_ok","hostName":"REBOUND-PC","sessionToken":"fresh-tok-888"}""")
-                webSocket.send("""{"type":"mute_state","isMuted":true,"routingMode":2,"targetMicName":"Mic/Aux"}""")
-                retryConnected.countDown()
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val obj = JSONObject(text)
+                if (obj.optString("type") == "auth") {
+                    secondAuth.set(obj)
+                    webSocket.send("""{"type":"auth_ok","protocolVersion":2,"hostBootId":"boot-1","stateSeq":1,"hostName":"REBOUND-PC","sessionToken":"fresh-tok-888"}""")
+                    webSocket.send("""{"type":"mute_state","stateSeq":2,"isMuted":true,"routingMode":2,"targetMicName":"Mic/Aux"}""")
+                    retryConnected.countDown()
+                }
             }
         }))
 
@@ -251,9 +264,13 @@ class ConnectionManagerWakeRecoveryTest {
 
         val firstReq = server.takeRequest(2, TimeUnit.SECONDS)
         val secondReq = server.takeRequest(2, TimeUnit.SECONDS)
-        assertTrue(firstReq?.path?.contains("token=stale-tok-123") == true)
+        assertFalse(firstReq?.path?.contains("token=") == true)
+        assertFalse(firstReq?.path?.contains("code=") == true)
         assertFalse(secondReq?.path?.contains("token=") == true)
-        assertTrue(secondReq?.path?.contains("code=K7M9P2") == true)
+        assertFalse(secondReq?.path?.contains("code=") == true)
+        assertEquals("stale-tok-123", firstAuth.get()?.optString("token"))
+        assertEquals("", secondAuth.get()?.optString("token"))
+        assertEquals("K7M9P2", secondAuth.get()?.optString("code"))
     }
 
     @Test

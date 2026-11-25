@@ -11,15 +11,21 @@
 ; ==============================================================================
 
 #DllLoad ws2_32.dll
+#Include "%A_LineFile%\..\JsonCodec.ahk"
 #Include WebRemoteUI.ahk
 #Include WebRemoteArcade.ahk
 
 class HostBridgeConstants {
+    static PROTOCOL_VERSION := 2
     static DEFAULT_PORT := 4456
     static DEFAULT_DISCOVERY_PORT := 4457
     static DISCOVER_V1_PROTO := "PS_DISCOVER_V1"
     static MAX_BUFFER_BYTES := 65536
+    static MAX_HTTP_HEADER_BYTES := 16384
+    static MAX_HTTP_BODY_BYTES := 8192
     static MAX_HTTP_SEND_BYTES := 1048576
+    static CMD_DEDUP_TTL_MS := 5000
+    static CMD_DEDUP_MAX := 256
     static AUTH_TIMEOUT_MS := 3000
     static KEEP_ALIVE_MS := 20000
     ; v7.0.5 (#11): an authenticated WS client that has sent nothing (not even a
@@ -147,51 +153,19 @@ _HB_FormatIp(addrBuf) {
 }
 
 _HB_JsonEscape(str) {
-    s := String(str)
-    s := StrReplace(s, "\", "\\")
-    s := StrReplace(s, '"', '\"')
-    s := StrReplace(s, "`b", "\b")
-    s := StrReplace(s, "`f", "\f")
-    s := StrReplace(s, "`r", "\r")
-    s := StrReplace(s, "`n", "\n")
-    s := StrReplace(s, "`t", "\t")
-    if (RegExMatch(s, "[\x00-\x1f]")) {
-        out := ""
-        Loop Parse, s {
-            code := Ord(A_LoopField)
-            out .= (code < 32) ? Format("\u{:04x}", code) : A_LoopField
-        }
-        return out
-    }
-    return s
+    return JsonCodec.Escape(str)
 }
 
 _HB_JsonExtractStr(jsonStr, key) {
-    pattern := '"' key '"\s*:\s*"((?:[^"\\]|\\.)*)"'
-    if (RegExMatch(jsonStr, pattern, &m)) {
-        val := m[1]
-        val := StrReplace(val, '\"', '"')
-        val := StrReplace(val, "\\", "\")
-        val := StrReplace(val, "\r", "`r")
-        val := StrReplace(val, "\n", "`n")
-        val := StrReplace(val, "\t", "`t")
-        return val
-    }
-    return ""
+    return JsonCodec.GetStr(jsonStr, key, "")
 }
 
 _HB_JsonExtractBool(jsonStr, key, defaultVal := false) {
-    pattern := '"' key '"\s*:\s*(true|false)'
-    if (RegExMatch(jsonStr, "i)" pattern, &m))
-        return (StrLower(m[1]) = "true")
-    return defaultVal
+    return JsonCodec.GetBool(jsonStr, key, defaultVal)
 }
 
 _HB_JsonExtractInt(jsonStr, key, defaultVal := 0) {
-    pattern := '"' key '"\s*:\s*(-?\d+)'
-    if (RegExMatch(jsonStr, pattern, &m))
-        return Integer(m[1])
-    return defaultVal
+    return JsonCodec.GetInt(jsonStr, key, defaultVal)
 }
 
 _HB_UrlDecode(str) {
@@ -296,6 +270,34 @@ class HostCompanionBridge {
     lastAdapterCheckTick := 0
     lastWakeRefreshTick := 0
     lastError := ""
+    hostBootId := ""
+    stateSeq := 1
+    recentCmdIds := Map()
+
+    _GenerateBootId() {
+        rnd := Buffer(6, 0)
+        ok := false
+        try {
+            if (DllCall("bcrypt\BCryptGenRandom", "Ptr", 0, "Ptr", rnd.Ptr, "UInt", 6, "UInt", 2, "Int") == 0)
+                ok := true
+        } catch {
+            ok := false
+        }
+        if (!ok) {
+            Loop 6
+                NumPut("UChar", Random(0, 255), rnd, A_Index - 1)
+        }
+        hex := ""
+        Loop 6
+            hex .= Format("{:02x}", NumGet(rnd, A_Index - 1, "UChar"))
+        return hex
+    }
+
+    _EnsureBootId() {
+        if (this.hostBootId = "")
+            this.hostBootId := this._GenerateBootId()
+        return this.hostBootId
+    }
 
     Start(cfg, state, tcpPort := 4456, udpPort := -1, discoverPort := -1) {
         this.Stop()
@@ -305,6 +307,9 @@ class HostCompanionBridge {
         this.requestedUdpPort := (udpPort = -1) ? tcpPort : udpPort
         this.requestedDiscoverPort := (discoverPort = -1) ? ((tcpPort = HostBridgeConstants.DEFAULT_PORT) ? HostBridgeConstants.DEFAULT_DISCOVERY_PORT : 0) : discoverPort
         this.lastError := ""
+        this.hostBootId := this._GenerateBootId()
+        this.stateSeq := 1
+        this.recentCmdIds := Map()
 
         EnsureHostUuid(cfg)
         if (!cfg.HasOwnProp("SessionPairingCode") || cfg.SessionPairingCode = "") {
@@ -615,7 +620,7 @@ class HostCompanionBridge {
         return true
     }
 
-    DisconnectDevice(devId) {
+    DisconnectDevice(devId, removePairing := false) {
         if (devId = "")
             return false
         devName := devId
@@ -626,17 +631,22 @@ class HostCompanionBridge {
                 devName := dev.deviceName
             if (dev.HasOwnProp("platform") && dev.platform != "")
                 plat := dev.platform
-            if (dev.HasOwnProp("token") && dev.token != "" && this.validTokens.Has(dev.token))
-                this.validTokens.Delete(dev.token)
-            this.pairedDevices.Delete(devId)
+            dev.connected := false
+            if (removePairing) {
+                if (dev.HasOwnProp("token") && dev.token != "" && this.validTokens.Has(dev.token))
+                    this.validTokens.Delete(dev.token)
+                this.pairedDevices.Delete(devId)
+            }
         }
-        staleTokens := []
-        for tok, ownerId in this.validTokens {
-            if (ownerId = devId)
-                staleTokens.Push(tok)
+        if (removePairing) {
+            staleTokens := []
+            for tok, ownerId in this.validTokens {
+                if (ownerId = devId)
+                    staleTokens.Push(tok)
+            }
+            for tok in staleTokens
+                this.validTokens.Delete(tok)
         }
-        for tok in staleTokens
-            this.validTokens.Delete(tok)
 
         targets := []
         for _, cli in this.clients {
@@ -645,7 +655,7 @@ class HostCompanionBridge {
         }
         for cli in targets {
             if (cli.kind = "ws") {
-                this._QueueWsFrame(cli, 0x1, '{"type":"disconnected","ok":true}')
+                this._QueueWsFrame(cli, 0x1, '{"type":"disconnected","protocolVersion":2,"ok":true}')
                 cli.closeAfterSend := true
                 this._FlushSendQueue(cli)
             } else {
@@ -654,14 +664,17 @@ class HostCompanionBridge {
         }
         if (IsSet(SessionTimeline))
             SessionTimeline.Record("Remote", "Remote Disconnected: " devName, this.state, plat)
-        this.SavePairedDevices()
+        if (removePairing)
+            this.SavePairedDevices()
         return true
     }
 
-    UnpairDevice(devId) {
+    UnpairDevice(devId, initiatedByClient := false) {
         if (devId = "" || !this.pairedDevices.Has(devId))
             return false
         dev := this.pairedDevices[devId]
+        devName := (dev.HasOwnProp("deviceName") && dev.deviceName != "") ? dev.deviceName : devId
+        plat := (dev.HasOwnProp("platform") && dev.platform != "") ? dev.platform : "Remote"
         if (dev.HasOwnProp("token") && dev.token != "" && this.validTokens.Has(dev.token))
             this.validTokens.Delete(dev.token)
         staleTokens := []
@@ -680,13 +693,18 @@ class HostCompanionBridge {
         }
         for cli in targets {
             if (cli.kind = "ws") {
-                this._QueueWsFrame(cli, 0x1, '{"type":"auth_error","error":"Device unpaired by host"}')
+                if (initiatedByClient)
+                    this._QueueWsFrame(cli, 0x1, '{"type":"disconnected","protocolVersion":2,"unpaired":true,"ok":true}')
+                else
+                    this._QueueWsFrame(cli, 0x1, '{"type":"auth_error","error":"Device unpaired by host"}')
                 cli.closeAfterSend := true
                 this._FlushSendQueue(cli)
             } else {
                 this._CloseClient(cli)
             }
         }
+        if (IsSet(SessionTimeline))
+            SessionTimeline.Record("Remote", "Remote Unpaired: " devName, this.state, plat)
         this.SavePairedDevices()
         return true
     }
@@ -736,12 +754,14 @@ class HostCompanionBridge {
     BroadcastMuteState(cfg, state) {
         if (!this.running)
             return 0
+        this.stateSeq += 1
         return this._BroadcastJsonToAuthenticated(this._BuildMuteStateJson())
     }
 
     BroadcastSyncResync(cfg, state, reason := "wake") {
         if (!this.running)
             return 0
+        this.stateSeq += 1
         return this._BroadcastJsonToAuthenticated(this._BuildSyncResyncJson(reason))
     }
 
@@ -895,7 +915,10 @@ class HostCompanionBridge {
             obsPass := this.cfg.HasOwnProp("obsPassword") ? String(this.cfg.obsPassword) : ""
             obsField := ',"obsFallback":{"port":4455,"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(obsPass) '"}'
         }
-        return '{"type":"auth_ok","hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '"' tokField obsField '}'
+        ver := _HB_JsonEscape(UIConstants.APP_VERSION)
+        bootId := _HB_JsonEscape(this._EnsureBootId())
+        caps := '["protocol_v2","cmd_dedup","set_state","ack_nack","stage_nudge","director_deck"]'
+        return '{"type":"auth_ok","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"capabilities":' caps ',"hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' ver '"' tokField obsField '}'
     }
 
     _OnUdpMessage(wParam, lParam, msg, hwnd) {
@@ -1018,7 +1041,12 @@ class HostCompanionBridge {
                         lastRxTick: A_TickCount,
                         lastPingTick: A_TickCount,
                         fragBuf: Buffer(0),
-                        fragLen: 0
+                        fragLen: 0,
+                        fragOpcode: 0,
+                        protocolVersion: 1,
+                        appVersion: "",
+                        capabilities: [],
+                        inputPaused: false
                     }
                     ; FD_READ(1) | FD_WRITE(2) | FD_CLOSE(32) = 0x23
                     if (DllCall("ws2_32\WSAAsyncSelect", "Ptr", clientSock, "Ptr", this.hwnd, "UInt", this.wmTcp, "Int", 0x23, "Int") != 0) {
@@ -1061,7 +1089,10 @@ class HostCompanionBridge {
             if (n > 0) {
                 res := _HB_AppendBytes(c.recvBuf, c.recvLen, tmp.Ptr, n, HostBridgeConstants.MAX_BUFFER_BYTES)
                 if (!IsObject(res)) {
-                    this._CloseClient(c)
+                    if (c.kind = "ws")
+                        this._SendWsCloseAndDisconnect(c, 1009, "Message too big")
+                    else
+                        this._SendHttpResponse(c, "413 Payload Too Large", '{"ok":false,"error":"Payload too large"}')
                     return
                 }
                 c.recvBuf := res.buf
@@ -1142,6 +1173,110 @@ class HostCompanionBridge {
         }
         if (c.sendLen = 0 && c.closeAfterSend)
             this._CloseClient(c)
+    }
+
+    _SendWsCloseAndDisconnect(c, closeCode := 1000, reason := "") {
+        rLen := 0
+        rBuf := (reason != "") ? _HB_StrToUtf8Buf(SubStr(String(reason), 1, 100), &rLen) : Buffer(0)
+        pLen := 2 + rLen
+        frame := Buffer(2 + pLen, 0)
+        NumPut("UChar", 0x88, frame, 0)
+        NumPut("UChar", pLen, frame, 1)
+        NumPut("UChar", (closeCode >> 8) & 0xFF, frame, 2)
+        NumPut("UChar", closeCode & 0xFF, frame, 3)
+        if (rLen > 0)
+            DllCall("ntdll\RtlMoveMemory", "Ptr", frame.Ptr + 4, "Ptr", rBuf.Ptr, "UPtr", rLen)
+        c.closeAfterSend := true
+        this._QueueRawBytes(c, frame.Ptr, 2 + pLen)
+        if (this.clients.Has(c.key))
+            this._FlushSendQueue(c)
+    }
+
+    _IsAllowedWsOrigin(hdrText) {
+        if (!RegExMatch(hdrText, "im)^Origin:\s*([^\r\n]+)", &mOrig))
+            return true
+        originRaw := Trim(mOrig[1])
+        if (originRaw = "" || StrLower(originRaw) = "null")
+            return false
+        if (!RegExMatch(originRaw, "i)^https?://([^/]+)", &mOrigHost))
+            return false
+        origHostPort := StrLower(Trim(mOrigHost[1]))
+
+        expectedHost := RegExMatch(hdrText, "im)^Host:\s*([^\r\n]+)", &mHost)
+            ? StrLower(Trim(mHost[1]))
+            : ("127.0.0.1:" this.boundTcpPort)
+        if (origHostPort == expectedHost)
+            return true
+        origNorm := RegExReplace(origHostPort, "^localhost(?=:|$)", "127.0.0.1")
+        expNorm := RegExReplace(expectedHost, "^localhost(?=:|$)", "127.0.0.1")
+        return (origNorm == expNorm)
+    }
+
+    _CheckAndGetCachedCmdAck(c, cmdId) {
+        cleanId := Trim(String(cmdId))
+        if (cleanId = "")
+            return ""
+        now := A_TickCount
+        this._PruneRecentCmdIds(now)
+        cacheKey := (c.deviceId != "" ? c.deviceId : c.key) ":" cleanId
+        if (this.recentCmdIds.Has(cacheKey)) {
+            entry := this.recentCmdIds[cacheKey]
+            if ((now - entry.tick) <= HostBridgeConstants.CMD_DEDUP_TTL_MS)
+                return entry.replyJson
+            this.recentCmdIds.Delete(cacheKey)
+        }
+        return ""
+    }
+
+    _StoreCmdDedupReply(c, cmdId, replyJson) {
+        cleanId := Trim(String(cmdId))
+        if (cleanId = "")
+            return
+        now := A_TickCount
+        this._PruneRecentCmdIds(now)
+        cacheKey := (c.deviceId != "" ? c.deviceId : c.key) ":" cleanId
+        this.recentCmdIds[cacheKey] := { tick: now, replyJson: replyJson }
+    }
+
+    _PruneRecentCmdIds(now := "") {
+        t := (now = "") ? A_TickCount : now
+        stale := []
+        for k, entry in this.recentCmdIds {
+            if ((t - entry.tick) > HostBridgeConstants.CMD_DEDUP_TTL_MS)
+                stale.Push(k)
+        }
+        for k in stale
+            this.recentCmdIds.Delete(k)
+        while (this.recentCmdIds.Count > HostBridgeConstants.CMD_DEDUP_MAX) {
+            oldestKey := ""
+            oldestTick := t + 1
+            for k, entry in this.recentCmdIds {
+                if (entry.tick <= oldestTick) {
+                    oldestTick := entry.tick
+                    oldestKey := k
+                }
+            }
+            if (oldestKey = "")
+                break
+            this.recentCmdIds.Delete(oldestKey)
+        }
+    }
+
+    _QueueCmdResult(c, action, ok, cmdId := "", code := "", reason := "") {
+        cmdField := (cmdId != "") ? (',"cmdId":"' _HB_JsonEscape(cmdId) '"') : ""
+        if (ok) {
+            reply := '{"type":"ack","protocolVersion":2,"action":"' _HB_JsonEscape(action) '","ok":true,"stateSeq":' this.stateSeq cmdField '}'
+            if (cmdId != "") {
+                dedupReply := '{"type":"ack","protocolVersion":2,"action":"' _HB_JsonEscape(action) '","ok":true,"dedup":true,"stateSeq":' this.stateSeq cmdField '}'
+                this._StoreCmdDedupReply(c, cmdId, dedupReply)
+            }
+            this._QueueWsFrame(c, 0x1, reply)
+        } else {
+            errCode := (code != "") ? code : "command_failed"
+            errReason := (reason != "") ? reason : errCode
+            nack := '{"type":"nack","protocolVersion":2,"action":"' _HB_JsonEscape(action) '","ok":false,"code":"' _HB_JsonEscape(errCode) '","reason":"' _HB_JsonEscape(errReason) '","stateSeq":' this.stateSeq cmdField '}'
+            this._QueueWsFrame(c, 0x1, nack)
+        }
     }
 
     _QueueWsFrame(c, opcode, payloadStr) {
@@ -1309,8 +1444,8 @@ class HostCompanionBridge {
         if (c.kind = "pending") {
             hdrEnd := this._FindHttpHeaderEnd(c.recvBuf, c.recvLen)
             if (!hdrEnd) {
-                if (c.recvLen > 16384)
-                    this._SendHttpResponse(c, "400 Bad Request", '{"ok":false,"error":"Headers too large"}')
+                if (c.recvLen > HostBridgeConstants.MAX_HTTP_HEADER_BYTES)
+                    this._SendHttpResponse(c, "413 Payload Too Large", '{"ok":false,"error":"Headers too large"}')
                 return
             }
 
@@ -1371,7 +1506,8 @@ class HostCompanionBridge {
                 contentLen := 0
                 if (RegExMatch(hdrText, "i)Content-Length:\s*(\d+)", &mLen))
                     contentLen := Integer(mLen[1])
-                if (contentLen > 8192) {
+                if (contentLen > HostBridgeConstants.MAX_HTTP_BODY_BYTES) {
+                    c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
                     this._SendHttpResponse(c, "413 Payload Too Large", '{"ok":false,"error":"Payload too large"}')
                     return
                 }
@@ -1404,14 +1540,15 @@ class HostCompanionBridge {
             return
         }
 
-        reqCode := NormalizePairingCode(_HB_JsonExtractStr(bodyText, "code"))
-        devId := _HB_JsonExtractStr(bodyText, "deviceId")
+        reqObj := JsonCodec.Parse(bodyText)
+        reqCode := NormalizePairingCode(IsObject(reqObj) ? JsonCodec.GetStr(reqObj, "code") : _HB_JsonExtractStr(bodyText, "code"))
+        devId := IsObject(reqObj) ? JsonCodec.GetStr(reqObj, "deviceId") : _HB_JsonExtractStr(bodyText, "deviceId")
         if (devId = "")
             devId := "device-" c.ip "-" c.sock
-        devName := _HB_JsonExtractStr(bodyText, "deviceName")
+        devName := IsObject(reqObj) ? JsonCodec.GetStr(reqObj, "deviceName") : _HB_JsonExtractStr(bodyText, "deviceName")
         if (devName = "")
             devName := "Smart Board"
-        plat := _HB_JsonExtractStr(bodyText, "platform")
+        plat := IsObject(reqObj) ? JsonCodec.GetStr(reqObj, "platform") : _HB_JsonExtractStr(bodyText, "platform")
         if (plat = "")
             plat := "Android"
 
@@ -1483,6 +1620,11 @@ class HostCompanionBridge {
     }
 
     _HandleWsUpgrade(c, hdrText, rawPath, hdrEnd) {
+        if (!this._IsAllowedWsOrigin(hdrText)) {
+            c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
+            this._SendHttpResponse(c, "403 Forbidden", '{"ok":false,"error":"Cross-origin WebSocket rejected"}')
+            return
+        }
         if (!RegExMatch(hdrText, "i)Sec-WebSocket-Key:\s*([^\r\n]+)", &mKey)) {
             this._SendHttpResponse(c, "400 Bad Request", '{"ok":false,"error":"Missing Sec-WebSocket-Key"}')
             return
@@ -1597,6 +1739,11 @@ class HostCompanionBridge {
             masked := (b1 & 0x80) != 0
             len7 := b1 & 0x7F
 
+            if (!masked) {
+                this._SendWsCloseAndDisconnect(c, 1002, "Unmasked client frame")
+                return
+            }
+
             offset := 2
             payloadLen := len7
             if (len7 = 126) {
@@ -1612,7 +1759,7 @@ class HostCompanionBridge {
                 lo := (NumGet(c.recvBuf, 6, "UChar") << 24) | (NumGet(c.recvBuf, 7, "UChar") << 16)
                     | (NumGet(c.recvBuf, 8, "UChar") << 8) | NumGet(c.recvBuf, 9, "UChar")
                 if (hi != 0 || lo > HostBridgeConstants.MAX_BUFFER_BYTES) {
-                    this._CloseClient(c)
+                    this._SendWsCloseAndDisconnect(c, 1009, "Message too big")
                     return
                 }
                 payloadLen := lo
@@ -1620,32 +1767,31 @@ class HostCompanionBridge {
             }
 
             if (payloadLen > HostBridgeConstants.MAX_BUFFER_BYTES) {
-                this._CloseClient(c)
+                this._SendWsCloseAndDisconnect(c, 1009, "Message too big")
+                return
+            }
+            if (opcode >= 0x8 && (!fin || payloadLen > 125)) {
+                this._SendWsCloseAndDisconnect(c, 1002, "Invalid control frame")
                 return
             }
 
             maskOff := offset
-            if (masked)
-                offset += 4
+            offset += 4
             totalLen := offset + payloadLen
             if (c.recvLen < totalLen)
                 break
 
             payloadBuf := Buffer(Max(1, payloadLen + 1), 0)
             if (payloadLen > 0) {
-                if (masked) {
-                    m0 := NumGet(c.recvBuf, maskOff, "UChar")
-                    m1 := NumGet(c.recvBuf, maskOff + 1, "UChar")
-                    m2 := NumGet(c.recvBuf, maskOff + 2, "UChar")
-                    m3 := NumGet(c.recvBuf, maskOff + 3, "UChar")
-                    masks := [m0, m1, m2, m3]
-                    Loop payloadLen {
-                        i := A_Index - 1
-                        byteVal := NumGet(c.recvBuf, offset + i, "UChar") ^ masks[Mod(i, 4) + 1]
-                        NumPut("UChar", byteVal, payloadBuf, i)
-                    }
-                } else {
-                    DllCall("ntdll\RtlMoveMemory", "Ptr", payloadBuf.Ptr, "Ptr", c.recvBuf.Ptr + offset, "UPtr", payloadLen)
+                m0 := NumGet(c.recvBuf, maskOff, "UChar")
+                m1 := NumGet(c.recvBuf, maskOff + 1, "UChar")
+                m2 := NumGet(c.recvBuf, maskOff + 2, "UChar")
+                m3 := NumGet(c.recvBuf, maskOff + 3, "UChar")
+                masks := [m0, m1, m2, m3]
+                Loop payloadLen {
+                    i := A_Index - 1
+                    byteVal := NumGet(c.recvBuf, offset + i, "UChar") ^ masks[Mod(i, 4) + 1]
+                    NumPut("UChar", byteVal, payloadBuf, i)
                 }
             }
             NumPut("UChar", 0, payloadBuf, payloadLen)
@@ -1666,29 +1812,56 @@ class HostCompanionBridge {
             } else if (opcode = 0xA) { ; Pong
                 c.lastRxTick := A_TickCount
                 continue
-            } else if (opcode = 0x1 || opcode = 0x0) {
-                if (!fin || opcode = 0x0) {
+            } else if (opcode = 0x0) { ; Continuation
+                if (c.fragOpcode = 0) {
+                    this._SendWsCloseAndDisconnect(c, 1002, "Unexpected continuation")
+                    return
+                }
+                res := _HB_AppendBytes(c.fragBuf, c.fragLen, payloadBuf.Ptr, payloadLen, HostBridgeConstants.MAX_BUFFER_BYTES)
+                if (!IsObject(res)) {
+                    this._SendWsCloseAndDisconnect(c, 1009, "Message too big")
+                    return
+                }
+                c.fragBuf := res.buf
+                c.fragLen := res.len
+                if (fin) {
+                    msgBuf := Buffer(c.fragLen + 1, 0)
+                    if (c.fragLen > 0)
+                        DllCall("ntdll\RtlMoveMemory", "Ptr", msgBuf.Ptr, "Ptr", c.fragBuf.Ptr, "UPtr", c.fragLen)
+                    isText := (c.fragOpcode == 0x1)
+                    c.fragLen := 0
+                    c.fragOpcode := 0
+                    if (isText) {
+                        text := StrGet(msgBuf, "UTF-8")
+                        this._HandleWsTextMessage(c, text)
+                    }
+                }
+                if (!this.clients.Has(c.key))
+                    return
+            } else if (opcode = 0x1 || opcode = 0x2) { ; Text / Binary
+                if (c.fragOpcode != 0) {
+                    this._SendWsCloseAndDisconnect(c, 1002, "Interleaved data frame")
+                    return
+                }
+                if (!fin) {
+                    c.fragOpcode := opcode
+                    c.fragLen := 0
                     res := _HB_AppendBytes(c.fragBuf, c.fragLen, payloadBuf.Ptr, payloadLen, HostBridgeConstants.MAX_BUFFER_BYTES)
                     if (!IsObject(res)) {
-                        this._CloseClient(c)
+                        this._SendWsCloseAndDisconnect(c, 1009, "Message too big")
                         return
                     }
                     c.fragBuf := res.buf
                     c.fragLen := res.len
-                    if (fin) {
-                        msgBuf := Buffer(c.fragLen + 1, 0)
-                        if (c.fragLen > 0)
-                            DllCall("ntdll\RtlMoveMemory", "Ptr", msgBuf.Ptr, "Ptr", c.fragBuf.Ptr, "UPtr", c.fragLen)
-                        c.fragLen := 0
-                        text := StrGet(msgBuf, "UTF-8")
-                        this._HandleWsTextMessage(c, text)
-                    }
-                } else {
+                } else if (opcode = 0x1) {
                     text := (payloadLen > 0) ? StrGet(payloadBuf, "UTF-8") : ""
                     this._HandleWsTextMessage(c, text)
+                    if (!this.clients.Has(c.key))
+                        return
                 }
-                if (!this.clients.Has(c.key))
-                    return
+            } else {
+                this._SendWsCloseAndDisconnect(c, 1002, "Unsupported opcode")
+                return
             }
         }
     }
@@ -1699,7 +1872,10 @@ class HostCompanionBridge {
 
     _HandleWsTextMessage(c, msg) {
         c.lastRxTick := A_TickCount
-        msgType := StrLower(_HB_JsonExtractStr(msg, "type"))
+        msgObj := JsonCodec.Parse(msg)
+        if !(msgObj is Map)
+            return
+        msgType := StrLower(JsonCodec.GetStr(msgObj, "type"))
 
         if (!c.authenticated) {
             if (msgType != "auth") {
@@ -1708,17 +1884,22 @@ class HostCompanionBridge {
                 this._FlushSendQueue(c)
                 return
             }
-            tok := _HB_JsonExtractStr(msg, "token")
-            code := _HB_JsonExtractStr(msg, "code")
-            devId := _HB_JsonExtractStr(msg, "deviceId")
-            devName := _HB_JsonExtractStr(msg, "deviceName")
-            plat := _HB_JsonExtractStr(msg, "platform")
+            tok := JsonCodec.GetStr(msgObj, "token")
+            code := JsonCodec.GetStr(msgObj, "code")
+            devId := JsonCodec.GetStr(msgObj, "deviceId")
+            devName := JsonCodec.GetStr(msgObj, "deviceName")
+            plat := JsonCodec.GetStr(msgObj, "platform")
             if (!this._TryAuthenticateWsClient(c, tok, code, devId, devName, plat)) {
                 this._QueueWsFrame(c, 0x1, '{"type":"auth_error","error":"Invalid token or pairing code"}')
                 c.closeAfterSend := true
                 this._FlushSendQueue(c)
                 return
             }
+            c.protocolVersion := Max(1, JsonCodec.GetInt(msgObj, "protocolVersion", 1))
+            c.appVersion := JsonCodec.GetStr(msgObj, "appVersion")
+            caps := JsonCodec.GetStrArray(msgObj, "capabilities")
+            if (caps.Length > 0)
+                c.capabilities := caps
             this._QueueWsFrame(c, 0x1, this._BuildAuthOkJson(c))
             this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             if (IsSet(SessionTimeline))
@@ -1729,37 +1910,89 @@ class HostCompanionBridge {
         if (c.deviceId != "" && this.pairedDevices.Has(c.deviceId))
             this.pairedDevices[c.deviceId].lastSeenTick := A_TickCount
 
+        if (msgType = "ping") {
+            isMutedStr := this.state.isMuted ? "true" : "false"
+            this._QueueWsFrame(c, 0x1, '{"type":"pong","protocolVersion":2,"isMuted":' isMutedStr ',"stateSeq":' this.stateSeq ',"timestamp":' A_TickCount '}')
+            return
+        }
+        if (msgType = "sync_req") {
+            this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            return
+        }
+        if (msgType = "disconnect") {
+            this.DisconnectDevice(c.deviceId, false)
+            return
+        }
+        if (msgType = "unpair") {
+            this.UnpairDevice(c.deviceId, true)
+            return
+        }
+
+        cmdId := JsonCodec.GetStr(msgObj, "cmdId")
+        expSeq := JsonCodec.GetInt(msgObj, "expectedStateSeq", 0)
+        if (c.HasOwnProp("inputPaused") && c.inputPaused) {
+            this._QueueCmdResult(c, msgType, false, cmdId, "input_paused", "Remote input is temporarily paused by host")
+            return
+        }
+        if (expSeq > 0 && expSeq < this.stateSeq) {
+            this._QueueCmdResult(c, msgType, false, cmdId, "stale_seq", "Stale stateSeq (" expSeq " < " this.stateSeq ")")
+            return
+        }
+        if (cmdId != "") {
+            cachedAck := this._CheckAndGetCachedCmdAck(c, cmdId)
+            if (cachedAck != "") {
+                this._QueueWsFrame(c, 0x1, cachedAck)
+                return
+            }
+        }
+
         switch (msgType) {
             case "toggle_mute":
                 ok := ExecuteHostRemoteToggleMute(this.cfg, this.state)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_mute","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "toggle_mute", ok, cmdId, ok ? "" : "obs_offline")
             case "set_mute":
-                targetMuted := _HB_JsonExtractBool(msg, "isMuted", this.state.isMuted)
-                ExecuteHostRemoteSetMute(this.cfg, this.state, targetMuted)
+                targetMuted := JsonCodec.GetBool(msgObj, "isMuted", this.state.isMuted)
+                ok := ExecuteHostRemoteSetMute(this.cfg, this.state, targetMuted)
+                this._QueueCmdResult(c, "set_mute", ok, cmdId, ok ? "" : "obs_offline")
             case "ppt_next":
                 ok := ExecuteHostRemotePptCommand(this.cfg, this.state, "next")
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"ppt_next","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "ppt_next", ok, cmdId)
             case "ppt_prev":
                 ok := ExecuteHostRemotePptCommand(this.cfg, this.state, "prev")
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"ppt_prev","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "ppt_prev", ok, cmdId)
             case "slide_start":
                 ok := IsSet(StartPowerPointSlideshow) ? StartPowerPointSlideshow() : false
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"slide_start","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "slide_start", ok, cmdId)
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "toggle_record":
                 ok := ExecuteHostToggleRecord(this.cfg, this.state)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_record","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "toggle_record", ok, cmdId, ok ? "" : "obs_offline")
+            case "set_record":
+                wantRec := JsonCodec.HasKey(msgObj, "recording") ? JsonCodec.GetBool(msgObj, "recording", false)
+                    : (JsonCodec.HasKey(msgObj, "active") ? JsonCodec.GetBool(msgObj, "active", false) : JsonCodec.GetBool(msgObj, "isRecording", false))
+                confirmed := JsonCodec.GetBool(msgObj, "confirmed", true)
+                curRec := (IsObject(this.state) && ((this.state.HasOwnProp("recState") && this.state.recState != 0) || (this.state.HasOwnProp("obsRecState") && this.state.obsRecState != 0)))
+                confirmCfg := !IsObject(this.cfg) || !this.cfg.HasOwnProp("ConfirmBeforeStopRecording") || this.cfg.ConfirmBeforeStopRecording
+                if (!wantRec && curRec && confirmCfg && !confirmed) {
+                    this._QueueCmdResult(c, "set_record", false, cmdId, "confirm_required", "Explicit confirmation required before stopping recording")
+                    return
+                }
+                if (wantRec == curRec)
+                    ok := true
+                else
+                    ok := wantRec ? ExecuteHostStartRecord(this.cfg, this.state) : ExecuteHostStopRecord(this.cfg, this.state)
+                this._QueueCmdResult(c, "set_record", ok, cmdId, ok ? "" : "obs_offline")
             case "pause_record":
                 ok := ExecuteHostPauseRecord(this.cfg, this.state)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"pause_record","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "pause_record", ok, cmdId, ok ? "" : "obs_offline")
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "split_record":
                 ok := ExecuteHostSplitRecord(this.cfg, this.state)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"split_record","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "split_record", ok, cmdId, ok ? "" : "obs_offline")
             case "switch_scene":
-                sName := _HB_JsonExtractStr(msg, "sceneName")
+                sName := JsonCodec.GetStr(msgObj, "sceneName")
                 ok := ExecuteHostSwitchScene(this.cfg, this.state, sName)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"switch_scene","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "switch_scene", ok, cmdId, ok ? "" : ((sName = "") ? "invalid_args" : "obs_offline"))
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "transition_scene":
                 ok := false
@@ -1767,39 +2000,35 @@ class HostCompanionBridge {
                     ok := (this.state.triggerTransitionFn.Call() != false)
                 else if (IsSet(TriggerObsSceneTransition))
                     ok := TriggerObsSceneTransition(this.cfg, this.state, true)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"transition_scene","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "transition_scene", ok, cmdId, ok ? "" : "obs_offline")
             case "toggle_standby":
                 ok := ExecuteHostToggleStandby(this.cfg, this.state)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"toggle_standby","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "toggle_standby", ok, cmdId)
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "set_standby":
+                wantBrb := JsonCodec.HasKey(msgObj, "isStandby") ? JsonCodec.GetBool(msgObj, "isStandby", false) : JsonCodec.GetBool(msgObj, "enabled", false)
+                ok := ExecuteHostToggleStandby(this.cfg, this.state, wantBrb)
+                this._QueueCmdResult(c, "set_standby", ok, cmdId)
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "timer_start":
-                dur := _HB_JsonExtractInt(msg, "durationSec", 0)
+                dur := JsonCodec.GetInt(msgObj, "durationSec", 0)
                 ok := StartHostPresenterTimer(this.cfg, this.state, dur)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"timer_start","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "timer_start", ok, cmdId)
             case "timer_pause":
                 ok := PauseHostPresenterTimer(this.cfg, this.state)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"timer_pause","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "timer_pause", ok, cmdId)
             case "timer_reset":
-                dur := _HB_JsonExtractInt(msg, "durationSec", 0)
+                dur := JsonCodec.GetInt(msgObj, "durationSec", 0)
                 ok := ResetHostPresenterTimer(this.cfg, this.state, dur)
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"timer_reset","ok":' (ok ? "true" : "false") '}')
+                this._QueueCmdResult(c, "timer_reset", ok, cmdId)
             case "stage_nudge":
-                nMsg := _HB_JsonExtractStr(msg, "message")
-                nSnd := _HB_JsonExtractStr(msg, "sender")
-                nAcc := _HB_JsonExtractStr(msg, "accentHex")
+                nMsg := JsonCodec.GetStr(msgObj, "message")
+                nSnd := JsonCodec.GetStr(msgObj, "sender")
+                nAcc := JsonCodec.GetStr(msgObj, "accentHex")
                 if (nSnd = "")
                     nSnd := (c.deviceName != "") ? c.deviceName : "Remote"
                 ok := BroadcastHostStageNudge(this.cfg, this.state, nMsg, nSnd, nAcc != "" ? nAcc : "F59E0B")
-                this._QueueWsFrame(c, 0x1, '{"type":"ack","action":"stage_nudge","ok":' (ok ? "true" : "false") '}')
-            case "sync_req":
-                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
-            case "ping":
-                isMutedStr := this.state.isMuted ? "true" : "false"
-                this._QueueWsFrame(c, 0x1, '{"type":"pong","isMuted":' isMutedStr ',"timestamp":' A_TickCount '}')
-            case "disconnect":
-                this.DisconnectDevice(c.deviceId)
-            case "unpair":
-                this.UnpairDevice(c.deviceId)
+                this._QueueCmdResult(c, "stage_nudge", ok, cmdId)
         }
     }
 
@@ -1846,7 +2075,9 @@ class HostCompanionBridge {
         tRem := this.state.HasOwnProp("timerRemainingSec") ? Integer(this.state.timerRemainingSec) : 600
         tPre := this.state.HasOwnProp("timerPresetSec") ? Integer(this.state.timerPresetSec) : 600
         hostUuid := EnsureHostUuid(this.cfg)
-        return '"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"quickNudges":' qnJson ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","timestamp":' A_TickCount
+        bootId := _HB_JsonEscape(this._EnsureBootId())
+        ver := _HB_JsonEscape(UIConstants.APP_VERSION)
+        return '"protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"quickNudges":' qnJson ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' ver '","timestamp":' A_TickCount
     }
 
     _BuildMuteStateJson() {

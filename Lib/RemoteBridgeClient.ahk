@@ -6,6 +6,7 @@
 ; ==============================================================================
 
 #DllLoad ws2_32.dll
+#Include "%A_LineFile%\..\JsonCodec.ahk"
 
 class RemoteBridgeConstants {
     static BRIDGE_CONNECT_TIMEOUT_MS := 1800
@@ -143,14 +144,7 @@ ReleaseRemoteInstanceMutex(mutexObj) {
 }
 
 _RBC_JsonEscape(str) {
-    s := StrReplace(String(str), "\", "\\")
-    s := StrReplace(s, '"', '\"')
-    s := StrReplace(s, "`b", "\b")
-    s := StrReplace(s, "`f", "\f")
-    s := StrReplace(s, "`r", "\r")
-    s := StrReplace(s, "`n", "\n")
-    s := StrReplace(s, "`t", "\t")
-    return s
+    return JsonCodec.Escape(str)
 }
 
 _RBC_UrlDecode(str) {
@@ -432,49 +426,23 @@ ParseRemotePairingUri(rawUri) {
 }
 
 _RBC_JsonGetStr(jsonStr, key) {
-    pattern := '"' key '"\s*:\s*"((?:\\.|[^"\\])*)"'
-    if (RegExMatch(jsonStr, pattern, &m)) {
-        val := m[1]
-        val := StrReplace(val, '\"', '"')
-        val := StrReplace(val, '\\', '\')
-        val := StrReplace(val, '\/', '/')
-        val := StrReplace(val, '\n', '`n')
-        val := StrReplace(val, '\r', '`r')
-        val := StrReplace(val, '\t', '`t')
-        return val
-    }
-    return ""
+    return JsonCodec.GetStr(jsonStr, key, "")
 }
 
 _RBC_JsonGetInt(jsonStr, key, defaultVal := 0) {
-    pattern := '"' key '"\s*:\s*(-?\d+)'
-    if (RegExMatch(jsonStr, pattern, &m))
-        return Integer(m[1])
-    return defaultVal
+    return JsonCodec.GetInt(jsonStr, key, defaultVal)
 }
 
 _RBC_JsonGetBool(jsonStr, key, defaultVal := false) {
-    pattern := '"' key '"\s*:\s*(true|false)'
-    if (RegExMatch(jsonStr, pattern, &m))
-        return (m[1] = "true")
-    return defaultVal
+    return JsonCodec.GetBool(jsonStr, key, defaultVal)
 }
 
 _RBC_JsonHasKey(jsonStr, key) {
-    return RegExMatch(jsonStr, '"' key '"\s*:') != 0
+    return JsonCodec.HasKey(jsonStr, key)
 }
 
 _RBC_JsonGetStrArray(jsonStr, key) {
-    out := []
-    if (!RegExMatch(jsonStr, '"' key '"\s*:\s*\[([^\]]*)\]', &mArr))
-        return out
-    inner := mArr[1]
-    pos := 1
-    while (RegExMatch(inner, '"((?:\\.|[^"\\])*)"', &mItem, pos)) {
-        out.Push(StrReplace(mItem[1], '\"', '"'))
-        pos := mItem.Pos + mItem.Len
-    }
-    return out
+    return JsonCodec.GetStrArray(jsonStr, key)
 }
 
 _RBC_OpenBroadcastUdpSocket() {
@@ -1059,6 +1027,8 @@ ResetRemoteConnectionTelemetry(state, resetFallback := false) {
     state.slideTotal := 0
     state.slideTitle := ""
     state.slideNotes := ""
+    state.hostBootId := ""
+    state.lastStateSeq := 0
 }
 
 IsRemoteDirectObsReady(cfg, state) {
@@ -1105,20 +1075,44 @@ CommitRemoteSceneChange(state, newScene, notify := true) {
         _RBC_NotifyRemoteStateUi(state, false)
 }
 
+_RBC_NextCmdId(cfg) {
+    static cmdSeq := 0
+    cmdSeq += 1
+    return _RBC_GetDeviceId(cfg) "-" cmdSeq
+}
+
 BuildRemoteBridgeAuthJson(cfg) {
     devId := _RBC_GetDeviceId(cfg)
     tok := cfg.HasOwnProp("SessionToken") ? Trim(cfg.SessionToken) : ""
     code := cfg.HasOwnProp("SessionPairingCode") ? Trim(cfg.SessionPairingCode) : ""
     devName := GetRemoteDisplayDeviceName(cfg)
-    return '{"type":"auth","token":"' _RBC_JsonEscape(tok) '","code":"' _RBC_JsonEscape(code) '","deviceId":"' _RBC_JsonEscape(devId) '","deviceName":"' _RBC_JsonEscape(devName) '","platform":"Windows"}'
+    ver := (IsSet(UIConstants) && UIConstants.HasOwnProp("APP_VERSION")) ? UIConstants.APP_VERSION : ""
+    caps := '["protocol_v2","cmd_dedup","set_state","ack_nack"]'
+    return '{"type":"auth","protocolVersion":2,"appVersion":"' _RBC_JsonEscape(ver) '","capabilities":' caps ',"token":"' _RBC_JsonEscape(tok) '","code":"' _RBC_JsonEscape(code) '","deviceId":"' _RBC_JsonEscape(devId) '","deviceName":"' _RBC_JsonEscape(devName) '","platform":"Windows"}'
 }
 
 BuildRemoteBridgeToggleJson(cfg) {
-    return '{"type":"toggle_mute","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"clicker"}'
+    return '{"type":"toggle_mute","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"clicker"}'
 }
 
 BuildRemoteBridgeSetMuteJson(cfg, targetMuted) {
-    return '{"type":"set_mute","isMuted":' (targetMuted ? "true" : "false") ',"deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"hud"}'
+    return '{"type":"set_mute","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","isMuted":' (targetMuted ? "true" : "false") ',"deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"hud"}'
+}
+
+BuildRemoteBridgeSetRecordJson(cfg, recording, confirmed := true) {
+    return '{"type":"set_record","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","recording":' (recording ? "true" : "false") ',"confirmed":' (confirmed ? "true" : "false") ',"deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
+}
+
+BuildRemoteBridgeSetStandbyJson(cfg, isStandby) {
+    return '{"type":"set_standby","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","isStandby":' (isStandby ? "true" : "false") ',"deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
+}
+
+BuildRemoteBridgeDisconnectJson(cfg) {
+    return '{"type":"disconnect","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"remote"}'
+}
+
+BuildRemoteBridgeUnpairJson(cfg) {
+    return '{"type":"unpair","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"remote"}'
 }
 
 BuildRemoteBridgePingJson() {
@@ -1126,71 +1120,81 @@ BuildRemoteBridgePingJson() {
 }
 
 BuildRemoteBridgeDeckJson(cfg, actionType) {
-    return '{"type":"' _RBC_JsonEscape(actionType) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
+    return '{"type":"' _RBC_JsonEscape(actionType) '","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
 }
 
 BuildRemoteBridgeSceneJson(cfg, sceneName) {
-    return '{"type":"switch_scene","sceneName":"' _RBC_JsonEscape(sceneName) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
+    return '{"type":"switch_scene","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","sceneName":"' _RBC_JsonEscape(sceneName) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
 }
 
 BuildRemoteBridgeTimerJson(cfg, action, durationSec := 0) {
-    return '{"type":"' _RBC_JsonEscape(action) '","durationSec":' Integer(durationSec) ',"deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
+    return '{"type":"' _RBC_JsonEscape(action) '","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","durationSec":' Integer(durationSec) ',"deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '","source":"tray"}'
 }
 
 BuildRemoteBridgeNudgeJson(cfg, message, sender := "", accentHex := "F59E0B") {
     snd := (Trim(String(sender)) != "") ? Trim(String(sender)) : GetRemoteDisplayDeviceName(cfg)
-    return '{"type":"stage_nudge","message":"' _RBC_JsonEscape(message) '","sender":"' _RBC_JsonEscape(snd) '","accentHex":"' _RBC_JsonEscape(accentHex) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '"}'
+    return '{"type":"stage_nudge","cmdId":"' _RBC_JsonEscape(_RBC_NextCmdId(cfg)) '","message":"' _RBC_JsonEscape(message) '","sender":"' _RBC_JsonEscape(snd) '","accentHex":"' _RBC_JsonEscape(accentHex) '","deviceId":"' _RBC_JsonEscape(_RBC_GetDeviceId(cfg)) '"}'
 }
 
 ParseHostBridgeWsEvent(rawText) {
-    t := _RBC_JsonGetStr(rawText, "type")
+    obj := JsonCodec.Parse(rawText)
+    if !(obj is Map)
+        return ""
+    t := JsonCodec.GetStr(obj, "type")
     if (t = "")
         return ""
-    reasonStr := _RBC_JsonGetStr(rawText, "reason")
+    reasonStr := JsonCodec.GetStr(obj, "reason")
     if (reasonStr = "")
-        reasonStr := _RBC_JsonGetStr(rawText, "error")
+        reasonStr := JsonCodec.GetStr(obj, "error")
     return {
         kind: t,
-        hasMuted: _RBC_JsonHasKey(rawText, "isMuted"),
-        isMuted: _RBC_JsonGetBool(rawText, "isMuted", false),
-        routingMode: _RBC_JsonGetInt(rawText, "routingMode", 1),
-        targetMicName: _RBC_JsonGetStr(rawText, "targetMicName"),
-        conferencingApp: _RBC_JsonGetStr(rawText, "conferencingApp"),
-        detectedConfApp: _RBC_JsonGetStr(rawText, "detectedConfApp"),
-        meetBgTabWarn: _RBC_JsonGetBool(rawText, "meetBgTabWarn", false),
-        slideIndex: _RBC_JsonGetInt(rawText, "slideIndex", 0),
-        slideTotal: _RBC_JsonGetInt(rawText, "slideTotal", 0),
-        slideTitle: _RBC_JsonGetStr(rawText, "slideTitle"),
-        slideNotes: _RBC_JsonGetStr(rawText, "slideNotes"),
-        recState: _RBC_JsonGetInt(rawText, "recState", 0),
-        obsRecState: _RBC_JsonGetInt(rawText, "obsRecState", 0),
-        confRecState: _RBC_JsonGetInt(rawText, "confRecState", 0),
-        recSourceTag: _RBC_JsonGetStr(rawText, "recSourceTag"),
-        recSeconds: _RBC_JsonGetInt(rawText, "recSeconds", 0),
-        obsConnected: _RBC_JsonGetBool(rawText, "obsConnected", false),
-        streamDropWarn: _RBC_JsonGetBool(rawText, "streamDropWarn", false),
-        voiceWhileMuted: _RBC_JsonGetBool(rawText, "voiceWhileMuted", false),
-        osMicMutedDrift: _RBC_JsonGetBool(rawText, "osMicMutedDrift", false),
-        lowDiskWarnLevel: _RBC_JsonGetInt(rawText, "lowDiskWarnLevel", 0),
-        lowDiskMb: _RBC_JsonGetInt(rawText, "lowDiskMb", -1),
-        deadMicWarn: _RBC_JsonGetBool(rawText, "deadMicWarn", false),
-        quickNudges: _RBC_JsonGetStrArray(rawText, "quickNudges"),
-        activeScene: _RBC_JsonGetStr(rawText, "activeScene"),
-        scenes: _RBC_JsonGetStrArray(rawText, "scenes"),
-        isStandby: _RBC_JsonGetBool(rawText, "isStandby", false),
-        standbyScene: _RBC_JsonGetStr(rawText, "standbyScene"),
-        timerState: _RBC_JsonGetStr(rawText, "timerState"),
-        timerRemainingSec: _RBC_JsonGetInt(rawText, "timerRemainingSec", 600),
-        timerPresetSec: _RBC_JsonGetInt(rawText, "timerPresetSec", 600),
-        message: _RBC_JsonGetStr(rawText, "message"),
-        sender: _RBC_JsonGetStr(rawText, "sender"),
-        accentHex: _RBC_JsonGetStr(rawText, "accentHex"),
-        hostUuid: _RBC_JsonGetStr(rawText, "hostUuid"),
-        hostName: _RBC_JsonGetStr(rawText, "hostName"),
-        sessionToken: _RBC_JsonGetStr(rawText, "sessionToken"),
+        protocolVersion: JsonCodec.GetInt(obj, "protocolVersion", 1),
+        appVersion: JsonCodec.GetStr(obj, "appVersion"),
+        hostBootId: JsonCodec.GetStr(obj, "hostBootId"),
+        stateSeq: JsonCodec.GetInt(obj, "stateSeq", 0),
+        cmdId: JsonCodec.GetStr(obj, "cmdId"),
+        code: JsonCodec.GetStr(obj, "code"),
+        dedup: JsonCodec.GetBool(obj, "dedup", false),
+        hasMuted: JsonCodec.HasKey(obj, "isMuted"),
+        isMuted: JsonCodec.GetBool(obj, "isMuted", false),
+        routingMode: JsonCodec.GetInt(obj, "routingMode", 1),
+        targetMicName: JsonCodec.GetStr(obj, "targetMicName"),
+        conferencingApp: JsonCodec.GetStr(obj, "conferencingApp"),
+        detectedConfApp: JsonCodec.GetStr(obj, "detectedConfApp"),
+        meetBgTabWarn: JsonCodec.GetBool(obj, "meetBgTabWarn", false),
+        slideIndex: JsonCodec.GetInt(obj, "slideIndex", 0),
+        slideTotal: JsonCodec.GetInt(obj, "slideTotal", 0),
+        slideTitle: JsonCodec.GetStr(obj, "slideTitle"),
+        slideNotes: JsonCodec.GetStr(obj, "slideNotes"),
+        recState: JsonCodec.GetInt(obj, "recState", 0),
+        obsRecState: JsonCodec.GetInt(obj, "obsRecState", 0),
+        confRecState: JsonCodec.GetInt(obj, "confRecState", 0),
+        recSourceTag: JsonCodec.GetStr(obj, "recSourceTag"),
+        recSeconds: JsonCodec.GetInt(obj, "recSeconds", 0),
+        obsConnected: JsonCodec.GetBool(obj, "obsConnected", false),
+        streamDropWarn: JsonCodec.GetBool(obj, "streamDropWarn", false),
+        voiceWhileMuted: JsonCodec.GetBool(obj, "voiceWhileMuted", false),
+        osMicMutedDrift: JsonCodec.GetBool(obj, "osMicMutedDrift", false),
+        lowDiskWarnLevel: JsonCodec.GetInt(obj, "lowDiskWarnLevel", 0),
+        lowDiskMb: JsonCodec.GetInt(obj, "lowDiskMb", -1),
+        deadMicWarn: JsonCodec.GetBool(obj, "deadMicWarn", false),
+        quickNudges: JsonCodec.GetStrArray(obj, "quickNudges"),
+        activeScene: JsonCodec.GetStr(obj, "activeScene"),
+        scenes: JsonCodec.GetStrArray(obj, "scenes"),
+        isStandby: JsonCodec.GetBool(obj, "isStandby", false),
+        standbyScene: JsonCodec.GetStr(obj, "standbyScene"),
+        timerState: JsonCodec.GetStr(obj, "timerState"),
+        timerRemainingSec: JsonCodec.GetInt(obj, "timerRemainingSec", 600),
+        timerPresetSec: JsonCodec.GetInt(obj, "timerPresetSec", 600),
+        message: JsonCodec.GetStr(obj, "message"),
+        sender: JsonCodec.GetStr(obj, "sender"),
+        accentHex: JsonCodec.GetStr(obj, "accentHex"),
+        hostUuid: JsonCodec.GetStr(obj, "hostUuid"),
+        hostName: JsonCodec.GetStr(obj, "hostName"),
+        sessionToken: JsonCodec.GetStr(obj, "sessionToken"),
         reason: reasonStr,
-        action: _RBC_JsonGetStr(rawText, "action"),
-        ok: _RBC_JsonGetBool(rawText, "ok", false)
+        action: JsonCodec.GetStr(obj, "action"),
+        ok: JsonCodec.GetBool(obj, "ok", false)
     }
 }
 

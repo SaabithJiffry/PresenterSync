@@ -1,5 +1,6 @@
 package com.saabithjiffry.presentersync.remote.network
 
+import com.saabithjiffry.presentersync.remote.config.AppConstants
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -8,6 +9,8 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 data class BridgeTelemetryState(
     val recState: Int = 0,
@@ -42,6 +45,7 @@ interface HostBridgeCallbacks {
     fun onTelemetryChanged(telemetry: BridgeTelemetryState) {}
     fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {}
     fun onSyncResync(reason: String, hostUuid: String) {}
+    fun onCommandNack(action: String, code: String, reason: String, cmdId: String) {}
     fun onCloseRemoteSignal()
     fun onBridgeDisconnected(reason: String)
 }
@@ -64,11 +68,20 @@ class HostBridgeClient(
     @Volatile
     private var authenticated = false
 
-    private val connSeq = java.util.concurrent.atomic.AtomicInteger(0)
+    private val connSeq = AtomicInteger(0)
+    private val cmdSeq = AtomicLong(0L)
+    private val lastStateSeq = AtomicLong(0L)
+
+    @Volatile
+    private var lastHostBootId: String = ""
+
+    private fun nextCmdId(): String = "$deviceId-${cmdSeq.incrementAndGet()}"
 
     fun connect() {
         closedByCaller = false
         authenticated = false
+        lastHostBootId = ""
+        lastStateSeq.set(0L)
         val mySeq = connSeq.incrementAndGet()
 
         val httpEquivalent = wsBaseUrl
@@ -80,8 +93,6 @@ class HostBridgeClient(
                 .addQueryParameter("deviceId", deviceId)
                 .addQueryParameter("deviceName", deviceName)
                 .addQueryParameter("platform", "Android")
-            if (sessionToken.isNotBlank()) builder.addQueryParameter("token", sessionToken)
-            if (sessionCode.isNotBlank()) builder.addQueryParameter("code", SessionPairingClient.normalizeCode(sessionCode))
             val rebuilt = builder.build().toString()
             if (wsBaseUrl.startsWith("wss://")) rebuilt.replaceFirst("https://", "wss://")
             else rebuilt.replaceFirst("http://", "ws://")
@@ -94,9 +105,7 @@ class HostBridgeClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (closedByCaller || mySeq != connSeq.get()) return
                 this@HostBridgeClient.webSocket = webSocket
-                if (sessionToken.isBlank() && sessionCode.isBlank()) {
-                    sendAuthFrame(webSocket)
-                }
+                sendAuthFrame(webSocket)
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
@@ -115,6 +124,15 @@ class HostBridgeClient(
                 when (obj.optString("type", "").lowercase()) {
                     "auth_ok" -> {
                         authenticated = true
+                        val bootId = obj.optString("hostBootId", "").trim()
+                        if (bootId.isNotEmpty() && bootId != lastHostBootId) {
+                            lastHostBootId = bootId
+                            lastStateSeq.set(0L)
+                        }
+                        val seq = obj.optLong("stateSeq", 0L)
+                        if (seq > 0L) {
+                            lastStateSeq.set(seq)
+                        }
                         val hostName = obj.optString("hostName", "Primary Host")
                         val hostUuid = obj.optString("hostUuid", "").trim()
                         if (hostUuid.isNotEmpty()) {
@@ -132,6 +150,19 @@ class HostBridgeClient(
                     }
                     "mute_state", "sync_resync" -> {
                         val msgKind = obj.optString("type", "").lowercase()
+                        val bootId = obj.optString("hostBootId", "").trim()
+                        if (bootId.isNotEmpty() && bootId != lastHostBootId) {
+                            lastHostBootId = bootId
+                            lastStateSeq.set(0L)
+                        }
+                        val seq = obj.optLong("stateSeq", 0L)
+                        val prevSeq = lastStateSeq.get()
+                        if (msgKind == "mute_state" && seq > 0L && prevSeq > 0L && seq < prevSeq) {
+                            return
+                        }
+                        if (seq > 0L) {
+                            lastStateSeq.set(seq)
+                        }
                         val muted = obj.optBoolean("isMuted", false)
                         val mode = obj.optInt("routingMode", 0)
                         val mic = obj.optString("targetMicName", "")
@@ -193,6 +224,14 @@ class HostBridgeClient(
                     "close_remote" -> {
                         callbacks.onCloseRemoteSignal()
                     }
+                    "nack" -> {
+                        callbacks.onCommandNack(
+                            action = obj.optString("action", ""),
+                            code = obj.optString("code", ""),
+                            reason = obj.optString("reason", obj.optString("error", "")),
+                            cmdId = obj.optString("cmdId", "")
+                        )
+                    }
                     "pong" -> Unit
                 }
             }
@@ -218,6 +257,9 @@ class HostBridgeClient(
     private fun sendAuthFrame(ws: WebSocket) {
         val payload = JSONObject().apply {
             put("type", "auth")
+            put("protocolVersion", 2)
+            put("appVersion", AppConstants.APP_VERSION)
+            put("capabilities", JSONArray(listOf("protocol_v2", "cmd_dedup", "set_state", "ack_nack")))
             put("token", sessionToken)
             put("code", SessionPairingClient.normalizeCode(sessionCode))
             put("deviceId", deviceId)
@@ -237,11 +279,38 @@ class HostBridgeClient(
 
     fun sendToggleRecord(source: String = "quick_menu"): Boolean = sendDeviceAction("toggle_record", source)
 
+    fun sendSetRecord(recording: Boolean, confirmed: Boolean = true, source: String = "quick_menu"): Boolean {
+        if (!authenticated) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "set_record")
+            put("cmdId", nextCmdId())
+            put("recording", recording)
+            put("confirmed", confirmed)
+            put("deviceId", deviceId)
+            put("source", source)
+        }.toString()
+        return ws.send(payload)
+    }
+
     fun sendPauseRecord(source: String = "quick_menu"): Boolean = sendDeviceAction("pause_record", source)
 
     fun sendSplitRecord(source: String = "quick_menu"): Boolean = sendDeviceAction("split_record", source)
 
     fun sendToggleStandby(source: String = "quick_menu"): Boolean = sendDeviceAction("toggle_standby", source)
+
+    fun sendSetStandby(isStandby: Boolean, source: String = "quick_menu"): Boolean {
+        if (!authenticated) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "set_standby")
+            put("cmdId", nextCmdId())
+            put("isStandby", isStandby)
+            put("deviceId", deviceId)
+            put("source", source)
+        }.toString()
+        return ws.send(payload)
+    }
 
     fun sendTransitionScene(source: String = "director"): Boolean = sendDeviceAction("transition_scene", source)
 
@@ -251,6 +320,7 @@ class HostBridgeClient(
         val ws = webSocket ?: return false
         val payload = JSONObject().apply {
             put("type", "switch_scene")
+            put("cmdId", nextCmdId())
             put("sceneName", clean)
             put("deviceId", deviceId)
             put("source", source)
@@ -263,6 +333,7 @@ class HostBridgeClient(
         val ws = webSocket ?: return false
         val payload = JSONObject().apply {
             put("type", action)
+            put("cmdId", nextCmdId())
             if (durationSec > 0) put("durationSec", durationSec)
             put("deviceId", deviceId)
             put("source", source)
@@ -276,6 +347,7 @@ class HostBridgeClient(
         val ws = webSocket ?: return false
         val payload = JSONObject().apply {
             put("type", "stage_nudge")
+            put("cmdId", nextCmdId())
             put("message", clean.take(140))
             put("sender", sender.ifBlank { deviceName })
             put("accentHex", accentHex)
@@ -284,11 +356,16 @@ class HostBridgeClient(
         return ws.send(payload)
     }
 
+    fun sendDisconnect(source: String = "remote"): Boolean = sendDeviceAction("disconnect", source)
+
+    fun sendUnpair(source: String = "remote"): Boolean = sendDeviceAction("unpair", source)
+
     private fun sendDeviceAction(type: String, source: String): Boolean {
         if (!authenticated) return false
         val ws = webSocket ?: return false
         val payload = JSONObject().apply {
             put("type", type)
+            put("cmdId", nextCmdId())
             put("deviceId", deviceId)
             put("source", source)
         }.toString()
@@ -300,6 +377,7 @@ class HostBridgeClient(
         val ws = webSocket ?: return false
         val payload = JSONObject().apply {
             put("type", "set_mute")
+            put("cmdId", nextCmdId())
             put("isMuted", isMuted)
             put("deviceId", deviceId)
         }.toString()

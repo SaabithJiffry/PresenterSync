@@ -224,10 +224,20 @@ Assert("toggle_mute triggers host OBS ToggleInputMute & queues ack/state (#1)", 
 LoopbackWsSendText(wsSock, '{"type":"disconnect","deviceId":"dev-web-1","source":"web_remote"}')
 gotDisc := LoopbackWsPumpAndFind(wsSock, "disconnected", 2000)
 tDiscEnd := A_TickCount + 1500
-while (A_TickCount < tDiscEnd && (bridge.pairedDevices.Has("dev-web-1") || bridge.GetConnectedClientCount() > 0))
+while (A_TickCount < tDiscEnd && bridge.GetConnectedClientCount() > 0)
     Sleep 15
 try DllCall("ws2_32\closesocket", "Ptr", wsSock)
-Assert("WS disconnect immediately unregisters Web Remote client, token & active count (#7)", gotDisc && !bridge.pairedDevices.Has("dev-web-1") && bridge.validTokens.Count == 0 && bridge.GetConnectedClientCount() == 0)
+Assert("WS disconnect closes Web Remote socket while preserving pairing token", gotDisc && bridge.pairedDevices.Has("dev-web-1") && bridge.validTokens.Count >= 1 && bridge.GetConnectedClientCount() == 0)
+
+wsSock2 := LoopbackWsOpen(bridgePort, "/ws?code=WEB-761&deviceId=dev-web-1&deviceName=WebTest&platform=Web")
+gotAuth2 := LoopbackWsPumpAndFind(wsSock2, "auth_ok", 2500)
+LoopbackWsSendText(wsSock2, '{"type":"unpair","deviceId":"dev-web-1","source":"web_remote"}')
+gotUnp := LoopbackWsPumpAndFind(wsSock2, '"unpaired":true', 2000)
+tUnpEnd := A_TickCount + 1500
+while (A_TickCount < tUnpEnd && (bridge.pairedDevices.Has("dev-web-1") || bridge.GetConnectedClientCount() > 0))
+    Sleep 15
+try DllCall("ws2_32\closesocket", "Ptr", wsSock2)
+Assert("WS unpair immediately unregisters Web Remote client, token & active count (#7)", gotAuth2 && gotUnp && !bridge.pairedDevices.Has("dev-web-1") && bridge.validTokens.Count == 0 && bridge.GetConnectedClientCount() == 0)
 
 StopHostCompanionBridge()
 try FileDelete(tmpIni)

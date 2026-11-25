@@ -755,6 +755,16 @@ class ConnectionManager(
                     _events.tryEmit(RemoteEvent.StageNudge(message, sender, accentHex))
                 }
 
+                override fun onCommandNack(action: String, code: String, reason: String, cmdId: String) {
+                    if (gen != generation.get()) return
+                    DiagnosticLogger.recordBreadcrumb("Bridge", "CommandNack", "$action | $code | $reason")
+                    if (code == "obs_offline" || code == "role_denied" || code == "input_paused" || code == "confirm_required") {
+                        _events.tryEmit(
+                            RemoteEvent.ToastMessage("Host declined $action: ${reason.ifBlank { code }}")
+                        )
+                    }
+                }
+
                 override fun onCloseRemoteSignal() {
                     if (gen != generation.get()) return
                     _events.tryEmit(RemoteEvent.CloseRemoteRequested)

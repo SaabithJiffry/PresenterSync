@@ -395,6 +395,8 @@ class RemoteState {
     _relayOutSeq := 0
     _relaySessionId := ""
     _relayPeerLegacy := false
+    hostBootId := ""
+    lastStateSeq := 0
 
     isMuted := false
     micHoldProgress := 0.0
@@ -1065,6 +1067,12 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             SetTimer state.reconnectTimerFn, 0
             CancelRemoteBridgeHandshakeWatchdog(state)
             state._lanCycleStartTick := 0
+            if (ev.HasOwnProp("hostBootId") && ev.hostBootId != "" && ev.hostBootId != state.hostBootId) {
+                state.hostBootId := ev.hostBootId
+                state.lastStateSeq := 0
+            }
+            if (ev.HasOwnProp("stateSeq") && ev.stateSeq > 0)
+                state.lastStateSeq := ev.stateSeq
             if (ev.HasOwnProp("hostUuid") && ev.hostUuid != "" && (!cfg.HasOwnProp("PairedHostUuid") || cfg.PairedHostUuid != ev.hostUuid)) {
                 cfg.PairedHostUuid := ev.hostUuid
                 try cfg.Write("Connection", "PairedHostUuid", ev.hostUuid)
@@ -1108,6 +1116,14 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 "Host Bridge authentication failed (" (ev.reason != "" ? ev.reason : "Invalid code/token") "). Re-pair in Change OBS Connection.")
         } else if (ev.kind = "mute_state" || ev.kind = "sync_resync") {
             CancelRemoteBridgeHandshakeWatchdog(state)
+            if (ev.HasOwnProp("hostBootId") && ev.hostBootId != "" && ev.hostBootId != state.hostBootId) {
+                state.hostBootId := ev.hostBootId
+                state.lastStateSeq := 0
+            }
+            if (ev.kind = "mute_state" && ev.HasOwnProp("stateSeq") && ev.stateSeq > 0 && state.lastStateSeq > 0 && ev.stateSeq < state.lastStateSeq)
+                return
+            if (ev.HasOwnProp("stateSeq") && ev.stateSeq > 0)
+                state.lastStateSeq := ev.stateSeq
             if (ev.HasOwnProp("hostUuid") && ev.hostUuid != "" && (!cfg.HasOwnProp("PairedHostUuid") || cfg.PairedHostUuid != ev.hostUuid)) {
                 cfg.PairedHostUuid := ev.hostUuid
                 try cfg.Write("Connection", "PairedHostUuid", ev.hostUuid)
@@ -1126,6 +1142,11 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         } else if (ev.kind = "stage_nudge") {
             if (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)
                 ShowStageNudgeBanner(ev.message, (ev.accentHex != "" ? ev.accentHex : "F59E0B"), 4500, ev.sender)
+        } else if (ev.kind = "nack") {
+            if (IsSet(DiagnosticLogger))
+                try DiagnosticLogger.RecordBreadcrumb("Bridge", "CommandNack", ev.action " code=" ev.code " reason=" ev.reason)
+            if (ev.code = "obs_offline" || ev.code = "role_denied" || ev.code = "input_paused" || ev.code = "confirm_required")
+                try TrayTip("Host declined '" ev.action "': " (ev.reason != "" ? ev.reason : ev.code), "PresenterSync Remote", 2)
         } else if (ev.kind = "close_remote") {
             if (state.HasOwnProp("onRemoteCloseSignal") && IsObject(state.onRemoteCloseSignal))
                 state.onRemoteCloseSignal.Call()

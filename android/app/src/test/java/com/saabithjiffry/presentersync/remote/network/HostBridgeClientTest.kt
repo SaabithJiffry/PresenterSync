@@ -12,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.Assert.assertFalse
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -41,18 +42,21 @@ class HostBridgeClientTest {
         val closeSignalLatch = CountDownLatch(1)
         val seenToggle = AtomicBoolean(false)
 
+        val seenAuth = java.util.concurrent.atomic.AtomicReference<JSONObject>()
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send("""{"type":"auth_ok","hostName":"HALL-PC","version":"4.7.0"}""")
-                webSocket.send("""{"type":"mute_state","isMuted":false,"routingMode":2,"targetMicName":"Mic/Aux"}""")
-            }
-
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val obj = JSONObject(text)
                 when (obj.optString("type")) {
+                    "auth" -> {
+                        seenAuth.set(obj)
+                        webSocket.send("""{"type":"auth_ok","protocolVersion":2,"hostBootId":"boot-1","stateSeq":5,"hostName":"HALL-PC","version":"9.2.0"}""")
+                        webSocket.send("""{"type":"mute_state","stateSeq":6,"isMuted":false,"routingMode":2,"targetMicName":"Mic/Aux"}""")
+                    }
                     "toggle_mute" -> {
                         seenToggle.set(true)
-                        webSocket.send("""{"type":"mute_state","isMuted":true,"routingMode":2,"targetMicName":"Mic/Aux"}""")
+                        // First send a stale stateSeq=4 packet (should be ignored) then fresh seq=7
+                        webSocket.send("""{"type":"mute_state","stateSeq":4,"isMuted":false,"routingMode":2,"targetMicName":"Mic/Aux"}""")
+                        webSocket.send("""{"type":"mute_state","stateSeq":7,"isMuted":true,"routingMode":2,"targetMicName":"Mic/Aux"}""")
                     }
                     "ping" -> {
                         webSocket.send("""{"type":"pong","isMuted":true}""")
@@ -88,7 +92,11 @@ class HostBridgeClientTest {
         client.connect()
         assertTrue(connectedLatch.await(3, TimeUnit.SECONDS))
         val recordedUpgrade = server.takeRequest(3, TimeUnit.SECONDS)
-        assertTrue(recordedUpgrade?.path?.contains("token=tok-abc") == true)
+        assertFalse(recordedUpgrade?.path?.contains("token=") == true)
+        assertFalse(recordedUpgrade?.path?.contains("code=") == true)
+        assertEquals(2, seenAuth.get()?.optInt("protocolVersion"))
+        assertEquals("tok-abc", seenAuth.get()?.optString("token"))
+        assertEquals("K7M9P2", seenAuth.get()?.optString("code"))
         assertTrue(client.sendToggleMute("clicker"))
         assertTrue(mutedTrueLatch.await(3, TimeUnit.SECONDS))
         assertTrue(seenToggle.get())
@@ -253,6 +261,72 @@ class HostBridgeClientTest {
         assertTrue(client.sendToggleRecord())
         assertTrue(deckLatch.await(3, TimeUnit.SECONDS))
         assertEquals(listOf("ppt_next", "ppt_prev", "toggle_record"), serverActions.toList())
+        client.close()
+    }
+
+    @Test
+    fun emitsCmdIdForExplicitSettersAndDeliversCommandNack() {
+        val connectedLatch = CountDownLatch(1)
+        val nackLatch = CountDownLatch(1)
+        val commandsLatch = CountDownLatch(2)
+        val seenPayloads = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
+        val nackInfo = java.util.concurrent.atomic.AtomicReference<Triple<String, String, String>>()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val obj = JSONObject(text)
+                when (obj.optString("type")) {
+                    "auth" -> webSocket.send("""{"type":"auth_ok","protocolVersion":2,"hostBootId":"b2","stateSeq":1,"hostName":"HALL-PC"}""")
+                    "set_record" -> {
+                        seenPayloads.add(obj)
+                        commandsLatch.countDown()
+                        webSocket.send("""{"type":"nack","action":"set_record","code":"confirm_required","reason":"Confirm stop","cmdId":"${obj.optString("cmdId")}"}""")
+                    }
+                    "set_standby" -> {
+                        seenPayloads.add(obj)
+                        commandsLatch.countDown()
+                    }
+                }
+            }
+        }))
+
+        val client = HostBridgeClient(
+            httpClient = httpClient,
+            wsBaseUrl = "ws://127.0.0.1:${server.port}/ws",
+            sessionToken = "tok-v2",
+            sessionCode = "",
+            deviceId = "dev-v2",
+            deviceName = "Board",
+            callbacks = object : HostBridgeCallbacks {
+                override fun onBridgeConnected(hostName: String) {
+                    connectedLatch.countDown()
+                }
+                override fun onBridgeAuthFailed(reason: String) = Unit
+                override fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String) = Unit
+                override fun onCommandNack(action: String, code: String, reason: String, cmdId: String) {
+                    nackInfo.set(Triple(action, code, cmdId))
+                    nackLatch.countDown()
+                }
+                override fun onCloseRemoteSignal() = Unit
+                override fun onBridgeDisconnected(reason: String) = Unit
+            }
+        )
+
+        client.connect()
+        assertTrue(connectedLatch.await(3, TimeUnit.SECONDS))
+        assertTrue(client.sendSetRecord(recording = false, confirmed = false))
+        assertTrue(client.sendSetStandby(isStandby = true))
+        assertTrue(commandsLatch.await(3, TimeUnit.SECONDS))
+        assertTrue(nackLatch.await(3, TimeUnit.SECONDS))
+
+        val recObj = seenPayloads.first { it.getString("type") == "set_record" }
+        val brbObj = seenPayloads.first { it.getString("type") == "set_standby" }
+        assertTrue(recObj.optString("cmdId").startsWith("dev-v2-"))
+        assertFalse(recObj.getBoolean("confirmed"))
+        assertTrue(brbObj.getBoolean("isStandby"))
+        assertEquals("set_record", nackInfo.get().first)
+        assertEquals("confirm_required", nackInfo.get().second)
+        assertEquals(recObj.getString("cmdId"), nackInfo.get().third)
         client.close()
     }
 }

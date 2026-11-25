@@ -6,6 +6,7 @@
 #Include "%A_LineFile%\..\WebSocket.ahk"
 #Include "%A_LineFile%\..\UIA.ahk"
 #Include "%A_LineFile%\..\Crypto.ahk"
+#Include "%A_LineFile%\..\JsonCodec.ahk"
 #Include "%A_LineFile%\..\HostBridge.ahk"
 
 FormatSendKey(hk) {
@@ -891,58 +892,11 @@ DispatchRemoteMuteToggle(cfg, state) {
 }
 
 EscapeJsonStr(str) {
-    s := StrReplace(String(str), "\", "\\")
-    s := StrReplace(s, '"', '\"')
-    s := StrReplace(s, "`b", "\b")
-    s := StrReplace(s, "`f", "\f")
-    s := StrReplace(s, "`r", "\r")
-    s := StrReplace(s, "`n", "\n")
-    s := StrReplace(s, "`t", "\t")
-    if (RegExMatch(s, "[\x00-\x1f]")) {
-        out := ""
-        Loop Parse, s {
-            code := Ord(A_LoopField)
-            out .= (code < 32) ? Format("\u{:04x}", code) : A_LoopField
-        }
-        return out
-    }
-    return s
+    return JsonCodec.Escape(str)
 }
 
 UnescapeJsonStr(str) {
-    s := String(str)
-    out := ""
-    i := 1
-    len := StrLen(s)
-    while (i <= len) {
-        ch := SubStr(s, i, 1)
-        if (ch = "\" && i < len) {
-            nxt := SubStr(s, i + 1, 1)
-            switch nxt {
-                case '"': out .= '"'
-                case "\": out .= "\"
-                case "/": out .= "/"
-                case "b": out .= "`b"
-                case "f": out .= "`f"
-                case "n": out .= "`n"
-                case "r": out .= "`r"
-                case "t": out .= "`t"
-                case "u":
-                    if (i + 5 <= len && RegExMatch(SubStr(s, i + 2, 4), "^[0-9A-Fa-f]{4}$")) {
-                        out .= Chr(Integer("0x" SubStr(s, i + 2, 4)))
-                        i += 6
-                        continue
-                    }
-                    out .= "\u"
-                default: out .= nxt
-            }
-            i += 2
-        } else {
-            out .= ch
-            i += 1
-        }
-    }
-    return out
+    return JsonCodec.Unescape(str)
 }
 
 ClearObsNetworkToolTip() {
@@ -1264,36 +1218,19 @@ BuildOutboundRelayPacket(cfg, state, src, cmd, data) {
 }
 
 _RelayJsonExtractStr(jsonStr, key) {
-    if (RegExMatch(jsonStr, '"' key '"\s*:\s*"((?:[^"\\]|\\.)*)"', &m))
-        return UnescapeJsonStr(m[1])
-    return ""
+    return JsonCodec.GetStr(jsonStr, key, "")
 }
 
 _RelayJsonExtractBool(jsonStr, key, defaultVal := false) {
-    if (RegExMatch(jsonStr, 'i)"' key '"\s*:\s*(true|false)', &m))
-        return (StrLower(m[1]) = "true")
-    return defaultVal
+    return JsonCodec.GetBool(jsonStr, key, defaultVal)
 }
 
 _RelayJsonExtractInt(jsonStr, key, defaultVal := 0) {
-    if (RegExMatch(jsonStr, '"' key '"\s*:\s*(-?\d+)', &m))
-        return Integer(m[1])
-    return defaultVal
+    return JsonCodec.GetInt(jsonStr, key, defaultVal)
 }
 
 _RelayJsonExtractStrArray(jsonStr, key) {
-    arr := []
-    if (!RegExMatch(jsonStr, '"' key '"\s*:\s*\[([^\]]*)\]', &mArr))
-        return arr
-    body := mArr[1]
-    pos := 1
-    while (pos := RegExMatch(body, '"((?:[^"\\]|\\.)*)"', &mItem, pos)) {
-        item := UnescapeJsonStr(mItem[1])
-        if (item != "")
-            arr.Push(item)
-        pos += StrLen(mItem[0])
-    }
-    return arr
+    return JsonCodec.GetStrArray(jsonStr, key)
 }
 
 ParseRelayEnvelope(rawMsg, pairingCode := "", password := "", replayGuard := "", allowLegacy := true, nowEpochSec := "") {
