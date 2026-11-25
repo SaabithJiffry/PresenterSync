@@ -99,6 +99,16 @@ class ScreenBoundsCalculatorTest {
     }
 
     @Test
+    fun oppositeCornerFlipAndPalmDetectionWorkForSmartBoard() {
+        val b = SafeRectPx(left = 0, top = 0, right = 1920, bottom = 1080)
+        assertEquals(OverlayPointPx(1800, 1040), ScreenBoundsCalculator.computeOppositeCornerFlip(10, 10, 120, 40, b))
+        assertEquals(OverlayPointPx(0, 0), ScreenBoundsCalculator.computeOppositeCornerFlip(1800, 1040, 120, 40, b))
+        assertTrue(ScreenBoundsCalculator.isPalmTouch(5, 10f))
+        assertTrue(ScreenBoundsCalculator.isPalmTouch(android.view.MotionEvent.TOOL_TYPE_FINGER, 95f, 85f))
+        assertFalse(ScreenBoundsCalculator.isPalmTouch(android.view.MotionEvent.TOOL_TYPE_STYLUS, 12f, 85f))
+    }
+
+    @Test
     fun boundedPillScalePreventsOverflowOnNarrowPhonesAndAllows5xOnSmartBoard() {
         // Galaxy A07 portrait: 720px @ 2.0x density = 360dp; 168dp * 5.0x would exceed viewport
         val phoneBounded = ScreenBoundsCalculator.computeBoundedPillScale(

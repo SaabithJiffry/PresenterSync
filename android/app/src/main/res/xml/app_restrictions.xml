@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<restrictions xmlns:android="http://schemas.android.com/apk/res/android">
+    <restriction
+        android:key="session_pairing_code"
+        android:title="Session Pairing Code"
+        android:description="@string/mdm_code_desc"
+        android:restrictionType="string" />
+    <restriction
+        android:key="host_address"
+        android:title="Primary Host IP / Hostname"
+        android:description="@string/mdm_host_desc"
+        android:restrictionType="string" />
+    <restriction
+        android:key="bridge_port"
+        android:title="Host Bridge Port"
+        android:description="@string/mdm_port_desc"
+        android:restrictionType="integer"
+        android:defaultValue="4456" />
+    <restriction
+        android:key="kiosk_pin"
+        android:title="Settings Kiosk PIN"
+        android:description="@string/mdm_pin_desc"
+        android:restrictionType="string" />
+    <restriction
+        android:key="device_profile_mode"
+        android:title="Device Form-Factor Profile"
+        android:description="@string/mdm_profile_desc"
+        android:restrictionType="string"
+        android:defaultValue="AUTO" />
+</restrictions>

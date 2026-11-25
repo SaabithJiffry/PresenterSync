@@ -4,4 +4,9 @@
     <string name="fgs_channel_name">PresenterSync Remote Overlay</string>
     <string name="fgs_channel_desc">Keeps the floating Mic HUD and OBS/Host WebSocket connection active over all apps.</string>
     <string name="qs_tile_label">PresenterSync Mic</string>
+    <string name="mdm_code_desc">6-character classroom session code for automatic Host Bridge pairing</string>
+    <string name="mdm_host_desc">Static IP or hostname of the classroom PresenterSync Primary Host</string>
+    <string name="mdm_port_desc">TCP port of PresenterSync Host Bridge (default 4456)</string>
+    <string name="mdm_pin_desc">Optional 4-8 digit PIN locking Smart Board settings</string>
+    <string name="mdm_profile_desc">AUTO, PHONE_HANDHELD, or LARGE_BOARD</string>
 </resources>

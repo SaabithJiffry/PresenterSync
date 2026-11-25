@@ -197,6 +197,11 @@ class MicPillCanvasView(context: Context) : View(context) {
         val palette = HudColorPalettes.get(config.hudColorPreset, config.customLiveHex, config.customMutedHex)
         val isOffline = overrideMuted == null && !connState.connected
         val muted = overrideMuted ?: connState.isMuted
+        contentDescription = when {
+            isOffline -> "PresenterSync Mic: Offline"
+            muted -> "PresenterSync Mic: Muted, Scene ${connState.activeScene}"
+            else -> "PresenterSync Mic: Live, Scene ${connState.activeScene}"
+        }
         val tFrom = transitionFromMuted
         val tTo = transitionToMuted
 

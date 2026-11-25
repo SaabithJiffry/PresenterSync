@@ -213,6 +213,31 @@ object ScreenBoundsCalculator {
     fun formatPixelReadout(x: Int, y: Int, widthPx: Int, heightPx: Int): String =
         "${widthPx}×${heightPx} px @ ($x, $y)"
 
+    fun computeOppositeCornerFlip(
+        currentX: Int,
+        currentY: Int,
+        viewWidthPx: Int,
+        viewHeightPx: Int,
+        bounds: SafeRectPx
+    ): OverlayPointPx {
+        val midX = (bounds.left + bounds.right - viewWidthPx) / 2
+        val midY = (bounds.top + bounds.bottom - viewHeightPx) / 2
+        val isLeft = currentX <= midX
+        val isTop = currentY <= midY
+        val targetCorner = when {
+            isLeft && isTop -> "BR"
+            !isLeft && isTop -> "BL"
+            isLeft && !isTop -> "TR"
+            else -> "TL"
+        }
+        return computeZeroMarginCornerDock(targetCorner, viewWidthPx, viewHeightPx, bounds)
+    }
+
+    fun isPalmTouch(toolType: Int, touchMajorPx: Float, thresholdPx: Float = 85f): Boolean {
+        if (toolType == 5) return true // MotionEvent.TOOL_TYPE_PALM
+        return touchMajorPx > thresholdPx
+    }
+
     fun getDisplayCount(context: Context): Int {
         val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return 1
         return dm.displays.size.coerceAtLeast(1)

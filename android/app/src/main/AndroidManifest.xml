@@ -94,6 +94,9 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/presentersync_widget_info" />
         </receiver>
+        <meta-data
+            android:name="android.content.APP_RESTRICTIONS"
+            android:resource="@xml/app_restrictions" />
     </application>
 
 </manifest>
