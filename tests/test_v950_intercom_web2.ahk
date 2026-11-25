@@ -16,6 +16,7 @@ SetWorkingDir A_ScriptDir "\.."
 #Include ..\Lib\OBS_Network.ahk
 #Include ..\Lib\GUI_Config.ahk
 #Include ..\Lib\HostBridge.ahk
+#Include ..\Lib\HudRenderer.ahk
 
 global g_Passed := 0
 global g_Failed := 0
@@ -85,6 +86,28 @@ try {
     AssertEq(hb.state.presenterSignals.Length, 1, "Stage-Back signal queued in state.presenterSignals")
     AssertEq(hb.state.presenterSignals[1].message, "Need Tech Help", "Stage-Back signal text preserved")
     AssertEq(rxByDev["dev-b"].Length, 0, "Stage-Back signal must NOT echo to other Presenter remotes")
+
+    ; 5. M5.2 Priority Alert Queue & Last-10 Cue History
+    global g_StageNudgeQueue, g_StageNudgeHistory, g_StageNudgeActiveMsg
+    g_StageNudgeQueue := [], g_StageNudgeHistory := []
+    HideStageNudgeBanner(false)
+
+    ShowStageNudgeBanner("Stream Dropped!", "EF4444", 0, "Watchdog", 1)
+    AssertEq(g_StageNudgeActiveMsg, "Stream Dropped!", "CRITICAL alert displays immediately")
+    ShowStageNudgeBanner("Manual Whisper", "F59E0B", 0, "Director", 0)
+    AssertEq(g_StageNudgeActiveMsg, "Stream Dropped!", "Manual nudge MUST NOT clobber active CRITICAL alert")
+    AssertEq(g_StageNudgeQueue.Length, 1, "Manual nudge queued behind CRITICAL alert")
+
+    HideStageNudgeBanner(true)
+    AssertEq(g_StageNudgeActiveMsg, "Manual Whisper", "Dismissing CRITICAL alert pops queued manual nudge")
+    HideStageNudgeBanner(false)
+
+    Loop 12
+        ShowStageNudgeBanner("Hist-" A_Index, "F59E0B", 0, "Host", 0)
+    HideStageNudgeBanner(false)
+    hist := GetStageNudgeHistory()
+    AssertEq(hist.Length, 10, "GetStageNudgeHistory caps at Last-10 cues")
+    AssertEq(hist[10].message, "Hist-12", "History retains newest cue")
 
 } catch as err {
     g_Failed++

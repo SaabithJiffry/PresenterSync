@@ -971,8 +971,21 @@ FormatCountdownClock(sec) {
 global g_StageNudgeGui := ""
 global g_StageNudgeHideFn := ""
 
-HideStageNudgeBanner(*) {
-    global g_StageNudgeGui, g_StageNudgeHideFn
+global g_StageNudgeQueue := []
+global g_StageNudgeHistory := []
+global g_StageNudgeActivePriority := 0
+global g_StageNudgeActiveMsg := ""
+
+GetStageNudgeHistory() {
+    global g_StageNudgeHistory
+    out := []
+    for _, item in g_StageNudgeHistory
+        out.Push(item)
+    return out
+}
+
+HideStageNudgeBanner(advanceQueue := true, *) {
+    global g_StageNudgeGui, g_StageNudgeHideFn, g_StageNudgeActivePriority, g_StageNudgeActiveMsg, g_StageNudgeQueue
     if (IsObject(g_StageNudgeHideFn)) {
         try SetTimer(g_StageNudgeHideFn, 0)
         g_StageNudgeHideFn := ""
@@ -981,16 +994,51 @@ HideStageNudgeBanner(*) {
         try g_StageNudgeGui.Destroy()
     }
     g_StageNudgeGui := ""
+    g_StageNudgeActivePriority := 0
+    g_StageNudgeActiveMsg := ""
+    if (advanceQueue && g_StageNudgeQueue.Length > 0) {
+        bestIdx := 1
+        for idx, qItem in g_StageNudgeQueue {
+            if (qItem.priority > g_StageNudgeQueue[bestIdx].priority) {
+                bestIdx := idx
+                break
+            }
+        }
+        nxt := g_StageNudgeQueue.RemoveAt(bestIdx)
+        _RenderStageNudgeBannerNow(nxt.message, nxt.accentHex, nxt.durationMs, nxt.sender, nxt.priority)
+    }
 }
 
-ShowStageNudgeBanner(message, accentHex := "F59E0B", durationMs := 4500, sender := "") {
-    global g_StageNudgeGui, g_StageNudgeHideFn
+ShowStageNudgeBanner(message, accentHex := "F59E0B", durationMs := 4500, sender := "", priority := -1) {
+    global g_StageNudgeGui, g_StageNudgeQueue, g_StageNudgeHistory, g_StageNudgeActivePriority
     msgText := Trim(String(message))
     if (msgText = "")
         return false
     senderTxt := Trim(String(sender))
+    accClean := NormalizeColorHex(accentHex, "F59E0B")
+    prio := (priority >= 0) ? Integer(priority)
+        : ((accClean = "EF4444" || accClean = "DC2626" || InStr(senderTxt, "Alert") || InStr(senderTxt, "Watchdog")) ? 1 : 0)
+
+    g_StageNudgeHistory.Push({ message: msgText, sender: senderTxt, accentHex: accClean, priority: prio, tick: A_TickCount })
+    if (g_StageNudgeHistory.Length > 10)
+        g_StageNudgeHistory.RemoveAt(1)
+
+    ; Never let a normal manual nudge clobber an active CRITICAL alert
+    if (IsObject(g_StageNudgeGui) && g_StageNudgeActivePriority > prio) {
+        if (g_StageNudgeQueue.Length < 16)
+            g_StageNudgeQueue.Push({ message: msgText, accentHex: accClean, durationMs: durationMs, sender: senderTxt, priority: prio })
+        return true
+    }
+
+    HideStageNudgeBanner(false)
+    return _RenderStageNudgeBannerNow(msgText, accClean, durationMs, senderTxt, prio)
+}
+
+_RenderStageNudgeBannerNow(msgText, accentHex := "F59E0B", durationMs := 4500, senderTxt := "", prio := 0) {
+    global g_StageNudgeGui, g_StageNudgeHideFn, g_StageNudgeActivePriority, g_StageNudgeActiveMsg
     fullText := (senderTxt != "") ? (senderTxt ": " msgText) : msgText
-    HideStageNudgeBanner()
+    g_StageNudgeActivePriority := prio
+    g_StageNudgeActiveMsg := msgText
 
     nGui := ""
     try {
