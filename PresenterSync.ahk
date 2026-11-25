@@ -24,6 +24,7 @@ SetKeyDelay -1, -1
 #Include <Gdip>
 #Include <OBS_Network>
 #Include <GUI_Config>
+#Include <WindowFit>
 #Include <HudSnakeGame>
 #Include <HudArcadeBase>
 #Include <ArcadeVault>

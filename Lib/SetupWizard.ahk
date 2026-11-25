@@ -139,7 +139,7 @@ BuildSettingsWindow(title, elementsArray, onSave := "", options := "") {
 
     if (doShow) {
         dlgHwnd := dlg.Hwnd
-        dlg.Show()
+        WindowFit.Show(dlg)
         if (doWaitClose)
             WinWaitClose("ahk_id " dlgHwnd)
     }
@@ -323,7 +323,7 @@ OpenShortcutCaptureDialog(currentHotkey, onApply, dialogTitle := "Capture Keystr
     dlg.OnEvent("Close", Cleanup)
     dlg.OnEvent("Escape", Cleanup)
 
-    dlg.Show("AutoSize Center")
+    WindowFit.Show(dlg, "AutoSize Center")
     StartCapture()
     return dlg
 }
@@ -639,7 +639,7 @@ PromptCloseRemoteCompanion(cfg, state := "", *) {
     dlg.OnEvent("Close", Cleanup)
     dlg.OnEvent("Escape", Cleanup)
 
-    dlg.Show("AutoSize Center")
+    WindowFit.Show(dlg, "AutoSize Center")
     return dlg
 }
 
@@ -936,7 +936,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         bCan.OnEvent("Click", _CloseRn)
         rnGui.OnEvent("Close", _CloseRn)
         rnGui.OnEvent("Escape", _CloseRn)
-        rnGui.Show("AutoSize Center")
+        WindowFit.Show(rnGui, "AutoSize Center")
     }
 
     btnRenameDev.OnEvent("Click", _OpenRenameDialog)
@@ -992,7 +992,7 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     dlg.OnEvent("Escape", Cleanup)
     btnClose.OnEvent("Click", Cleanup)
 
-    dlg.Show("AutoSize Center")
+    WindowFit.Show(dlg, "AutoSize Center")
     return dlg
 }
 
@@ -1179,7 +1179,7 @@ ShowGuidedSetupWizard(cfg, state := "", *) {
     ))
     wGui.OnEvent("Close", CloseWizard)
     wGui.OnEvent("Escape", CloseWizard)
-    wGui.Show("AutoSize")
+    WindowFit.Show(wGui, "AutoSize")
     return wGui
 }
 
@@ -1358,7 +1358,7 @@ ShowPreFlightRehearsalDialog(cfg, state := "", overrides := "") {
     pfGui.OnEvent("Close", ClosePf)
     pfGui.OnEvent("Escape", ClosePf)
 
-    pfGui.Show("AutoSize Center")
+    WindowFit.Show(pfGui, "AutoSize Center")
     return { shown: true, testMode: false, result: res, gui: pfGui }
 }
 

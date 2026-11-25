@@ -583,7 +583,7 @@ class SessionTimeline {
         }
         tlGui.OnEvent("Close", CloseTimeline)
         tlGui.OnEvent("Escape", CloseTimeline)
-        tlGui.Show("AutoSize")
+        WindowFit.Show(tlGui, "AutoSize")
         return tlGui
     }
 }

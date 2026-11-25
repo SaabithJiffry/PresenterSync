@@ -2564,6 +2564,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
                 if (InStr(msg, "InitState"))
                     TrayTip("Audio source '" cfg.targetMicName "' was not found in OBS Studio.", "PresenterSync", 2)
+                else if (IsSet(RollbackHostOptimisticMute))
+                    RollbackHostOptimisticMute(cfg, state, "OBS rejected mute query")
             } else if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                 isMutedOBS := (matchMuted[1] == "true")
                 PushObsMuteToZoom(cfg, state, isMutedOBS)
@@ -2571,10 +2573,15 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                 BroadcastHostRelayMuteState(cfg, state)
             }
         }
-        else if (InStr(msg, '"requestId":"HostClickerMute"') || InStr(msg, '"requestId": "HostClickerMute"')) {
+        else if (InStr(msg, '"requestId":"HostClickerMute"') || InStr(msg, '"requestId": "HostClickerMute"')
+            || InStr(msg, '"requestId":"HostRemoteSetMute"') || InStr(msg, '"requestId": "HostRemoteSetMute"')
+            || InStr(msg, '"requestId":"RemoteClickerMute"') || InStr(msg, '"requestId": "RemoteClickerMute"')
+            || InStr(msg, '"requestId":"RemoteClickerSetMute"') || InStr(msg, '"requestId": "RemoteClickerSetMute"')) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
                 if (IsSet(ShowCaptureSafeMicroToast))
                     ShowCaptureSafeMicroToast("PresenterSync: Audio source '" cfg.targetMicName "' not found in OBS", 2500)
+                if (IsSet(RollbackHostOptimisticMute))
+                    RollbackHostOptimisticMute(cfg, state, "OBS returned an error")
             }
         }
         else if (InStr(msg, '"requestId":"HostSceneTransition"') || InStr(msg, '"requestId": "HostSceneTransition"')) {

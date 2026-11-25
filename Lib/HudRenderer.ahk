@@ -1156,7 +1156,7 @@ ConfigureCustomHudColorsUI(cfg, state := "", *) {
     btnCancel.OnEvent("Click", CloseDlg)
     g.OnEvent("Close", CloseDlg)
     g.OnEvent("Escape", CloseDlg)
-    g.Show("AutoSize")
+    WindowFit.Show(g, "AutoSize")
     return g
 }
 
@@ -1207,7 +1207,7 @@ PromptCustomPresenterTimerUI(onStartFn, defaultSec := 600) {
     btnCan.OnEvent("Click", CloseDlg)
     g.OnEvent("Close", CloseDlg)
     g.OnEvent("Escape", CloseDlg)
-    g.Show("AutoSize")
+    WindowFit.Show(g, "AutoSize")
     return g
 }
 
@@ -1265,7 +1265,7 @@ PromptSendStageNudgeUI(onSendFn) {
     btnCan.OnEvent("Click", CloseDlg)
     g.OnEvent("Close", CloseDlg)
     g.OnEvent("Escape", CloseDlg)
-    g.Show("AutoSize")
+    WindowFit.Show(g, "AutoSize")
     return g
 }
 
@@ -1809,19 +1809,50 @@ CancelHostOptimisticReconcile(state) {
         try SetTimer(state._optimisticTimerFn, 0)
 }
 
+; v9.7 (Live Finding A): bounded verification. The optimistic indicator may never outlive
+; ~3 unconfirmed GetInputMute probes (~1.3s). On exhaustion / OBS offline / op:7 failure we roll back
+; to the last OBS-confirmed state, rebroadcast authoritative state, and alert.
 _ReconcileHostOptimisticMute(cfg, state) {
     if (!IsObject(state) || !state.HasOwnProp("_optimisticMutePending") || !state._optimisticMutePending)
         return
-    if (IsObject(state.obsWs) && state.HasOwnProp("obsConnected") && state.obsConnected && IsSet(SendObsRequest) && IsObject(cfg)) {
+    attempts := state.HasOwnProp("_reconcileAttempts") ? state._reconcileAttempts : 0
+    if (attempts < 3 && IsObject(state.obsWs) && state.HasOwnProp("obsConnected") && state.obsConnected && IsSet(SendObsRequest) && IsObject(cfg)) {
+        state._reconcileAttempts := attempts + 1
         escMic := IsSet(EscapeJsonStr) ? EscapeJsonStr(cfg.HasOwnProp("targetMicName") ? cfg.targetMicName : "Mic/Aux") : "Mic/Aux"
         SendObsRequest(state.obsWs, "GetInputMute", "ReconcileObsMute", '{"inputName":"' escMic '"}')
-    } else {
-        state._optimisticMutePending := false
+        ArmHostOptimisticReconcile(cfg, state, attempts = 0 ? 450 : 400)
+        return
     }
+    RollbackHostOptimisticMute(cfg, state, attempts >= 3 ? "OBS did not confirm mute change" : "OBS unavailable")
+}
+
+RollbackHostOptimisticMute(cfg, state, reason := "") {
+    if (!IsObject(state))
+        return
+    hadPending := state.HasOwnProp("_optimisticMutePending") && state._optimisticMutePending
+    if (!hadPending)
+        return
+    CancelHostOptimisticReconcile(state)
+    state._reconcileAttempts := 0
+    prior := state.HasOwnProp("_mutePreOptimistic") ? !!state._mutePreOptimistic : !!state.isMuted
+    if (IsSet(DiagnosticLogger))
+        try DiagnosticLogger.RecordBreadcrumb("Audio", "MuteOptimisticRollback", "reason=" reason " rollbackTo=" (prior ? "muted" : "live"))
+    if (!!state.isMuted != prior && IsSet(SyncUIState))
+        SyncUIState(cfg, state, prior, false)
+    else if (IsSet(BroadcastHostRelayMuteState))
+        try BroadcastHostRelayMuteState(cfg, state)
+    if (IsSet(HostBridgeBroadcastMuteState))
+        try HostBridgeBroadcastMuteState(cfg, state)
+    if (IsSet(ShowCaptureSafeMicroToast))
+        try ShowCaptureSafeMicroToast("PresenterSync: mute change not confirmed by OBS (" reason ") - showing real state: " (prior ? "MUTED" : "LIVE"), 3000)
 }
 
 SyncUIState(cfg, state, obsIsMuted, isOptimistic := false) {
     if (isOptimistic) {
+        if (!state.HasOwnProp("_optimisticMutePending") || !state._optimisticMutePending) {
+            state._mutePreOptimistic := !!state.isMuted
+            state._reconcileAttempts := 0
+        }
         state._optimisticMutePending := true
         changedOpt := (state.isMuted != obsIsMuted)
         if (changedOpt) {
@@ -1848,6 +1879,7 @@ SyncUIState(cfg, state, obsIsMuted, isOptimistic := false) {
 
     wasOptimistic := (state.HasOwnProp("_optimisticMutePending") && state._optimisticMutePending)
     CancelHostOptimisticReconcile(state)
+    state._reconcileAttempts := 0
     stateChanged := (state.isMuted != obsIsMuted)
     if (stateChanged || wasOptimistic) {
         state.isMuted := obsIsMuted

@@ -567,7 +567,7 @@ ShowHelpWindow(cfg, state := "", *) {
     helpGui.OnEvent("Close", CloseHelp)
     helpGui.OnEvent("Escape", CloseHelp)
 
-    helpGui.Show("w840 h612 Center")
+    WindowFit.Show(helpGui, "w840 h612 Center")
     btnClose.Focus()
     return helpGui
 }
@@ -643,7 +643,7 @@ ShowAboutWindow(cfg := "", state := "", *) {
     if (IsSet(ArcadeVault) && IsObject(cfg))
         vaultExtraH := ArcadeVault.AttachAboutVaultSection(aboutGui, cfg, state, 20, 526, 430, false, (c, s) => ShowAboutWindow(c, s))
 
-    aboutGui.Show("w470 h" (536 + vaultExtraH) " Center")
+    WindowFit.Show(aboutGui, "w470 h" (536 + vaultExtraH) " Center")
     closeBtn.Focus()
     return aboutGui
 }
@@ -949,7 +949,7 @@ OpenPointerKeyCaptureDialog(currentKey, saveBtnLabel, onApply, dialogTitle := "E
     dlg.OnEvent("Close", Cleanup)
     dlg.OnEvent("Escape", Cleanup)
 
-    dlg.Show("AutoSize Center")
+    WindowFit.Show(dlg, "AutoSize Center")
     btnSave.Focus()
     StartCapture()
     return dlg
@@ -1059,7 +1059,7 @@ ShowPointerTester(*) {
     testerGui.OnEvent("Escape", Cleanup)
     btn.OnEvent("Click", Cleanup)
 
-    testerGui.Show("AutoSize Center")
+    WindowFit.Show(testerGui, "AutoSize Center")
     ih.Start()
     return testerGui
 }
@@ -1398,7 +1398,7 @@ ShowProfileManagerUI(cfg, state := "") {
     dlg.OnEvent("Close", CloseProfileMgr)
     dlg.OnEvent("Escape", CloseProfileMgr)
 
-    dlg.Show()
+    WindowFit.Show(dlg)
     return dlg
 }
 
@@ -2757,7 +2757,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.OnEvent("Close", CloseControlCenter)
     ccGui.OnEvent("Escape", CloseControlCenter)
 
-    ccGui.Show("w720 h556")
+    WindowFit.Show(ccGui, "w720 h556")
     return ccGui
 }
 

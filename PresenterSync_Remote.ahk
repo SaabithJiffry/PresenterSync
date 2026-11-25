@@ -23,6 +23,7 @@ ProcessSetPriority "High"
 #Include <Gdip>
 #Include <OBS_Network>
 #Include <GUI_Config>
+#Include <WindowFit>
 #Include <HudSnakeGame>
 #Include <HudArcadeBase>
 #Include <ArcadeVault>
@@ -2602,7 +2603,7 @@ ShowRemoteTouchDeckGUI(cfg, state, *) {
     }
     UpdateRemoteTouchDeckUI(cfg, state)
     if (!IsSet(g_IsTestMode) || !g_IsTestMode)
-        deckGui.Show("w620 h520")
+        WindowFit.Show(deckGui, "w620 h520")
     return deckGui
 }
 
@@ -2878,7 +2879,7 @@ ShowCreateRemoteShortcutUI(cfg, state := "", *) {
     }
 
     btnCreate.OnEvent("Click", OnCreateClick)
-    dlg.Show()
+    WindowFit.Show(dlg)
     return dlg
 }
 
@@ -3191,7 +3192,7 @@ ShowRemoteHelpUI(cfg, state, *) {
         helpGui._onThemeRefresh := ""
     ), btnClose)
 
-    helpGui.Show("w740 h540 Center")
+    WindowFit.Show(helpGui, "w740 h540 Center")
     btnClose.Focus()
     return helpGui
 }
@@ -3253,7 +3254,7 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
     if (IsSet(ArcadeVault) && IsObject(cfg))
         vaultExtraH := ArcadeVault.AttachAboutVaultSection(aboutGui, cfg, state, 20, 514, 430, true)
 
-    aboutGui.Show("w470 h" (524 + vaultExtraH) " Center")
+    WindowFit.Show(aboutGui, "w470 h" (524 + vaultExtraH) " Center")
     closeBtn.Focus()
     return aboutGui
 }
@@ -3631,7 +3632,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     dlg.OnEvent("Close", (*) => CleanupDialog(isInitialBoot))
     dlg.OnEvent("Escape", (*) => CleanupDialog(isInitialBoot))
 
-    dlg.Show("AutoSize Center")
+    WindowFit.Show(dlg, "AutoSize Center")
     return dlg
 }
 

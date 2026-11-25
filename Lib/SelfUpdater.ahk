@@ -563,8 +563,7 @@ StartWindowsSelfUpdateDownloadUI(updRes, targetExePath := "") {
     updGui.OnEvent("Escape", (*) => (cancelled := true))
 
     Theme.NamedWindows["SelfUpdaterProgress"] := updGui
-    updGui.Show("w460 Center")
-
+    WindowFit.Show(updGui, "w460 Center")
     stageFile := curExe ".update.tmp"
     OnSt(msg) {
         if (!closed)
@@ -669,7 +668,7 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
     dlg.OnEvent("Escape", CloseDlg)
 
     Theme.NamedWindows["UpdateAvailablePrompt"] := dlg
-    dlg.Show("w480 Center")
+    WindowFit.Show(dlg, "w480 Center")
     btnPrimary.Focus()
     return dlg
 }
