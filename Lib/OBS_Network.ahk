@@ -2053,7 +2053,7 @@ PresenterTimerTick(cfg, state) {
     StepHostPresenterTimerTick(cfg, state)
 }
 
-BroadcastHostStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B") {
+BroadcastHostStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B", opts := "") {
     msgClean := SubStr(Trim(String(message)), 1, 140)
     if (msgClean = "")
         return false
@@ -2063,7 +2063,9 @@ BroadcastHostStageNudge(cfg, state, message, sender := "Stage", accentHex := "F5
     accClean := IsSet(NormalizeColorHex) ? NormalizeColorHex(accentHex, "F59E0B") : "F59E0B"
     if (IsSet(ShowStageNudgeBanner) && (!IsObject(state) || !state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
         ShowStageNudgeBanner(msgClean, accClean, 4500, senderClean)
-    HostBridgeBroadcastStageNudge(cfg, state, msgClean, senderClean, accClean)
+    HostBridgeBroadcastStageNudge(cfg, state, msgClean, senderClean, accClean, opts)
+    if (IsSet(SessionTimeline))
+        SessionTimeline.Record("Intercom", "Stage Cue (" senderClean "): " msgClean, state)
     if (ShouldEnableHostInternetRelay(cfg)) {
         topic := GetInternetRelayTopic(cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : "")
         if (topic != "") {

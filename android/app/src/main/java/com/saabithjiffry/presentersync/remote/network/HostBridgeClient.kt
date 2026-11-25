@@ -238,6 +238,10 @@ class HostBridgeClient(
                         }
                     }
                     "stage_nudge" -> {
+                        val nId = obj.optString("nudgeId", "").trim()
+                        if (nId.isNotEmpty() && !recordSeenNudgeId(nId)) {
+                            return
+                        }
                         val nMsg = obj.optString("message", "").trim()
                         val nSender = obj.optString("sender", "Stage").ifBlank { "Stage" }
                         val nAccent = obj.optString("accentHex", "F59E0B").ifBlank { "F59E0B" }
@@ -366,6 +370,52 @@ class HostBridgeClient(
             put("source", source)
         }.toString()
         return ws.send(payload)
+    }
+
+    private val seenNudgeIds = LinkedHashSet<String>()
+
+    private fun recordSeenNudgeId(nudgeId: String): Boolean {
+        synchronized(seenNudgeIds) {
+            if (!seenNudgeIds.add(nudgeId)) return false
+            if (seenNudgeIds.size > 64) {
+                val it = seenNudgeIds.iterator()
+                if (it.hasNext()) {
+                    it.next()
+                    it.remove()
+                }
+            }
+            return true
+        }
+    }
+
+    fun sendNudgeAck(nudgeId: String): Boolean {
+        val clean = nudgeId.trim()
+        if (!authenticated || clean.isEmpty()) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "nudge_ack")
+            put("cmdId", nextCmdId())
+            put("nudgeId", clean)
+            put("status", "got_it")
+            put("deviceId", deviceId)
+        }
+        return ws.send(payload.toString())
+    }
+
+    fun sendPresenterSignal(message: String, urgency: String = "sticky"): Boolean {
+        val clean = message.trim()
+        if (!authenticated || clean.isEmpty()) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "stage_nudge")
+            put("cmdId", nextCmdId())
+            put("direction", "stage_back")
+            put("urgency", urgency)
+            put("message", clean.take(140))
+            put("sender", deviceName)
+            put("deviceId", deviceId)
+        }
+        return ws.send(payload.toString())
     }
 
     fun sendStageNudge(message: String, sender: String = deviceName, accentHex: String = "F59E0B"): Boolean {

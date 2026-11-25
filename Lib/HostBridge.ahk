@@ -40,6 +40,7 @@ class HostBridgeConstants {
     static UDP_COOLDOWN_MS := 200
     static WS_GUID := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     static ROLES := ["Tally-Only", "Presenter", "Director"]
+    static PRESENTER_SIGNALS := ["Ready to Start", "Switch to Board Cam", "Mic / Audio Issue", "Need Tech Help", "Advance Slide Please"]
 }
 
 GetBridgeFallbackPorts(preferredPort := 4456) {
@@ -757,7 +758,7 @@ class HostCompanionBridge {
         if (norm = "Director")
             return true
         cmd := StrLower(Trim(String(msgType)))
-        if (cmd = "ping" || cmd = "sync_req" || cmd = "disconnect" || cmd = "unpair" || cmd = "reconcile_fallback_state")
+        if (cmd = "ping" || cmd = "sync_req" || cmd = "disconnect" || cmd = "unpair" || cmd = "reconcile_fallback_state" || cmd = "nudge_ack")
             return true
         if (norm = "Tally-Only")
             return false
@@ -926,11 +927,48 @@ class HostCompanionBridge {
         return sent
     }
 
-    BroadcastStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B") {
-        if (!this.running)
-            return 0
-        payload := '{"type":"stage_nudge","message":"' _HB_JsonEscape(message) '","sender":"' _HB_JsonEscape(sender) '","accentHex":"' _HB_JsonEscape(accentHex) '","timestamp":' A_TickCount '}'
-        return this._BroadcastJsonToAuthenticated(payload)
+    BroadcastStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B", opts := "") {
+        if (!this.HasOwnProp("nudgeStatusMap") || !IsObject(this.nudgeStatusMap))
+            this.nudgeStatusMap := Map()
+        nudgeId := (IsObject(opts) && opts.HasOwnProp("nudgeId") && opts.nudgeId != "") ? String(opts.nudgeId) : ("ndg-" A_TickCount "-" Random(1000, 9999))
+        targetDev := (IsObject(opts) && opts.HasOwnProp("targetDeviceId") && opts.targetDeviceId != "") ? String(opts.targetDeviceId) : "All"
+        originDev := (IsObject(opts) && opts.HasOwnProp("originDeviceId")) ? String(opts.originDeviceId) : ""
+        urgency := (IsObject(opts) && opts.HasOwnProp("urgency") && opts.urgency != "") ? StrLower(String(opts.urgency)) : "whisper"
+        reqAck := (IsObject(opts) && opts.HasOwnProp("requiresAck")) ? !!opts.requiresAck : (urgency != "whisper")
+        dir := (IsObject(opts) && opts.HasOwnProp("direction") && opts.direction != "") ? String(opts.direction) : "stage_out"
+
+        payload := '{"type":"stage_nudge","nudgeId":"' _HB_JsonEscape(nudgeId) '","message":"' _HB_JsonEscape(message) '","sender":"' _HB_JsonEscape(sender) '","accentHex":"' _HB_JsonEscape(accentHex) '","targetDeviceId":"' _HB_JsonEscape(targetDev) '","urgency":"' _HB_JsonEscape(urgency) '","requiresAck":' (reqAck ? "true" : "false") ',"direction":"' _HB_JsonEscape(dir) '","timestamp":' A_TickCount '}'
+        sent := 0
+        if (this.running) {
+            for _, cli in this.clients {
+                if (cli.kind != "ws" || !cli.authenticated)
+                    continue
+                if (originDev != "" && cli.deviceId = originDev)
+                    continue
+                if (targetDev != "" && targetDev != "All" && cli.deviceId != targetDev)
+                    continue
+                this._QueueWsFrame(cli, 0x1, payload)
+                sent += 1
+            }
+        }
+        if (this.nudgeStatusMap.Count >= 64) {
+            for oldKey in this.nudgeStatusMap {
+                this.nudgeStatusMap.Delete(oldKey)
+                break
+            }
+        }
+        this.nudgeStatusMap[nudgeId] := {
+            nudgeId: nudgeId,
+            message: message,
+            sender: sender,
+            targetDeviceId: targetDev,
+            urgency: urgency,
+            requiresAck: reqAck,
+            status: (sent > 0 ? "Delivered" : "Sent"),
+            ackedBy: [],
+            tick: A_TickCount
+        }
+        return sent
     }
 
     _BroadcastJsonToAuthenticated(payload) {
@@ -2274,10 +2312,46 @@ class HostCompanionBridge {
                 nMsg := JsonCodec.GetStr(msgObj, "message")
                 nSnd := JsonCodec.GetStr(msgObj, "sender")
                 nAcc := JsonCodec.GetStr(msgObj, "accentHex")
+                nId := JsonCodec.GetStr(msgObj, "nudgeId")
+                nTarget := JsonCodec.GetStr(msgObj, "targetDeviceId")
+                nUrg := JsonCodec.GetStr(msgObj, "urgency")
+                nReqAck := JsonCodec.HasKey(msgObj, "requiresAck") ? JsonCodec.GetBool(msgObj, "requiresAck", false) : false
+                nDir := StrLower(JsonCodec.GetStr(msgObj, "direction"))
                 if (nSnd = "")
-                    nSnd := (c.deviceName != "") ? c.deviceName : "Remote"
-                ok := BroadcastHostStageNudge(this.cfg, this.state, nMsg, nSnd, nAcc != "" ? nAcc : "F59E0B")
-                this._QueueCmdResult(c, "stage_nudge", ok, cmdId)
+                    nSnd := actorName
+                if (nDir = "" && cRole = "Presenter")
+                    nDir := "stage_back"
+                if (nDir = "stage_back") {
+                    ; Presenter -> Primary Controller Inbox only (never echo back to other remotes)
+                    if (IsObject(this.state)) {
+                        if (!this.state.HasOwnProp("presenterSignals") || !IsObject(this.state.presenterSignals))
+                            this.state.presenterSignals := []
+                        this.state.presenterSignals.Push({ nudgeId: nId, message: nMsg, sender: nSnd, deviceId: c.deviceId, urgency: (nUrg != "" ? nUrg : "sticky"), tick: A_TickCount })
+                        if (this.state.presenterSignals.Length > 32)
+                            this.state.presenterSignals.RemoveAt(1)
+                    }
+                    if (IsSet(ShowStageNudgeBanner) && (!IsObject(this.state) || !this.state.HasOwnProp("suppressNudgeBanners") || !this.state.suppressNudgeBanners))
+                        ShowStageNudgeBanner(nMsg, nAcc != "" ? nAcc : "38BDF8", 4500, nSnd " [Stage-Back]")
+                    if (IsSet(SessionTimeline))
+                        SessionTimeline.Record("Intercom", "Stage-Back Signal from " nSnd ": " nMsg, this.state, c.platform)
+                    this._QueueCmdResult(c, "stage_nudge", nMsg != "", cmdId)
+                } else {
+                    nOpts := { nudgeId: nId, targetDeviceId: (nTarget != "" ? nTarget : "All"), originDeviceId: c.deviceId, urgency: (nUrg != "" ? nUrg : "whisper"), requiresAck: nReqAck, direction: "stage_out" }
+                    ok := BroadcastHostStageNudge(this.cfg, this.state, nMsg, nSnd, nAcc != "" ? nAcc : "F59E0B", nOpts)
+                    this._QueueCmdResult(c, "stage_nudge", ok, cmdId)
+                }
+            case "nudge_ack":
+                ackId := JsonCodec.GetStr(msgObj, "nudgeId")
+                okAck := false
+                if (ackId != "" && this.HasOwnProp("nudgeStatusMap") && IsObject(this.nudgeStatusMap) && this.nudgeStatusMap.Has(ackId)) {
+                    entry := this.nudgeStatusMap[ackId]
+                    entry.status := "Ack'd"
+                    entry.ackedBy.Push(actorName)
+                    okAck := true
+                    if (IsSet(SessionTimeline))
+                        SessionTimeline.Record("Intercom", "Cue Ack'd (" ackId ") by " actorName, this.state, c.platform)
+                }
+                this._QueueCmdResult(c, "nudge_ack", okAck, cmdId, okAck ? "" : "unknown_nudge")
         }
     }
 
@@ -2569,10 +2643,10 @@ HostBridgeBroadcastObsFallback(cfg := "") {
     return 0
 }
 
-HostBridgeBroadcastStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B") {
+HostBridgeBroadcastStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B", opts := "") {
     global g_HostCompanionBridge
     if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
-        return g_HostCompanionBridge.BroadcastStageNudge(cfg, state, message, sender, accentHex)
+        return g_HostCompanionBridge.BroadcastStageNudge(cfg, state, message, sender, accentHex, opts)
     return 0
 }
 
