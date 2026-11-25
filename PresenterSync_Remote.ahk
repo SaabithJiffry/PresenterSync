@@ -1137,8 +1137,12 @@ FailoverToNextCandidate(cfg, state, failedCandidate := "") {
 HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     if (IsObject(ws) && ws.HasOwnProp("_psClosed") && ws._psClosed)
         return
-    if IsObject(ws)
-        try ws.shutdown()
+    if IsObject(ws) {
+        if (IsSet(SafeCloseWebSocketDeferred))
+            SafeCloseWebSocketDeferred(ws, 40)
+        else
+            try ws.shutdown()
+    }
     if (IsObject(ws) && IsObject(state.obsWs) && state.obsWs != ws)
         return
     if (state.obsWs == ws)
@@ -1275,6 +1279,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 return
             if (ev.HasOwnProp("stateSeq") && ev.stateSeq > 0)
                 state.lastStateSeq := ev.stateSeq
+            CancelRemoteOptimisticReconcile(state)
             if (ev.HasOwnProp("hostUuid") && ev.hostUuid != "" && (!cfg.HasOwnProp("PairedHostUuid") || cfg.PairedHostUuid != ev.hostUuid)) {
                 cfg.PairedHostUuid := ev.hostUuid
                 try cfg.Write("Connection", "PairedHostUuid", ev.hostUuid)
@@ -1288,7 +1293,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 RefreshRemoteMicHudAlpha(cfg, state)
                 state.NotifyTrayStatus()
             }
-            SyncRemoteMuteState(cfg, state, ev.isMuted)
+            SyncRemoteMuteState(cfg, state, ev.isMuted, false)
             SyncRemoteBridgeTelemetry(cfg, state, ev)
         } else if (ev.kind = "obs_fallback_update") {
             if (ev.HasOwnProp("hasObsFallback") && ev.hasObsFallback)
@@ -1297,6 +1302,10 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             if (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)
                 ShowStageNudgeBanner(ev.message, (ev.accentHex != "" ? ev.accentHex : "F59E0B"), 4500, ev.sender)
         } else if (ev.kind = "nack") {
+            wasOpt := (state.HasOwnProp("_optimisticMutePending") && state._optimisticMutePending)
+            CancelRemoteOptimisticReconcile(state)
+            if (wasOpt && IsObject(ws))
+                try TrySendWsText(ws, BuildRemoteBridgeSyncReqJson(cfg))
             if (IsSet(DiagnosticLogger))
                 try DiagnosticLogger.RecordBreadcrumb("Bridge", "CommandNack", ev.action " code=" ev.code " reason=" ev.reason)
             if (ev.code = "obs_offline" || ev.code = "role_denied" || ev.code = "input_paused" || ev.code = "confirm_required")
@@ -1522,6 +1531,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.NotifyTrayStatus()
                 TrayTip("Audio source '" cfg.TargetMicName "' was not found in OBS Studio.", "PresenterSync Remote", 2)
             } else if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
+                CancelRemoteOptimisticReconcile(state)
                 state.connStatus := "connected"
                 isMutedNow := (matchMuted[1] == "true")
                 state.isMuted := isMutedNow
@@ -1756,25 +1766,71 @@ RemoteHeartbeatTick(cfg, state) {
     SendRemotePingWithWatchdog(cfg, state, "obs")
 }
 
-SyncRemoteMuteState(cfg, state, newMuted) {
+CancelRemoteOptimisticReconcile(state) {
+    if (!IsObject(state))
+        return
+    state._optimisticMutePending := false
+    if (state.HasOwnProp("_optimisticTimerFn") && IsObject(state._optimisticTimerFn))
+        try SetTimer(state._optimisticTimerFn, 0)
+}
+
+_ReconcileRemoteOptimisticMute(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("_optimisticMutePending") || !state._optimisticMutePending)
+        return
+    state._optimisticMutePending := false
+    if (!state.HasOwnProp("obsConnected") || !state.obsConnected)
+        return
+    if (IsRemoteUsingInternetChannel(cfg, state)) {
+        SendRemoteRelaySyncRequest(cfg, state)
+    } else if (IsRemoteUsingBridgeChannel(cfg, state) && IsObject(state.obsWs)) {
+        TrySendWsText(state.obsWs, BuildRemoteBridgeSyncReqJson(cfg))
+    } else if (IsObject(state.obsWs)) {
+        escMic := EscapeJsonStr(cfg.TargetMicName)
+        SendObsRequest(state.obsWs, "GetInputMute", "InitRemoteMute", '{"inputName":"' escMic '"}')
+    }
+}
+
+ApplyRemoteOptimisticMute(cfg, state, targetMuted) {
+    if (!IsObject(state))
+        return
+    state._optimisticMutePending := true
+    SyncRemoteMuteState(cfg, state, !!targetMuted, true)
+    if (!state.HasOwnProp("_optimisticTimerFn") || !IsObject(state._optimisticTimerFn))
+        state._optimisticTimerFn := _ReconcileRemoteOptimisticMute.Bind(cfg, state)
+    try SetTimer(state._optimisticTimerFn, -300)
+}
+
+SyncRemoteMuteState(cfg, state, newMuted, isOptimistic := false) {
+    if (!isOptimistic)
+        CancelRemoteOptimisticReconcile(state)
     if (state.isMuted != newMuted) {
         NotifyRemoteActivity(cfg, state)
         state.isMuted := newMuted
         cfg.IsMuted := newMuted
-        if (cfg.HasMethod("WriteBoolDeferred"))
-            cfg.WriteBoolDeferred("Settings", "IsMuted", newMuted, 250)
-        else
-            cfg.WriteBool("Settings", "IsMuted", newMuted)
+        if (!isOptimistic) {
+            if (cfg.HasMethod("WriteBoolDeferred"))
+                cfg.WriteBoolDeferred("Settings", "IsMuted", newMuted, 250)
+            else
+                cfg.WriteBool("Settings", "IsMuted", newMuted)
+        }
         if (!newMuted)
             state.voiceWhileMuted := false
         PlayMuteAnimation(cfg, state)
         UpdateRemoteTouchDeckUI(cfg, state)
         if (state.HasMethod("NotifyTrayStatus"))
             state.NotifyTrayStatus()
-        if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
-            PlayMuteAudioCue(newMuted)
-        if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
-            ShowMuteToast(newMuted)
+        if (!isOptimistic) {
+            if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
+                PlayMuteAudioCue(newMuted)
+            if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)
+                ShowMuteToast(newMuted)
+        }
+    } else if (!isOptimistic) {
+        cfg.IsMuted := newMuted
+        if (cfg.HasMethod("WriteBoolDeferred"))
+            cfg.WriteBoolDeferred("Settings", "IsMuted", newMuted, 250)
+        else
+            cfg.WriteBool("Settings", "IsMuted", newMuted)
     }
 }
 

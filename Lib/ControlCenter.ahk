@@ -1649,7 +1649,10 @@ SyncTelemetryBackendsFromConfig(cfg, state) {
         if (state.HasOwnProp("obsConnected"))
             state.obsConnected := false
         if (state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
-            try state.obsWs.shutdown()
+            if (IsSet(SafeCloseWebSocketDeferred))
+                SafeCloseWebSocketDeferred(state.obsWs, 40)
+            else
+                try state.obsWs.shutdown()
             state.obsWs := ""
         }
         if (state.HasOwnProp("streamTimerFn") && state.streamTimerFn)
@@ -1691,7 +1694,10 @@ SyncTelemetryBackendsFromConfig(cfg, state) {
         if (!cfg.EnableRemoteConnections) {
             StopHostCompanionBridge()
             if (state.HasOwnProp("relayWs") && IsObject(state.relayWs)) {
-                try state.relayWs.shutdown()
+                if (IsSet(SafeCloseWebSocketDeferred))
+                    SafeCloseWebSocketDeferred(state.relayWs, 40)
+                else
+                    try state.relayWs.shutdown()
                 state.relayWs := ""
             }
             state.relayConnected := false

@@ -1312,12 +1312,21 @@ BuildRemoteHudDiagramBitmap(cfg, selectedIdx := 1, targetW := 680, targetH := 19
 }
 
 /**
- * Safely assigns a newly created HBITMAP to a GUI Picture control.
+ * Safely assigns a newly created HBITMAP to a GUI Picture control and frees
+ * any unconsumed HBITMAP on error/invalid control. (AHK v2 clones & frees on set.)
  */
 ApplyDiagramBitmap(picCtrl, hBmp) {
-    if (!IsObject(picCtrl) || !hBmp)
+    if (!hBmp)
         return
-    try picCtrl.Value := "HBITMAP:" hBmp
+    if (!IsObject(picCtrl)) {
+        DllCall("DeleteObject", "Ptr", hBmp)
+        return
+    }
+    try {
+        picCtrl.Value := "HBITMAP:" hBmp
+    } catch {
+        DllCall("DeleteObject", "Ptr", hBmp)
+    }
 }
 
 /**

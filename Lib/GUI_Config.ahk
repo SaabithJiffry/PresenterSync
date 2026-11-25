@@ -76,7 +76,7 @@ class UIConstants {
     static DRAG_SYNC_INTERVAL_MS := 16
     static PPT_DEBOUNCE_MS := 150
     static PUSH_TO_MUTE_HOLD_MS := 350
-    static VOICE_METER_INTERVAL_MS := 25
+    static VOICE_METER_INTERVAL_MS := 50
     static MUTED_VOICE_THRESHOLD := 0.12
     static MUTED_VOICE_TRIGGER_MS := 1500
     static MUTED_VOICE_CLEAR_MS := 1500
@@ -519,11 +519,19 @@ class Theme {
                 DllCall("DeleteObject", "Ptr", hBold)
         }
         this.BoldFontCache.Clear()
+        try OnMessage(0x001A, WM_SETTINGCHANGE_Theme, 0)
+        for _, propName in ["hkSubclassPtr", "tabSubclassPtr", "staticSubclassPtr", "btnSubclassPtr"] {
+            if (this.%propName%) {
+                try CallbackFree(this.%propName%)
+                this.%propName% := 0
+            }
+        }
         if (this._uxthemeLoaded && this.hUxtheme) {
             DllCall("FreeLibrary", "Ptr", this.hUxtheme)
             this.hUxtheme := 0
             this._uxthemeLoaded := false
         }
+        this.initialized := false
     }
 
     static AcquireSuspend() {

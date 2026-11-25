@@ -185,6 +185,9 @@ class ConnectionManager(
     private var presenterTimerJob: Job? = null
     private var networkDebounceJob: Job? = null
     private var lanRepromoteJob: Job? = null
+    private var optimisticReconcileJob: Job? = null
+    @Volatile
+    private var optimisticPending: Boolean = false
     private var networkCallbackRegistered = false
     @Volatile
     internal var lastRxAtMs: Long = -1L
@@ -192,9 +195,16 @@ class ConnectionManager(
     private val rxSeq = AtomicLong(0L)
     @Volatile
     private var lastWakeReconnectAtMs: Long = Long.MIN_VALUE
+    @Volatile
+    private var reconnectAttempt: Int = 0
     internal var pongTimeoutMs: Long = PONG_TIMEOUT_MS
     internal var wakeStalenessMs: Long = WAKE_STALENESS_MS
     internal var bridgeConnectTimeoutMs: Long = BRIDGE_CONNECT_TIMEOUT_MS
+    internal var obsHandshakeTimeoutMs: Long = OBS_HANDSHAKE_TIMEOUT_MS
+    internal var relayHandshakeTimeoutMs: Long = RELAY_HANDSHAKE_TIMEOUT_MS
+    internal var reconnectBaseDelayMs: Long = AppConstants.RECONNECT_DELAY_MS
+    internal var maxReconnectBackoffMs: Long = MAX_RECONNECT_BACKOFF_MS
+    internal var optimisticReconcileDelayMs: Long = OPTIMISTIC_RECONCILE_DELAY_MS
     internal var discoverPortOverride: Int = AppConstants.DEFAULT_DISCOVERY_PORT
     internal var failoverBudgetMs: Long = AppConstants.LAN_FAILOVER_DEADLINE_MS
     internal var repromoteIntervalMs: Long = BRIDGE_REPROMOTE_INTERVAL_MS
@@ -341,6 +351,7 @@ class ConnectionManager(
     fun reconnectNow() {
         val gen = generation.incrementAndGet()
         consecutiveHealthyRepromoteProbes = 0
+        reconnectAttempt = 0
         cancelSessionJobs(includeConnectLoop = true)
         lastRxAtMs = -1L
         closeActiveClients()
@@ -362,6 +373,9 @@ class ConnectionManager(
         heartbeatJob?.cancel()
         pongWatchdogJob?.cancel()
         pongWatchdogJob = null
+        optimisticReconcileJob?.cancel()
+        optimisticReconcileJob = null
+        optimisticPending = false
         if (includeRecTicker) recTickerJob?.cancel()
         if (includePresenterTimer) presenterTimerJob?.cancel()
         if (includeRepromote) lanRepromoteJob?.cancel()
@@ -372,6 +386,7 @@ class ConnectionManager(
         activeHost: String,
         isFallback: Boolean = false
     ) {
+        reconnectAttempt = 0
         _uiState.value = _uiState.value.copy(
             connected = true,
             connStatus = ConnStatus.CONNECTED,
@@ -557,12 +572,12 @@ class ConnectionManager(
             val cfg = configStore.current
             if (cfg.networkMode == NetworkMode.INTERNET) {
                 if (cfg.internetPairingCode.isBlank()) {
-                    delay(AppConstants.RECONNECT_DELAY_MS)
+                    delay(computeReconnectBackoffMs(reconnectAttempt++, reconnectBaseDelayMs, maxReconnectBackoffMs))
                     continue
                 }
                 val result = attemptRelaySession(gen, cfg, isFallback = false)
                 if (result == SessionOutcome.AUTH_FAILED || gen != generation.get()) return
-                delay(AppConstants.RECONNECT_DELAY_MS)
+                delay(computeReconnectBackoffMs(reconnectAttempt++, reconnectBaseDelayMs, maxReconnectBackoffMs))
                 continue
             }
 
@@ -630,7 +645,7 @@ class ConnectionManager(
                 if (relayOutcome == SessionOutcome.AUTH_FAILED || gen != generation.get()) return
             }
 
-            delay(AppConstants.RECONNECT_DELAY_MS)
+            delay(computeReconnectBackoffMs(reconnectAttempt++, reconnectBaseDelayMs, maxReconnectBackoffMs))
         }
     }
 
@@ -815,6 +830,12 @@ class ConnectionManager(
 
                 override fun onCommandNack(action: String, code: String, reason: String, cmdId: String) {
                     if (gen != generation.get()) return
+                    if (optimisticPending) {
+                        optimisticPending = false
+                        optimisticReconcileJob?.cancel()
+                        optimisticReconcileJob = null
+                        bridgeClient?.sendSyncRequest()
+                    }
                     DiagnosticLogger.recordBreadcrumb("Bridge", "CommandNack", "$action | $code | $reason")
                     if (code == "obs_offline" || code == "role_denied" || code == "input_paused" || code == "confirm_required") {
                         _events.tryEmit(
@@ -871,6 +892,7 @@ class ConnectionManager(
         isBridgeFallback: Boolean = true
     ): SessionOutcome {
         val done = kotlinx.coroutines.CompletableDeferred<SessionOutcome>()
+        var handshakeTimeoutJob: Job? = null
         val client = ObsWebSocketClient(
             httpClient = httpClient,
             wsUrl = wsUrl,
@@ -878,6 +900,7 @@ class ConnectionManager(
             targetMicName = cfg.targetMicName,
             callbacks = object : ObsSessionCallbacks {
                 override fun onIdentified() {
+                    handshakeTimeoutJob?.cancel()
                     if (gen != generation.get()) return
                     markRxActivity()
                     transitionToConnected(ChannelType.DIRECT_OBS, displayRaw, isFallback = isBridgeFallback)
@@ -899,6 +922,7 @@ class ConnectionManager(
                 }
 
                 override fun onAuthFailed() {
+                    handshakeTimeoutJob?.cancel()
                     if (gen == generation.get()) {
                         transitionToAuthFailed("OBS authentication failed (4009). Check password.")
                     }
@@ -978,6 +1002,7 @@ class ConnectionManager(
                 }
 
                 override fun onDisconnected(reason: String) {
+                    handshakeTimeoutJob?.cancel()
                     cancelSessionJobs()
                     if (gen == generation.get()) {
                         transitionToDisconnected(preserveAuthFailed = true)
@@ -988,10 +1013,22 @@ class ConnectionManager(
         )
         obsClient = client
         client.connect()
+        val timeoutMs = obsHandshakeTimeoutMs.coerceAtLeast(100L)
+        val obsTimeoutJob = scope.launch {
+            delay(timeoutMs)
+            if (!done.isCompleted && (!_uiState.value.connected || _uiState.value.channelType != ChannelType.DIRECT_OBS)) {
+                logWarn("Direct OBS handshake timeout (${timeoutMs}ms) on $wsUrl")
+                DiagnosticLogger.recordBreadcrumb("Failover", "ObsHandshakeTimeout", "${timeoutMs}ms on $wsUrl")
+                client.closeDead()
+                done.complete(SessionOutcome.DISCONNECTED)
+            }
+        }
+        handshakeTimeoutJob = obsTimeoutJob
 
         return try {
             done.await()
         } finally {
+            obsTimeoutJob.cancel()
             cancelSessionJobs(includeRecTicker = false)
             client.close()
             if (obsClient === client) obsClient = null
@@ -1004,6 +1041,7 @@ class ConnectionManager(
         isFallback: Boolean
     ): SessionOutcome {
         val done = kotlinx.coroutines.CompletableDeferred<SessionOutcome>()
+        var handshakeTimeoutJob: Job? = null
         val prefix = if (isFallback) "Relay Bridge" else "Internet"
         val display = "$prefix (${cfg.internetPairingCode})"
         val client = RelayClient(
@@ -1015,6 +1053,7 @@ class ConnectionManager(
             allowLegacyPlaintext = cfg.allowLegacyPlaintextRelay,
             callbacks = object : RelaySessionCallbacks {
                 override fun onRelayConnected() {
+                    handshakeTimeoutJob?.cancel()
                     if (gen != generation.get()) return
                     markRxActivity()
                     transitionToConnected(ChannelType.WAN_RELAY, display, isFallback = isFallback)
@@ -1031,6 +1070,7 @@ class ConnectionManager(
                 }
 
                 override fun onRelayAuthFailed() {
+                    handshakeTimeoutJob?.cancel()
                     if (gen == generation.get()) {
                         transitionToAuthFailed("Internet Relay authentication failed. Check password.")
                     }
@@ -1089,6 +1129,7 @@ class ConnectionManager(
                 }
 
                 override fun onRelayDisconnected(reason: String) {
+                    handshakeTimeoutJob?.cancel()
                     cancelSessionJobs(includePresenterTimer = true, includeRecTicker = false, includeRepromote = false)
                     if (gen == generation.get()) {
                         transitionToDisconnected(clearSessionTelemetry = true, preserveAuthFailed = true)
@@ -1099,10 +1140,22 @@ class ConnectionManager(
         )
         relayClient = client
         client.connect()
+        val timeoutMs = relayHandshakeTimeoutMs.coerceAtLeast(100L)
+        val relayTimeoutJob = scope.launch {
+            delay(timeoutMs)
+            if (!done.isCompleted && (!_uiState.value.connected || _uiState.value.channelType != ChannelType.WAN_RELAY)) {
+                logWarn("WAN Relay handshake timeout (${timeoutMs}ms)")
+                DiagnosticLogger.recordBreadcrumb("Failover", "RelayHandshakeTimeout", "${timeoutMs}ms")
+                client.closeDead()
+                done.complete(SessionOutcome.DISCONNECTED)
+            }
+        }
+        handshakeTimeoutJob = relayTimeoutJob
 
         return try {
             done.await()
         } finally {
+            relayTimeoutJob.cancel()
             cancelSessionJobs(includeRecTicker = false)
             client.close()
             if (relayClient === client) relayClient = null
@@ -1503,15 +1556,41 @@ class ConnectionManager(
         return true
     }
 
-    private fun applyNewMuteState(muted: Boolean) {
+    private fun applyNewMuteState(muted: Boolean, isOptimistic: Boolean = false) {
+        if (!isOptimistic) {
+            optimisticPending = false
+            optimisticReconcileJob?.cancel()
+            optimisticReconcileJob = null
+        }
         val prev = _uiState.value.isMuted
-        configStore.update { it.copy(isMuted = muted) }
+        if (!isOptimistic) {
+            configStore.update { it.copy(isMuted = muted) }
+        }
         _uiState.value = _uiState.value.copy(
             isMuted = muted,
             voiceWhileMuted = if (muted) _uiState.value.voiceWhileMuted else false
         )
         if (prev != muted) {
             _events.tryEmit(RemoteEvent.MuteChanged(muted))
+        }
+    }
+
+    private fun armOptimisticReconcile() {
+        optimisticPending = true
+        optimisticReconcileJob?.cancel()
+        val gen = generation.get()
+        val delayMs = optimisticReconcileDelayMs.coerceAtLeast(50L)
+        optimisticReconcileJob = scope.launch {
+            delay(delayMs)
+            if (gen != generation.get() || !optimisticPending) return@launch
+            optimisticPending = false
+            val st = _uiState.value
+            if (!st.connected) return@launch
+            when {
+                st.usingBridge && bridgeClient != null -> bridgeClient?.sendSyncRequest()
+                st.channelType == ChannelType.DIRECT_OBS && obsClient != null -> obsClient?.sendGetInputMute()
+                st.channelType == ChannelType.WAN_RELAY && relayClient != null -> relayClient?.sendSyncRequest()
+            }
         }
     }
 
@@ -1666,21 +1745,36 @@ class ConnectionManager(
 
     fun toggleMuteFromClicker(): Boolean = toggleMuteInternal("clicker")
 
-    private fun toggleMuteInternal(source: String): Boolean = dispatchMuteCommand(
-        bridgeSend = { it.sendToggleMute(source) },
-        obsSend = { it.sendToggleInputMute() },
-        relaySend = { it.sendToggleMute() }
-    )
+    private fun toggleMuteInternal(source: String): Boolean {
+        val targetMuted = !_uiState.value.isMuted
+        val sent = dispatchMuteCommand(
+            bridgeSend = { it.sendToggleMute(source) },
+            obsSend = { it.sendToggleInputMute() },
+            relaySend = { it.sendToggleMute() }
+        )
+        if (sent) {
+            applyNewMuteState(targetMuted, isOptimistic = true)
+            armOptimisticReconcile()
+        }
+        return sent
+    }
 
     fun setMuteFromHud(targetMuted: Boolean): Boolean = setMuteInternal(targetMuted)
 
     fun setMuteFromClicker(targetMuted: Boolean): Boolean = setMuteInternal(targetMuted)
 
-    private fun setMuteInternal(targetMuted: Boolean): Boolean = dispatchMuteCommand(
-        bridgeSend = { it.sendSetMute(targetMuted) },
-        obsSend = { it.sendSetInputMute(targetMuted) },
-        relaySend = { it.sendSetMute(targetMuted) }
-    )
+    private fun setMuteInternal(targetMuted: Boolean): Boolean {
+        val sent = dispatchMuteCommand(
+            bridgeSend = { it.sendSetMute(targetMuted) },
+            obsSend = { it.sendSetInputMute(targetMuted) },
+            relaySend = { it.sendSetMute(targetMuted) }
+        )
+        if (sent) {
+            applyNewMuteState(targetMuted, isOptimistic = true)
+            armOptimisticReconcile()
+        }
+        return sent
+    }
 
     private fun dispatchMuteCommand(
         bridgeSend: (HostBridgeClient) -> Boolean,
@@ -2005,10 +2099,25 @@ class ConnectionManager(
 
     companion object {
         const val BRIDGE_CONNECT_TIMEOUT_MS = 1800L
+        const val OBS_HANDSHAKE_TIMEOUT_MS = 6000L
+        const val RELAY_HANDSHAKE_TIMEOUT_MS = 8000L
+        const val MAX_RECONNECT_BACKOFF_MS = 30_000L
+        const val OPTIMISTIC_RECONCILE_DELAY_MS = 300L
         const val BRIDGE_REPROMOTE_INTERVAL_MS = 8000L
         const val HEALTH_PROBE_TIMEOUT_MS = 500L
         const val PONG_TIMEOUT_MS = 2500L
         const val WAKE_STALENESS_MS = 25_000L
+
+        internal fun computeReconnectBackoffMs(
+            attempt: Int,
+            baseMs: Long = AppConstants.RECONNECT_DELAY_MS,
+            maxMs: Long = MAX_RECONNECT_BACKOFF_MS
+        ): Long {
+            val safeBase = baseMs.coerceAtLeast(10L)
+            val safeMax = maxMs.coerceAtLeast(safeBase)
+            val exp = attempt.coerceIn(0, 4)
+            return minOf(safeMax, safeBase * (1L shl exp))
+        }
 
         internal fun resolveNonStudioTransitionTarget(state: ConnectionUiState): String {
             val active = state.activeScene.trim()

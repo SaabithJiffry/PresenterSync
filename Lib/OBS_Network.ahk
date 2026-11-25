@@ -727,8 +727,11 @@ DispatchHostMuteToggle(cfg, state) {
     zoomOpen := WinExist(confSpec)
 
     if (cfg.AudioRoutingMode == 1) {
-        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
+        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute")) {
+            if (IsSet(SyncUIState))
+                SyncUIState(cfg, state, !state.isMuted, true)
             return true
+        }
         if (!obsOpen || cfg.ObsMuteHotkey = "None" || cfg.ObsMuteHotkey = "") {
             if (TryCoreAudioFallbackMute(cfg, state, !state.isMuted, "HostToggleMode1"))
                 return true
@@ -745,8 +748,11 @@ DispatchHostMuteToggle(cfg, state) {
         }
         ControlSendFast(confHk, confSpec)
     } else if (cfg.AudioRoutingMode == 3) {
-        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
+        if (state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute")) {
+            if (IsSet(SyncUIState))
+                SyncUIState(cfg, state, !state.isMuted, true)
             return true
+        }
         obsCanSend := (obsOpen && cfg.ObsMuteHotkey != "None" && cfg.ObsMuteHotkey != "")
         confCanSend := (zoomOpen && confHk != "" && confHk != "None")
         if (!obsCanSend && !confCanSend) {
@@ -761,8 +767,11 @@ DispatchHostMuteToggle(cfg, state) {
         if (confCanSend)
             ControlSendFast(confHk, confSpec)
     } else {
-        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
+        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute")) {
+            if (IsSet(SyncUIState))
+                SyncUIState(cfg, state, !state.isMuted, true)
             return true
+        }
         if (TryCoreAudioFallbackMute(cfg, state, !state.isMuted, "HostToggleMode0"))
             return true
     }
@@ -820,6 +829,12 @@ IsRemoteUsingDirectObsChannel(cfg, state := "") {
         && !IsRemoteUsingInternetChannel(cfg, state)
 }
 
+_NextRemoteBridgeCmdId(cfg, state) {
+    devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? EscapeJsonStr(cfg.DeviceId) : "win-default"
+    seq := IsObject(state) ? _NextRelaySequence(state) : A_TickCount
+    return devId "-" seq
+}
+
 DispatchRemoteSetMute(cfg, state, targetMuted) {
     valStr := targetMuted ? "1" : "0"
     if (IsRemoteUsingInternetChannel(cfg, state)) {
@@ -831,17 +846,22 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
             SetTimer ClearObsNetworkToolTip, -2000
             return false
         }
+        if (IsSet(ApplyRemoteOptimisticMute))
+            ApplyRemoteOptimisticMute(cfg, state, !!targetMuted)
         return true
     }
 
     if (IsRemoteUsingBridgeChannel(cfg, state)) {
         devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? EscapeJsonStr(cfg.DeviceId) : "win-default"
-        payload := '{"type":"set_mute","isMuted":' (targetMuted ? "true" : "false") ',"deviceId":"' devId '","source":"hud"}'
+        cid := _NextRemoteBridgeCmdId(cfg, state)
+        payload := '{"type":"set_mute","cmdId":"' cid '","isMuted":' (targetMuted ? "true" : "false") ',"deviceId":"' devId '","source":"hud"}'
         if (!TrySendWsText(state.obsWs, payload)) {
             ToolTip "PresenterSync Remote: Host Bridge disconnected"
             SetTimer ClearObsNetworkToolTip, -2000
             return false
         }
+        if (IsSet(ApplyRemoteOptimisticMute))
+            ApplyRemoteOptimisticMute(cfg, state, !!targetMuted)
         return true
     }
 
@@ -856,10 +876,13 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
         SetTimer ClearObsNetworkToolTip, -2000
         return false
     }
+    if (IsSet(ApplyRemoteOptimisticMute))
+        ApplyRemoteOptimisticMute(cfg, state, !!targetMuted)
     return true
 }
 
 DispatchRemoteMuteToggle(cfg, state) {
+    nextMuted := (IsObject(state) && state.HasOwnProp("isMuted")) ? !state.isMuted : true
     if (IsRemoteUsingInternetChannel(cfg, state)) {
         topic := GetInternetRelayTopic(cfg.InternetPairingCode)
         pktStr := BuildOutboundRelayPacket(cfg, state, "remote", "toggle_mute", "1")
@@ -869,17 +892,22 @@ DispatchRemoteMuteToggle(cfg, state) {
             SetTimer ClearObsNetworkToolTip, -2000
             return false
         }
+        if (IsSet(ApplyRemoteOptimisticMute))
+            ApplyRemoteOptimisticMute(cfg, state, nextMuted)
         return true
     }
 
     if (IsRemoteUsingBridgeChannel(cfg, state)) {
         devId := (IsObject(cfg) && cfg.HasOwnProp("DeviceId") && cfg.DeviceId != "") ? EscapeJsonStr(cfg.DeviceId) : "win-default"
-        payload := '{"type":"toggle_mute","deviceId":"' devId '","source":"clicker"}'
+        cid := _NextRemoteBridgeCmdId(cfg, state)
+        payload := '{"type":"toggle_mute","cmdId":"' cid '","deviceId":"' devId '","source":"clicker"}'
         if (!TrySendWsText(state.obsWs, payload)) {
             ToolTip "PresenterSync Remote: Host Bridge disconnected"
             SetTimer ClearObsNetworkToolTip, -2000
             return false
         }
+        if (IsSet(ApplyRemoteOptimisticMute))
+            ApplyRemoteOptimisticMute(cfg, state, nextMuted)
         return true
     }
 
@@ -888,6 +916,8 @@ DispatchRemoteMuteToggle(cfg, state) {
         SetTimer ClearObsNetworkToolTip, -2000
         return false
     }
+    if (IsSet(ApplyRemoteOptimisticMute))
+        ApplyRemoteOptimisticMute(cfg, state, nextMuted)
     return true
 }
 
@@ -1642,8 +1672,11 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
 ExecuteHostRemoteToggleMute(cfg, state) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
-    if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute"))
+    if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute")) {
+        if (IsSet(SyncUIState))
+            SyncUIState(cfg, state, !state.isMuted, true)
         return true
+    }
     return _DispatchHostRemoteControlSend(cfg, state, !state.isMuted)
 }
 
@@ -1652,6 +1685,8 @@ ExecuteHostRemoteSetMute(cfg, state, targetMuted) {
         return false
     wantMuted := !!targetMuted
     if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsSetInputMuteGroup(cfg, state.obsWs, wantMuted, "HostRemoteSetMute")) {
+        if (IsSet(SyncUIState))
+            SyncUIState(cfg, state, wantMuted, true)
         if (!!state.isMuted = wantMuted)
             BroadcastHostRelayMuteState(cfg, state)
         return true
@@ -2485,13 +2520,15 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         }
     }
     else if (opCode == 7) {
-        if (InStr(msg, '"requestId":"InitState"') || InStr(msg, '"requestId": "InitState"')) {
+        if (InStr(msg, '"requestId":"InitState"') || InStr(msg, '"requestId": "InitState"')
+            || InStr(msg, '"requestId":"ReconcileObsMute"') || InStr(msg, '"requestId": "ReconcileObsMute"')) {
             if (RegExMatch(msg, '"result"\s*:\s*false')) {
-                TrayTip("Audio source '" cfg.targetMicName "' was not found in OBS Studio.", "PresenterSync", 2)
+                if (InStr(msg, "InitState"))
+                    TrayTip("Audio source '" cfg.targetMicName "' was not found in OBS Studio.", "PresenterSync", 2)
             } else if (RegExMatch(msg, '"inputMuted"\s*:\s*(true|false)', &matchMuted)) {
                 isMutedOBS := (matchMuted[1] == "true")
                 PushObsMuteToZoom(cfg, state, isMutedOBS)
-                SyncUIState(cfg, state, isMutedOBS)
+                SyncUIState(cfg, state, isMutedOBS, false)
                 BroadcastHostRelayMuteState(cfg, state)
             }
         }

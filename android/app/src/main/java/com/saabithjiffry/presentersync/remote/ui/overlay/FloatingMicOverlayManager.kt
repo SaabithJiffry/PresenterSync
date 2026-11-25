@@ -76,6 +76,8 @@ class FloatingMicOverlayManager(
 
     private var currentAlpha: Int = currentConfig.opacityLevel
     private var breathDir: Int = -AppConstants.PULSE_STEP_NORMAL
+    private var breathingActive: Boolean = false
+    private var breathingAggressive: Boolean = false
     private var animSeq = 0
     private var muteTransitionAnimator: ValueAnimator? = null
 
@@ -1319,13 +1321,17 @@ class FloatingMicOverlayManager(
     }
 
     private fun startBreathing() {
+        val aggressive = currentConfig.aggressivePulse
+        if (breathingActive && breathingAggressive == aggressive) return
         handler.removeCallbacks(breathRunnable)
-        breathDir = if (currentConfig.aggressivePulse) {
+        breathingActive = true
+        breathingAggressive = aggressive
+        breathDir = if (aggressive) {
             -AppConstants.PULSE_STEP_AGGRESSIVE
         } else {
             -AppConstants.PULSE_STEP_NORMAL
         }
-        val interval = if (currentConfig.aggressivePulse) {
+        val interval = if (aggressive) {
             AppConstants.PULSE_INTERVAL_AGGRESSIVE_MS
         } else {
             AppConstants.PULSE_INTERVAL_NORMAL_MS
@@ -1334,6 +1340,7 @@ class FloatingMicOverlayManager(
     }
 
     private fun stopBreathing() {
+        breathingActive = false
         handler.removeCallbacks(breathRunnable)
     }
 

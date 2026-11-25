@@ -6,6 +6,7 @@
 
 class SessionTimeline {
     static MAX_ENTRIES := 2000
+    static MAX_AUTOSAVE_BYTES := 2097152 ; 2 MB
     static Entries := []
     static SessionStartUtc := ""
     static _NextSeq := 1
@@ -159,6 +160,16 @@ class SessionTimeline {
             . ',"details":"' this._EscapeJson(entry.details) '"}'
     }
 
+    static _RotateAutosaveIfNeeded() {
+        if (Trim(String(this.AutosaveFile)) = "" || !FileExist(this.AutosaveFile))
+            return
+        sz := 0
+        try sz := FileGetSize(this.AutosaveFile)
+        if (sz >= this.MAX_AUTOSAVE_BYTES) {
+            try FileMove(this.AutosaveFile, this.AutosaveFile ".1", 1)
+        }
+    }
+
     static FlushAutosave() {
         if (IsObject(this._AutosaveTimerFn))
             try SetTimer(this._AutosaveTimerFn, 0)
@@ -167,8 +178,8 @@ class SessionTimeline {
             return true
         }
         batch := ""
-        for _, ln in this._PendingAutosaveLines
-            batch .= ln
+        for _, lineText in this._PendingAutosaveLines
+            batch .= lineText
         this._PendingAutosaveLines := []
         if (batch = "")
             return true
@@ -176,6 +187,7 @@ class SessionTimeline {
             SplitPath(this.AutosaveFile, , &parentDir)
             if (parentDir != "" && !DirExist(parentDir))
                 DirCreate(parentDir)
+            this._RotateAutosaveIfNeeded()
             FileAppend(batch, this.AutosaveFile, "UTF-8")
             return true
         } catch {
@@ -199,6 +211,7 @@ class SessionTimeline {
             SplitPath(this.AutosaveFile, , &parentDir)
             if (parentDir != "" && !DirExist(parentDir))
                 DirCreate(parentDir)
+            this._RotateAutosaveIfNeeded()
             FileAppend(this._SerializeEntryJson(entry) "`n", this.AutosaveFile, "UTF-8")
             return true
         } catch {

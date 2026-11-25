@@ -196,16 +196,47 @@ class FloatingHudForegroundService : LifecycleService() {
 
         app.connectionManager.start()
 
+        var lastMediaCfgKey = ""
+        var lastNotifKey = ""
+        var lastTileKey = ""
+        var lastArcadeKey = ""
+        var lastSnakeCfgKey = ""
+
         lifecycleScope.launch {
             combine(app.configStore.config, app.connectionManager.uiState) { cfg, conn ->
                 cfg to conn
             }.collect { (cfg, conn) ->
                 overlayManager.showOrUpdate(cfg, conn)
-                hudSnakeOverlayManager.updateConfig(cfg)
-                arcadeOverlayHost.updateState(cfg, conn.isMuted)
-                backgroundMediaClickerController.update(cfg)
-                updateNotification(cfg, conn)
-                QuickToggleTileService.requestRefresh(this@FloatingHudForegroundService)
+
+                val snakeCfgKey = "${cfg.showIndicator}|${cfg.themeMode}|${cfg.hudColorPreset}|${cfg.opacityLevel}|${cfg.indicatorScale}|${cfg.hideFromScreenCapture}|${cfg.snakeHighScore}"
+                if (snakeCfgKey != lastSnakeCfgKey) {
+                    lastSnakeCfgKey = snakeCfgKey
+                    hudSnakeOverlayManager.updateConfig(cfg)
+                }
+
+                val arcadeKey = "${conn.isMuted}|${cfg.themeMode}|${cfg.hudColorPreset}|${cfg.hideFromScreenCapture}|${cfg.opacityLevel}|${cfg.arcadeHighScores.hashCode()}"
+                if (arcadeKey != lastArcadeKey) {
+                    lastArcadeKey = arcadeKey
+                    arcadeOverlayHost.updateState(cfg, conn.isMuted)
+                }
+
+                val mediaCfgKey = "${cfg.enableBackgroundMediaClicker}|${cfg.backgroundMediaPrimaryAction}|${cfg.hotkeysSuspended}"
+                if (mediaCfgKey != lastMediaCfgKey) {
+                    lastMediaCfgKey = mediaCfgKey
+                    backgroundMediaClickerController.update(cfg)
+                }
+
+                val notifKey = "${conn.connected}|${conn.connStatus}|${conn.isMuted}|${conn.channelType}|${conn.activeScene}|${conn.recState}|${cfg.showIndicator}|${cfg.hudClickThrough}|${conn.isStandby}"
+                if (notifKey != lastNotifKey) {
+                    lastNotifKey = notifKey
+                    updateNotification(cfg, conn)
+                }
+
+                val tileKey = "${conn.connected}|${conn.connStatus}|${conn.isMuted}"
+                if (tileKey != lastTileKey) {
+                    lastTileKey = tileKey
+                    QuickToggleTileService.requestRefresh(this@FloatingHudForegroundService)
+                }
 
                 if (conn.timerState == "stopped") {
                     warned2mThisRun = false
@@ -349,6 +380,7 @@ class FloatingHudForegroundService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
         unregisterWakeReceiver()
         ArcadeVaultManager.unregisterLockListener(vaultLockListener)
         if (::hudSnakeOverlayManager.isInitialized) {

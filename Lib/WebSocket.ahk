@@ -149,6 +149,8 @@ class WebSocket {
 				default:	; WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE
 					data := NumGet(wp, A_PtrSize, 'ptr')
 					size := NumGet(wp, 2 * A_PtrSize, 'uptr')
+					while (ws.__rx_queue.Length >= 256)
+						ws.__rx_queue.RemoveAt(1)
 					if lp == 2
 						ws.__rx_queue.Push({ kind: 2, text: StrGet(data, size, 'utf-8') })
 					else {

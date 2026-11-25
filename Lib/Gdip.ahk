@@ -7,6 +7,9 @@ class Gdip {
     static _token := 0
     static _hModule := 0
     static _fontFamilies := Map()
+    static _fonts := Map()
+    static _stringFormats := Map()
+    static _surfaces := Map()
     static _bi := Buffer(40, 0)
     static _ptWin := Buffer(8, 0)
     static _szWin := Buffer(8, 0)
@@ -15,6 +18,23 @@ class Gdip {
     static _layoutRect := Buffer(16, 0)
     static _boundRect := Buffer(16, 0)
     static _rectF := Buffer(16, 0)
+
+    static ReleaseSurface(hwnd) {
+        k := Integer(hwnd)
+        if (!this._surfaces.Has(k))
+            return false
+        surf := this._surfaces[k]
+        this._surfaces.Delete(k)
+        if (surf.pGraphics)
+            try DllCall("gdiplus\GdipDeleteGraphics", "Ptr", surf.pGraphics)
+        if (surf.hdcMem && surf.obm)
+            try DllCall("SelectObject", "Ptr", surf.hdcMem, "Ptr", surf.obm)
+        if (surf.hbm)
+            try DllCall("DeleteObject", "Ptr", surf.hbm)
+        if (surf.hdcMem)
+            try DllCall("DeleteDC", "Ptr", surf.hdcMem)
+        return true
+    }
 
     static Startup() {
         if (this._token)
@@ -36,9 +56,27 @@ class Gdip {
     }
 
     static Shutdown() {
+        surfKeys := []
+        for hwndKey in this._surfaces
+            surfKeys.Push(hwndKey)
+        for _, hwndKey in surfKeys
+            this.ReleaseSurface(hwndKey)
+
+        for _, pFmt in this._stringFormats {
+            if (pFmt)
+                try DllCall("gdiplus\GdipDeleteStringFormat", "Ptr", pFmt)
+        }
+        this._stringFormats.Clear()
+
+        for _, pFnt in this._fonts {
+            if (pFnt)
+                try DllCall("gdiplus\GdipDeleteFont", "Ptr", pFnt)
+        }
+        this._fonts.Clear()
+
         for _, pFamily in this._fontFamilies {
             if (pFamily)
-                DllCall("gdiplus\GdipDeleteFontFamily", "Ptr", pFamily)
+                try DllCall("gdiplus\GdipDeleteFontFamily", "Ptr", pFamily)
         }
         this._fontFamilies.Clear()
         if (this._token) {
@@ -308,6 +346,35 @@ class Gdip {
         }
     }
 
+    static _GetStringFormat(hAlign := 1, vAlign := 1, trimming := 0) {
+        k := hAlign ":" vAlign ":" trimming
+        if (this._stringFormats.Has(k))
+            return this._stringFormats[k]
+        pFmt := this.CreateTypographicFormat(hAlign, vAlign, trimming)
+        if (pFmt)
+            this._stringFormats[k] := pFmt
+        return pFmt
+    }
+
+    static _GetCachedFont(pFamily, fontName, pxSize, fontStyle) {
+        k := fontName ":" Round(Float(pxSize), 2) ":" fontStyle
+        if (this._fonts.Has(k))
+            return this._fonts[k]
+        pFnt := 0
+        DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", Float(pxSize), "Int", fontStyle, "Int", 2, "Ptr*", &pFnt)
+        if (pFnt) {
+            if (this._fonts.Count >= 64) {
+                for _, oldF in this._fonts {
+                    if (oldF)
+                        try DllCall("gdiplus\GdipDeleteFont", "Ptr", oldF)
+                }
+                this._fonts.Clear()
+            }
+            this._fonts[k] := pFnt
+        }
+        return pFnt
+    }
+
     static DrawText(pGraphics, textStr, fontName, ptSize, fontStyle, argbColor, x, y, w, h, hAlign := 1, vAlign := 1, trimming := 0, autoFit := true) {
         if (textStr = "" || w <= 0 || h <= 0)
             return
@@ -321,11 +388,11 @@ class Gdip {
         pFormat := 0
         pBrush := 0
         try {
-            DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", fitPxSize, "Int", fontStyle, "Int", 2, "Ptr*", &pFont)
+            pFont := this._GetCachedFont(pFamily, fontName, fitPxSize, fontStyle)
             if (!pFont)
                 return
 
-            pFormat := this.CreateTypographicFormat(hAlign, vAlign, trimming)
+            pFormat := this._GetStringFormat(hAlign, vAlign, trimming)
 
             ; Auto-fit font size if measured text or glyph width exceeds available box width w
             if (autoFit && StrLen(textStr) >= 1) {
@@ -335,9 +402,7 @@ class Gdip {
                 measuredW := NumGet(this._boundRect, 8, "Float")
                 if (measuredW > Float(w) && measuredW > 0.0) {
                     fitPxSize := Max(1.0, fitPxSize * (Float(w) / measuredW) * 0.96)
-                    DllCall("gdiplus\GdipDeleteFont", "Ptr", pFont)
-                    pFont := 0
-                    DllCall("gdiplus\GdipCreateFont", "Ptr", pFamily, "Float", fitPxSize, "Int", fontStyle, "Int", 2, "Ptr*", &pFont)
+                    pFont := this._GetCachedFont(pFamily, fontName, fitPxSize, fontStyle)
                     if (!pFont)
                         return
                 }
@@ -351,10 +416,6 @@ class Gdip {
         } finally {
             if (pBrush)
                 DllCall("gdiplus\GdipDeleteBrush", "Ptr", pBrush)
-            if (pFormat)
-                DllCall("gdiplus\GdipDeleteStringFormat", "Ptr", pFormat)
-            if (pFont)
-                DllCall("gdiplus\GdipDeleteFont", "Ptr", pFont)
         }
     }
 
@@ -364,118 +425,146 @@ class Gdip {
         return DllCall("UpdateLayeredWindow", "Ptr", hwnd, "Ptr", 0, "Ptr", 0, "Ptr", 0, "Ptr", 0, "Ptr", 0, "UInt", 0, "Ptr", this._blend, "UInt", 2, "Int")
     }
 
+    static _AcquireSurface(hwnd, w, h) {
+        key := Integer(hwnd)
+        if (this._surfaces.Has(key)) {
+            cand := this._surfaces[key]
+            if (cand.w == w && cand.h == h && cand.hdcMem && cand.hbm && cand.pGraphics)
+                return cand
+            this.ReleaseSurface(key)
+        }
+        if (this._surfaces.Count >= 16) {
+            stale := []
+            for sk in this._surfaces {
+                if (!DllCall("IsWindow", "Ptr", sk))
+                    stale.Push(sk)
+            }
+            for _, sk in stale
+                this.ReleaseSurface(sk)
+        }
+
+        NumPut("UInt", 40, "Int", w, "Int", -h, "UShort", 1, "UShort", 32, this._bi, 0)
+        hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
+        hdcMem := hdcScreen ? DllCall("CreateCompatibleDC", "Ptr", hdcScreen, "Ptr") : 0
+        pBits := 0
+        hbm := (hdcScreen && hdcMem) ? DllCall("CreateDIBSection", "Ptr", hdcScreen, "Ptr", this._bi, "UInt", 0, "Ptr*", &pBits, "Ptr", 0, "UInt", 0, "Ptr") : 0
+        if (hdcScreen)
+            DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcScreen)
+        if (!hdcMem || !hbm) {
+            if (hbm)
+                DllCall("DeleteObject", "Ptr", hbm)
+            if (hdcMem)
+                DllCall("DeleteDC", "Ptr", hdcMem)
+            return ""
+        }
+        obm := DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hbm, "Ptr")
+        pGraphics := 0
+        DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcMem, "Ptr*", &pGraphics)
+        if (!pGraphics) {
+            DllCall("SelectObject", "Ptr", hdcMem, "Ptr", obm)
+            DllCall("DeleteObject", "Ptr", hbm)
+            DllCall("DeleteDC", "Ptr", hdcMem)
+            return ""
+        }
+        surf := { hdcMem: hdcMem, hbm: hbm, obm: obm, pGraphics: pGraphics, w: w, h: h }
+        this._surfaces[key] := surf
+        return surf
+    }
+
     static RenderPill(hwnd, x, y, w, h, bgArgb, borderArgb, alpha, radius, iconCfg := "", labelCfg := "", meterLevel := 0.0, meterArgb := 0, holdProgress := 0.0, holdArgb := 0) {
         if (!this._token)
             this.Startup()
         if (!hwnd || w <= 0 || h <= 0)
             return false
 
-        NumPut("UInt", 40, "Int", w, "Int", -h, "UShort", 1, "UShort", 32, this._bi, 0)
+        surf := this._AcquireSurface(hwnd, w, h)
+        if (!IsObject(surf))
+            return false
 
-        hdcScreen := 0
-        hdcMem := 0
-        hbm := 0
-        obm := 0
-        pGraphics := 0
+        hdcMem := surf.hdcMem
+        pGraphics := surf.pGraphics
         pPath := 0
         pFill := 0
         pMeterBrush := 0
         pPen := 0
         try {
-            hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
-            hdcMem := DllCall("CreateCompatibleDC", "Ptr", hdcScreen, "Ptr")
-            pBits := 0
-            hbm := DllCall("CreateDIBSection", "Ptr", hdcScreen, "Ptr", this._bi, "UInt", 0, "Ptr*", &pBits, "Ptr", 0, "UInt", 0, "Ptr")
-            if (hdcScreen) {
-                DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcScreen)
-                hdcScreen := 0
+            DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 4)
+            DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGraphics, "Int", 4)
+            DllCall("gdiplus\GdipResetClip", "Ptr", pGraphics)
+            DllCall("gdiplus\GdipGraphicsClear", "Ptr", pGraphics, "UInt", 0)
+
+            pad := 0.75
+            pPath := this.CreateRoundedRectPath(pad, pad, w - 1.5, h - 1.5, radius)
+            if (pPath) {
+                DllCall("gdiplus\GdipCreateSolidFill", "UInt", bgArgb, "Ptr*", &pFill)
+                if (pFill) {
+                    DllCall("gdiplus\GdipFillPath", "Ptr", pGraphics, "Ptr", pFill, "Ptr", pPath)
+                    DllCall("gdiplus\GdipDeleteBrush", "Ptr", pFill)
+                    pFill := 0
+                }
+
+                lvl := Min(1.0, Max(0.0, Float(meterLevel)))
+                if (lvl > 0.01) {
+                    barH := Max(2.0, Min(4.5, h * 0.095))
+                    barY := Float(h) - pad - barH
+                    barW := Max(2.0, (Float(w) - 2.0 * pad) * lvl)
+                    DllCall("gdiplus\GdipSetClipPath", "Ptr", pGraphics, "Ptr", pPath, "Int", 0)
+                    DllCall("gdiplus\GdipCreateSolidFill", "UInt", (meterArgb ? meterArgb : 0xD8FFFFFF), "Ptr*", &pMeterBrush)
+                    if (pMeterBrush) {
+                        DllCall("gdiplus\GdipFillRectangle", "Ptr", pGraphics, "Ptr", pMeterBrush, "Float", Float(pad), "Float", barY, "Float", barW, "Float", barH)
+                        DllCall("gdiplus\GdipDeleteBrush", "Ptr", pMeterBrush)
+                        pMeterBrush := 0
+                    }
+                    DllCall("gdiplus\GdipResetClip", "Ptr", pGraphics)
+                }
+
+                DllCall("gdiplus\GdipCreatePen1", "UInt", borderArgb, "Float", 1.5, "Int", 2, "Ptr*", &pPen)
+                if (pPen) {
+                    DllCall("gdiplus\GdipDrawPath", "Ptr", pGraphics, "Ptr", pPen, "Ptr", pPath)
+                    DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
+                    pPen := 0
+                }
+
+                DllCall("gdiplus\GdipDeletePath", "Ptr", pPath)
+                pPath := 0
             }
 
-            if (!hdcMem || !hbm)
-                return false
+            if (Float(holdProgress) > 0.001) {
+                holdCol := holdArgb ? holdArgb : 0xFFF59E0B
+                holdStroke := Max(2.0, Min(4.0, Float(h) * 0.08))
+                this.DrawRoundedRectPerimeterProgress(pGraphics, 0, 0, w, h, radius, holdProgress, holdCol, holdStroke)
+            }
 
-            obm := DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hbm, "Ptr")
-            DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdcMem, "Ptr*", &pGraphics)
-
-            if (pGraphics) {
-                DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 4)
-                DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", pGraphics, "Int", 4)
-                DllCall("gdiplus\GdipGraphicsClear", "Ptr", pGraphics, "UInt", 0)
-
-                pad := 0.75
-                pPath := this.CreateRoundedRectPath(pad, pad, w - 1.5, h - 1.5, radius)
-                if (pPath) {
-                    DllCall("gdiplus\GdipCreateSolidFill", "UInt", bgArgb, "Ptr*", &pFill)
-                    if (pFill) {
-                        DllCall("gdiplus\GdipFillPath", "Ptr", pGraphics, "Ptr", pFill, "Ptr", pPath)
-                        DllCall("gdiplus\GdipDeleteBrush", "Ptr", pFill)
-                        pFill := 0
+            if (IsObject(iconCfg) && iconCfg.text != "") {
+                this.DrawText(pGraphics, iconCfg.text, iconCfg.font, iconCfg.size, 0, iconCfg.color, iconCfg.x, 0, iconCfg.w, h, 1, 1)
+            }
+            if (IsObject(labelCfg)) {
+                hasDraws := labelCfg.HasOwnProp("draws") && IsObject(labelCfg.draws) && labelCfg.draws.Length > 0
+                hasText := labelCfg.HasOwnProp("text") && labelCfg.text != ""
+                if (hasDraws || hasText) {
+                    style := labelCfg.HasOwnProp("bold") && labelCfg.bold ? 1 : 0
+                    align := labelCfg.HasOwnProp("align") ? labelCfg.align : 0
+                    autoFit := labelCfg.HasOwnProp("autoFit") ? labelCfg.autoFit : true
+                    hasClip := labelCfg.HasOwnProp("clipW") && labelCfg.clipW > 0
+                    if (hasClip) {
+                        clipX := labelCfg.HasOwnProp("clipX") ? Float(labelCfg.clipX) : Float(labelCfg.x)
+                        DllCall("gdiplus\GdipSetClipRect", "Ptr", pGraphics, "Float", clipX, "Float", 0.0, "Float", Float(labelCfg.clipW), "Float", Float(h), "Int", 0)
                     }
-
-                    lvl := Min(1.0, Max(0.0, Float(meterLevel)))
-                    if (lvl > 0.01) {
-                        barH := Max(2.0, Min(4.5, h * 0.095))
-                        barY := Float(h) - pad - barH
-                        barW := Max(2.0, (Float(w) - 2.0 * pad) * lvl)
-                        DllCall("gdiplus\GdipSetClipPath", "Ptr", pGraphics, "Ptr", pPath, "Int", 0)
-                        DllCall("gdiplus\GdipCreateSolidFill", "UInt", (meterArgb ? meterArgb : 0xD8FFFFFF), "Ptr*", &pMeterBrush)
-                        if (pMeterBrush) {
-                            DllCall("gdiplus\GdipFillRectangle", "Ptr", pGraphics, "Ptr", pMeterBrush, "Float", Float(pad), "Float", barY, "Float", barW, "Float", barH)
-                            DllCall("gdiplus\GdipDeleteBrush", "Ptr", pMeterBrush)
-                            pMeterBrush := 0
+                    if (hasDraws) {
+                        for _, dItem in labelCfg.draws {
+                            if (IsObject(dItem) && dItem.text != "")
+                                this.DrawText(pGraphics, dItem.text, "Segoe UI", labelCfg.size, style, labelCfg.color, Float(dItem.x), 0, Float(dItem.w), h, align, 1, 0, false)
                         }
+                    } else {
+                        this.DrawText(pGraphics, labelCfg.text, "Segoe UI", labelCfg.size, style, labelCfg.color, labelCfg.x, 0, labelCfg.w, h, align, 1, 0, autoFit)
+                    }
+                    if (hasClip) {
                         DllCall("gdiplus\GdipResetClip", "Ptr", pGraphics)
                     }
-
-                    DllCall("gdiplus\GdipCreatePen1", "UInt", borderArgb, "Float", 1.5, "Int", 2, "Ptr*", &pPen)
-                    if (pPen) {
-                        DllCall("gdiplus\GdipDrawPath", "Ptr", pGraphics, "Ptr", pPen, "Ptr", pPath)
-                        DllCall("gdiplus\GdipDeletePen", "Ptr", pPen)
-                        pPen := 0
-                    }
-
-                    DllCall("gdiplus\GdipDeletePath", "Ptr", pPath)
-                    pPath := 0
                 }
-
-                if (Float(holdProgress) > 0.001) {
-                    holdCol := holdArgb ? holdArgb : 0xFFF59E0B
-                    holdStroke := Max(2.0, Min(4.0, Float(h) * 0.08))
-                    this.DrawRoundedRectPerimeterProgress(pGraphics, 0, 0, w, h, radius, holdProgress, holdCol, holdStroke)
-                }
-
-                if (IsObject(iconCfg) && iconCfg.text != "") {
-                    this.DrawText(pGraphics, iconCfg.text, iconCfg.font, iconCfg.size, 0, iconCfg.color, iconCfg.x, 0, iconCfg.w, h, 1, 1)
-                }
-                if (IsObject(labelCfg)) {
-                    hasDraws := labelCfg.HasOwnProp("draws") && IsObject(labelCfg.draws) && labelCfg.draws.Length > 0
-                    hasText := labelCfg.HasOwnProp("text") && labelCfg.text != ""
-                    if (hasDraws || hasText) {
-                        style := labelCfg.HasOwnProp("bold") && labelCfg.bold ? 1 : 0
-                        align := labelCfg.HasOwnProp("align") ? labelCfg.align : 0
-                        autoFit := labelCfg.HasOwnProp("autoFit") ? labelCfg.autoFit : true
-                        hasClip := labelCfg.HasOwnProp("clipW") && labelCfg.clipW > 0
-                        if (hasClip) {
-                            clipX := labelCfg.HasOwnProp("clipX") ? Float(labelCfg.clipX) : Float(labelCfg.x)
-                            DllCall("gdiplus\GdipSetClipRect", "Ptr", pGraphics, "Float", clipX, "Float", 0.0, "Float", Float(labelCfg.clipW), "Float", Float(h), "Int", 0)
-                        }
-                        if (hasDraws) {
-                            for _, dItem in labelCfg.draws {
-                                if (IsObject(dItem) && dItem.text != "")
-                                    this.DrawText(pGraphics, dItem.text, "Segoe UI", labelCfg.size, style, labelCfg.color, Float(dItem.x), 0, Float(dItem.w), h, align, 1, 0, false)
-                            }
-                        } else {
-                            this.DrawText(pGraphics, labelCfg.text, "Segoe UI", labelCfg.size, style, labelCfg.color, labelCfg.x, 0, labelCfg.w, h, align, 1, 0, autoFit)
-                        }
-                        if (hasClip) {
-                            DllCall("gdiplus\GdipResetClip", "Ptr", pGraphics)
-                        }
-                    }
-                }
-
-                DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
-                pGraphics := 0
             }
+
+            DllCall("gdiplus\GdipFlush", "Ptr", pGraphics, "Int", 1)
 
             NumPut("Int", Integer(x), "Int", Integer(y), this._ptWin, 0)
             NumPut("Int", Integer(w), "Int", Integer(h), this._szWin, 0)
@@ -495,16 +584,6 @@ class Gdip {
                 DllCall("gdiplus\GdipDeleteBrush", "Ptr", pFill)
             if (pPath)
                 DllCall("gdiplus\GdipDeletePath", "Ptr", pPath)
-            if (pGraphics)
-                DllCall("gdiplus\GdipDeleteGraphics", "Ptr", pGraphics)
-            if (hdcMem && obm)
-                DllCall("SelectObject", "Ptr", hdcMem, "Ptr", obm)
-            if (hbm)
-                DllCall("DeleteObject", "Ptr", hbm)
-            if (hdcMem)
-                DllCall("DeleteDC", "Ptr", hdcMem)
-            if (hdcScreen)
-                DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcScreen)
         }
     }
 }

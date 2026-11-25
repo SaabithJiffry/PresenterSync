@@ -425,10 +425,34 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
 
     fitFontPt := Float(state.miniTextSize)
     minFontPt := Max(6.5, Round(7.5 * cfg.IndicatorScale, 1))
-    fullW := Gdip.MeasureTextWidthFloat(state.currentSceneName, "Segoe UI", fitFontPt, 1, false)
-    while (fullW > Float(availW) && fitFontPt > minFontPt) {
-        fitFontPt := Max(minFontPt, Round(fitFontPt - 0.5, 1))
+    cacheKey := state.currentSceneName "|" cfg.IndicatorScale "|" availW "|" fitFontPt
+    if (state.HasOwnProp("_sceneMeasureCache") && IsObject(state._sceneMeasureCache) && state._sceneMeasureCache.key == cacheKey) {
+        cachedM := state._sceneMeasureCache
+        fullW := cachedM.fullW
+        fitFontPt := cachedM.fitFontPt
+        marqueeFontPt := cachedM.marqueeFontPt
+        nameW := cachedM.nameW
+        dotChar := cachedM.dotChar
+        dotW := cachedM.dotW
+    } else {
         fullW := Gdip.MeasureTextWidthFloat(state.currentSceneName, "Segoe UI", fitFontPt, 1, false)
+        while (fullW > Float(availW) && fitFontPt > minFontPt) {
+            fitFontPt := Max(minFontPt, Round(fitFontPt - 0.5, 1))
+            fullW := Gdip.MeasureTextWidthFloat(state.currentSceneName, "Segoe UI", fitFontPt, 1, false)
+        }
+        marqueeFontPt := Max(7.0, Round(8.0 * cfg.IndicatorScale, 1))
+        nameW := (fullW > Float(availW)) ? Gdip.MeasureTextWidthFloat(state.currentSceneName, "Segoe UI", marqueeFontPt, 1, false) : fullW
+        dotChar := Chr(0x2022)
+        dotW := (fullW > Float(availW)) ? Gdip.MeasureTextWidthFloat(dotChar, "Segoe UI", marqueeFontPt, 1, false) : 0.0
+        state._sceneMeasureCache := {
+            key: cacheKey,
+            fullW: fullW,
+            fitFontPt: fitFontPt,
+            marqueeFontPt: marqueeFontPt,
+            nameW: nameW,
+            dotChar: dotChar,
+            dotW: dotW
+        }
     }
 
     sceneTextArgb := Gdip.HexToArgb(state.colors.HasOwnProp("sceneText") ? state.colors.sceneText : "FFFFFF")
@@ -448,10 +472,6 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
             autoFit: true
         }
     } else {
-        marqueeFontPt := Max(7.0, Round(8.0 * cfg.IndicatorScale, 1))
-        nameW := Gdip.MeasureTextWidthFloat(state.currentSceneName, "Segoe UI", marqueeFontPt, 1, false)
-        dotChar := Chr(0x2022)
-        dotW := Gdip.MeasureTextWidthFloat(dotChar, "Segoe UI", marqueeFontPt, 1, false)
         sepGapPx := 28.0 * Float(cfg.IndicatorScale)
         singleSpan := nameW + sepGapPx
         state.sceneMarqueeFontPt := marqueeFontPt
@@ -1642,8 +1662,63 @@ UpdateSafetyWatchdogTimer(cfg, state) {
     return false
 }
 
-SyncUIState(cfg, state, obsIsMuted) {
-    if (state.isMuted != obsIsMuted) {
+ArmHostOptimisticReconcile(cfg, state, delayMs := 300) {
+    if (!IsObject(state))
+        return
+    if (!state.HasOwnProp("_optimisticTimerFn") || !IsObject(state._optimisticTimerFn))
+        state._optimisticTimerFn := _ReconcileHostOptimisticMute.Bind(cfg, state)
+    try SetTimer(state._optimisticTimerFn, -Max(50, Integer(delayMs)))
+}
+
+CancelHostOptimisticReconcile(state) {
+    if (!IsObject(state))
+        return
+    state._optimisticMutePending := false
+    if (state.HasOwnProp("_optimisticTimerFn") && IsObject(state._optimisticTimerFn))
+        try SetTimer(state._optimisticTimerFn, 0)
+}
+
+_ReconcileHostOptimisticMute(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("_optimisticMutePending") || !state._optimisticMutePending)
+        return
+    if (IsObject(state.obsWs) && state.HasOwnProp("obsConnected") && state.obsConnected && IsSet(SendObsRequest) && IsObject(cfg)) {
+        escMic := IsSet(EscapeJsonStr) ? EscapeJsonStr(cfg.HasOwnProp("targetMicName") ? cfg.targetMicName : "Mic/Aux") : "Mic/Aux"
+        SendObsRequest(state.obsWs, "GetInputMute", "ReconcileObsMute", '{"inputName":"' escMic '"}')
+    } else {
+        state._optimisticMutePending := false
+    }
+}
+
+SyncUIState(cfg, state, obsIsMuted, isOptimistic := false) {
+    if (isOptimistic) {
+        state._optimisticMutePending := true
+        changedOpt := (state.isMuted != obsIsMuted)
+        if (changedOpt) {
+            state.isMuted := obsIsMuted
+            cfg.IsMuted := obsIsMuted
+            if (!obsIsMuted) {
+                state.voiceWhileMuted := false
+                state.mutedVoiceAboveSince := 0
+                state.mutedVoiceQuietSince := 0
+            } else {
+                if (state.HasOwnProp("osMicMutedDrift") && state.osMicMutedDrift)
+                    state.osMicMutedDrift := false
+                if (state.HasOwnProp("deadMicWarn") && state.deadMicWarn)
+                    state.deadMicWarn := false
+                state._deadMicSinceTick := 0
+            }
+            PlayMuteAnimation(cfg, state)
+            UpdateVoiceMeterTimer(cfg, state)
+            UpdateMutedVoiceMonitorTimer(cfg, state)
+        }
+        ArmHostOptimisticReconcile(cfg, state, 300)
+        return
+    }
+
+    wasOptimistic := (state.HasOwnProp("_optimisticMutePending") && state._optimisticMutePending)
+    CancelHostOptimisticReconcile(state)
+    stateChanged := (state.isMuted != obsIsMuted)
+    if (stateChanged || wasOptimistic) {
         state.isMuted := obsIsMuted
         cfg.IsMuted := obsIsMuted
         if (cfg.HasMethod("WriteBoolDeferred"))
@@ -1662,9 +1737,11 @@ SyncUIState(cfg, state, obsIsMuted) {
             state._deadMicSinceTick := 0
         }
         BroadcastHostRelayMuteState(cfg, state)
-        PlayMuteAnimation(cfg, state)
-        UpdateVoiceMeterTimer(cfg, state)
-        UpdateMutedVoiceMonitorTimer(cfg, state)
+        if (stateChanged) {
+            PlayMuteAnimation(cfg, state)
+            UpdateVoiceMeterTimer(cfg, state)
+            UpdateMutedVoiceMonitorTimer(cfg, state)
+        }
         if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
             PlayMuteAudioCue(obsIsMuted)
         if (cfg.HasOwnProp("EnableMuteToast") && cfg.EnableMuteToast)

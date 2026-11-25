@@ -805,9 +805,34 @@ class HostCompanionBridge {
         return this._BroadcastJsonToAuthenticated(payload)
     }
 
+    PruneRateLimits(nowTick := "") {
+        now := (nowTick != "" && IsInteger(nowTick)) ? Integer(nowTick) : A_TickCount
+        staleKeys := []
+        for ip, rl in this.rateLimits {
+            lastAct := rl.HasOwnProp("lastActivityTick") ? rl.lastActivityTick : Max(rl.lastUdpTick, rl.lastV1Tick)
+            if (rl.lockUntil <= now && (lastAct == 0 ? (rl.fails == 0) : ((now - lastAct) > 120000)))
+                staleKeys.Push(ip)
+        }
+        for _, k in staleKeys
+            this.rateLimits.Delete(k)
+        if (this.rateLimits.Count > 256) {
+            for ip in this.rateLimits {
+                staleKeys := ip
+                this.rateLimits.Delete(ip)
+                if (this.rateLimits.Count <= 256)
+                    break
+            }
+        }
+    }
+
     _GetRateLimit(ip) {
-        if (!this.rateLimits.Has(ip))
-            this.rateLimits[ip] := { fails: 0, lockUntil: 0, lastUdpTick: 0, lastV1Tick: 0 }
+        if (!this.rateLimits.Has(ip)) {
+            if (this.rateLimits.Count >= 256)
+                this.PruneRateLimits()
+            this.rateLimits[ip] := { fails: 0, lockUntil: 0, lastUdpTick: 0, lastV1Tick: 0, lastActivityTick: A_TickCount }
+        } else {
+            this.rateLimits[ip].lastActivityTick := A_TickCount
+        }
         return this.rateLimits[ip]
     }
 
@@ -853,6 +878,7 @@ class HostCompanionBridge {
             this._CloseClient(cli)
         for cli in toReap
             this._ReapDeadClient(cli, now)
+        this.PruneRateLimits(now)
         if ((now - this.lastAdapterCheckTick) >= 5000) {
             this.lastAdapterCheckTick := now
             latestEps := GetLocalNetworkEndpoints(false)
@@ -1727,6 +1753,17 @@ class HostCompanionBridge {
         c.lastRxTick := A_TickCount
         this._EvictStaleDeviceSockets(c, finalDevId)
 
+        prevDev := this.pairedDevices.Has(finalDevId) ? this.pairedDevices[finalDevId] : ""
+        pairedAtVal := (IsObject(prevDev) && prevDev.pairedAt != "") ? prevDev.pairedAt : FormatTime(, "HH:mm:ss")
+        unchanged := IsObject(prevDev)
+            && prevDev.deviceName == finalName
+            && prevDev.platform == finalPlat
+            && prevDev.ip == c.ip
+            && prevDev.transport == "Bridge WS"
+            && prevDev.token == tokToKeep
+            && ((prevDev.HasOwnProp("customName") && prevDev.customName) == hadCustom)
+            && prevDev.pairedAt == pairedAtVal
+
         this.pairedDevices[finalDevId] := {
             deviceId: finalDevId,
             deviceName: finalName,
@@ -1734,14 +1771,15 @@ class HostCompanionBridge {
             ip: c.ip,
             transport: "Bridge WS",
             token: tokToKeep,
-            pairedAt: (this.pairedDevices.Has(finalDevId) && this.pairedDevices[finalDevId].pairedAt != "") ? this.pairedDevices[finalDevId].pairedAt : FormatTime(, "HH:mm:ss"),
+            pairedAt: pairedAtVal,
             lastSeenTick: A_TickCount,
             connected: true,
             customName: hadCustom
         }
         if (tokToKeep != "")
             this.validTokens[tokToKeep] := finalDevId
-        this.SavePairedDevices()
+        if (!unchanged)
+            this.SavePairedDevices()
         return true
     }
 
@@ -1879,6 +1917,8 @@ class HostCompanionBridge {
                 return
             }
         }
+        if (c.recvLen == 0 && c.recvBuf.Size > 16384)
+            c.recvBuf := Buffer(4096, 0)
     }
 
     _HandleBridgeMessage(c, msg) {

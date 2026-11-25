@@ -13,6 +13,8 @@ class DiagnosticLogger {
     static MaxLogBytes := 5242880 ; 5 MB
     static Breadcrumbs := []
     static MaxBreadcrumbs := 50
+    static PERF_LOG_COOLDOWN_MS := 30000
+    static _LastPerfLogTick := Map()
     static CfgRef := ""
     static StateRef := ""
     static Initialized := false
@@ -71,12 +73,20 @@ class DiagnosticLogger {
         elapsed := A_TickCount - startTick
         this.RecordBreadcrumb(category, action, "elapsed=" elapsed "ms" (detail != "" ? (" | " detail) : ""))
         if (elapsed > thresholdMs) {
-            this.LogIssue(
-                "PERF_LAG",
-                category,
-                action " took " elapsed "ms (threshold " thresholdMs "ms)",
-                "Main-thread timer, COM/WMI call, or hotkey callback exceeded " thresholdMs "ms latency budget." (detail != "" ? (" " detail) : "")
-            )
+            rateKey := String(category) "|" String(action)
+            nowTick := A_TickCount
+            lastTick := this._LastPerfLogTick.Has(rateKey) ? this._LastPerfLogTick[rateKey] : 0
+            if (lastTick = 0 || (nowTick - lastTick) >= this.PERF_LOG_COOLDOWN_MS) {
+                this._LastPerfLogTick[rateKey] := nowTick
+                if (this._LastPerfLogTick.Count > 128)
+                    this._LastPerfLogTick.Clear()
+                this.LogIssue(
+                    "PERF_LAG",
+                    category,
+                    action " took " elapsed "ms (threshold " thresholdMs "ms)",
+                    "Main-thread timer, COM/WMI call, or hotkey callback exceeded " thresholdMs "ms latency budget." (detail != "" ? (" " detail) : "")
+                )
+            }
         }
         return elapsed
     }

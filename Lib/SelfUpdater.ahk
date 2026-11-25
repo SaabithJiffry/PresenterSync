@@ -766,11 +766,62 @@ StartBackgroundUpdateChecker(cfg, targetAssetName := "", intervalSeconds := 8640
     _RunBgUpdateCheck() {
         if (!cfg.AutoCheckUpdates)
             return
-        res := CheckForUpdates(UIConstants.APP_VERSION, "", true, targetAssetName, cfg)
-        skipped := cfg.HasOwnProp("SkippedUpdateVersion") ? cfg.SkippedUpdateVersion : ""
-        if (res.ok && res.updateAvailable && res.latest != skipped) {
-            TrayTip("PresenterSync v" res.latest " is available! Open Tray -> Check for Updates... to 1-click install.", "PresenterSync Update Ready", 1)
+        url := "https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest"
+        req := ""
+        try {
+            req := ComObject("WinHttp.WinHttpRequest.5.1")
+            req.Open("GET", url, true)
+            req.SetRequestHeader("Accept", "application/vnd.github+json")
+            req.SetRequestHeader("User-Agent", "PresenterSync/" UIConstants.APP_VERSION)
+            req.Send()
+        } catch {
+            return
         }
+        startTick := A_TickCount
+        pollFn := ""
+        _PollAsyncUpdate() {
+            if (!IsObject(req)) {
+                if (IsObject(pollFn))
+                    try SetTimer(pollFn, 0)
+                return
+            }
+            done := false
+            try done := !!req.WaitForResponse(0)
+            catch {
+                if (IsObject(pollFn))
+                    try SetTimer(pollFn, 0)
+                req := ""
+                return
+            }
+            if (!done) {
+                if ((A_TickCount - startTick) >= 8000) {
+                    if (IsObject(pollFn))
+                        try SetTimer(pollFn, 0)
+                    try req.Abort()
+                    req := ""
+                }
+                return
+            }
+            if (IsObject(pollFn))
+                try SetTimer(pollFn, 0)
+            try {
+                if (Integer(req.Status) == 200) {
+                    body := String(req.ResponseText)
+                    try cfg.Write("Settings", "LastUpdateCheckEpoch", String(GetCurrentUnixEpoch()))
+                    parsed := ParseGitHubReleaseDetails(body, targetAssetName)
+                    cur := LTrim(String(UIConstants.APP_VERSION), "vV")
+                    if (parsed.ok && CompareSemVer(parsed.version, cur) > 0) {
+                        skipped := cfg.HasOwnProp("SkippedUpdateVersion") ? cfg.SkippedUpdateVersion : ""
+                        if (parsed.version != skipped)
+                            TrayTip("PresenterSync v" parsed.version " is available! Open Tray -> Check for Updates... to 1-click install.", "PresenterSync Update Ready", 1)
+                    }
+                }
+            } finally {
+                req := ""
+            }
+        }
+        pollFn := _PollAsyncUpdate
+        SetTimer(pollFn, 150)
     }
     SetTimer(_RunBgUpdateCheck, -8000)
     return true

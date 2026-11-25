@@ -1430,6 +1430,7 @@ ccRes := ApplyControlCenterSettings(cfgAudit, stAudit, {
     PptHotkey: "Invalid_Key_Name_999",
     HwMuteHotkey: "b"
 }, false, badHkList)
+Sleep(80)
 Assert("ApplyControlCenterSettings rejects bad hotkeys without corrupting config & tears down WS telemetry",
     !ccRes && badHkList.Length == 1 && badHkList[1].prop = "PptHotkey"
     && cfgAudit.PptHotkey == "^F12" && cfgAudit.HwMuteHotkey == "b"
