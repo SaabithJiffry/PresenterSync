@@ -2161,6 +2161,10 @@ ToggleHudClickThrough(cfg, state := "", *) {
         if (state.HasOwnProp("refreshHudFn") && state.refreshHudFn)
             try state.refreshHudFn.Call()
     }
+    if (IsObject(cfg) && cfg.HasOwnProp("HudClickThrough") && cfg.HudClickThrough && IsSet(ShowCaptureSafeMicroToast) && (!IsSet(g_IsTestMode) || !g_IsTestMode)) {
+        hwnd := (IsObject(state) && state.HasOwnProp("MicGui") && IsObject(state.MicGui)) ? state.MicGui.Hwnd : 0
+        ShowCaptureSafeMicroToast("Click-Through Active — Hold Alt / Unlock via Tray", 4000, hwnd)
+    }
 }
 
 ToggleHudAutoDodge(cfg, state := "", *) {

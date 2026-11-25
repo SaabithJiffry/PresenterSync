@@ -183,6 +183,12 @@ try {
     AssertEq(sentFrames.Length, 2, "BroadcastObsFallbackUpdate sends to 2 clients")
     AssertTrue(!InStr(sentFrames[1], "SuperSecretObsPass!") && InStr(sentFrames[2], "SuperSecretObsPass!") > 0, "BroadcastObsFallbackUpdate enforces C3 per client")
 
+    ; 7. M4.3 Modifier-Aware Hotkey Collision Detection
+    AssertTrue(_DoHotkeysCollide("^!m", "!^M"), "M4.3: Reordered modifier chord ^!m collides with !^M")
+    AssertTrue(!_DoHotkeysCollide("^!m", "m"), "M4.3: ^!m does NOT falsely collide with bare m")
+    AssertTrue(!_DoHotkeysCollide("^b", "+b"), "M4.3: ^b does NOT falsely collide with +b")
+    AssertTrue(_DoHotkeysCollide("F5", "$F5"), "M4.3: F5 collides with $F5")
+
 } catch as err {
     g_Failed++
     g_FailMessages.Push("UNCAUGHT EXCEPTION: " err.Message " (" err.File ":" err.Line ")")

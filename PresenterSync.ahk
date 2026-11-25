@@ -614,11 +614,34 @@ BoundHwMuteHotkey := ""
 BoundHwTransitionHotkey := ""
 BoundPassthroughHooks := []
 
+global g_LastExitHotkeyTick := 0
+
+_ConfirmGuardedExitHotkey(cfg) {
+    global g_LastExitHotkeyTick
+    now := A_TickCount
+    if (g_LastExitHotkeyTick > 0 && (now - g_LastExitHotkeyTick) <= 2500) {
+        g_LastExitHotkeyTick := 0
+        ExitTrayApp()
+        return
+    }
+    g_LastExitHotkeyTick := now
+    hkLabel := (IsObject(cfg) && cfg.HasOwnProp("ExitHotkey") && cfg.ExitHotkey != "") ? cfg.ExitHotkey : "Exit Hotkey"
+    if (IsSet(ShowCaptureSafeMicroToast))
+        ShowCaptureSafeMicroToast("Press " hkLabel " again within 2.5s to exit PresenterSync", 2500)
+}
+
 _TryRegisterSystemHotkey(hk, handler) {
     global BoundSystemHotkeys
     if (hk != "" && hk != "None") {
-        try Hotkey(hk, handler, "On")
-        BoundSystemHotkeys.Push(hk)
+        try {
+            Hotkey(hk, handler, "On")
+            BoundSystemHotkeys.Push(hk)
+        } catch as err {
+            if (IsSet(DiagnosticLogger))
+                try DiagnosticLogger.RecordBreadcrumb("Hotkey", "RegisterFailed", hk " -> " err.Message)
+            if (IsSet(ShowCaptureSafeMicroToast) && (!IsSet(g_IsTestMode) || !g_IsTestMode))
+                ShowCaptureSafeMicroToast("Hotkey '" hk "' failed to register (already in use?)", 3200)
+        }
     }
 }
 
@@ -638,7 +661,7 @@ BindSystemHotkeys(cfg, state) {
         try Hotkey(cfg.SuspendHotkey, "On")
         BoundSystemHotkeys.Push(cfg.SuspendHotkey)
     }
-    _TryRegisterSystemHotkey(cfg.ExitHotkey, (*) => ExitTrayApp())
+    _TryRegisterSystemHotkey(cfg.ExitHotkey, (*) => _ConfirmGuardedExitHotkey(cfg))
     _TryRegisterSystemHotkey(cfg.RemoteInfoHotkey, (*) => ShowRemoteCompanionInfo(cfg, state))
     ArcadeVault.RegisterGame("snake", "HUD Snake", "!^+s", "Ctrl+Alt+Shift+S", (c, s) => HudSnake.Toggle(c, s), () => HudSnake.Stop())
     ArcadeVault.RegisterGame("asteroids", "Asteroid Blaster", "!^+a", "Ctrl+Alt+Shift+A", (c, s) => GameAsteroids.Toggle(c, s), () => GameAsteroids.Stop())

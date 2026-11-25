@@ -1440,6 +1440,7 @@ class Config {
     EnableForgottenRecordWatchdog := true
     AutoRecordOnStreamDrop := true
     ConfirmBeforeStopRecording := true
+    ConfirmBeforeLiveCut := true
     AutoMuteOnLock := true
     AutoMuteOnMeetingEnd := false
     AutoMuteOnFirstObsConnect := false
