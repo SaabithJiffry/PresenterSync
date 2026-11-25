@@ -125,7 +125,7 @@ if (!A_IsCompiled && FileExist(A_ScriptDir "\assets\PresenterSync.ico"))
 A_IconTip := "PresenterSync v" UIConstants.APP_VERSION
 
 ; === CONFIGURATION & STATE ===
-AppConfig := Config(A_ScriptDir "\MicOverlay_Config.ini")
+AppConfig := Config()
 Theme.Init(AppConfig.ThemeMode)
 
 ; 1. First-run / missing shortcut setup: Audio Routing Mode + shortcuts

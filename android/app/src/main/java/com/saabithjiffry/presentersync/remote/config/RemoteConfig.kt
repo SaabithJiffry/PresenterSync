@@ -128,6 +128,7 @@ data class RemoteConfig(
     val relayBaseUrl: String = AppConstants.NTFY_BASE_URL,
     val quickNudgePresets: String = "",
     val enableRelayEncryption: Boolean = true,
+    val allowLegacyPlaintextRelay: Boolean = false,
     val sessionPairingCode: String = "",
     val sessionToken: String = "",
     val pairedHostUuid: String = "",
@@ -227,9 +228,32 @@ data class RemoteConfig(
     }
 }
 
-class RemoteConfigStore(context: Context) {
-    private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences("presentersync_remote_prefs", Context.MODE_PRIVATE)
+class RemoteConfigStore private constructor(
+    private val prefs: SharedPreferences,
+    private val secretVault: SecretVault
+) {
+    constructor(context: Context) : this(
+        prefs = context.applicationContext.getSharedPreferences("presentersync_remote_prefs", Context.MODE_PRIVATE),
+        secretVault = SecretVault(
+            context.applicationContext,
+            context.applicationContext.getSharedPreferences("presentersync_remote_prefs", Context.MODE_PRIVATE)
+        )
+    )
+
+    internal constructor(
+        context: Context,
+        cipher: SecretCipher
+    ) : this(
+        prefs = context.applicationContext.getSharedPreferences("presentersync_remote_prefs", Context.MODE_PRIVATE),
+        secretVault = SecretVault(
+            vaultPrefs = context.applicationContext.getSharedPreferences(SecretVault.VAULT_PREFS_NAME, Context.MODE_PRIVATE),
+            legacyPrefs = context.applicationContext.getSharedPreferences("presentersync_remote_prefs", Context.MODE_PRIVATE),
+            cipher = cipher
+        )
+    )
+
+    val vault: SecretVault
+        get() = secretVault
 
     private val _config = MutableStateFlow(loadFromPrefs())
     val config: StateFlow<RemoteConfig> = _config.asStateFlow()
@@ -267,16 +291,17 @@ class RemoteConfigStore(context: Context) {
         return RemoteConfig(
             networkMode = NetworkMode.fromRaw(prefs.getString("networkMode", "LAN")),
             enableRelayFallback = prefs.getBoolean("enableRelayFallback", true),
-            internetPairingCode = prefs.getString("internetPairingCode", "").orEmpty().trim(),
+            internetPairingCode = secretVault.getSecret("internetPairingCode").trim(),
             relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(prefs.getString("relayBaseUrl", AppConstants.NTFY_BASE_URL)),
             enableRelayEncryption = prefs.getBoolean("enableRelayEncryption", true),
-            sessionPairingCode = prefs.getString("sessionPairingCode", "").orEmpty().trim(),
-            sessionToken = prefs.getString("sessionToken", "").orEmpty().trim(),
+            allowLegacyPlaintextRelay = prefs.getBoolean("allowLegacyPlaintextRelay", false),
+            sessionPairingCode = secretVault.getSecret("sessionPairingCode").trim(),
+            sessionToken = secretVault.getSecret("sessionToken").trim(),
             pairedHostUuid = prefs.getString("pairedHostUuid", "").orEmpty().trim(),
             hostAddress = prefs.getString("hostAddress", "127.0.0.1").orEmpty(),
             hostPort = validPort,
             bridgePort = validBridgePort,
-            obsPassword = prefs.getString("obsPassword", "").orEmpty(),
+            obsPassword = secretVault.getSecret("obsPassword"),
             targetMicName = mic,
             heartbeatSeconds = validHb,
             hwMuteHotkey = prefs.getString("hwMuteHotkey", "KEYCODE_B").orEmpty().ifBlank { "KEYCODE_B" },
@@ -330,7 +355,7 @@ class RemoteConfigStore(context: Context) {
             deviceProfileMode = DeviceProfileMode.fromRaw(prefs.getString("deviceProfileMode", "Auto")),
             keepScreenOn = prefs.getBoolean("keepScreenOn", false),
             idleDimAfterSec = prefs.getInt("idleDimAfterSec", 0).coerceIn(0, 600),
-            savedProfiles = SavedHostProfileCodec.fromJsonString(prefs.getString("savedProfilesJson", "").orEmpty()),
+            savedProfiles = SavedHostProfileCodec.fromJsonString(secretVault.getSecret("savedProfilesJson")),
             activeProfileId = prefs.getString("activeProfileId", "").orEmpty().trim(),
             savedX = prefs.getInt("savedX", -1),
             savedY = prefs.getInt("savedY", -1),
@@ -538,20 +563,23 @@ class RemoteConfigStore(context: Context) {
     }
 
     private fun saveToPrefs(c: RemoteConfig) {
+        secretVault.putSecret("internetPairingCode", c.internetPairingCode)
+        secretVault.putSecret("sessionPairingCode", c.sessionPairingCode)
+        secretVault.putSecret("sessionToken", c.sessionToken)
+        secretVault.putSecret("obsPassword", c.obsPassword)
+        secretVault.putSecret("savedProfilesJson", SavedHostProfileCodec.toJsonString(c.savedProfiles))
+
         prefs.edit()
             .putString("networkMode", c.networkMode.label)
             .putBoolean("enableRelayFallback", c.enableRelayFallback)
-            .putString("internetPairingCode", c.internetPairingCode)
             .putString("relayBaseUrl", RelayCrypto.normalizeRelayBaseUrl(c.relayBaseUrl))
             .putString("quickNudgePresets", c.quickNudgePresets)
             .putBoolean("enableRelayEncryption", c.enableRelayEncryption)
-            .putString("sessionPairingCode", c.sessionPairingCode)
-            .putString("sessionToken", c.sessionToken)
+            .putBoolean("allowLegacyPlaintextRelay", c.allowLegacyPlaintextRelay)
             .putString("pairedHostUuid", c.pairedHostUuid)
             .putString("hostAddress", c.hostAddress)
             .putInt("hostPort", c.hostPort)
             .putInt("bridgePort", c.bridgePort)
-            .putString("obsPassword", c.obsPassword)
             .putString("targetMicName", c.targetMicName)
             .putInt("heartbeatSeconds", c.heartbeatSeconds)
             .putString("hwMuteHotkey", c.hwMuteHotkey)
@@ -609,7 +637,6 @@ class RemoteConfigStore(context: Context) {
             .putString("deviceProfileMode", c.deviceProfileMode.rawValue)
             .putBoolean("keepScreenOn", c.keepScreenOn)
             .putInt("idleDimAfterSec", c.idleDimAfterSec)
-            .putString("savedProfilesJson", SavedHostProfileCodec.toJsonString(c.savedProfiles))
             .putString("activeProfileId", c.activeProfileId)
             .putInt("savedX", c.savedX)
             .putInt("savedY", c.savedY)

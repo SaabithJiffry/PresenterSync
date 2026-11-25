@@ -11,6 +11,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\OBS_Network.ahk"
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
+#Include "%A_LineFile%\..\ConfigStore.ahk"
 
 class UIConstants {
     static APP_VERSION := "9.1.0"
@@ -1466,6 +1467,7 @@ class Config {
     RelayBaseUrl := "https://ntfy.sh"
     QuickNudgePresets := "2 min left|Wrap up|Check Mic|Q&A"
     EnableRelayEncryption := true
+    AllowLegacyPlaintextRelay := false
     SessionPairingCode := ""
     HostUuid := ""
     BridgePort := 4456
@@ -1486,31 +1488,14 @@ class Config {
     _deferredWriteTimerFn := ""
 
     __New(filePath := "") {
-        this.ConfigFile := (filePath != "") ? filePath : A_ScriptDir "\MicOverlay_Config.ini"
+        this.ConfigFile := (filePath != "") ? filePath : ConfigStore.ResolveDataDir(A_ScriptDir) "\MicOverlay_Config.ini"
+        ConfigStore.EnsureParentDir(this.ConfigFile)
         this.Load()
     }
 
     IsValidConfigFile(filePath := "") {
         p := (filePath != "") ? filePath : this.ConfigFile
-        if (p = "" || !FileExist(p))
-            return false
-        sz := 0
-        try sz := FileGetSize(p)
-        catch
-            return false
-        if (sz <= 0)
-            return false
-        try {
-            sec := IniRead(p, "Settings", , "")
-            if (sec != "")
-                return true
-        }
-        try {
-            raw := FileRead(p)
-            if (RegExMatch(raw, "im)^\s*\[Settings\]") > 0)
-                return true
-        }
-        return false
+        return ConfigStore.IsValidIniFile(p, "Settings")
     }
 
     BackupToFile(force := true) {
@@ -1519,34 +1504,31 @@ class Config {
         now := A_TickCount
         if (!force && this._lastBackupTick != 0 && (now - this._lastBackupTick) < 5000)
             return false
-        if (!this.IsValidConfigFile(this.ConfigFile))
-            return false
-        bakPath := this.ConfigFile ".bak"
-        tmpPath := bakPath ".tmp"
-        try {
-            FileCopy(this.ConfigFile, tmpPath, 1)
-            FileMove(tmpPath, bakPath, 1)
+        if (ConfigStore.BackupIniFile(this.ConfigFile, "Settings")) {
             this._lastBackupTick := now
             return true
-        } catch {
-            try if FileExist(tmpPath)
-                FileDelete(tmpPath)
-            return false
         }
+        return false
     }
 
     Read(section, key, defaultVal := "") {
         k := section "`n" key
         if (this._deferredWrites.Has(k))
-            return String(this._deferredWrites[k].val)
-        return IniRead(this.ConfigFile, section, key, defaultVal)
+            raw := String(this._deferredWrites[k].val)
+        else
+            raw := IniRead(this.ConfigFile, section, key, defaultVal)
+        if (ConfigStore.IsSecretKey(section, key))
+            return ConfigStore.UnprotectSecret(raw, section "." key)
+        return raw
     }
 
     Write(section, key, val) {
         k := section "`n" key
         if (this._deferredWrites.Has(k))
             this._deferredWrites.Delete(k)
-        IniWrite(val, this.ConfigFile, section, key)
+        ConfigStore.EnsureParentDir(this.ConfigFile)
+        writeVal := ConfigStore.IsSecretKey(section, key) ? ConfigStore.ProtectSecret(val) : val
+        IniWrite(writeVal, this.ConfigFile, section, key)
         this.BackupToFile(false)
     }
 
@@ -1583,6 +1565,7 @@ class Config {
         k := section "`n" key
         if (this._deferredWrites.Has(k))
             this._deferredWrites.Delete(k)
+        ConfigStore.EnsureParentDir(this.ConfigFile)
         IniWrite(value ? 1 : 0, this.ConfigFile, section, key)
         this.BackupToFile(false)
     }
@@ -1602,10 +1585,12 @@ class Config {
             return 0
         pending := this._deferredWrites
         this._deferredWrites := Map()
+        ConfigStore.EnsureParentDir(this.ConfigFile)
         written := 0
         for _, entry in pending {
             try {
-                IniWrite(entry.val, this.ConfigFile, entry.sec, entry.key)
+                wVal := ConfigStore.IsSecretKey(entry.sec, entry.key) ? ConfigStore.ProtectSecret(entry.val) : entry.val
+                IniWrite(wVal, this.ConfigFile, entry.sec, entry.key)
                 written += 1
             }
         }
@@ -1615,17 +1600,8 @@ class Config {
     }
 
     Load() {
-        bakPath := this.ConfigFile ".bak"
-        if (!this.IsValidConfigFile(this.ConfigFile) && this.IsValidConfigFile(bakPath)) {
-            try {
-                SplitPath(this.ConfigFile, , &cfgDir)
-                if (cfgDir != "" && !DirExist(cfgDir))
-                    DirCreate(cfgDir)
-                FileCopy(bakPath, this.ConfigFile, 1)
-                if (IsSet(DiagnosticLogger))
-                    try DiagnosticLogger.RecordBreadcrumb("Config", "RecoveredFromBak", this.ConfigFile)
-            }
-        }
+        ConfigStore.RecoverIniFromBackup(this.ConfigFile, "Settings")
+        ConfigStore.MigrateIniSchema(this.ConfigFile, "Settings")
         this.AudioRoutingMode := this.ReadInt("Settings", "AudioRoutingMode", 0)
         if (this.AudioRoutingMode < 0 || this.AudioRoutingMode > 3)
             this.AudioRoutingMode := 0
@@ -1770,6 +1746,7 @@ class Config {
         this.QuickNudgePresets := this.Read("Settings", "QuickNudgePresets", "2 min left|Wrap up|Check Mic|Q&A")
         this.RelayBaseUrl := IsSet(NormalizeRelayBaseUrl) ? NormalizeRelayBaseUrl(rawRelayUrl) : (rawRelayUrl != "" ? RTrim(rawRelayUrl, "/") : "https://ntfy.sh")
         this.EnableRelayEncryption := this.ReadBool("Settings", "EnableRelayEncryption", true)
+        this.AllowLegacyPlaintextRelay := this.ReadBool("Settings", "AllowLegacyPlaintextRelay", false)
         this.InternetPairingCode := Trim(this.Read("Settings", "InternetPairingCode", ""))
         if (this.InternetPairingCode = "") {
             this.InternetPairingCode := GenerateInternetPairingCode()
@@ -1802,6 +1779,10 @@ class Config {
         this.savedY := this.Read("Position", "Y", "Default")
         this.savedSecondaryX := this.Read("SecondaryPosition", "X", "Default")
         this.savedSecondaryY := this.Read("SecondaryPosition", "Y", "Default")
+        if (FileExist(this.ConfigFile)) {
+            if (Trim(IniRead(this.ConfigFile, "ConfigMeta", "SchemaVersion", "")) = "")
+                try IniWrite(ConfigStore.CURRENT_SCHEMA_VERSION, this.ConfigFile, "ConfigMeta", "SchemaVersion")
+        }
         this.BackupToFile(true)
     }
 
@@ -1952,6 +1933,7 @@ class Config {
             { sec: "Settings", key: "RelayBaseUrl", prop: "RelayBaseUrl", kind: "str" },
             { sec: "Settings", key: "QuickNudgePresets", prop: "QuickNudgePresets", kind: "str" },
             { sec: "Settings", key: "EnableRelayEncryption", prop: "EnableRelayEncryption", kind: "bool" },
+            { sec: "Settings", key: "AllowLegacyPlaintextRelay", prop: "AllowLegacyPlaintextRelay", kind: "bool" },
             { sec: "Settings", key: "EnableRemoteConnections", prop: "EnableRemoteConnections", kind: "bool" },
             { sec: "Settings", key: "IncludeVirtualAdapters", prop: "IncludeVirtualAdapters", kind: "bool" },
             { sec: "Settings", key: "RemoteInfoHotkey", prop: "RemoteInfoHotkey", kind: "str" },

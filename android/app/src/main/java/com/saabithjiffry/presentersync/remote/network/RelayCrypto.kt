@@ -7,7 +7,9 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.Cipher
+import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.math.abs
 
@@ -25,6 +27,13 @@ data class RelayTelemetryState(
     val recSeconds: Int = 0,
     val streamDropWarn: Boolean = false,
     val voiceWhileMuted: Boolean = false,
+    val osMicMutedDrift: Boolean = false,
+    val lowDiskWarnLevel: Int = 0,
+    val lowDiskMb: Int = -1,
+    val deadMicWarn: Boolean = false,
+    val slideIndex: Int = 0,
+    val slideTotal: Int = 0,
+    val slideTitle: String = "",
     val timerState: String = "stopped",
     val timerRemainingSec: Int = 600,
     val timerPresetSec: Int = 600,
@@ -37,6 +46,7 @@ data class ParsedRelayEnvelope(
     val encrypted: Boolean,
     val authError: Boolean = false,
     val replayRejected: Boolean = false,
+    val clockSkewRejected: Boolean = false,
     val error: String = "",
     val src: String = "",
     val cmd: String = "",
@@ -53,10 +63,14 @@ class RelayReplayGuard(
     private val maxSenders: Int = 64
 ) {
     private val lastSeqBySender = LinkedHashMap<String, Long>()
+    @Volatile
+    var lastRejectReason: String = ""
+        private set
 
     @Synchronized
     fun reset() {
         lastSeqBySender.clear()
+        lastRejectReason = ""
     }
 
     @Synchronized
@@ -66,11 +80,19 @@ class RelayReplayGuard(
         ts: Long = 0L,
         nowEpochSec: Long = System.currentTimeMillis() / 1000L
     ): Boolean {
-        if (seq <= 0L) return false
+        lastRejectReason = ""
+        if (seq <= 0L) {
+            lastRejectReason = "bad_seq"
+            return false
+        }
         val key = senderKey.trim().ifEmpty { "default" }
         val prev = lastSeqBySender[key]
-        if (prev != null && seq <= prev) return false
+        if (prev != null && seq <= prev) {
+            lastRejectReason = "replay_seq"
+            return false
+        }
         if (ts >= 1_000_000_000L && abs(nowEpochSec - ts) > maxSkewSec) {
+            lastRejectReason = "clock_skew"
             return false
         }
         if (prev == null && lastSeqBySender.size >= maxSenders) {
@@ -85,6 +107,8 @@ class RelayReplayGuard(
 object RelayCrypto {
     const val DEFAULT_RELAY_BASE_URL = "https://ntfy.sh"
     const val GCM_ENVELOPE_PREFIX = "PSGCM1"
+    const val GCM_V2_ENVELOPE_PREFIX = "PSGCM2"
+    const val PBKDF2_ITERATIONS = 10_000
     const val GCM_IV_BYTES = 12
     const val GCM_TAG_BITS = 128
 
@@ -92,8 +116,12 @@ object RelayCrypto {
     private val nonAlnumRegex = Regex("[^a-zA-Z0-9]")
     private val relayPacketRegex = Regex("""PSRELAY\|([^|"]*)\|([^|"]*)\|([^|"]*)\|([^|"\r\n\s}]*)""")
     private val gcmEnvelopeRegex = Regex("""PSGCM1\|([A-Za-z0-9+/=]+)\|([A-Za-z0-9+/=]+)""")
+    private val gcmV2EnvelopeRegex = Regex("""PSGCM2\|([A-Za-z0-9+/=]+)\|([A-Za-z0-9+/=]+)""")
     private val strictBase64Regex = Regex("""^[A-Za-z0-9+/=]+$""")
     private val validHttpBaseRegex = Regex("""^https?://[^\s/?#]+.*$""", RegexOption.IGNORE_CASE)
+    private val v2KeyCache = object : LinkedHashMap<String, ByteArray>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>?): Boolean = size > 32
+    }
 
     fun sha256Base64(input: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -152,10 +180,34 @@ object RelayCrypto {
             .digest(material.toByteArray(StandardCharsets.UTF_8))
     }
 
+    fun deriveAesGcmKey32V2(
+        pairingCode: String,
+        secretSalt: String = "",
+        iterations: Int = PBKDF2_ITERATIONS
+    ): ByteArray {
+        val cleanCode = pairingCode.trim()
+        val cleanSalt = secretSalt.trim()
+        val safeIter = iterations.coerceAtLeast(1000)
+        val cacheKey = "$safeIter|$cleanCode|$cleanSalt"
+        synchronized(v2KeyCache) {
+            v2KeyCache[cacheKey]?.let { return it.copyOf() }
+        }
+        val pwChars = "$cleanCode|$cleanSalt".toCharArray()
+        val saltBytes = "PS_GCM_V2_SALT|$cleanCode".toByteArray(StandardCharsets.UTF_8)
+        val derived = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            .generateSecret(PBEKeySpec(pwChars, saltBytes, safeIter, 256))
+            .encoded
+        synchronized(v2KeyCache) {
+            v2KeyCache[cacheKey] = derived.copyOf()
+        }
+        return derived
+    }
+
     fun aesGcmEncryptBytes(
         plaintext: String,
         key32: ByteArray,
-        ivOverride: ByteArray? = null
+        ivOverride: ByteArray? = null,
+        aad: String = ""
     ): Pair<String, String> {
         require(key32.size == 32) { "AES-256-GCM key must be exactly 32 bytes" }
         val iv = if (ivOverride != null) {
@@ -166,11 +218,19 @@ object RelayCrypto {
         }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key32, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+        if (aad.isNotEmpty()) {
+            cipher.updateAAD(aad.toByteArray(StandardCharsets.UTF_8))
+        }
         val ctAndTag = cipher.doFinal(plaintext.toByteArray(StandardCharsets.UTF_8))
         return Base64.getEncoder().encodeToString(iv) to Base64.getEncoder().encodeToString(ctAndTag)
     }
 
-    fun aesGcmDecryptBytes(b64Iv: String, b64CtAndTag: String, key32: ByteArray): String? {
+    fun aesGcmDecryptBytes(
+        b64Iv: String,
+        b64CtAndTag: String,
+        key32: ByteArray,
+        aad: String = ""
+    ): String? {
         if (key32.size != 32) return null
         val ivClean = b64Iv.trim()
         val ctClean = b64CtAndTag.trim()
@@ -181,6 +241,9 @@ object RelayCrypto {
             if (iv.size != GCM_IV_BYTES || ctAndTag.size < 16) return null
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key32, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            if (aad.isNotEmpty()) {
+                cipher.updateAAD(aad.toByteArray(StandardCharsets.UTF_8))
+            }
             val plain = cipher.doFinal(ctAndTag)
             String(plain, StandardCharsets.UTF_8)
         } catch (_: Exception) {
@@ -188,7 +251,7 @@ object RelayCrypto {
         }
     }
 
-    fun encryptRelayPayload(
+    fun encryptRelayPayloadV1(
         plainJson: String,
         pairingCode: String,
         secretSalt: String = "",
@@ -199,12 +262,35 @@ object RelayCrypto {
         return "$GCM_ENVELOPE_PREFIX|$b64Iv|$b64CtAndTag"
     }
 
+    fun encryptRelayPayload(
+        plainJson: String,
+        pairingCode: String,
+        secretSalt: String = "",
+        ivOverride: ByteArray? = null,
+        envelopeVersion: Int = 2
+    ): String {
+        if (envelopeVersion == 1) {
+            return encryptRelayPayloadV1(plainJson, pairingCode, secretSalt, ivOverride)
+        }
+        val cleanCode = pairingCode.trim()
+        val key32 = deriveAesGcmKey32V2(cleanCode, secretSalt)
+        val aad = "$GCM_V2_ENVELOPE_PREFIX|$cleanCode"
+        val (b64Iv, b64CtAndTag) = aesGcmEncryptBytes(plainJson, key32, ivOverride, aad)
+        return "$GCM_V2_ENVELOPE_PREFIX|$b64Iv|$b64CtAndTag"
+    }
+
     fun decryptRelayPayload(
         envelope: String,
         pairingCode: String,
         secretSalt: String = ""
     ): String? {
         val normalized = envelope.replace("\\/", "/")
+        val matchV2 = gcmV2EnvelopeRegex.find(normalized)
+        if (matchV2 != null) {
+            val cleanCode = pairingCode.trim()
+            val key32 = deriveAesGcmKey32V2(cleanCode, secretSalt)
+            return aesGcmDecryptBytes(matchV2.groupValues[1], matchV2.groupValues[2], key32, "$GCM_V2_ENVELOPE_PREFIX|$cleanCode")
+        }
         val match = gcmEnvelopeRegex.find(normalized) ?: return null
         val key32 = deriveAesGcmKey32(pairingCode, secretSalt)
         return aesGcmDecryptBytes(match.groupValues[1], match.groupValues[2], key32)
@@ -277,10 +363,10 @@ object RelayCrypto {
         pairingCode: String,
         password: String = "",
         replayGuard: RelayReplayGuard? = null,
-        allowLegacy: Boolean = true,
+        allowLegacy: Boolean = false,
         nowEpochSec: Long = System.currentTimeMillis() / 1000L
     ): ParsedRelayEnvelope? {
-        if (rawMsg.contains("$GCM_ENVELOPE_PREFIX|")) {
+        if (rawMsg.contains("$GCM_V2_ENVELOPE_PREFIX|") || rawMsg.contains("$GCM_ENVELOPE_PREFIX|")) {
             val cleanCode = pairingCode.trim().uppercase()
             val plain = decryptRelayPayload(rawMsg, cleanCode, password)
                 ?: return ParsedRelayEnvelope(
@@ -317,11 +403,13 @@ object RelayCrypto {
             if (replayGuard != null) {
                 val senderKey = if (sid.isNotEmpty()) "$src:$sid" else src
                 if (!replayGuard.accept(senderKey, seq, ts, nowEpochSec)) {
+                    val isSkew = replayGuard.lastRejectReason == "clock_skew"
                     return ParsedRelayEnvelope(
                         ok = false,
                         encrypted = true,
-                        replayRejected = true,
-                        error = "replay_rejected",
+                        replayRejected = !isSkew,
+                        clockSkewRejected = isSkew,
+                        error = if (isSkew) "clock_skew" else "replay_rejected",
                         src = src,
                         cmd = cmd,
                         seq = seq
@@ -330,7 +418,8 @@ object RelayCrypto {
             }
             val hasTelemetry = obj.has("recSeconds") || obj.has("streamDropWarn") ||
                 obj.has("voiceWhileMuted") || obj.has("scenes") || obj.has("activeScene") ||
-                obj.has("isStandby") || obj.has("recState")
+                obj.has("isStandby") || obj.has("recState") ||
+                obj.has("osMicMutedDrift") || obj.has("slideIndex")
             val telemetry = if (hasTelemetry) {
                 val scenesList = mutableListOf<String>()
                 val arr: JSONArray? = obj.optJSONArray("scenes")
@@ -347,6 +436,13 @@ object RelayCrypto {
                     recSeconds = obj.optInt("recSeconds", 0).coerceAtLeast(0),
                     streamDropWarn = obj.optBoolean("streamDropWarn", false),
                     voiceWhileMuted = obj.optBoolean("voiceWhileMuted", false),
+                    osMicMutedDrift = obj.optBoolean("osMicMutedDrift", false),
+                    lowDiskWarnLevel = obj.optInt("lowDiskWarnLevel", 0),
+                    lowDiskMb = obj.optInt("lowDiskMb", -1),
+                    deadMicWarn = obj.optBoolean("deadMicWarn", false),
+                    slideIndex = obj.optInt("slideIndex", 0).coerceAtLeast(0),
+                    slideTotal = obj.optInt("slideTotal", 0).coerceAtLeast(0),
+                    slideTitle = obj.optString("slideTitle", ""),
                     timerState = obj.optString("timerState", "stopped").ifBlank { "stopped" },
                     timerRemainingSec = obj.optInt("timerRemainingSec", 600),
                     timerPresetSec = obj.optInt("timerPresetSec", 600).coerceAtLeast(60),

@@ -1137,18 +1137,26 @@ stMode2Host := {
     relayMockWs: { sendText: (this, pkt) => mode2Packets.Push(pkt) }
 }
 authMode2 := GetInternetRelayAuthToken(cfgMode2Host.InternetPairingCode, cfgMode2Host.obsPassword)
-pktMode2Toggle := FormatRelayPacket("remote", "toggle_mute", "1", authMode2)
-HandleHostRelayMessage(cfgMode2Host, stMode2Host, stMode2Host.relayWs, pktMode2Toggle)
-mode2LastPkt := mode2Packets.Length >= 1 ? ParseRelayPacket(mode2Packets[mode2Packets.Length]) : ""
-Assert("Mode 2 HandleHostRelayMessage toggles muted state without OBS and broadcasts host packet",
-    stMode2Host.isMuted == true && IsObject(mode2LastPkt) && mode2LastPkt.src == "host" && mode2LastPkt.cmd == "state" && mode2LastPkt.data == "1")
+remMode2Sim := { _relayOutSeq: 0, _relaySessionId: "m2sim01" }
+remMode2Guard := RelayReplayGuard()
+; Default AllowLegacyPlaintextRelay=false rejects plaintext PSRELAY
+pktMode2Plain := FormatRelayPacket("remote", "toggle_mute", "1", authMode2)
+HandleHostRelayMessage(cfgMode2Host, stMode2Host, stMode2Host.relayWs, pktMode2Plain)
+plainRejectedOk := (stMode2Host.isMuted == false && mode2Packets.Length == 0)
 
-pktMode2Sync := FormatRelayPacket("remote", "sync_req", "0", authMode2)
+; Encrypted PSGCM2 works out of the box and broadcasts encrypted state
+pktMode2Toggle := FormatEncryptedRelayPacket("remote", "toggle_mute", "1", cfgMode2Host.InternetPairingCode, cfgMode2Host.obsPassword, remMode2Sim)
+HandleHostRelayMessage(cfgMode2Host, stMode2Host, stMode2Host.relayWs, pktMode2Toggle)
+mode2LastPkt := mode2Packets.Length >= 1 ? ParseRelayEnvelope(mode2Packets[mode2Packets.Length], cfgMode2Host.InternetPairingCode, cfgMode2Host.obsPassword, remMode2Guard, false) : ""
+Assert("Mode 2 HandleHostRelayMessage rejects plaintext by default and toggles muted state via encrypted packet",
+    plainRejectedOk && stMode2Host.isMuted == true && IsObject(mode2LastPkt) && mode2LastPkt.ok && mode2LastPkt.src == "host" && mode2LastPkt.cmd == "state" && mode2LastPkt.isMuted == true)
+
+pktMode2Sync := FormatEncryptedRelayPacket("remote", "sync_req", "0", cfgMode2Host.InternetPairingCode, cfgMode2Host.obsPassword, remMode2Sim)
 mode2Packets := []
 HandleHostRelayMessage(cfgMode2Host, stMode2Host, stMode2Host.relayWs, pktMode2Sync)
-mode2SyncPkt := mode2Packets.Length == 1 ? ParseRelayPacket(mode2Packets[1]) : ""
+mode2SyncPkt := mode2Packets.Length == 1 ? ParseRelayEnvelope(mode2Packets[1], cfgMode2Host.InternetPairingCode, cfgMode2Host.obsPassword, remMode2Guard, false) : ""
 Assert("Mode 2 sync_req responds even when RemoteNetworkMode=LAN",
-    mode2Packets.Length == 1 && IsObject(mode2SyncPkt) && mode2SyncPkt.src == "host" && mode2SyncPkt.cmd == "state" && mode2SyncPkt.data == "1")
+    mode2Packets.Length == 1 && IsObject(mode2SyncPkt) && mode2SyncPkt.ok && mode2SyncPkt.src == "host" && mode2SyncPkt.cmd == "state" && mode2SyncPkt.isMuted == true)
 
 remCfgLan := { NetworkMode: "LAN", EnableRelayFallback: true, InternetPairingCode: "PS-MODE2-234" }
 remStateLan := { usingRelayFallback: false }
@@ -1519,8 +1527,8 @@ ccAuditLight := ShowControlCenterWindow(cfgAudit, stAudit)
 PostMessage(0x0010, 0, 0, ccAuditLight.Hwnd)
 Sleep(50)
 Theme.SetMode("System")
-Assert("Control Center registers all 44 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
-    ccChkTabCount == 44 && ccUiOk && Theme.SuspendLockCount == 0)
+Assert("Control Center registers all 45 tab Checkboxes, warns on invalid hotkey interactively, & balances Theme lock",
+    ccChkTabCount == 45 && ccUiOk && Theme.SuspendLockCount == 0)
 
 ; 21.6 Scope Guard: PresenterSync_Remote remains strictly 1-tier Mic HUD (no multi-tier GUIs)
 remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
@@ -2347,8 +2355,8 @@ ExecuteHostRemoteSetMute(cfgSet, stSet, true)
 setOk1 := (stSet.isMuted == true)
 ExecuteHostRemoteSetMute(cfgSet, stSet, true) ; idempotent when already muted
 setOk2 := (stSet.isMuted == true)
-tokSet := GetInternetRelayAuthToken(cfgSet.InternetPairingCode, cfgSet.ObsPassword)
-HandleHostRelayMessage(cfgSet, stSet, "", FormatRelayPacket("remote", "set_mute", "0", tokSet))
+remSetSim := { _relayOutSeq: 0, _relaySessionId: "setm01" }
+HandleHostRelayMessage(cfgSet, stSet, "", FormatEncryptedRelayPacket("remote", "set_mute", "0", cfgSet.InternetPairingCode, cfgSet.ObsPassword, remSetSim))
 setOk3 := (stSet.isMuted == false)
 Assert("ExecuteHostRemoteSetMute and relay set_mute are idempotent and state-accurate", setOk1 && setOk2 && setOk3)
 
@@ -2819,13 +2827,14 @@ stM7.relayMockWs := mockRelayM7
 cfgM7.RemoteNetworkMode := "Internet"
 cfgM7.InternetPairingCode := "PS-M7-RELAY"
 cfgM7.obsPassword := "PwM7"
-authTokM7 := GetInternetRelayAuthToken(cfgM7.InternetPairingCode, cfgM7.obsPassword)
-HandleHostRelayMessage(cfgM7, stM7, "", FormatRelayPacket("remote", "switch_scene", "Main Slides", authTokM7))
+remM7Sim := { _relayOutSeq: 0, _relaySessionId: "m7sim01" }
+remM7Guard := RelayReplayGuard()
+HandleHostRelayMessage(cfgM7, stM7, "", FormatEncryptedRelayPacket("remote", "switch_scene", "Main Slides", cfgM7.InternetPairingCode, cfgM7.obsPassword, remM7Sim))
 BroadcastHostStageNudge(cfgM7, stM7, "Wrap up Q&A", "Host", "F59E0B")
 relayHasNudge := false
 for sentPkt in mockRelayM7.sent {
-    parsedSent := ParseRelayPacket(sentPkt)
-    if (IsObject(parsedSent) && parsedSent.cmd == "nudge" && parsedSent.data == "Host;Wrap up Q&A")
+    parsedSent := ParseRelayEnvelope(sentPkt, cfgM7.InternetPairingCode, cfgM7.obsPassword, remM7Guard, false)
+    if (IsObject(parsedSent) && parsedSent.ok && parsedSent.cmd == "nudge" && parsedSent.data == "Host;Wrap up Q&A")
         relayHasNudge := true
 }
 Assert("WAN Relay executes M7 Director commands and broadcasts dir_state & stage nudges",

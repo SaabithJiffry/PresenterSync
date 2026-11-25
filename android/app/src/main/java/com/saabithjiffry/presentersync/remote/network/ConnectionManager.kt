@@ -1012,6 +1012,7 @@ class ConnectionManager(
             password = cfg.obsPassword,
             httpBaseUrl = cfg.relayBaseUrl,
             enableEncryption = cfg.enableRelayEncryption,
+            allowLegacyPlaintext = cfg.allowLegacyPlaintextRelay,
             callbacks = object : RelaySessionCallbacks {
                 override fun onRelayConnected() {
                     if (gen != generation.get()) return
@@ -1053,10 +1054,13 @@ class ConnectionManager(
                             recSeconds = telemetry.recSeconds,
                             streamDropWarn = telemetry.streamDropWarn,
                             voiceWhileMuted = telemetry.voiceWhileMuted,
-                            osMicMutedDrift = _uiState.value.osMicMutedDrift,
-                            lowDiskWarnLevel = _uiState.value.lowDiskWarnLevel,
-                            lowDiskMb = _uiState.value.lowDiskMb,
-                            deadMicWarn = _uiState.value.deadMicWarn,
+                            osMicMutedDrift = telemetry.osMicMutedDrift,
+                            lowDiskWarnLevel = telemetry.lowDiskWarnLevel,
+                            lowDiskMb = telemetry.lowDiskMb,
+                            deadMicWarn = telemetry.deadMicWarn,
+                            slideIndex = telemetry.slideIndex,
+                            slideTotal = telemetry.slideTotal,
+                            slideTitle = telemetry.slideTitle,
                             activeScene = telemetry.activeScene.ifBlank { _uiState.value.activeScene },
                             scenes = telemetry.scenes.ifEmpty { _uiState.value.scenes },
                             isStandby = telemetry.isStandby,
@@ -1066,6 +1070,12 @@ class ConnectionManager(
                             timerPresetSec = telemetry.timerPresetSec
                         )
                     )
+                }
+
+                override fun onRelayWarning(code: String, message: String) {
+                    if (gen != generation.get()) return
+                    DiagnosticLogger.recordBreadcrumb("Relay", code, message)
+                    _events.tryEmit(RemoteEvent.ToastMessage(message))
                 }
 
                 override fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {
@@ -1506,13 +1516,25 @@ class ConnectionManager(
     }
 
     fun sendPptNext(source: String = "quick_menu"): Boolean =
-        sendBridgeDeckAction { it.sendPptNext(source) }
+        sendDirectorAction(
+            bridgeAction = { it.sendPptNext(source) },
+            obsAction = null,
+            relayAction = { it.sendPptNext() }
+        )
 
     fun sendPptPrev(source: String = "quick_menu"): Boolean =
-        sendBridgeDeckAction { it.sendPptPrev(source) }
+        sendDirectorAction(
+            bridgeAction = { it.sendPptPrev(source) },
+            obsAction = null,
+            relayAction = { it.sendPptPrev() }
+        )
 
     fun sendStartSlideshow(source: String = "podium"): Boolean =
-        sendBridgeDeckAction { it.sendStartSlideshow(source) }
+        sendDirectorAction(
+            bridgeAction = { it.sendStartSlideshow(source) },
+            obsAction = null,
+            relayAction = { it.sendStartSlideshow() }
+        )
 
     fun sendToggleRecord(source: String = "quick_menu"): Boolean =
         sendDirectorAction(
@@ -1851,7 +1873,7 @@ class ConnectionManager(
                             pairingCode = cleanPair,
                             password = password,
                             replayGuard = null,
-                            allowLegacy = true
+                            allowLegacy = configStore.current.allowLegacyPlaintextRelay
                         )
                         if (pkt != null) {
                             if (!pkt.ok) {

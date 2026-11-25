@@ -29,6 +29,7 @@ interface RelaySessionCallbacks {
         activeScene: String
     ) {}
     fun onRelayTelemetryState(telemetry: RelayTelemetryState) {}
+    fun onRelayWarning(code: String, message: String) {}
     fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {}
     fun onCloseRemoteSignal()
     fun onRelayDisconnected(reason: String)
@@ -41,7 +42,8 @@ class RelayClient(
     private val callbacks: RelaySessionCallbacks,
     private val httpBaseUrl: String = AppConstants.NTFY_BASE_URL,
     private val wsBaseUrl: String? = null,
-    private val enableEncryption: Boolean = true
+    private val enableEncryption: Boolean = true,
+    private val allowLegacyPlaintext: Boolean = false
 ) {
     private val topic = RelayCrypto.getInternetRelayTopic(pairingCode)
     private val authToken = RelayCrypto.getInternetRelayAuthToken(pairingCode, password)
@@ -112,11 +114,16 @@ class RelayClient(
             pairingCode = pairingCode,
             password = password,
             replayGuard = replayGuard,
-            allowLegacy = true
+            allowLegacy = allowLegacyPlaintext
         )
         if (env != null) {
             if (!env.ok) {
-                // Reject tampered ciphertext/tag or replayed sequence silently without corrupting state
+                if (env.clockSkewRejected) {
+                    callbacks.onRelayWarning(
+                        "clock_skew",
+                        "WAN Relay rejected packet (>5 min clock skew). Check device clock."
+                    )
+                }
                 return
             }
             if (env.src != "host") return
@@ -125,7 +132,7 @@ class RelayClient(
                 callbacks.onRelayAuthFailed()
                 return
             }
-            peerLegacy.set(!env.encrypted)
+            peerLegacy.set(allowLegacyPlaintext && !env.encrypted)
             when (env.cmd) {
                 "state" -> {
                     val muted = env.telemetry?.isMuted
@@ -178,6 +185,12 @@ class RelayClient(
     fun sendSetMute(isMuted: Boolean): Boolean {
         return publishPacket("set_mute", if (isMuted) "1" else "0")
     }
+
+    fun sendPptNext(): Boolean = publishPacket("ppt_next", "1")
+
+    fun sendPptPrev(): Boolean = publishPacket("ppt_prev", "1")
+
+    fun sendStartSlideshow(): Boolean = publishPacket("slide_start", "1")
 
     fun sendToggleRecord(): Boolean = publishPacket("toggle_record", "1")
 
@@ -232,7 +245,13 @@ class RelayClient(
             httpClient.newCall(req).enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {}
                 override fun onResponse(call: Call, response: Response) {
+                    val code = response.code
                     response.close()
+                    if (code == 429) {
+                        callbacks.onRelayWarning("http_429", "WAN Relay rate limited (HTTP 429) — slowing updates.")
+                    } else if (code == 413) {
+                        callbacks.onRelayWarning("http_413", "WAN Relay payload rejected (HTTP 413 too large).")
+                    }
                 }
             })
             true

@@ -80,8 +80,18 @@ cfg.EnableWS := false
 cfg.WriteBool("Settings", "EnableWS", false)
 cfg.ObsPassword := "BakSecret99"
 cfg.Write("Settings", "ObsPassword", "BakSecret99")
+cfg.Write("Settings", "SessionPairingCode", "PAIR-7788")
+cfg.Write("Settings", "InternetPairingCode", "PS-WAN-9988")
 cfg.BackupToFile(true)
 AssertTrue(FileExist(tmpIni ".bak") && FileGetSize(tmpIni ".bak") > 0, "Config.BackupToFile creates non-empty .bak")
+
+; M2.3 DPAPI Check: Secrets must NOT be plaintext on disk, while Config.Read returns decrypted plaintext
+rawDiskIni := FileRead(tmpIni)
+rawDiskSecCode := IniRead(tmpIni, "Settings", "SessionPairingCode", "")
+rawDiskPass := IniRead(tmpIni, "Settings", "ObsPassword", "")
+AssertTrue(!InStr(rawDiskIni, "BakSecret99") && !InStr(rawDiskIni, "PAIR-7788") && !InStr(rawDiskIni, "PS-WAN-9988"), "Primary INI stores zero plaintext secrets on disk")
+AssertTrue(InStr(rawDiskPass, "DPAPI_B64:") == 1 && InStr(rawDiskSecCode, "DPAPI_B64:") == 1, "ObsPassword & SessionPairingCode are DPAPI_B64-protected on disk")
+AssertTrue(cfg.Read("Settings", "ObsPassword", "") = "BakSecret99", "Config.Read transparently unprotects DPAPI ObsPassword")
 
 ; Delete primary INI -> Load should recover from .bak
 FileDelete(tmpIni)
@@ -93,8 +103,63 @@ FileDelete(tmpIni)
 FileAppend("CORRUPT_GARBAGE_NO_SETTINGS_SECTION", tmpIni, "UTF-8")
 cfgRecovered2 := Config(tmpIni)
 AssertTrue(cfgRecovered2.EnableWS == false && cfgRecovered2.ObsPassword = "BakSecret99", "Config.Load recovers corrupt INI from .bak")
-cfgRecovered2.DeleteFile()
+
+; Guardrail #2: Corrupt DPAPI blob fails softly to empty string + diagnostic breadcrumb (no crash)
+DiagnosticLogger.Breadcrumbs := []
+IniWrite("DPAPI_B64:CORRUPT_INVALID!!!", tmpIni, "Settings", "ObsPassword")
+cfgSoftFail := Config(tmpIni)
+hasSoftBc := false
+for _, bc in DiagnosticLogger.Breadcrumbs {
+    if (InStr(bc.category, "ConfigStore") && (InStr(bc.action, "Dpapi") || InStr(bc.action, "SoftFail")))
+        hasSoftBc := true
+}
+AssertTrue(cfgSoftFail.ObsPassword = "" && hasSoftBc, "Guardrail #2: Corrupt DPAPI secret fails softly to empty with ConfigStore breadcrumb")
+cfgSoftFail.DeleteFile()
 AssertTrue(!FileExist(tmpIni) && !FileExist(tmpIni ".bak"), "Config.DeleteFile removes both INI and .bak")
+
+; SchemaVersion=1 plaintext INI migrates cleanly to SchemaVersion=2 DPAPI on load
+migIni := A_Temp "\PresenterSync_mig_" A_TickCount ".ini"
+if FileExist(migIni)
+    try FileDelete(migIni)
+if FileExist(migIni ".bak")
+    try FileDelete(migIni ".bak")
+IniWrite("LegacyPass123", migIni, "Settings", "ObsPassword")
+IniWrite("LEGACY-CODE", migIni, "Settings", "SessionPairingCode")
+IniWrite(1, migIni, "ConfigMeta", "SchemaVersion")
+cfgMig := Config(migIni)
+rawMigPass := IniRead(migIni, "Settings", "ObsPassword", "")
+AssertTrue(cfgMig.ObsPassword = "LegacyPass123" && InStr(rawMigPass, "DPAPI_B64:") == 1 && IniRead(migIni, "ConfigMeta", "SchemaVersion", "") = "2", "ConfigStore.MigrateIniSchema upgrades SchemaVersion=1 plaintext secrets to DPAPI SchemaVersion=2")
+cfgMig.DeleteFile()
+
+; ResolveDataDir falls back to %APPDATA%\PresenterSync when preferAppData=true
+roProbeDir := A_Temp "\ps_ro_probe_" A_TickCount
+resolvedAppData := ConfigStore.ResolveDataDir(roProbeDir, true)
+AssertTrue(resolvedAppData == (RTrim(A_AppData, "\/") "\PresenterSync") && DirExist(resolvedAppData), "ConfigStore.ResolveDataDir resolves AppData\PresenterSync fallback")
+
+; HostCompanionBridge SavePairedDevices protects dev.token via DPAPI atomically & skips corrupt DPAPI softly
+bridgeIni := A_Temp "\PresenterSync_hb_dpapi_" A_TickCount ".ini"
+if FileExist(bridgeIni)
+    try FileDelete(bridgeIni)
+if FileExist(bridgeIni ".bak")
+    try FileDelete(bridgeIni ".bak")
+cfgHb := Config(bridgeIni)
+hb := HostCompanionBridge()
+hb.cfg := cfgHb
+hb.pairedDevices["dev-good"] := { deviceId: "dev-good", deviceName: "Tablet 1", platform: "android", token: "tok_secret_good_777", pairedAt: "2026-11-25T06:00:00Z", ip: "192.168.1.50", transport: "bridge", customName: false }
+hb.SavePairedDevices()
+rawHbFile := FileRead(bridgeIni)
+AssertTrue(!InStr(rawHbFile, "tok_secret_good_777") && InStr(rawHbFile, "DPAPI_B64%3A") > 0, "HostCompanionBridge.SavePairedDevices stores DPAPI-protected tokens atomically")
+hbReload := HostCompanionBridge()
+hbReload.cfg := cfgHb
+hbReload.LoadPairedDevices()
+AssertTrue(hbReload.pairedDevices.Has("dev-good") && hbReload.pairedDevices["dev-good"].token = "tok_secret_good_777", "HostCompanionBridge.LoadPairedDevices decrypts DPAPI device token")
+; Inject corrupt DPAPI device entry -> skipped softly without crash while good entry still loads
+IniWrite("v1|BadTablet|android|DPAPI_B64%3AINVALID_BLOB|2026|1.2.3.4|bridge|0", bridgeIni, "HostBridgePairedDevices", "dev-corrupt")
+hbSoft := HostCompanionBridge()
+hbSoft.cfg := cfgHb
+hbSoft.LoadPairedDevices()
+AssertTrue(hbSoft.pairedDevices.Has("dev-good") && !hbSoft.pairedDevices.Has("dev-corrupt"), "HostCompanionBridge.LoadPairedDevices skips undecryptable DPAPI device token softly")
+cfgHb.DeleteFile()
 
 ; 3. GetBridgeFallbackPorts & HostCompanionBridge port conflict auto-fallback + BuildHostPairingUri
 fbPorts := GetBridgeFallbackPorts(4456)

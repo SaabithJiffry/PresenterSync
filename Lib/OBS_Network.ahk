@@ -996,10 +996,14 @@ _TryShutdownWsDeferred(ws) {
 
 GenerateInternetPairingCode() {
     chars := "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    charCount := StrLen(chars)
     p1 := "", p2 := ""
+    rnd := IsSet(GenerateRandomBytes) ? GenerateRandomBytes(8) : ""
     Loop 4 {
-        p1 .= SubStr(chars, Random(1, StrLen(chars)), 1)
-        p2 .= SubStr(chars, Random(1, StrLen(chars)), 1)
+        b1 := IsObject(rnd) ? NumGet(rnd, A_Index - 1, "UChar") : Random(0, 255)
+        b2 := IsObject(rnd) ? NumGet(rnd, A_Index + 3, "UChar") : Random(0, 255)
+        p1 .= SubStr(chars, Mod(b1, charCount) + 1, 1)
+        p2 .= SubStr(chars, Mod(b2, charCount) + 1, 1)
     }
     return "PS-" p1 "-" p2
 }
@@ -1166,33 +1170,58 @@ FormatRelayStatePayload(cfg, state, cmd := "state", seq := 0, ts := 0, sid := ""
         : ((IsObject(state) && state.HasOwnProp("recSeconds") && IsInteger(state.recSeconds)) ? Max(0, Integer(state.recSeconds)) : 0)
     streamDrop := (IsObject(state) && ((state.HasOwnProp("streamDropWarn") && state.streamDropWarn) || (state.HasOwnProp("streamState") && state.streamState == 2))) ? true : false
     voiceMuted := (IsObject(state) && state.HasOwnProp("voiceWhileMuted") && state.voiceWhileMuted) ? true : false
+    osDrift := (IsObject(state) && state.HasOwnProp("osMicMutedDrift") && state.osMicMutedDrift) ? true : false
+    lowDiskLvl := (IsObject(state) && state.HasOwnProp("lowDiskWarnLevel") && IsInteger(state.lowDiskWarnLevel)) ? Integer(state.lowDiskWarnLevel) : 0
+    lowDiskMb := (IsObject(state) && state.HasOwnProp("lowDiskMb") && IsInteger(state.lowDiskMb)) ? Integer(state.lowDiskMb) : -1
+    deadMic := (IsObject(state) && state.HasOwnProp("deadMicWarn") && state.deadMicWarn) ? true : false
+    sIdx := (IsObject(state) && state.HasOwnProp("slideIndex") && IsInteger(state.slideIndex)) ? Max(0, Integer(state.slideIndex)) : 0
+    sTot := (IsObject(state) && state.HasOwnProp("slideTotal") && IsInteger(state.slideTotal)) ? Max(0, Integer(state.slideTotal)) : 0
+    sTitle := (IsObject(state) && state.HasOwnProp("slideTitle")) ? SubStr(Trim(String(state.slideTitle)), 1, 120) : ""
     tSt := (IsObject(state) && state.HasOwnProp("timerState") && state.timerState != "") ? String(state.timerState) : "stopped"
     tRem := (IsObject(state) && state.HasOwnProp("timerRemainingSec") && IsInteger(state.timerRemainingSec)) ? Integer(state.timerRemainingSec) : 600
     tPre := (IsObject(state) && state.HasOwnProp("timerPresetSec") && IsInteger(state.timerPresetSec)) ? Max(60, Integer(state.timerPresetSec)) : 600
     activeScene := (IsObject(state) && state.HasOwnProp("currentSceneName") && state.currentSceneName != "") ? String(state.currentSceneName) : "Scene"
 
-    scenesJson := "["
-    for idx, scName in _GetHostSceneListForRelay(state)
-        scenesJson .= (idx > 1 ? "," : "") '"' EscapeJsonStr(scName) '"'
-    scenesJson .= "]"
-
-    dataStr := (cmd = "state") ? (isMuted ? "1" : "0") : _BuildLegacyDirStatePayload(state)
+    sceneList := _GetHostSceneListForRelay(state)
+    dataStr := (cmd = "state") ? (isMuted ? "1" : "0") : ""
     seqNum := (seq > 0) ? Integer(seq) : _NextRelaySequence(state)
     tsNum := (ts > 0) ? Integer(ts) : (IsSet(GetCurrentUnixEpochSec) ? GetCurrentUnixEpochSec() : A_TickCount)
     sidStr := (sid != "") ? String(sid) : _GetRelaySessionId(state)
 
-    return '{"v":1,"src":"host","cmd":"' EscapeJsonStr(cmd) '","data":"' EscapeJsonStr(dataStr) '","seq":' seqNum ',"ts":' tsNum ',"sid":"' EscapeJsonStr(sidStr) '","auth":"' EscapeJsonStr(auth) '"'
-        . ',"isMuted":' (isMuted ? "true" : "false")
-        . ',"isStandby":' (isStandby ? "true" : "false")
-        . ',"recState":' recSt
-        . ',"recSeconds":' recSec
-        . ',"streamDropWarn":' (streamDrop ? "true" : "false")
-        . ',"voiceWhileMuted":' (voiceMuted ? "true" : "false")
-        . ',"timerState":"' EscapeJsonStr(tSt) '"'
-        . ',"timerRemainingSec":' tRem
-        . ',"timerPresetSec":' tPre
-        . ',"activeScene":"' EscapeJsonStr(activeScene) '"'
-        . ',"scenes":' scenesJson '}'
+    buildJson(scArr, titleStr) {
+        scJson := "["
+        for idx, scName in scArr
+            scJson .= (idx > 1 ? "," : "") '"' EscapeJsonStr(scName) '"'
+        scJson .= "]"
+        return '{"v":2,"src":"host","cmd":"' EscapeJsonStr(cmd) '","data":"' EscapeJsonStr(dataStr) '","seq":' seqNum ',"ts":' tsNum ',"sid":"' EscapeJsonStr(sidStr) '","auth":"' EscapeJsonStr(auth) '"'
+            . ',"isMuted":' (isMuted ? "true" : "false")
+            . ',"isStandby":' (isStandby ? "true" : "false")
+            . ',"recState":' recSt
+            . ',"recSeconds":' recSec
+            . ',"streamDropWarn":' (streamDrop ? "true" : "false")
+            . ',"voiceWhileMuted":' (voiceMuted ? "true" : "false")
+            . ',"osMicMutedDrift":' (osDrift ? "true" : "false")
+            . ',"lowDiskWarnLevel":' lowDiskLvl
+            . ',"lowDiskMb":' lowDiskMb
+            . ',"deadMicWarn":' (deadMic ? "true" : "false")
+            . ',"slideIndex":' sIdx
+            . ',"slideTotal":' sTot
+            . ',"slideTitle":"' EscapeJsonStr(titleStr) '"'
+            . ',"timerState":"' EscapeJsonStr(tSt) '"'
+            . ',"timerRemainingSec":' tRem
+            . ',"timerPresetSec":' tPre
+            . ',"activeScene":"' EscapeJsonStr(activeScene) '"'
+            . ',"scenes":' scJson '}'
+    }
+
+    outJson := buildJson(sceneList, sTitle)
+    if (StrLen(outJson) > 2500) {
+        sTitle := SubStr(sTitle, 1, 48)
+        while (sceneList.Length > 12 && StrLen(buildJson(sceneList, sTitle)) > 2500)
+            sceneList.Pop()
+        outJson := buildJson(sceneList, sTitle)
+    }
+    return outJson
 }
 
 FormatEncryptedRelayPacket(src, cmd, data, pairingCode, password := "", state := "", ivOverride := "") {
@@ -1233,13 +1262,13 @@ _RelayJsonExtractStrArray(jsonStr, key) {
     return JsonCodec.GetStrArray(jsonStr, key)
 }
 
-ParseRelayEnvelope(rawMsg, pairingCode := "", password := "", replayGuard := "", allowLegacy := true, nowEpochSec := "") {
+ParseRelayEnvelope(rawMsg, pairingCode := "", password := "", replayGuard := "", allowLegacy := false, nowEpochSec := "") {
     msg := (Type(rawMsg) == "Buffer") ? StrGet(rawMsg, "UTF-8") : String(rawMsg)
-    if (InStr(msg, "PSGCM1|") && IsSet(DecryptRelayPayload)) {
+    if ((InStr(msg, "PSGCM2|") || InStr(msg, "PSGCM1|")) && IsSet(DecryptRelayPayload)) {
         decOk := false
         plain := DecryptRelayPayload(msg, StrUpper(Trim(String(pairingCode))), password, &decOk)
         if (!decOk || plain = "")
-            return { ok: false, encrypted: true, authError: true, replayRejected: false, error: "decrypt_failed" }
+            return { ok: false, encrypted: true, authError: true, replayRejected: false, clockSkewRejected: false, error: "decrypt_failed" }
 
         src := _RelayJsonExtractStr(plain, "src")
         cmd := _RelayJsonExtractStr(plain, "cmd")
@@ -1250,21 +1279,24 @@ ParseRelayEnvelope(rawMsg, pairingCode := "", password := "", replayGuard := "",
         ts := _RelayJsonExtractInt(plain, "ts", 0)
 
         if (src = "" || cmd = "")
-            return { ok: false, encrypted: true, authError: true, replayRejected: false, error: "malformed_json" }
+            return { ok: false, encrypted: true, authError: true, replayRejected: false, clockSkewRejected: false, error: "malformed_json" }
 
         if (IsObject(replayGuard)) {
             senderKey := src (sid != "" ? (":" sid) : "")
-            if (!replayGuard.Accept(senderKey, seq, ts, nowEpochSec))
-                return { ok: false, encrypted: true, authError: false, replayRejected: true, error: "replay_rejected", src: src, cmd: cmd, seq: seq }
+            if (!replayGuard.Accept(senderKey, seq, ts, nowEpochSec)) {
+                isSkew := (replayGuard.HasOwnProp("lastRejectReason") && replayGuard.lastRejectReason = "clock_skew")
+                return { ok: false, encrypted: true, authError: false, replayRejected: !isSkew, clockSkewRejected: isSkew, error: (isSkew ? "clock_skew" : "replay_rejected"), src: src, cmd: cmd, seq: seq }
+            }
         }
 
-        hasTelemetry := (InStr(plain, '"recSeconds"') || InStr(plain, '"streamDropWarn"') || InStr(plain, '"voiceWhileMuted"') || InStr(plain, '"scenes"') || InStr(plain, '"activeScene"'))
+        hasTelemetry := (InStr(plain, '"recSeconds"') || InStr(plain, '"streamDropWarn"') || InStr(plain, '"voiceWhileMuted"') || InStr(plain, '"scenes"') || InStr(plain, '"activeScene"') || InStr(plain, '"osMicMutedDrift"') || InStr(plain, '"slideIndex"'))
         hasMutedField := (InStr(plain, '"isMuted"') != 0)
         return {
             ok: true,
             encrypted: true,
             authError: false,
             replayRejected: false,
+            clockSkewRejected: false,
             src: src,
             cmd: cmd,
             data: data,
@@ -1280,6 +1312,13 @@ ParseRelayEnvelope(rawMsg, pairingCode := "", password := "", replayGuard := "",
             recSeconds: Max(0, _RelayJsonExtractInt(plain, "recSeconds", 0)),
             streamDropWarn: _RelayJsonExtractBool(plain, "streamDropWarn", false),
             voiceWhileMuted: _RelayJsonExtractBool(plain, "voiceWhileMuted", false),
+            osMicMutedDrift: _RelayJsonExtractBool(plain, "osMicMutedDrift", false),
+            lowDiskWarnLevel: _RelayJsonExtractInt(plain, "lowDiskWarnLevel", 0),
+            lowDiskMb: _RelayJsonExtractInt(plain, "lowDiskMb", -1),
+            deadMicWarn: _RelayJsonExtractBool(plain, "deadMicWarn", false),
+            slideIndex: Max(0, _RelayJsonExtractInt(plain, "slideIndex", 0)),
+            slideTotal: Max(0, _RelayJsonExtractInt(plain, "slideTotal", 0)),
+            slideTitle: _RelayJsonExtractStr(plain, "slideTitle"),
             timerState: _RelayJsonExtractStr(plain, "timerState"),
             timerRemainingSec: _RelayJsonExtractInt(plain, "timerRemainingSec", 600),
             timerPresetSec: Max(60, _RelayJsonExtractInt(plain, "timerPresetSec", 600)),
@@ -1298,6 +1337,7 @@ ParseRelayEnvelope(rawMsg, pairingCode := "", password := "", replayGuard := "",
         encrypted: false,
         authError: false,
         replayRejected: false,
+        clockSkewRejected: false,
         src: pkt.src,
         cmd: pkt.cmd,
         data: pkt.data,
@@ -1341,10 +1381,26 @@ ParseRelayPacket(rawMsg) {
 
 PublishInternetRelayPacket(topic, packetStr, relayBaseUrl := "https://ntfy.sh", mockTargetWs := "") {
     static activeRequests := []
+    static lastHttpWarnTick := 0
     if (topic = "" || packetStr = "")
         return false
     if IsObject(mockTargetWs)
         return TrySendWsText(mockTargetWs, packetStr)
+    ; Check any completed prior async requests for HTTP 429/413 rate-limit or payload warnings
+    for _, prevWhr in activeRequests {
+        try {
+            if (prevWhr.WaitForResponse(0)) {
+                stCode := Integer(prevWhr.Status)
+                if ((stCode == 429 || stCode == 413) && (lastHttpWarnTick == 0 || (A_TickCount - lastHttpWarnTick) >= 30000)) {
+                    lastHttpWarnTick := A_TickCount
+                    if (IsSet(DiagnosticLogger))
+                        try DiagnosticLogger.RecordBreadcrumb("Relay", "Http" stCode, "WAN Relay returned HTTP " stCode)
+                    if (!IsSet(g_IsTestMode) || !g_IsTestMode)
+                        try TrayTip(stCode == 429 ? "WAN Relay rate limited (HTTP 429) — slowing updates." : "WAN Relay message rejected (HTTP 413 too large).", "PresenterSync", 2)
+                }
+            }
+        }
+    }
     try {
         baseUrl := NormalizeRelayBaseUrl(relayBaseUrl)
         whr := ComObject("WinHttp.WinHttpRequest.5.1")
@@ -1497,12 +1553,19 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
     }
     guard := (state.HasOwnProp("relayReplayGuard") && IsObject(state.relayReplayGuard)) ? state.relayReplayGuard : ""
     pw := _GetRelayPassword(cfg)
-    pkt := ParseRelayEnvelope(msg, cfg.InternetPairingCode, pw, guard, true)
+    allowLegacy := (IsObject(cfg) && cfg.HasOwnProp("AllowLegacyPlaintextRelay") && cfg.AllowLegacyPlaintextRelay) ? true : false
+    pkt := ParseRelayEnvelope(msg, cfg.InternetPairingCode, pw, guard, allowLegacy)
     if (!IsObject(pkt))
         return
     if (!pkt.ok) {
         if (IsSet(DiagnosticLogger))
-            try DiagnosticLogger.RecordBreadcrumb("Relay", pkt.replayRejected ? "ReplayRejected" : "DecryptRejected", pkt.error)
+            try DiagnosticLogger.RecordBreadcrumb("Relay", (pkt.HasOwnProp("clockSkewRejected") && pkt.clockSkewRejected) ? "ClockSkewRejected" : (pkt.replayRejected ? "ReplayRejected" : "DecryptRejected"), pkt.error)
+        if (pkt.HasOwnProp("clockSkewRejected") && pkt.clockSkewRejected && (!IsSet(g_IsTestMode) || !g_IsTestMode)) {
+            if (!state.HasOwnProp("_lastSkewWarnTick") || (A_TickCount - state._lastSkewWarnTick) >= 60000) {
+                state._lastSkewWarnTick := A_TickCount
+                try TrayTip("WAN Relay message rejected (>5 min clock skew). Sync system clock on Host and Remote.", "PresenterSync", 2)
+            }
+        }
         return
     }
     if (pkt.src != "remote")
@@ -1516,7 +1579,7 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
         return
     }
 
-    state._relayPeerLegacy := !pkt.encrypted
+    state._relayPeerLegacy := (allowLegacy && !pkt.encrypted)
 
     if (pkt.cmd = "sync_req") {
         BroadcastHostRelayMuteState(cfg, state)
@@ -1535,6 +1598,14 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
     } else if (pkt.cmd = "set_mute") {
         wantMuted := (StrLower(Trim(String(pkt.data))) = "1" || StrLower(Trim(String(pkt.data))) = "true")
         ExecuteHostRemoteSetMute(cfg, state, wantMuted)
+    } else if (pkt.cmd = "ppt_next") {
+        ExecuteHostRemotePptCommand(cfg, state, "next")
+    } else if (pkt.cmd = "ppt_prev") {
+        ExecuteHostRemotePptCommand(cfg, state, "prev")
+    } else if (pkt.cmd = "slide_start") {
+        if (IsSet(StartPowerPointSlideshow))
+            StartPowerPointSlideshow()
+        BroadcastHostRelayMuteState(cfg, state)
     } else if (pkt.cmd = "toggle_record") {
         ExecuteHostToggleRecord(cfg, state)
     } else if (pkt.cmd = "pause_record") {

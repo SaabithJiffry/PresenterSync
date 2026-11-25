@@ -7,6 +7,7 @@
 
 #DllLoad ws2_32.dll
 #Include "%A_LineFile%\..\JsonCodec.ahk"
+#Include "%A_LineFile%\..\ConfigStore.ahk"
 
 class RemoteBridgeConstants {
     static BRIDGE_CONNECT_TIMEOUT_MS := 1800
@@ -313,13 +314,16 @@ _RBC_ParseProfileLine(rawVal) {
                 params[k] := v
         }
     }
+    rawCode := params.Has("code") ? params["code"] : ""
+    rawWan := params.Has("wan") ? params["wan"] : ""
+    rawPw := params.Has("pw") ? params["pw"] : ""
     return {
         host: params.Has("host") ? params["host"] : "",
         bridgePort: params.Has("bp") && IsInteger(params["bp"]) ? String(Integer(params["bp"])) : "4456",
         obsPort: params.Has("obsport") && IsInteger(params["obsport"]) ? String(Integer(params["obsport"])) : "4455",
-        code: params.Has("code") ? params["code"] : "",
-        wanCode: params.Has("wan") ? params["wan"] : "",
-        obsPass: params.Has("pw") ? params["pw"] : "",
+        code: ConfigStore.UnprotectSecret(rawCode, "HostProfile.code"),
+        wanCode: ConfigStore.UnprotectSecret(rawWan, "HostProfile.wanCode"),
+        obsPass: ConfigStore.UnprotectSecret(rawPw, "HostProfile.obsPass"),
         networkMode: (params.Has("mode") && StrLower(params["mode"]) = "internet") ? "Internet" : "LAN",
         targetMic: params.Has("mic") ? params["mic"] : "",
         relayBaseUrl: params.Has("relay") ? params["relay"] : ""
@@ -357,9 +361,9 @@ SaveHostProfile(cfg, profileName, data) {
     h := data.HasOwnProp("host") ? String(data.host) : ""
     bp := data.HasOwnProp("bridgePort") && IsInteger(data.bridgePort) ? String(Integer(data.bridgePort)) : "4456"
     op := data.HasOwnProp("obsPort") && IsInteger(data.obsPort) ? String(Integer(data.obsPort)) : "4455"
-    cd := data.HasOwnProp("code") ? String(data.code) : ""
-    wn := data.HasOwnProp("wanCode") ? String(data.wanCode) : ""
-    pw := data.HasOwnProp("obsPass") ? String(data.obsPass) : ""
+    cd := ConfigStore.ProtectSecret(data.HasOwnProp("code") ? String(data.code) : "")
+    wn := ConfigStore.ProtectSecret(data.HasOwnProp("wanCode") ? String(data.wanCode) : "")
+    pw := ConfigStore.ProtectSecret(data.HasOwnProp("obsPass") ? String(data.obsPass) : "")
     md := (data.HasOwnProp("networkMode") && StrLower(String(data.networkMode)) = "internet") ? "Internet" : "LAN"
     mc := data.HasOwnProp("targetMic") ? String(data.targetMic) : ""
     rl := data.HasOwnProp("relayBaseUrl") ? String(data.relayBaseUrl) : ""

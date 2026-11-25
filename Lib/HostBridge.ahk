@@ -12,6 +12,7 @@
 
 #DllLoad ws2_32.dll
 #Include "%A_LineFile%\..\JsonCodec.ahk"
+#Include "%A_LineFile%\..\ConfigStore.ahk"
 #Include WebRemoteUI.ahk
 #Include WebRemoteArcade.ahk
 
@@ -595,14 +596,14 @@ class HostCompanionBridge {
         iniPath := this._GetIniPath()
         if (iniPath = "")
             return false
-        try IniDelete(iniPath, "HostBridgePairedDevices")
+        entries := Map()
         for devId, d in this.pairedDevices {
             iniKey := UriEncodeComponent(devId)
             if (iniKey = "")
                 continue
-            try IniWrite(_HB_SerializePairedDevice(d), iniPath, "HostBridgePairedDevices", iniKey)
+            entries[iniKey] := _HB_SerializePairedDevice(d)
         }
-        return true
+        return ConfigStore.AtomicReplaceIniSection(iniPath, "HostBridgePairedDevices", entries)
     }
 
     RenamePairedDevice(devId, newName) {
@@ -2191,7 +2192,7 @@ RotateHostSessionPairingCode(cfg, revokeAll := false) {
     if (IsObject(cfg) && cfg.HasMethod("Write"))
         try cfg.Write("Settings", "SessionPairingCode", newCode)
     if (revokeAll && IsObject(cfg) && cfg.HasOwnProp("ConfigFile") && cfg.ConfigFile != "")
-        try IniDelete(cfg.ConfigFile, "HostBridgePairedDevices")
+        ConfigStore.AtomicReplaceIniSection(cfg.ConfigFile, "HostBridgePairedDevices", Map())
     return newCode
 }
 
@@ -2211,14 +2212,15 @@ UnpairHostPairedDevice(devId) {
 
 _HB_SerializePairedDevice(dev) {
     customFlag := (dev.HasOwnProp("customName") && dev.customName) ? "1" : "0"
-    return "v1|" UriEncodeComponent(dev.deviceName) "|" UriEncodeComponent(dev.platform) "|" UriEncodeComponent(dev.token) "|" UriEncodeComponent(dev.pairedAt) "|" UriEncodeComponent(dev.ip) "|" UriEncodeComponent(dev.transport) "|" customFlag
+    tokProtected := ConfigStore.ProtectSecret(dev.token)
+    return "v1|" UriEncodeComponent(dev.deviceName) "|" UriEncodeComponent(dev.platform) "|" UriEncodeComponent(tokProtected) "|" UriEncodeComponent(dev.pairedAt) "|" UriEncodeComponent(dev.ip) "|" UriEncodeComponent(dev.transport) "|" customFlag
 }
 
 _HB_ParsePairedDevice(devId, rawVal) {
     parts := StrSplit(String(rawVal), "|")
     if (parts.Length < 7 || parts[1] != "v1")
         return ""
-    tok := UriDecodeComponent(parts[4])
+    tok := ConfigStore.UnprotectSecret(UriDecodeComponent(parts[4]), "HostBridgePairedDevice." devId)
     if (tok = "" || devId = "")
         return ""
     return {

@@ -156,7 +156,69 @@ DeriveAesGcmKey32(pairingCode, secretSalt := "") {
     return _HashCryptRaw("SHA256", 32, material)
 }
 
-_BuildGcmAuthInfo(ivBuf, tagBuf) {
+DeriveAesGcmKey32V2(pairingCode, secretSalt := "", iterations := 10000) {
+    static cache := Map()
+    static cacheOrder := []
+    iters := Max(1000, Integer(iterations))
+    cleanCode := Trim(String(pairingCode))
+    cleanSalt := Trim(String(secretSalt))
+    cacheKey := iters "|" cleanCode "|" cleanSalt
+    if (cache.Has(cacheKey)) {
+        cached := cache[cacheKey]
+        outCopy := Buffer(32, 0)
+        DllCall("ntdll\RtlMoveMemory", "Ptr", outCopy.Ptr, "Ptr", cached.Ptr, "UPtr", 32)
+        return outCopy
+    }
+
+    pwStr := cleanCode "|" cleanSalt
+    saltStr := "PS_GCM_V2_SALT|" cleanCode
+    pwLen := StrPut(pwStr, "UTF-8") - 1
+    pwBuf := Buffer(Max(1, pwLen + 1), 0)
+    if (pwLen > 0)
+        StrPut(pwStr, pwBuf, "UTF-8")
+
+    saltLen := StrPut(saltStr, "UTF-8") - 1
+    saltBuf := Buffer(Max(1, saltLen + 1), 0)
+    if (saltLen > 0)
+        StrPut(saltStr, saltBuf, "UTF-8")
+
+    keyBuf := Buffer(32, 0)
+    hAlg := 0
+    ok := false
+    try {
+        ; 0x00000008 = BCRYPT_ALG_HANDLE_HMAC_FLAG
+        if (DllCall("bcrypt\BCryptOpenAlgorithmProvider", "Ptr*", &hAlg, "Str", "SHA256", "Ptr", 0, "UInt", 0x00000008, "Int") == 0) {
+            st := DllCall("bcrypt\BCryptDeriveKeyPBKDF2",
+                "Ptr", hAlg,
+                "Ptr", pwBuf.Ptr, "UInt", pwLen,
+                "Ptr", saltBuf.Ptr, "UInt", saltLen,
+                "UInt64", iters,
+                "Ptr", keyBuf.Ptr, "UInt", 32,
+                "UInt", 0, "Int")
+            ok := (st == 0)
+        }
+    } finally {
+        if (hAlg)
+            try DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+    }
+
+    if (!ok)
+        return DeriveAesGcmKey32(pairingCode, secretSalt)
+
+    while (cacheOrder.Length >= 32) {
+        oldKey := cacheOrder.RemoveAt(1)
+        if (cache.Has(oldKey))
+            cache.Delete(oldKey)
+    }
+    storeBuf := Buffer(32, 0)
+    DllCall("ntdll\RtlMoveMemory", "Ptr", storeBuf.Ptr, "Ptr", keyBuf.Ptr, "UPtr", 32)
+    cache[cacheKey] := storeBuf
+    cacheOrder.Push(cacheKey)
+    return keyBuf
+}
+
+_BuildGcmAuthInfo(ivBuf, tagBuf, aadBuf := "") {
+    hasAad := (aadBuf is Buffer && aadBuf.Size > 0)
     if (A_PtrSize == 8) {
         ; 64-bit Windows SDK BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO (sizeof = 88):
         ; +0 cbSize(4), +4 dwInfoVersion(4), +8 pbNonce(8), +16 cbNonce(4),
@@ -167,8 +229,8 @@ _BuildGcmAuthInfo(ivBuf, tagBuf) {
         NumPut("UInt", 1, info, 4)
         NumPut("Ptr", ivBuf.Ptr, info, 8)
         NumPut("UInt", ivBuf.Size, info, 16)
-        NumPut("Ptr", 0, info, 24)
-        NumPut("UInt", 0, info, 32)
+        NumPut("Ptr", hasAad ? aadBuf.Ptr : 0, info, 24)
+        NumPut("UInt", hasAad ? aadBuf.Size : 0, info, 32)
         NumPut("Ptr", tagBuf.Ptr, info, 40)
         NumPut("UInt", tagBuf.Size, info, 48)
         return info
@@ -179,14 +241,26 @@ _BuildGcmAuthInfo(ivBuf, tagBuf) {
     NumPut("UInt", 1, info, 4)
     NumPut("Ptr", ivBuf.Ptr, info, 8)
     NumPut("UInt", ivBuf.Size, info, 12)
-    NumPut("Ptr", 0, info, 16)
-    NumPut("UInt", 0, info, 20)
+    NumPut("Ptr", hasAad ? aadBuf.Ptr : 0, info, 16)
+    NumPut("UInt", hasAad ? aadBuf.Size : 0, info, 20)
     NumPut("Ptr", tagBuf.Ptr, info, 24)
     NumPut("UInt", tagBuf.Size, info, 28)
     return info
 }
 
-AesGcmEncryptBytes(plaintextStr, keyBuf, ivOverrideBuf := "") {
+_MakeUtf8BytesBuf(strVal) {
+    s := String(strVal)
+    len := StrPut(s, "UTF-8") - 1
+    if (len <= 0)
+        return Buffer(0)
+    tmp := Buffer(len + 1, 0)
+    StrPut(s, tmp, "UTF-8")
+    out := Buffer(len, 0)
+    DllCall("ntdll\RtlMoveMemory", "Ptr", out.Ptr, "Ptr", tmp.Ptr, "UPtr", len)
+    return out
+}
+
+AesGcmEncryptBytes(plaintextStr, keyBuf, ivOverrideBuf := "", aadStr := "") {
     if (!(keyBuf is Buffer) || keyBuf.Size != 32)
         return ""
     ivBuf := ""
@@ -229,7 +303,8 @@ AesGcmEncryptBytes(plaintextStr, keyBuf, ivOverrideBuf := "") {
 
         tagBuf := Buffer(16, 0)
         ctBuf := Buffer(Max(1, ptLen), 0)
-        authInfo := _BuildGcmAuthInfo(ivBuf, tagBuf)
+        aadBuf := (aadStr != "") ? _MakeUtf8BytesBuf(aadStr) : ""
+        authInfo := _BuildGcmAuthInfo(ivBuf, tagBuf, aadBuf)
         cbResult := 0
         st := DllCall("bcrypt\BCryptEncrypt",
             "Ptr", hKey,
@@ -261,7 +336,7 @@ AesGcmEncryptBytes(plaintextStr, keyBuf, ivOverrideBuf := "") {
     }
 }
 
-AesGcmDecryptBytes(b64Iv, b64CtAndTag, keyBuf, &ok := "") {
+AesGcmDecryptBytes(b64Iv, b64CtAndTag, keyBuf, &ok := "", aadStr := "") {
     ok := false
     if (!(keyBuf is Buffer) || keyBuf.Size != 32)
         return ""
@@ -299,7 +374,8 @@ AesGcmDecryptBytes(b64Iv, b64CtAndTag, keyBuf, &ok := "") {
             return ""
 
         ptBuf := Buffer(Max(1, ctLen), 0)
-        authInfo := _BuildGcmAuthInfo(ivBuf, tagBuf)
+        aadBuf := (aadStr != "") ? _MakeUtf8BytesBuf(aadStr) : ""
+        authInfo := _BuildGcmAuthInfo(ivBuf, tagBuf, aadBuf)
         cbResult := 0
         st := DllCall("bcrypt\BCryptDecrypt",
             "Ptr", hKey,
@@ -324,7 +400,7 @@ AesGcmDecryptBytes(b64Iv, b64CtAndTag, keyBuf, &ok := "") {
     }
 }
 
-EncryptRelayPayload(plainJson, pairingCode, secretSalt := "", ivOverride := "") {
+EncryptRelayPayloadV1(plainJson, pairingCode, secretSalt := "", ivOverride := "") {
     keyBuf := DeriveAesGcmKey32(pairingCode, secretSalt)
     enc := AesGcmEncryptBytes(plainJson, keyBuf, ivOverride)
     if (!IsObject(enc))
@@ -332,53 +408,83 @@ EncryptRelayPayload(plainJson, pairingCode, secretSalt := "", ivOverride := "") 
     return "PSGCM1|" enc.iv "|" enc.ct
 }
 
+EncryptRelayPayload(plainJson, pairingCode, secretSalt := "", ivOverride := "", envelopeVersion := 2) {
+    if (Integer(envelopeVersion) == 1)
+        return EncryptRelayPayloadV1(plainJson, pairingCode, secretSalt, ivOverride)
+    cleanCode := Trim(String(pairingCode))
+    keyBuf := DeriveAesGcmKey32V2(cleanCode, secretSalt)
+    aadStr := "PSGCM2|" cleanCode
+    enc := AesGcmEncryptBytes(plainJson, keyBuf, ivOverride, aadStr)
+    if (!IsObject(enc))
+        return ""
+    return "PSGCM2|" enc.iv "|" enc.ct
+}
+
 DecryptRelayPayload(envelope, pairingCode, secretSalt := "", &ok := "") {
     ok := false
     raw := (Type(envelope) == "Buffer") ? StrGet(envelope, "UTF-8") : String(envelope)
     raw := StrReplace(raw, "\/", "/")
-    if (!RegExMatch(raw, "PSGCM1\|([A-Za-z0-9+/=]+)\|([A-Za-z0-9+/=]+)", &m))
-        return ""
-    keyBuf := DeriveAesGcmKey32(pairingCode, secretSalt)
-    return AesGcmDecryptBytes(m[1], m[2], keyBuf, &ok)
+    if (RegExMatch(raw, "PSGCM2\|([A-Za-z0-9+/=]+)\|([A-Za-z0-9+/=]+)", &m2)) {
+        cleanCode := Trim(String(pairingCode))
+        keyBuf := DeriveAesGcmKey32V2(cleanCode, secretSalt)
+        return AesGcmDecryptBytes(m2[1], m2[2], keyBuf, &ok, "PSGCM2|" cleanCode)
+    }
+    if (RegExMatch(raw, "PSGCM1\|([A-Za-z0-9+/=]+)\|([A-Za-z0-9+/=]+)", &m1)) {
+        keyBuf := DeriveAesGcmKey32(pairingCode, secretSalt)
+        return AesGcmDecryptBytes(m1[1], m1[2], keyBuf, &ok)
+    }
+    return ""
 }
 
 class RelayReplayGuard {
     maxSkewSec := 300
     maxSenders := 64
+    lastRejectReason := ""
     _lastSeq := ""
     _order := ""
 
     __New(maxSkewSec := 300, maxSenders := 64) {
         this.maxSkewSec := Max(5, Integer(maxSkewSec))
         this.maxSenders := Max(4, Integer(maxSenders))
+        this.lastRejectReason := ""
         this._lastSeq := Map()
         this._order := []
     }
 
     Reset() {
+        this.lastRejectReason := ""
         this._lastSeq := Map()
         this._order := []
     }
 
     Accept(senderKey, seq, ts := 0, nowEpochSec := "") {
+        this.lastRejectReason := ""
         sKey := Trim(String(senderKey))
         if (sKey = "")
             sKey := "default"
-        if (!IsInteger(seq))
+        if (!IsInteger(seq)) {
+            this.lastRejectReason := "bad_seq"
             return false
+        }
         seqNum := Integer(seq)
-        if (seqNum <= 0)
+        if (seqNum <= 0) {
+            this.lastRejectReason := "bad_seq"
             return false
+        }
 
-        if (this._lastSeq.Has(sKey) && seqNum <= this._lastSeq[sKey])
+        if (this._lastSeq.Has(sKey) && seqNum <= this._lastSeq[sKey]) {
+            this.lastRejectReason := "replay_seq"
             return false
+        }
 
         if (ts != "" && IsInteger(ts)) {
             tsNum := Integer(ts)
             if (tsNum >= 1000000000) {
                 nowSec := (nowEpochSec != "" && IsInteger(nowEpochSec)) ? Integer(nowEpochSec) : GetCurrentUnixEpochSec()
-                if (Abs(nowSec - tsNum) > this.maxSkewSec)
+                if (Abs(nowSec - tsNum) > this.maxSkewSec) {
+                    this.lastRejectReason := "clock_skew"
                     return false
+                }
             }
         }
 

@@ -17,6 +17,8 @@ class SessionTimeline {
     static _EnsureInit() {
         if (this.SessionStartUtc = "")
             this.SessionStartUtc := A_NowUTC
+        if (this.AutosaveFile = A_ScriptDir "\logs\SessionTimeline_active.jsonl" && IsSet(ConfigStore))
+            this.AutosaveFile := ConfigStore.ResolveDataDir(A_ScriptDir) "\logs\SessionTimeline_active.jsonl"
     }
 
     static Clear() {

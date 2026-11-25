@@ -120,13 +120,36 @@ class RelayClientTest {
     @Test
     fun rejectsBadAuthTokenAndEmitsAuthFailed() {
         val code = "PAIR42"
-        val authFailLatch = CountDownLatch(1)
-        val client = RelayClient(
+        val defaultAuthFailLatch = CountDownLatch(1)
+        val defaultClient = RelayClient(
             httpClient = httpClient,
             pairingCode = code,
             password = "right",
             httpBaseUrl = "http://127.0.0.1:1",
             wsBaseUrl = "ws://127.0.0.1:1",
+            callbacks = object : RelaySessionCallbacks {
+                override fun onRelayConnected() {}
+                override fun onRelayAuthFailed() { defaultAuthFailLatch.countDown() }
+                override fun onRelayMuteState(muted: Boolean) {}
+                override fun onCloseRemoteSignal() {}
+                override fun onRelayDisconnected(reason: String) {}
+            }
+        )
+
+        // Default allowLegacyPlaintext=false must silently drop plaintext PSRELAY frames
+        val badPacket = RelayCrypto.formatRelayPacket("host", "state", "0", "WRONGTOKEN")
+        defaultClient.handleRawMessage("""{"event":"message","message":"$badPacket"}""")
+        assertEquals(1L, defaultAuthFailLatch.count)
+
+        // Opt-in allowLegacyPlaintext=true OR encrypted envelope with wrong auth must trigger onRelayAuthFailed
+        val authFailLatch = CountDownLatch(1)
+        val legacyClient = RelayClient(
+            httpClient = httpClient,
+            pairingCode = code,
+            password = "right",
+            httpBaseUrl = "http://127.0.0.1:1",
+            wsBaseUrl = "ws://127.0.0.1:1",
+            allowLegacyPlaintext = true,
             callbacks = object : RelaySessionCallbacks {
                 override fun onRelayConnected() {}
                 override fun onRelayAuthFailed() { authFailLatch.countDown() }
@@ -135,9 +158,7 @@ class RelayClientTest {
                 override fun onRelayDisconnected(reason: String) {}
             }
         )
-
-        val badPacket = RelayCrypto.formatRelayPacket("host", "state", "0", "WRONGTOKEN")
-        client.handleRawMessage("""{"event":"message","message":"$badPacket"}""")
+        legacyClient.handleRawMessage("""{"event":"message","message":"$badPacket"}""")
         assertTrue(authFailLatch.await(1, TimeUnit.SECONDS))
     }
 }

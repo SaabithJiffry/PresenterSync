@@ -101,16 +101,19 @@ def _gf_mul(x: int, y: int) -> int:
     return z
 
 
-def _ghash(h_int: int, ct: bytes) -> int:
+def _ghash(h_int: int, ct: bytes, aad: bytes = b"") -> int:
     y = 0
+    for i in range(0, len(aad), 16):
+        blk = aad[i : i + 16].ljust(16, b"\x00")
+        y = _gf_mul(y ^ int.from_bytes(blk, "big"), h_int)
     for i in range(0, len(ct), 16):
         blk = ct[i : i + 16].ljust(16, b"\x00")
         y = _gf_mul(y ^ int.from_bytes(blk, "big"), h_int)
-    len_blk = (0).to_bytes(8, "big") + (len(ct) * 8).to_bytes(8, "big")
+    len_blk = (len(aad) * 8).to_bytes(8, "big") + (len(ct) * 8).to_bytes(8, "big")
     return _gf_mul(y ^ int.from_bytes(len_blk, "big"), h_int)
 
 
-def aes256_gcm_encrypt(key: bytes, iv: bytes, plaintext: bytes) -> tuple[bytes, bytes]:
+def aes256_gcm_encrypt(key: bytes, iv: bytes, plaintext: bytes, aad: bytes = b"") -> tuple[bytes, bytes]:
     rk = _aes256_key_expand(key)
     h_int = int.from_bytes(_aes256_encrypt_block(b"\x00" * 16, rk), "big")
     j0 = iv + b"\x00\x00\x00\x01"
@@ -122,18 +125,18 @@ def aes256_gcm_encrypt(key: bytes, iv: bytes, plaintext: bytes) -> tuple[bytes, 
         chunk = plaintext[i : i + 16]
         ct_parts.append(bytes(a ^ b for a, b in zip(chunk, ks)))
     ct = b"".join(ct_parts)
-    tag_int = _ghash(h_int, ct) ^ int.from_bytes(_aes256_encrypt_block(j0, rk), "big")
+    tag_int = _ghash(h_int, ct, aad) ^ int.from_bytes(_aes256_encrypt_block(j0, rk), "big")
     return ct, tag_int.to_bytes(16, "big")
 
 
-def aes256_gcm_decrypt(key: bytes, iv: bytes, ct_and_tag: bytes) -> bytes:
+def aes256_gcm_decrypt(key: bytes, iv: bytes, ct_and_tag: bytes, aad: bytes = b"") -> bytes:
     if len(ct_and_tag) < 16:
         raise ValueError("Ciphertext too short")
     ct, tag = ct_and_tag[:-16], ct_and_tag[-16:]
     rk = _aes256_key_expand(key)
     h_int = int.from_bytes(_aes256_encrypt_block(b"\x00" * 16, rk), "big")
     j0 = iv + b"\x00\x00\x00\x01"
-    expected_tag = (_ghash(h_int, ct) ^ int.from_bytes(_aes256_encrypt_block(j0, rk), "big")).to_bytes(16, "big")
+    expected_tag = (_ghash(h_int, ct, aad) ^ int.from_bytes(_aes256_encrypt_block(j0, rk), "big")).to_bytes(16, "big")
     if expected_tag != tag:
         raise ValueError("GCM auth tag mismatch")
     ctr = int.from_bytes(j0, "big")
@@ -148,6 +151,12 @@ def aes256_gcm_decrypt(key: bytes, iv: bytes, ct_and_tag: bytes) -> bytes:
 
 def derive_key(code: str, salt: str) -> bytes:
     return hashlib.sha256(f"PS_GCM_V1|{code.strip()}|{salt.strip()}".encode("utf-8")).digest()
+
+
+def derive_key_v2(code: str, salt: str, iterations: int = 10000) -> bytes:
+    pw = f"{code.strip()}|{salt.strip()}".encode("utf-8")
+    kdf_salt = f"PS_GCM_V2_SALT|{code.strip()}".encode("utf-8")
+    return hashlib.pbkdf2_hmac("sha256", pw, kdf_salt, iterations, dklen=32)
 
 
 def _run_ahk(script_body: str) -> str:
@@ -172,21 +181,33 @@ def _run_ahk(script_body: str) -> str:
 
 
 def main() -> int:
-    # 1. Parse Kotlin deterministic vector and decrypt + verify in pure Python
+    # 1. Parse Kotlin v1 and v2 deterministic vectors and decrypt + verify in pure Python
     kt_src = KT_TEST.read_text(encoding="utf-8")
     m_code = re.search(r'VECTOR_CODE\s*=\s*"([^"]+)"', kt_src)
     m_salt = re.search(r'VECTOR_SALT\s*=\s*"([^"]+)"', kt_src)
     m_plain = re.search(r'VECTOR_PLAIN\s*=\s*"""(.*?)"""', kt_src)
     m_env = re.search(r'EXPECTED_VECTOR_ENVELOPE\s*=\s*\n?\s*"([^"]+)"', kt_src)
-    assert m_code and m_salt and m_plain and m_env, "Failed to parse Kotlin test vector"
+    m_env2 = re.search(r'EXPECTED_VECTOR_ENVELOPE_V2\s*=\s*\n?\s*"([^"]+)"', kt_src)
+    assert m_code and m_salt and m_plain and m_env and m_env2, "Failed to parse Kotlin test vectors"
 
-    vec_key = derive_key(m_code.group(1), m_salt.group(1))
+    code_val = m_code.group(1)
+    salt_val = m_salt.group(1)
+
+    vec_key = derive_key(code_val, salt_val)
     _, b64_iv, b64_ct_tag = m_env.group(1).split("|")
     py_dec = aes256_gcm_decrypt(vec_key, base64.b64decode(b64_iv), base64.b64decode(b64_ct_tag)).decode("utf-8")
-    assert py_dec == m_plain.group(1), f"Kotlin vector mismatch: {py_dec!r}"
-    print("[PASS] 1/3 Kotlin EXPECTED_VECTOR_ENVELOPE decrypted & verified in pure Python")
+    assert py_dec == m_plain.group(1), f"Kotlin v1 vector mismatch: {py_dec!r}"
 
-    # 2. AHK EncryptRelayPayload -> Python decrypt
+    vec_key_v2 = derive_key_v2(code_val, salt_val)
+    aad_v2 = f"PSGCM2|{code_val.strip()}".encode("utf-8")
+    _, b64_iv2, b64_ct_tag2 = m_env2.group(1).split("|")
+    py_dec_v2 = aes256_gcm_decrypt(
+        vec_key_v2, base64.b64decode(b64_iv2), base64.b64decode(b64_ct_tag2), aad=aad_v2
+    ).decode("utf-8")
+    assert py_dec_v2 == m_plain.group(1), f"Kotlin v2 vector mismatch: {py_dec_v2!r}"
+    print("[PASS] 1/4 Kotlin EXPECTED_VECTOR_ENVELOPE (v1) + EXPECTED_VECTOR_ENVELOPE_V2 (PSGCM2+AAD) verified in pure Python")
+
+    # 2. AHK EncryptRelayPayload (PSGCM2) -> Python decrypt + AAD tamper check
     rand_code = "PY-AHK-" + os.urandom(4).hex()
     rand_salt = "Salt#" + os.urandom(4).hex()
     rand_plain = f'{{"msg":"hello-{os.urandom(6).hex()}","ok":true}}'
@@ -194,33 +215,60 @@ def main() -> int:
         f"env := EncryptRelayPayload('{rand_plain}', '{rand_code}', '{rand_salt}')\n"
         'FileAppend(env, "*")\nExitApp(0)'
     )
-    assert ahk_env.startswith("PSGCM1|"), f"Unexpected AHK envelope: {ahk_env!r}"
+    assert ahk_env.startswith("PSGCM2|"), f"Unexpected AHK envelope: {ahk_env!r}"
     _, ahk_iv_b64, ahk_ct_b64 = ahk_env.split("|")
+    rand_aad = f"PSGCM2|{rand_code}".encode("utf-8")
     py_from_ahk = aes256_gcm_decrypt(
-        derive_key(rand_code, rand_salt),
+        derive_key_v2(rand_code, rand_salt),
         base64.b64decode(ahk_iv_b64),
         base64.b64decode(ahk_ct_b64),
+        aad=rand_aad,
     ).decode("utf-8")
-    assert py_from_ahk == rand_plain, f"AHK->Python mismatch: {py_from_ahk!r}"
-    print("[PASS] 2/3 AHK EncryptRelayPayload -> Python AES-256-GCM decrypt verified")
+    assert py_from_ahk == rand_plain, f"AHK->Python PSGCM2 mismatch: {py_from_ahk!r}"
+    try:
+        aes256_gcm_decrypt(
+            derive_key_v2(rand_code, rand_salt),
+            base64.b64decode(ahk_iv_b64),
+            base64.b64decode(ahk_ct_b64),
+            aad=b"PSGCM2|WRONG-CODE",
+        )
+        raise AssertionError("Wrong AAD must fail GCM tag verification")
+    except ValueError:
+        pass
+    print("[PASS] 2/4 AHK EncryptRelayPayload PSGCM2 -> Python PBKDF2+AAD decrypt & wrong-AAD rejection verified")
 
-    # 3. Python encrypt -> AHK DecryptRelayPayload + tampered-tag rejection
+    # 3. Python PSGCM2 encrypt -> AHK DecryptRelayPayload + tampered-tag & wrong-code rejection
     py_iv = os.urandom(12)
     py_plain = f'{{"from":"python","n":{int.from_bytes(os.urandom(2), "big")}}}'
-    py_ct, py_tag = aes256_gcm_encrypt(derive_key(rand_code, rand_salt), py_iv, py_plain.encode("utf-8"))
-    py_env = "PSGCM1|" + base64.b64encode(py_iv).decode() + "|" + base64.b64encode(py_ct + py_tag).decode()
+    py_ct, py_tag = aes256_gcm_encrypt(derive_key_v2(rand_code, rand_salt), py_iv, py_plain.encode("utf-8"), aad=rand_aad)
+    py_env = "PSGCM2|" + base64.b64encode(py_iv).decode() + "|" + base64.b64encode(py_ct + py_tag).decode()
 
     tampered_bytes = bytearray(py_ct + py_tag)
     tampered_bytes[-1] ^= 0xFF
-    tampered_env = "PSGCM1|" + base64.b64encode(py_iv).decode() + "|" + base64.b64encode(bytes(tampered_bytes)).decode()
+    tampered_env = "PSGCM2|" + base64.b64encode(py_iv).decode() + "|" + base64.b64encode(bytes(tampered_bytes)).decode()
 
     ahk_out = _run_ahk(
         f'dec := DecryptRelayPayload("{py_env}", "{rand_code}", "{rand_salt}")\n'
-        f'bad := DecryptRelayPayload("{tampered_env}", "{rand_code}", "{rand_salt}")\n'
-        'FileAppend(dec "`nBAD=" StrLen(bad), "*")\nExitApp(0)'
+        f'badTag := DecryptRelayPayload("{tampered_env}", "{rand_code}", "{rand_salt}")\n'
+        f'badAad := DecryptRelayPayload("{py_env}", "WRONG-CODE", "{rand_salt}")\n'
+        'FileAppend(dec "`nBADTAG=" StrLen(badTag) "`nBADAAD=" StrLen(badAad), "*")\nExitApp(0)'
     )
-    assert ahk_out == f"{py_plain}\nBAD=0", f"Python->AHK mismatch or tamper accepted: {ahk_out!r}"
-    print("[PASS] 3/3 Python AES-256-GCM -> AHK DecryptRelayPayload + tampered-tag rejection verified")
+    assert ahk_out == f"{py_plain}\nBADTAG=0\nBADAAD=0", f"Python->AHK PSGCM2 mismatch or tamper accepted: {ahk_out!r}"
+    print("[PASS] 3/4 Python PSGCM2 -> AHK DecryptRelayPayload + tampered-tag & AAD rejection verified")
+
+    # 4. Backward compatibility: Python PSGCM1 -> AHK DecryptRelayPayload & AHK EncryptRelayPayloadV1 -> Python
+    py_ct1, py_tag1 = aes256_gcm_encrypt(derive_key(rand_code, rand_salt), py_iv, py_plain.encode("utf-8"))
+    py_env1 = "PSGCM1|" + base64.b64encode(py_iv).decode() + "|" + base64.b64encode(py_ct1 + py_tag1).decode()
+    ahk_out1 = _run_ahk(
+        f'dec1 := DecryptRelayPayload("{py_env1}", "{rand_code}", "{rand_salt}")\n'
+        f"enc1 := EncryptRelayPayloadV1('{rand_plain}', '{rand_code}', '{rand_salt}')\n"
+        'FileAppend(dec1 "`n" enc1, "*")\nExitApp(0)'
+    )
+    dec1_line, enc1_line = ahk_out1.split("\n", 1)
+    assert dec1_line == py_plain and enc1_line.startswith("PSGCM1|"), f"PSGCM1 compat failed: {ahk_out1!r}"
+    _, iv1_b64, ct1_b64 = enc1_line.split("|")
+    assert aes256_gcm_decrypt(derive_key(rand_code, rand_salt), base64.b64decode(iv1_b64), base64.b64decode(ct1_b64)).decode("utf-8") == rand_plain
+    print("[PASS] 4/4 Backward-compatible PSGCM1 Python <-> AHK roundtrip verified")
     return 0
 
 

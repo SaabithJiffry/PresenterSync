@@ -29,6 +29,8 @@ class AesGcmRelayCryptoTest {
         private val VECTOR_IV = ByteArray(12) { (it + 1).toByte() }
         private const val EXPECTED_VECTOR_ENVELOPE =
             "PSGCM1|AQIDBAUGBwgJCgsM|xm/rr4vlvT59lkdEHjQ+P3tWFW56lxVwSKJdXy8O2FfPGMxM/Dw1yPpLzed7CPasWvSBETWV7hXK0Z+6I0r53ydmSMcV6nLWy/c/7mu8lUk="
+        private const val EXPECTED_VECTOR_ENVELOPE_V2 =
+            "PSGCM2|AQIDBAUGBwgJCgsM|A50jQz/upMirKVGolj9r2QcU7BnA4P3spHJsyqbW5/oVZfmkkl6dbkH5ZDeFvSCz4YxnPCCQ/roAdtcByzVTdVARwZnOOudwdZKIPIaMb1Y="
     }
 
     @Test
@@ -38,14 +40,20 @@ class AesGcmRelayCryptoTest {
         assertEquals(32, key1.size)
         assertTrue(key1.contentEquals(key2))
 
-        val envelope = RelayCrypto.encryptRelayPayload(VECTOR_PLAIN, VECTOR_CODE, VECTOR_SALT, VECTOR_IV)
-        assertEquals(EXPECTED_VECTOR_ENVELOPE, envelope)
+        val envV2 = RelayCrypto.encryptRelayPayload(VECTOR_PLAIN, VECTOR_CODE, VECTOR_SALT, VECTOR_IV)
+        assertEquals(EXPECTED_VECTOR_ENVELOPE_V2, envV2)
+        assertEquals(VECTOR_PLAIN, RelayCrypto.decryptRelayPayload(envV2, VECTOR_CODE, VECTOR_SALT))
+        assertNull(RelayCrypto.decryptRelayPayload(envV2, "WRONG-AAD-CODE", VECTOR_SALT))
+
+        val envelopeV1 = RelayCrypto.encryptRelayPayloadV1(VECTOR_PLAIN, VECTOR_CODE, VECTOR_SALT, VECTOR_IV)
+        assertEquals(EXPECTED_VECTOR_ENVELOPE, envelopeV1)
+        val envelope = envelopeV1
 
         val decrypted = RelayCrypto.decryptRelayPayload(envelope, VECTOR_CODE, VECTOR_SALT)
         assertEquals(VECTOR_PLAIN, decrypted)
 
         // Wrapped inside ntfy WebSocket JSON envelope
-        val ntfyJson = """{"id":"m1","event":"message","topic":"psync_test","message":"$envelope"}"""
+        val ntfyJson = """{"id":"m1","event":"message","topic":"psync_test","message":"$envV2"}"""
         assertEquals(VECTOR_PLAIN, RelayCrypto.decryptRelayPayload(ntfyJson, VECTOR_CODE, VECTOR_SALT))
     }
 
@@ -54,13 +62,13 @@ class AesGcmRelayCryptoTest {
         val utfPlain = """{"v":1,"cmd":"nudge","data":"Host;Wrap up — 2 min left ✓"}"""
         val env1 = RelayCrypto.encryptRelayPayload(utfPlain, VECTOR_CODE, VECTOR_SALT)
         val env2 = RelayCrypto.encryptRelayPayload(utfPlain, VECTOR_CODE, VECTOR_SALT)
-        assertTrue(env1.startsWith("PSGCM1|"))
-        assertTrue(env2.startsWith("PSGCM1|"))
+        assertTrue(env1.startsWith("PSGCM2|"))
+        assertTrue(env2.startsWith("PSGCM2|"))
         assertNotEquals(env1, env2)
         assertEquals(utfPlain, RelayCrypto.decryptRelayPayload(env1, VECTOR_CODE, VECTOR_SALT))
         assertEquals(utfPlain, RelayCrypto.decryptRelayPayload(env2, VECTOR_CODE, VECTOR_SALT))
 
-        val parts = EXPECTED_VECTOR_ENVELOPE.split("|")
+        val parts = EXPECTED_VECTOR_ENVELOPE_V2.split("|")
         val b64Iv = parts[1]
         val ctAndTag = Base64.getDecoder().decode(parts[2])
 
@@ -69,7 +77,7 @@ class AesGcmRelayCryptoTest {
         badCt[0] = (badCt[0].toInt() xor 0x01).toByte()
         assertNull(
             RelayCrypto.decryptRelayPayload(
-                "PSGCM1|$b64Iv|${Base64.getEncoder().encodeToString(badCt)}",
+                "PSGCM2|$b64Iv|${Base64.getEncoder().encodeToString(badCt)}",
                 VECTOR_CODE,
                 VECTOR_SALT
             )
@@ -80,7 +88,7 @@ class AesGcmRelayCryptoTest {
         badTag[badTag.lastIndex] = (badTag[badTag.lastIndex].toInt() xor 0x80).toByte()
         assertNull(
             RelayCrypto.decryptRelayPayload(
-                "PSGCM1|$b64Iv|${Base64.getEncoder().encodeToString(badTag)}",
+                "PSGCM2|$b64Iv|${Base64.getEncoder().encodeToString(badTag)}",
                 VECTOR_CODE,
                 VECTOR_SALT
             )
@@ -91,14 +99,14 @@ class AesGcmRelayCryptoTest {
         badIv[0] = (badIv[0].toInt() xor 0xFF).toByte()
         assertNull(
             RelayCrypto.decryptRelayPayload(
-                "PSGCM1|${Base64.getEncoder().encodeToString(badIv)}|${parts[2]}",
+                "PSGCM2|${Base64.getEncoder().encodeToString(badIv)}|${parts[2]}",
                 VECTOR_CODE,
                 VECTOR_SALT
             )
         )
 
         // Wrong secretSalt / password
-        assertNull(RelayCrypto.decryptRelayPayload(EXPECTED_VECTOR_ENVELOPE, VECTOR_CODE, "WrongPass"))
+        assertNull(RelayCrypto.decryptRelayPayload(EXPECTED_VECTOR_ENVELOPE_V2, VECTOR_CODE, "WrongPass"))
     }
 
     @Test
@@ -174,6 +182,7 @@ class AesGcmRelayCryptoTest {
         val lastTelemetry = AtomicReference<RelayTelemetryState>()
         val lastMuted = AtomicReference<Boolean>()
 
+        val warnings = mutableListOf<Pair<String, String>>()
         val httpClient = OkHttpClient.Builder().build()
         try {
             val client = RelayClient(
@@ -193,6 +202,10 @@ class AesGcmRelayCryptoTest {
                         lastTelemetry.set(telemetry)
                     }
 
+                    override fun onRelayWarning(code: String, message: String) {
+                        warnings.add(code to message)
+                    }
+
                     override fun onCloseRemoteSignal() = Unit
                     override fun onRelayDisconnected(reason: String) = Unit
                 }
@@ -200,7 +213,7 @@ class AesGcmRelayCryptoTest {
 
             val nowSec = System.currentTimeMillis() / 1000L
             val hostJson = JSONObject()
-                .put("v", 1)
+                .put("v", 2)
                 .put("src", "host")
                 .put("cmd", "state")
                 .put("data", "1")
@@ -214,6 +227,13 @@ class AesGcmRelayCryptoTest {
                 .put("recSeconds", 187)
                 .put("streamDropWarn", true)
                 .put("voiceWhileMuted", true)
+                .put("osMicMutedDrift", true)
+                .put("lowDiskWarnLevel", 1)
+                .put("lowDiskMb", 1900)
+                .put("deadMicWarn", true)
+                .put("slideIndex", 3)
+                .put("slideTotal", 15)
+                .put("slideTitle", "Intro Slide")
                 .put("timerState", "running")
                 .put("timerRemainingSec", 245)
                 .put("timerPresetSec", 600)
@@ -222,9 +242,10 @@ class AesGcmRelayCryptoTest {
                 .toString()
 
             val encryptedEnv = RelayCrypto.encryptRelayPayload(hostJson, code, pass)
+            assertTrue(encryptedEnv.startsWith("PSGCM2|"))
             val ntfyFrame = """{"event":"message","message":"$encryptedEnv"}"""
 
-            // First delivery accepted with full WAN telemetry parity
+            // First delivery accepted with full WAN telemetry parity + watchdog & slide fields
             client.handleRawMessage(ntfyFrame)
             assertEquals(1, muteCalls.get())
             assertEquals(1, telemetryCalls.get())
@@ -235,6 +256,13 @@ class AesGcmRelayCryptoTest {
             assertEquals(187, tel.recSeconds)
             assertTrue(tel.streamDropWarn)
             assertTrue(tel.voiceWhileMuted)
+            assertTrue(tel.osMicMutedDrift)
+            assertEquals(1, tel.lowDiskWarnLevel)
+            assertEquals(1900, tel.lowDiskMb)
+            assertTrue(tel.deadMicWarn)
+            assertEquals(3, tel.slideIndex)
+            assertEquals(15, tel.slideTotal)
+            assertEquals("Intro Slide", tel.slideTitle)
             assertTrue(tel.isStandby)
             assertEquals("running", tel.timerState)
             assertEquals(245, tel.timerRemainingSec)
@@ -247,16 +275,23 @@ class AesGcmRelayCryptoTest {
             assertEquals(1, muteCalls.get())
             assertEquals(1, telemetryCalls.get())
 
+            // Clock skew (>300s) emits clock_skew warning callback!
+            val skewedJson = JSONObject(hostJson).put("seq", 9L).put("ts", nowSec - 900L).toString()
+            val skewedEnv = RelayCrypto.encryptRelayPayload(skewedJson, code, pass)
+            client.handleRawMessage("""{"event":"message","message":"$skewedEnv"}""")
+            assertTrue(warnings.any { it.first == "clock_skew" })
+            assertEquals(1, telemetryCalls.get())
+
             // Tampered GCM tag must be rejected!
             val envParts = encryptedEnv.split("|")
             val tamperedBytes = Base64.getDecoder().decode(envParts[2])
             tamperedBytes[tamperedBytes.lastIndex] = (tamperedBytes[tamperedBytes.lastIndex].toInt() xor 0x01).toByte()
-            val tamperedFrame = """{"event":"message","message":"PSGCM1|${envParts[1]}|${Base64.getEncoder().encodeToString(tamperedBytes)}"}"""
+            val tamperedFrame = """{"event":"message","message":"PSGCM2|${envParts[1]}|${Base64.getEncoder().encodeToString(tamperedBytes)}"}"""
             client.handleRawMessage(tamperedFrame)
             assertEquals(1, muteCalls.get())
             assertEquals(1, telemetryCalls.get())
 
-            // Extended legacy 10-part dir_state telemetry parsing also supported
+            // Default allowLegacyPlaintext=false must reject plaintext PSRELAY
             val legacyExtended = RelayCrypto.formatRelayPacket(
                 "host",
                 "dir_state",
@@ -264,6 +299,27 @@ class AesGcmRelayCryptoTest {
                 auth
             )
             client.handleRawMessage(legacyExtended)
+            assertEquals(1, telemetryCalls.get())
+
+            // Opt-in allowLegacyPlaintext=true parses extended legacy dir_state telemetry cleanly
+            val optInClient = RelayClient(
+                httpClient = httpClient,
+                pairingCode = code,
+                password = pass,
+                allowLegacyPlaintext = true,
+                callbacks = object : RelaySessionCallbacks {
+                    override fun onRelayConnected() = Unit
+                    override fun onRelayAuthFailed() = Unit
+                    override fun onRelayMuteState(muted: Boolean) = Unit
+                    override fun onRelayTelemetryState(telemetry: RelayTelemetryState) {
+                        telemetryCalls.incrementAndGet()
+                        lastTelemetry.set(telemetry)
+                    }
+                    override fun onCloseRemoteSignal() = Unit
+                    override fun onRelayDisconnected(reason: String) = Unit
+                }
+            )
+            optInClient.handleRawMessage(legacyExtended)
             assertEquals(2, telemetryCalls.get())
             val tel2 = lastTelemetry.get()
             assertEquals(95, tel2.recSeconds)

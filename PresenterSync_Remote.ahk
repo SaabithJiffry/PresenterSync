@@ -84,6 +84,7 @@ class RemoteConfig {
     RelayBaseUrl := "https://ntfy.sh"
     QuickNudgePresets := "2 min left|Wrap up|Check Mic|Q&A"
     EnableRelayEncryption := true
+    AllowLegacyPlaintextRelay := false
     HostAddress := "127.0.0.1"
     HostPort := "4455"
     BridgePort := "4456"
@@ -145,29 +146,57 @@ class RemoteConfig {
 
     __New(filePath := "") {
         global g_RemoteCli
+        dataDir := IsSet(ConfigStore) ? ConfigStore.ResolveDataDir(A_ScriptDir) : A_ScriptDir
         if (filePath != "")
             this.ConfigFile := filePath
         else if (IsObject(g_RemoteCli) && g_RemoteCli.configPath != "")
             this.ConfigFile := g_RemoteCli.configPath
         else if (IsObject(g_RemoteCli) && g_RemoteCli.instanceName != "")
-            this.ConfigFile := A_ScriptDir "\PresenterSync_Remote_" SanitizeInstanceFileSlug(g_RemoteCli.instanceName) ".ini"
+            this.ConfigFile := dataDir "\PresenterSync_Remote_" SanitizeInstanceFileSlug(g_RemoteCli.instanceName) ".ini"
         else
-            this.ConfigFile := A_ScriptDir "\PresenterSync_Remote.ini"
+            this.ConfigFile := dataDir "\PresenterSync_Remote.ini"
+        if (IsSet(ConfigStore))
+            ConfigStore.EnsureParentDir(this.ConfigFile)
         this.Load()
     }
 
     Read(section, key, defaultVal := "") {
         k := section "`n" key
         if (this._deferredWrites.Has(k))
-            return String(this._deferredWrites[k].val)
-        return IniRead(this.ConfigFile, section, key, defaultVal)
+            raw := String(this._deferredWrites[k].val)
+        else
+            raw := IniRead(this.ConfigFile, section, key, defaultVal)
+        if (IsSet(ConfigStore) && ConfigStore.IsSecretKey(section, key))
+            return ConfigStore.UnprotectSecret(raw, section "." key)
+        return raw
     }
 
     Write(section, key, val) {
         k := section "`n" key
         if (this._deferredWrites.Has(k))
             this._deferredWrites.Delete(k)
-        IniWrite(val, this.ConfigFile, section, key)
+        writeVal := val
+        if (IsSet(ConfigStore)) {
+            ConfigStore.EnsureParentDir(this.ConfigFile)
+            if (ConfigStore.IsSecretKey(section, key))
+                writeVal := ConfigStore.ProtectSecret(val)
+        }
+        IniWrite(writeVal, this.ConfigFile, section, key)
+        this._BackupDeferred(false)
+    }
+
+    _BackupDeferred(force := false) {
+        static lastBak := 0
+        if (!IsSet(ConfigStore))
+            return false
+        now := A_TickCount
+        if (!force && lastBak != 0 && (now - lastBak) < 5000)
+            return false
+        if (ConfigStore.BackupIniFile(this.ConfigFile)) {
+            lastBak := now
+            return true
+        }
+        return false
     }
 
     ReadBool(section, key, defaultValue := 0) {
@@ -203,7 +232,10 @@ class RemoteConfig {
         k := section "`n" key
         if (this._deferredWrites.Has(k))
             this._deferredWrites.Delete(k)
+        if (IsSet(ConfigStore))
+            ConfigStore.EnsureParentDir(this.ConfigFile)
         IniWrite(value ? 1 : 0, this.ConfigFile, section, key)
+        this._BackupDeferred(false)
     }
 
     WriteBoolDeferred(section, key, value, delayMs := 250) {
@@ -221,24 +253,34 @@ class RemoteConfig {
             return 0
         pending := this._deferredWrites
         this._deferredWrites := Map()
+        if (IsSet(ConfigStore))
+            ConfigStore.EnsureParentDir(this.ConfigFile)
         written := 0
         for _, entry in pending {
             try {
-                IniWrite(entry.val, this.ConfigFile, entry.sec, entry.key)
+                wVal := (IsSet(ConfigStore) && ConfigStore.IsSecretKey(entry.sec, entry.key)) ? ConfigStore.ProtectSecret(entry.val) : entry.val
+                IniWrite(wVal, this.ConfigFile, entry.sec, entry.key)
                 written += 1
             }
         }
+        if (written > 0)
+            this._BackupDeferred(false)
         return written
     }
 
     Load() {
         global g_RemoteCli
+        if (IsSet(ConfigStore)) {
+            ConfigStore.RecoverIniFromBackup(this.ConfigFile)
+            ConfigStore.MigrateIniSchema(this.ConfigFile, "Connection")
+        }
         rawNetMode := StrLower(Trim(this.Read("Connection", "NetworkMode", "LAN")))
         this.NetworkMode := (rawNetMode = "internet") ? "Internet" : "LAN"
         this.EnableRelayFallback := this.ReadBool("Connection", "EnableRelayFallback", 1)
         this.InternetPairingCode := Trim(this.Read("Connection", "InternetPairingCode", ""))
         this.RelayBaseUrl := NormalizeRelayBaseUrl(this.Read("Connection", "RelayBaseUrl", "https://ntfy.sh"))
         this.EnableRelayEncryption := this.ReadBool("Connection", "EnableRelayEncryption", 1)
+        this.AllowLegacyPlaintextRelay := this.ReadBool("Connection", "AllowLegacyPlaintextRelay", 0)
         this.HostAddress := this.Read("Connection", "HostAddress", "127.0.0.1")
         rawPort := Trim(this.Read("Connection", "HostPort", "4455"))
         this.HostPort := (IsInteger(rawPort) && Integer(rawPort) >= 1 && Integer(rawPort) <= 65535) ? String(Integer(rawPort)) : "4455"
@@ -325,6 +367,11 @@ class RemoteConfig {
         this.savedY := this.Read("Position", "Y", "Default")
         this.savedXRatio := this.Read("Position", "XRatio", "")
         this.savedYRatio := this.Read("Position", "YRatio", "")
+        if (IsSet(ConfigStore) && FileExist(this.ConfigFile)) {
+            if (Trim(IniRead(this.ConfigFile, "ConfigMeta", "SchemaVersion", "")) = "")
+                try IniWrite(ConfigStore.CURRENT_SCHEMA_VERSION, this.ConfigFile, "ConfigMeta", "SchemaVersion")
+        }
+        this._BackupDeferred(true)
     }
 
     ResetPosition() {
@@ -757,10 +804,13 @@ ApplyRemoteRelayTelemetryPacket(cfg, state, telObj) {
         recSeconds: telObj.recSeconds,
         streamDropWarn: telObj.streamDropWarn,
         voiceWhileMuted: telObj.voiceWhileMuted,
-        osMicMutedDrift: state.osMicMutedDrift,
-        lowDiskWarnLevel: state.lowDiskWarnLevel,
-        lowDiskMb: state.lowDiskMb,
-        deadMicWarn: state.deadMicWarn,
+        osMicMutedDrift: telObj.HasOwnProp("osMicMutedDrift") ? !!telObj.osMicMutedDrift : state.osMicMutedDrift,
+        lowDiskWarnLevel: telObj.HasOwnProp("lowDiskWarnLevel") ? Integer(telObj.lowDiskWarnLevel) : state.lowDiskWarnLevel,
+        lowDiskMb: telObj.HasOwnProp("lowDiskMb") ? Integer(telObj.lowDiskMb) : state.lowDiskMb,
+        deadMicWarn: telObj.HasOwnProp("deadMicWarn") ? !!telObj.deadMicWarn : state.deadMicWarn,
+        slideIndex: telObj.HasOwnProp("slideIndex") ? Max(0, Integer(telObj.slideIndex)) : state.slideIndex,
+        slideTotal: telObj.HasOwnProp("slideTotal") ? Max(0, Integer(telObj.slideTotal)) : state.slideTotal,
+        slideTitle: telObj.HasOwnProp("slideTitle") && telObj.slideTitle != "" ? String(telObj.slideTitle) : state.slideTitle,
         isStandby: telObj.isStandby,
         timerState: (telObj.timerState != "" ? telObj.timerState : state.timerState),
         timerRemainingSec: telObj.timerRemainingSec,
@@ -1262,11 +1312,18 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
 
     if (!state.HasOwnProp("relayReplayGuard") || !IsObject(state.relayReplayGuard))
         state.relayReplayGuard := RelayReplayGuard()
-    pkt := ParseRelayEnvelope(msg, cfg.InternetPairingCode, cfg.ObsPassword, state.relayReplayGuard, true)
+    allowLegacy := (IsObject(cfg) && cfg.HasOwnProp("AllowLegacyPlaintextRelay") && cfg.AllowLegacyPlaintextRelay) ? true : false
+    pkt := ParseRelayEnvelope(msg, cfg.InternetPairingCode, cfg.ObsPassword, state.relayReplayGuard, allowLegacy)
     if IsObject(pkt) {
         if (!pkt.ok) {
             if (IsSet(DiagnosticLogger))
-                try DiagnosticLogger.RecordBreadcrumb("Relay", pkt.replayRejected ? "ReplayRejected" : "DecryptRejected", pkt.error)
+                try DiagnosticLogger.RecordBreadcrumb("Relay", (pkt.HasOwnProp("clockSkewRejected") && pkt.clockSkewRejected) ? "ClockSkewRejected" : (pkt.replayRejected ? "ReplayRejected" : "DecryptRejected"), pkt.error)
+            if (pkt.HasOwnProp("clockSkewRejected") && pkt.clockSkewRejected && (!IsSet(g_IsTestMode) || !g_IsTestMode)) {
+                if (!state.HasOwnProp("_lastSkewWarnTick") || (A_TickCount - state._lastSkewWarnTick) >= 60000) {
+                    state._lastSkewWarnTick := A_TickCount
+                    try TrayTip("WAN Relay message rejected (>5 min clock skew). Sync system clock on Host and Remote.", "PresenterSync Remote", 2)
+                }
+            }
             return
         }
         if (pkt.src != "host")
@@ -1277,7 +1334,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 "Internet Relay authentication failed. Check password in Change OBS Connection.")
             return
         }
-        state._relayPeerLegacy := !pkt.encrypted
+        state._relayPeerLegacy := (allowLegacy && !pkt.encrypted)
         if (pkt.cmd = "state") {
             if (!state.obsConnected || state.connStatus != "connected") {
                 state.obsConnected := true

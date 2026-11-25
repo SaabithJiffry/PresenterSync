@@ -5,6 +5,8 @@
 ;              pre-error breadcrumb ring buffer.
 ; ==============================================================================
 
+#Include "%A_LineFile%\..\ConfigStore.ahk"
+
 class DiagnosticLogger {
     static LogDir := A_ScriptDir "\logs"
     static AppName := "PresenterSync"
@@ -19,6 +21,8 @@ class DiagnosticLogger {
     static Init(appName := "PresenterSync", cfg := "", state := "") {
         if (appName != "")
             this.AppName := String(appName)
+        if (this.LogDir = A_ScriptDir "\logs" && IsSet(ConfigStore))
+            this.LogDir := ConfigStore.ResolveDataDir(A_ScriptDir) "\logs"
         if (IsObject(cfg) || cfg != "")
             this.CfgRef := cfg
         if (IsObject(state) || state != "")
