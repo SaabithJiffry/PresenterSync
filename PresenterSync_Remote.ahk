@@ -125,6 +125,7 @@ class RemoteConfig {
     ShowPillMiniBadges := true
     ExcludeFromCapture := true
     HudVisibilityMode := "Always"
+    SlideTargetMode := "Host"
     ConfirmBeforeStopRecording := true
     OpacityLevel := 220
     IndicatorScale := 1.0
@@ -1955,6 +1956,10 @@ _SendRemoteRelayAction(cfg, state, cmd, data := "1") {
 SendRemoteBridgeDeckCommand(cfg, state, actionType) {
     static lastTransTick := 0
     actLow := StrLower(Trim(String(actionType)))
+    if ((actLow = "ppt_next" || actLow = "ppt_prev") && IsObject(cfg) && cfg.HasOwnProp("SlideTargetMode") && cfg.SlideTargetMode = "Local") {
+        res := TryDispatchFallbackSlideKey(actLow = "ppt_prev" ? "prev" : "next")
+        return res.handled
+    }
     if (actLow = "transition_scene") {
         now := A_TickCount
         if (lastTransTick != 0 && (now - lastTransTick < 35))

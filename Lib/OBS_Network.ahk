@@ -643,7 +643,9 @@ GetFallbackSlideKey(exe, dir := "next") {
     exeLow := StrLower(Trim(String(exe)))
     dLow := StrLower(Trim(String(dir)))
     isPrev := (dLow = "prev" || dLow = "previous" || dLow = "{left}" || dLow = "{up}" || dLow = "{pgup}")
-    if (exeLow = "acrobat.exe" || exeLow = "acrord32.exe" || exeLow = "sumatrapdf.exe" || exeLow = "foxitpdfreader.exe")
+    if (exeLow = "acrobat.exe" || exeLow = "acrord32.exe" || exeLow = "sumatrapdf.exe" || exeLow = "foxitpdfreader.exe"
+        || exeLow = "wpp.exe" || exeLow = "wps.exe" || exeLow = "soffice.bin" || exeLow = "simpress.exe"
+        || exeLow = "mswhiteboard.exe" || exeLow = "whiteboard.exe" || exeLow = "onenote.exe" || exeLow = "powerpnt.exe")
         return isPrev ? "{PgUp}" : "{PgDn}"
     if (exeLow = "chrome.exe" || exeLow = "msedge.exe" || exeLow = "brave.exe" || exeLow = "firefox.exe")
         return isPrev ? "{Left}" : "{Right}"
@@ -666,7 +668,7 @@ TryDispatchFallbackSlideKey(dir := "next", mockWin := "", dryRun := false) {
             targetSpec := "A"
             isActive := true
         } else {
-            for _, cand in ["Acrobat.exe", "AcroRd32.exe", "SumatraPDF.exe", "FoxitPDFReader.exe", "chrome.exe", "msedge.exe", "brave.exe", "firefox.exe"] {
+            for _, cand in ["POWERPNT.EXE", "wpp.exe", "wps.exe", "soffice.bin", "simpress.exe", "Acrobat.exe", "AcroRd32.exe", "SumatraPDF.exe", "FoxitPDFReader.exe", "mswhiteboard.exe", "onenote.exe", "chrome.exe", "msedge.exe", "brave.exe", "firefox.exe"] {
                 if (WinExist("ahk_exe " cand)) {
                     targetExe := cand
                     targetSpec := "ahk_exe " cand

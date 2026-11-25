@@ -146,6 +146,8 @@ if (serveMode) {
             cfg.EnableWS := true
             cfg.EnablePPT := true
             st.obsConnected := true
+            for devId, _ in bridge.pairedDevices
+                bridge.SetDeviceRole(devId, "Director")
             mockObsSent.Length := 0
             mockPptEvents.Length := 0
             FileAppend("ok", readyPath ".rec_ready", "UTF-8")

@@ -1734,6 +1734,23 @@ class HostCompanionBridge {
                 this._SendHttpResponse(c, "200 OK", manJson)
                 return
             }
+            if (method = "GET" && cleanPath = "/slide-preview.jpg") {
+                c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
+                authTok := ""
+                if (RegExMatch(rawPath, "[?&]token=([^&#]+)", &mTok))
+                    authTok := UriDecodeComponent(mTok[1])
+                if (authTok = "" && RegExMatch(hdrText, "im)^Authorization:\s*Bearer\s+([^\r\n]+)", &mHdr))
+                    authTok := Trim(mHdr[1])
+                if (authTok = "" || !this.validTokens.Has(authTok)) {
+                    this._SendHttpResponse(c, "401 Unauthorized", '{"ok":false,"error":"Valid paired token required"}')
+                    return
+                }
+                if (this.HasOwnProp("cachedSlidePreviewBuf") && IsObject(this.cachedSlidePreviewBuf) && this.cachedSlidePreviewBuf.Size > 0)
+                    this._SendBinaryResponse(c, "200 OK", "image/jpeg", this.cachedSlidePreviewBuf, this.cachedSlidePreviewBuf.Size)
+                else
+                    this._SendHttpResponse(c, "404 Not Found", '{"ok":false,"error":"No cached slide preview"}')
+                return
+            }
             if (method = "GET" && cleanPath = "/arcade.js") {
                 c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
                 jsBody := BuildWebRemoteArcadeJs()

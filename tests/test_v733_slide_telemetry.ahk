@@ -119,6 +119,15 @@ AssertTrue(fbBrowser.handled == true && fbBrowser.key = "{Right}", "TryDispatchF
 fbPdf := TryDispatchFallbackSlideKey("prev", { exe: "FoxitPDFReader.exe", active: true }, true)
 AssertTrue(fbPdf.handled == true && fbPdf.key = "{PgUp}", "TryDispatchFallbackSlideKey dispatches {PgUp} for Foxit PDF Reader")
 
+fbWps := TryDispatchFallbackSlideKey("next", { exe: "wpp.exe", active: true }, true)
+AssertTrue(fbWps.handled == true && fbWps.key = "{PgDn}", "M6.3: TryDispatchFallbackSlideKey dispatches {PgDn} for WPS Presentation")
+
+fbImp := TryDispatchFallbackSlideKey("prev", { exe: "soffice.bin", active: true }, true)
+AssertTrue(fbImp.handled == true && fbImp.key = "{PgUp}", "M6.3: TryDispatchFallbackSlideKey dispatches {PgUp} for LibreOffice Impress")
+
+fbWb := TryDispatchFallbackSlideKey("next", { exe: "mswhiteboard.exe", active: true }, true)
+AssertTrue(fbWb.handled == true && fbWb.key = "{PgDn}", "M6.3: TryDispatchFallbackSlideKey dispatches {PgDn} for Microsoft Whiteboard")
+
 SessionTimeline.EnableAutosave := origAutosave
 SessionTimeline.Entries := []
 cfg.DeleteFile()
