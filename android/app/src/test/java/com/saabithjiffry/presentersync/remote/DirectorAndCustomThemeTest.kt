@@ -205,8 +205,8 @@ class DirectorAndCustomThemeTest {
             }
         )
 
-        val dirPkt = RelayCrypto.formatRelayPacket("host", "dir_state", "1;2;running;115;600;BRB", auth)
-        val nudgePkt = RelayCrypto.formatRelayPacket("host", "nudge", "Host;Wrap up now", auth)
+        val dirPkt = RelayCrypto.formatEncryptedRelayPacket("host", "dir_state", "1;2;running;115;600;BRB", code, pw, seq = 1L)
+        val nudgePkt = RelayCrypto.formatEncryptedRelayPacket("host", "nudge", "Host;Wrap up now", code, pw, seq = 2L)
         relay.handleRawMessage(dirPkt)
         relay.handleRawMessage(nudgePkt)
         assertTrue(dirLatch.await(2, TimeUnit.SECONDS))
