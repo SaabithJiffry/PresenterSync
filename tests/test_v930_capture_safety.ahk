@@ -122,6 +122,45 @@ try {
         AssertEq(hasToolTip, 0, relPath " must contain zero native ToolTip() calls")
     }
 
+    ; 6. M3.3 0px Flush Corner Docking, WxH Readout, Visibility Modes & Capture Banner
+    m33Cfg := {
+        ShowIndicator: true,
+        HudVisibilityMode: "MutedOrAlert",
+        savedX: 0,
+        savedY: 0,
+        Write: (this, s, k, v) => true
+    }
+    m33State := {
+        isMuted: false,
+        baseWidth: 120,
+        baseHeight: 40,
+        savedX: 0,
+        savedY: 0
+    }
+    AssertEq(ShouldHideForMutedOrAlertMode(m33Cfg, m33State), true, "MutedOrAlert should hide when live and no alert")
+    m33State.isMuted := true
+    AssertEq(ShouldHideForMutedOrAlertMode(m33Cfg, m33State), false, "MutedOrAlert must show when muted")
+    m33State.isMuted := false
+    m33State.voiceWhileMuted := true
+    AssertEq(ShouldHideForMutedOrAlertMode(m33Cfg, m33State), false, "MutedOrAlert must show on active alert")
+
+    m33Cfg.HudVisibilityMode := "CornerTallyDot"
+    m33State.voiceWhileMuted := false
+    AssertEq(IsCornerTallyDotActive(m33Cfg, m33State), true, "CornerTallyDot active when live and no alert")
+    m33State.isMuted := true
+    AssertEq(IsCornerTallyDotActive(m33Cfg, m33State), false, "CornerTallyDot expands when muted")
+
+    dockRes := SnapHudToCorner(m33Cfg, m33State, "BR", 0)
+    AssertEq(dockRes.w, 120, "SnapHudToCorner width=120")
+    AssertEq(dockRes.h, 40, "SnapHudToCorner height=40")
+    readout := GetHudPixelReadout(m33Cfg, m33State)
+    AssertTrue(InStr(readout, "120×40 px @ (") > 0, "GetHudPixelReadout formats WxH px @ (X, Y)")
+
+    banner19041 := CaptureSafety.GetCaptureSafetyBannerText(true, 22631)
+    AssertTrue(InStr(banner19041, "WDA_EXCLUDEFROMCAPTURE") > 0 && InStr(banner19041, "NDI") > 0, "Banner mentions 19041+ and NDI tip")
+    bannerLegacy := CaptureSafety.GetCaptureSafetyBannerText(true, 18363)
+    AssertTrue(InStr(bannerLegacy, "WDA_MONITOR") > 0, "Banner mentions WDA_MONITOR for pre-19041")
+
 } catch as err {
     g_Failed++
     g_FailMessages.Push("UNCAUGHT EXCEPTION: " err.Message " (" err.File ":" err.Line ")")

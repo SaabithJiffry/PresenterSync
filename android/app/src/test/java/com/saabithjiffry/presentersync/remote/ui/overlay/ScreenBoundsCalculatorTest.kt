@@ -89,6 +89,16 @@ class ScreenBoundsCalculatorTest {
     }
 
     @Test
+    fun zeroMarginCornerDockAndPixelReadoutWorkOnAllCorners() {
+        val b = SafeRectPx(left = 0, top = 0, right = 1920, bottom = 1080)
+        assertEquals(OverlayPointPx(0, 0), ScreenBoundsCalculator.computeZeroMarginCornerDock("TL", 120, 40, b))
+        assertEquals(OverlayPointPx(1800, 0), ScreenBoundsCalculator.computeZeroMarginCornerDock("TR", 120, 40, b))
+        assertEquals(OverlayPointPx(0, 1040), ScreenBoundsCalculator.computeZeroMarginCornerDock("BL", 120, 40, b))
+        assertEquals(OverlayPointPx(1800, 1040), ScreenBoundsCalculator.computeZeroMarginCornerDock("BR", 120, 40, b))
+        assertEquals("120×40 px @ (1800, 1040)", ScreenBoundsCalculator.formatPixelReadout(1800, 1040, 120, 40))
+    }
+
+    @Test
     fun boundedPillScalePreventsOverflowOnNarrowPhonesAndAllows5xOnSmartBoard() {
         // Galaxy A07 portrait: 720px @ 2.0x density = 360dp; 168dp * 5.0x would exceed viewport
         val phoneBounded = ScreenBoundsCalculator.computeBoundedPillScale(

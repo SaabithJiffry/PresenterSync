@@ -174,6 +174,7 @@ data class RemoteConfig(
     val veryLongPressDurationMs: Int = 1400,
     val enableMagneticSnap: Boolean = true,
     val hudClickThrough: Boolean = false,
+    val hdmiHdcpRecoveryEnabled: Boolean = false,
     val hudAutoDodge: Boolean = false,
     val hideFromScreenCapture: Boolean = true,
     val confirmBeforeStopRecording: Boolean = true,
@@ -341,6 +342,7 @@ class RemoteConfigStore private constructor(
             veryLongPressDurationMs = veryLongMs,
             enableMagneticSnap = prefs.getBoolean("enableMagneticSnap", true),
             hudClickThrough = prefs.getBoolean("hudClickThrough", false),
+            hdmiHdcpRecoveryEnabled = prefs.getBoolean("hdmiHdcpRecoveryEnabled", false),
             hudAutoDodge = prefs.getBoolean("hudAutoDodge", false),
             hideFromScreenCapture = prefs.getBoolean("hideFromScreenCapture", true),
             confirmBeforeStopRecording = prefs.getBoolean("confirmBeforeStopRecording", true),
@@ -625,6 +627,7 @@ class RemoteConfigStore private constructor(
             .putInt("veryLongPressDurationMs", c.veryLongPressDurationMs)
             .putBoolean("enableMagneticSnap", c.enableMagneticSnap)
             .putBoolean("hudClickThrough", c.hudClickThrough)
+            .putBoolean("hdmiHdcpRecoveryEnabled", c.hdmiHdcpRecoveryEnabled)
             .putBoolean("hudAutoDodge", c.hudAutoDodge)
             .putInt("opacityLevel", c.opacityLevel)
             .putFloat("indicatorScale", c.indicatorScale)

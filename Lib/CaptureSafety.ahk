@@ -173,6 +173,15 @@ class CaptureSafety {
         }
     }
 
+    static GetCaptureSafetyBannerText(exclude := true, osBuildOverride := "") {
+        build := (osBuildOverride != "" && IsInteger(osBuildOverride)) ? Integer(osBuildOverride) : this.GetOsBuildNumber()
+        if (!exclude)
+            return "Visible in Screen Share (ExcludeFromCapture OFF)"
+        if (build >= this.MIN_EXCLUSION_BUILD)
+            return "Capture-Safe (Win10 " build "+ WDA_EXCLUDEFROMCAPTURE) | Tip: NDI / Game Capture hooks may still capture layered windows"
+        return "Legacy Monitor Blackout (WDA_MONITOR — Win10 build " build " < 19041)"
+    }
+
     static HideMicroToast(*) {
         if (IsObject(this._MicroToastTimerFn)) {
             try SetTimer(this._MicroToastTimerFn, 0)

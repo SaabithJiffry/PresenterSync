@@ -337,6 +337,15 @@ GetHudColorPresetNames() {
     return ["Standard", "Colorblind Safe", "OLED Stealth", "Broadcast Tally", "Cyber Ocean", "Custom"]
 }
 
+NormalizeHudVisibilityMode(mode) {
+    m := StrLower(Trim(String(mode)))
+    if (m = "mutedoralert")
+        return "MutedOrAlert"
+    if (m = "cornertallydot")
+        return "CornerTallyDot"
+    return "Always"
+}
+
 NormalizeHudColorPreset(name) {
     cleaned := StrLower(Trim(String(name)))
     for pName in GetHudColorPresetNames() {
@@ -1412,6 +1421,7 @@ class Config {
     ShowRow2RecChatHud := true
     ShowRow3StudioSceneHud := true
     ShowSecondaryMicHud := false
+    HudVisibilityMode := "Always"
     ThemeMode := "System"
     HudColorPreset := "Standard"
     CustomLiveHex := "107C10"
@@ -1677,6 +1687,7 @@ class Config {
         this.ShowRow2RecChatHud := this.ReadBool("Settings", "ShowRow2RecChatHud", true)
         this.ShowRow3StudioSceneHud := this.ReadBool("Settings", "ShowRow3StudioSceneHud", true)
         this.ShowSecondaryMicHud := this.ReadBool("Settings", "ShowSecondaryMicHud", false)
+        this.HudVisibilityMode := NormalizeHudVisibilityMode(this.Read("Settings", "HudVisibilityMode", "Always"))
         rawTheme := StrLower(Trim(this.Read("Settings", "ThemeMode", "System")))
         this.ThemeMode := (rawTheme = "dark") ? "Dark" : ((rawTheme = "light") ? "Light" : "System")
         Theme.SetMode(this.ThemeMode)

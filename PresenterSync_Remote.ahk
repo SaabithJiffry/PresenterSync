@@ -124,6 +124,7 @@ class RemoteConfig {
     EnableIdleAutoDim := false
     ShowPillMiniBadges := true
     ExcludeFromCapture := true
+    HudVisibilityMode := "Always"
     ConfirmBeforeStopRecording := true
     OpacityLevel := 220
     IndicatorScale := 1.0
@@ -346,6 +347,7 @@ class RemoteConfig {
         this.EnableIdleAutoDim := this.ReadBool("Appearance", "EnableIdleAutoDim", 0)
         this.ShowPillMiniBadges := this.ReadBool("Appearance", "ShowPillMiniBadges", 1)
         this.ExcludeFromCapture := this.ReadBool("Appearance", "ExcludeFromCapture", 1)
+        this.HudVisibilityMode := NormalizeHudVisibilityMode(this.Read("Appearance", "HudVisibilityMode", "Always"))
         this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", 1)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
@@ -2036,6 +2038,14 @@ SendRemoteStageNudge(cfg, state, message) {
 
 RemoveToolTip() {
     HideCaptureSafeMicroToast()
+}
+
+DockRemoteHudFlushCorner(cfg, state, corner := "BR") {
+    return SnapHudToCorner(cfg, state, corner, 0)
+}
+
+GetRemoteHudPixelReadout(cfg, state) {
+    return GetHudPixelReadout(cfg, state)
 }
 
 OnRemoteClickerMute(cfg, state, thisHotkeyOrFromHud := "", *) {

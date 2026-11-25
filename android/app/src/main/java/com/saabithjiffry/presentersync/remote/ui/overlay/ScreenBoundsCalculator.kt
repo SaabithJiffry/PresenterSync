@@ -1,6 +1,7 @@
 package com.saabithjiffry.presentersync.remote.ui.overlay
 
 import android.content.Context
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.view.WindowInsets
 import android.view.WindowManager
@@ -190,4 +191,32 @@ object ScreenBoundsCalculator {
             bottom = (dm.heightPixels - pad / 2).coerceAtLeast(1)
         )
     }
+
+    fun computeZeroMarginCornerDock(
+        corner: String,
+        viewWidthPx: Int,
+        viewHeightPx: Int,
+        bounds: SafeRectPx
+    ): OverlayPointPx {
+        val minX = bounds.left
+        val maxX = (bounds.right - viewWidthPx).coerceAtLeast(minX)
+        val minY = bounds.top
+        val maxY = (bounds.bottom - viewHeightPx).coerceAtLeast(minY)
+        return when (corner.trim().uppercase()) {
+            "TL" -> OverlayPointPx(minX, minY)
+            "TR" -> OverlayPointPx(maxX, minY)
+            "BL" -> OverlayPointPx(minX, maxY)
+            else -> OverlayPointPx(maxX, maxY)
+        }
+    }
+
+    fun formatPixelReadout(x: Int, y: Int, widthPx: Int, heightPx: Int): String =
+        "${widthPx}×${heightPx} px @ ($x, $y)"
+
+    fun getDisplayCount(context: Context): Int {
+        val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return 1
+        return dm.displays.size.coerceAtLeast(1)
+    }
+
+    fun hasExternalDisplay(context: Context): Boolean = getDisplayCount(context) > 1
 }

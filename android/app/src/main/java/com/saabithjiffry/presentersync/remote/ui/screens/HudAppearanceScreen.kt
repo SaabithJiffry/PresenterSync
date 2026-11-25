@@ -758,6 +758,12 @@ private fun SmartBoardErgonomicsCard(
                 onCheckedChange = { v -> configStore.update { it.copy(hudClickThrough = v) } }
             )
             ExplorerSettingToggleRow(
+                title = "HDMI-Out / HDCP Overlay Recovery",
+                subtitle = "Disables secure overlay flag if external HDMI capture card or Miracast blanks screen",
+                checked = cfg.hdmiHdcpRecoveryEnabled,
+                onCheckedChange = { v -> configStore.update { it.copy(hdmiHdcpRecoveryEnabled = v) } }
+            )
+            ExplorerSettingToggleRow(
                 title = "Two-Tone Acoustic Audio Chime",
                 subtitle = "Synthesized 880Hz↔520Hz tone chime on mic mute state change",
                 checked = cfg.enableAudioCue,

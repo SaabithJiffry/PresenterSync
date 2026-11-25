@@ -11,6 +11,83 @@ IsHudSuppressed(cfg) {
     return !IsObject(cfg) || !cfg.ShowIndicator || (IsSet(HudSnake) && HudSnake.IsActive)
 }
 
+HasActiveHudAlert(state) {
+    if (!IsObject(state))
+        return false
+    return (state.HasOwnProp("voiceWhileMuted") && state.voiceWhileMuted)
+        || (state.HasOwnProp("deadMicWarn") && state.deadMicWarn)
+        || (state.HasOwnProp("osMicMutedDrift") && state.osMicMutedDrift)
+        || (state.HasOwnProp("streamDropWarn") && state.streamDropWarn)
+        || (state.HasOwnProp("lowDiskWarnLevel") && state.lowDiskWarnLevel > 0)
+}
+
+ShouldHideForMutedOrAlertMode(cfg, state) {
+    if (!IsObject(cfg) || !cfg.HasOwnProp("HudVisibilityMode"))
+        return false
+    if (cfg.HudVisibilityMode != "MutedOrAlert")
+        return false
+    if (IsObject(state) && (state.isMuted || HasActiveHudAlert(state)))
+        return false
+    return true
+}
+
+IsCornerTallyDotActive(cfg, state) {
+    if (!IsObject(cfg) || !cfg.HasOwnProp("HudVisibilityMode"))
+        return false
+    if (cfg.HudVisibilityMode != "CornerTallyDot")
+        return false
+    if (IsObject(state) && (state.isMuted || HasActiveHudAlert(state)))
+        return false
+    return true
+}
+
+SnapHudToCorner(cfg, state, corner := "BR", margin := 0) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return { x: 0, y: 0, w: 0, h: 0 }
+    w := (state.HasOwnProp("baseWidth") && state.baseWidth > 0) ? state.baseWidth : UIConstants.BASE_WIDTH_ICON
+    h := (state.HasOwnProp("baseHeight") && state.baseHeight > 0) ? state.baseHeight : UIConstants.BASE_HEIGHT
+    curX := state.HasOwnProp("savedX") ? Integer(state.savedX) : 0
+    curY := state.HasOwnProp("savedY") ? Integer(state.savedY) : 0
+    mons := IsSet(CaptureSafety) ? CaptureSafety.GetMonitorWorkAreas() : [{ left: 0, top: 0, right: A_ScreenWidth, bottom: A_ScreenHeight }]
+    targetMon := mons[1]
+    bestDist := 1e15
+    cx := curX + (w / 2.0), cy := curY + (h / 2.0)
+    for _, m in mons {
+        if (curX + w > m.left && curX < m.right && curY + h > m.top && curY < m.bottom) {
+            targetMon := m
+            break
+        }
+        d := ((cx - (m.left + m.right) / 2.0) ** 2) + ((cy - (m.top + m.bottom) / 2.0) ** 2)
+        if (d < bestDist) {
+            bestDist := d
+            targetMon := m
+        }
+    }
+    mgn := Max(0, Integer(margin))
+    c := StrUpper(Trim(String(corner)))
+    nx := (c = "TL" || c = "BL") ? (targetMon.left + mgn) : (targetMon.right - w - mgn)
+    ny := (c = "TL" || c = "TR") ? (targetMon.top + mgn) : (targetMon.bottom - h - mgn)
+    state.savedX := nx
+    state.savedY := ny
+    cfg.savedX := nx
+    cfg.savedY := ny
+    try cfg.Write("Position", "SavedX", String(nx))
+    try cfg.Write("Position", "SavedY", String(ny))
+    if (state.HasOwnProp("MicGui") && IsGuiValid(state.MicGui))
+        UpdateHudLayout(state, nx, ny)
+    return { x: nx, y: ny, w: w, h: h }
+}
+
+GetHudPixelReadout(cfg, state) {
+    if (!IsObject(state))
+        return "0×0 px @ (0, 0)"
+    w := (state.HasOwnProp("baseWidth") && state.baseWidth > 0) ? state.baseWidth : UIConstants.BASE_WIDTH_ICON
+    h := (state.HasOwnProp("baseHeight") && state.baseHeight > 0) ? state.baseHeight : UIConstants.BASE_HEIGHT
+    x := state.HasOwnProp("savedX") ? Integer(state.savedX) : 0
+    y := state.HasOwnProp("savedY") ? Integer(state.savedY) : 0
+    return Format("{}×{} px @ ({}, {})", w, h, x, y)
+}
+
 IsSecondaryHudSuppressed(cfg) {
     return !IsObject(cfg) || !cfg.HasOwnProp("ShowSecondaryMicHud") || !cfg.ShowSecondaryMicHud || (IsSet(HudSnake) && HudSnake.IsActive)
 }
@@ -2247,7 +2324,7 @@ _SyncSecondaryHudVisibility(cfg, state) {
 
 UpdateHudVisibility(cfg, state) {
     state.animSeq += 1
-    if (IsHudSuppressed(cfg)) {
+    if (IsHudSuppressed(cfg) || ShouldHideForMutedOrAlertMode(cfg, state)) {
         if (state.HasOwnProp("sceneMarqueeTimerFn") && state.sceneMarqueeTimerFn)
             SetTimer(state.sceneMarqueeTimerFn, 0)
         if IsObject(state.MicGui)
