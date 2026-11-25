@@ -842,6 +842,21 @@ class HostCompanionBridge {
         return toRemove.Length
     }
 
+    FlashDevicePill(devId, durationMs := 1800) {
+        if (devId = "")
+            return 0
+        sent := 0
+        dur := Max(300, Integer(durationMs))
+        payload := '{"type":"flash_pill","durationMs":' dur ',"timestamp":' A_TickCount '}'
+        for _, cli in this.clients {
+            if (cli.kind = "ws" && cli.authenticated && cli.deviceId = devId) {
+                this._QueueWsFrame(cli, 0x1, payload)
+                sent += 1
+            }
+        }
+        return sent
+    }
+
     GetDeviceList() {
         list := []
         for _, d in this.pairedDevices {
@@ -897,8 +912,18 @@ class HostCompanionBridge {
             ? Trim(String(useCfg.targetMicName))
             : "Mic/Aux"
         obsPass := useCfg.HasOwnProp("obsPassword") ? String(useCfg.obsPassword) : ""
-        payload := '{"type":"obs_fallback_update","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"obsFallback":{"port":4455,"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(obsPass) '"}}'
-        return this._BroadcastJsonToAuthenticated(payload)
+        sent := 0
+        for _, cli in this.clients {
+            if (cli.kind = "ws" && cli.authenticated) {
+                cliRole := (cli.HasOwnProp("role") && cli.role != "") ? HostCompanionBridge.NormalizeRole(cli.role) : "Presenter"
+                allowFb := (cliRole = "Director") || (cli.HasOwnProp("allowDirectObsFallback") && !!cli.allowDirectObsFallback)
+                cliPass := allowFb ? obsPass : ""
+                payload := '{"type":"obs_fallback_update","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"obsFallback":{"port":4455,"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(cliPass) '","directObsAllowed":' (allowFb ? "true" : "false") '}}'
+                this._QueueWsFrame(cli, 0x1, payload)
+                sent += 1
+            }
+        }
+        return sent
     }
 
     BroadcastStageNudge(cfg, state, message, sender := "Stage", accentHex := "F59E0B") {
@@ -2165,11 +2190,16 @@ class HostCompanionBridge {
             }
         }
 
+        actorName := (c.HasOwnProp("deviceName") && c.deviceName != "") ? c.deviceName : ((c.HasOwnProp("deviceId") && c.deviceId != "") ? c.deviceId : "Remote")
         switch (msgType) {
             case "toggle_mute":
+                if (IsObject(this.state))
+                    this.state.lastActionActor := actorName
                 ok := ExecuteHostRemoteToggleMute(this.cfg, this.state)
                 this._QueueCmdResult(c, "toggle_mute", ok, cmdId, ok ? "" : "obs_offline")
             case "set_mute":
+                if (IsObject(this.state))
+                    this.state.lastActionActor := actorName
                 targetMuted := JsonCodec.GetBool(msgObj, "isMuted", this.state.isMuted)
                 ok := ExecuteHostRemoteSetMute(this.cfg, this.state, targetMuted)
                 this._QueueCmdResult(c, "set_mute", ok, cmdId, ok ? "" : "obs_offline")
@@ -2343,10 +2373,11 @@ class HostCompanionBridge {
         tState := this.state.HasOwnProp("timerState") ? String(this.state.timerState) : "stopped"
         tRem := this.state.HasOwnProp("timerRemainingSec") ? Integer(this.state.timerRemainingSec) : 600
         tPre := this.state.HasOwnProp("timerPresetSec") ? Integer(this.state.timerPresetSec) : 600
+        lastActor := this.state.HasOwnProp("lastActionActor") ? String(this.state.lastActionActor) : ""
         hostUuid := EnsureHostUuid(this.cfg)
         bootId := _HB_JsonEscape(this._EnsureBootId())
         ver := _HB_JsonEscape(UIConstants.APP_VERSION)
-        return '"protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"quickNudges":' qnJson ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' ver '","timestamp":' A_TickCount
+        return '"protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"lastActionActor":"' _HB_JsonEscape(lastActor) '","routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"quickNudges":' qnJson ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' ver '","timestamp":' A_TickCount
     }
 
     _BuildMuteStateJson() {
@@ -2402,6 +2433,48 @@ UnpairHostPairedDevice(devId) {
     if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
         return g_HostCompanionBridge.UnpairDevice(devId)
     return false
+}
+
+FlashHostDevicePill(devId, durationMs := 1800) {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.FlashDevicePill(devId, durationMs)
+    return 0
+}
+
+SetHostDeviceRole(devId, role) {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.SetDeviceRole(devId, role)
+    return false
+}
+
+SetHostDeviceTrustTier(devId, trustTier) {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.SetDeviceTrustTier(devId, trustTier)
+    return false
+}
+
+SetHostDeviceDirectObsFallback(devId, allow) {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.SetDeviceDirectObsFallback(devId, allow)
+    return false
+}
+
+SetHostDevicePaused(devId, paused) {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.SetDevicePaused(devId, paused)
+    return false
+}
+
+RevokeHostEphemeralGuests() {
+    global g_HostCompanionBridge
+    if (IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running)
+        return g_HostCompanionBridge.RevokeEphemeralGuests()
+    return 0
 }
 
 _HB_SerializePairedDevice(dev) {

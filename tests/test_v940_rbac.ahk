@@ -90,7 +90,9 @@ try {
 
     ; 3. C3 obsFallback.password withholding in _BuildAuthOkJson
     hb := HostCompanionBridge()
-    hb.cfg := { EnableWS: true, targetMicName: "Mic/Aux", obsPassword: "SuperSecretObsPass!", HostUuid: "uuid-1" }
+    hb.cfg := { EnableWS: true, AudioRoutingMode: 2, targetMicName: "Mic/Aux", obsPassword: "SuperSecretObsPass!", HostUuid: "uuid-1" }
+    hb.cfg.DefineProp("WriteBool", { Call: (t, s, k, v) => true })
+    hb.cfg.DefineProp("WriteBoolDeferred", { Call: (t, s, k, v, d := 250) => true })
     hb.state := { isMuted: false, recState: 0 }
 
     cPres := { sessionToken: "t1", role: "Presenter", trustTier: "Ephemeral Guest", allowDirectObsFallback: false }
@@ -152,6 +154,34 @@ try {
     AssertEq(revokedCnt, 1, "RevokeEphemeralGuests should revoke 1 guest")
     AssertTrue(hb.pairedDevices.Has("pinned-sb"), "Pinned Room Smart Board must stay paired")
     AssertTrue(!hb.pairedDevices.Has("guest-1"), "Ephemeral Guest must be revoked")
+
+    ; 6. M4.2 Action Attribution (lastActionActor) + FlashDevicePill + BroadcastObsFallbackUpdate C3
+    presCli.expiresAt := 0
+    presCli.inputPaused := false
+    hb.state.lastActionActor := ""
+    hb._HandleWsTextMessage(presCli, '{"type":"toggle_mute","cmdId":"c-attr-1"}')
+    AssertEq(hb.state.lastActionActor, "Pres", "lastActionActor should be attributed to remote deviceName")
+    msJson := hb._BuildMuteStateJson()
+    AssertTrue(InStr(msJson, '"lastActionActor":"Pres"') > 0, "_BuildMuteStateJson should broadcast lastActionActor")
+
+    hb.clients := Map("k1", presCli, "k2", tallyCli)
+    sentFrames := []
+    flashed := hb.FlashDevicePill("pres-1", 1500)
+    AssertEq(flashed, 1, "FlashDevicePill should target matching deviceId")
+    AssertTrue(sentFrames.Length == 1 && InStr(sentFrames[1], '"type":"flash_pill"') > 0, "FlashDevicePill sends flash_pill JSON")
+
+    dirCli := {
+        sock: 0, kind: "ws", authenticated: true, deviceId: "dir-1", deviceName: "DirectorTab",
+        platform: "Android", role: "Director", trustTier: "Pinned Room",
+        allowDirectObsFallback: false, inputPaused: false, expiresAt: 0, lastRxTick: A_TickCount, cmdCache: Map()
+    }
+    hb.clients := Map("k1", presCli, "k2", dirCli)
+    sentFrames := []
+    hb.running := true
+    hb.BroadcastObsFallbackUpdate(hb.cfg)
+    hb.running := false
+    AssertEq(sentFrames.Length, 2, "BroadcastObsFallbackUpdate sends to 2 clients")
+    AssertTrue(!InStr(sentFrames[1], "SuperSecretObsPass!") && InStr(sentFrames[2], "SuperSecretObsPass!") > 0, "BroadcastObsFallbackUpdate enforces C3 per client")
 
 } catch as err {
     g_Failed++

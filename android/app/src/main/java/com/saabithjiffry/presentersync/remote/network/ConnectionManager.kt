@@ -93,7 +93,9 @@ data class ConnectionUiState(
     val slideIndex: Int = 0,
     val slideTotal: Int = 0,
     val slideTitle: String = "",
-    val slideNotes: String = ""
+    val slideNotes: String = "",
+    val remoteRole: String = "Presenter",
+    val lastActionActor: String = ""
 ) {
     val currentSceneName: String
         get() = activeScene
@@ -770,6 +772,11 @@ class ConnectionManager(
                     transitionToConnected(ChannelType.HOST_BRIDGE, "$hostName ($displayRaw)")
                     DiagnosticLogger.recordBreadcrumb("Connection", "HostBridgeConnected", "$hostName ($displayRaw)")
                     startHeartbeat(gen, cfg.heartbeatSeconds)
+                }
+
+                override fun onBridgeRoleAssigned(role: String) {
+                    if (gen != generation.get()) return
+                    _uiState.value = _uiState.value.copy(remoteRole = role)
                 }
 
                 override fun onObsFallbackUpdated(port: Int, targetMic: String, password: String) {

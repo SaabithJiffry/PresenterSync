@@ -37,6 +37,8 @@ data class BridgeTelemetryState(
 
 interface HostBridgeCallbacks {
     fun onBridgeConnected(hostName: String)
+    fun onBridgeRoleAssigned(role: String) {}
+    fun onBridgeFlashPill(durationMs: Long) {}
     fun onBridgeHostUuidReceived(hostUuid: String) {}
     fun onBridgeSessionTokenRefreshed(sessionToken: String) {}
     fun onBridgeFrameReceived() {}
@@ -136,6 +138,8 @@ class HostBridgeClient(
                             lastStateSeq.set(seq)
                         }
                         val hostName = obj.optString("hostName", "Primary Host")
+                        val assignedRole = obj.optString("role", "Presenter").trim().ifEmpty { "Presenter" }
+                        callbacks.onBridgeRoleAssigned(assignedRole)
                         val hostUuid = obj.optString("hostUuid", "").trim()
                         if (hostUuid.isNotEmpty()) {
                             callbacks.onBridgeHostUuidReceived(hostUuid)

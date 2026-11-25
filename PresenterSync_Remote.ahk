@@ -1223,6 +1223,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         if (!IsObject(ev))
             return
         if (ev.kind = "auth_ok") {
+            if (ev.HasOwnProp("role") && ev.role != "")
+                state.remoteRole := ev.role
             SetTimer state.reconnectTimerFn, 0
             CancelRemoteBridgeHandshakeWatchdog(state)
             state._lanCycleStartTick := 0
@@ -1277,6 +1279,9 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
             isMissingPw := (cfg.ObsPassword = "" && InStr(reasonLow, "password"))
             HandleRemoteAuthFailure(cfg, state, ws, isMissingPw ? "pw_required" : "auth_failed",
                 "Host Bridge authentication failed (" (ev.reason != "" ? ev.reason : "Invalid code/token") "). Re-pair in Change OBS Connection.")
+        } else if (ev.kind = "flash_pill") {
+            hwnd := (state.HasOwnProp("MicGui") && IsObject(state.MicGui)) ? state.MicGui.Hwnd : 0
+            ShowCaptureSafeMicroToast("Host flashed this pill!", ev.HasOwnProp("durationMs") ? ev.durationMs : 1800, hwnd)
         } else if (ev.kind = "mute_state" || ev.kind = "sync_resync") {
             CancelRemoteBridgeHandshakeWatchdog(state)
             if (ev.HasOwnProp("hostBootId") && ev.hostBootId != "" && ev.hostBootId != state.hostBootId) {
