@@ -1728,6 +1728,12 @@ class HostCompanionBridge {
                 return
             }
 
+            if (method = "GET" && cleanPath = "/manifest.json") {
+                c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
+                manJson := '{"name":"PresenterSync Web Remote","short_name":"PresenterSync","start_url":"/","display":"standalone","background_color":"#090b10","theme_color":"#0f172a"}'
+                this._SendHttpResponse(c, "200 OK", manJson)
+                return
+            }
             if (method = "GET" && cleanPath = "/arcade.js") {
                 c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
                 jsBody := BuildWebRemoteArcadeJs()
