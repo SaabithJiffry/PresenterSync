@@ -1870,7 +1870,7 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.Write("Settings", "ThemeMode", tm)
             Theme.SetMode(tm)
         }
-        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowRow2RecChatHud", "ShowRow3StudioSceneHud", "ShowSecondaryMicHud", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough", "ExcludeFromCapture", "ExcludeSecondaryFromCapture", "ConfirmBeforeStopRecording"] {
+        for bProp in ["ShowIndicator", "ShowExtraHuds", "ShowRow2RecChatHud", "ShowRow3StudioSceneHud", "ShowSecondaryMicHud", "ShowText", "MonoIcon", "SleekCorners", "AggressivePulse", "EnableHudClickActions", "EnableMagneticSnap", "HudAutoDodge", "HudClickThrough", "ExcludeFromCapture", "ExcludeSecondaryFromCapture", "ConfirmBeforeStopRecording", "ExitBrbSafelyMuted"] {
             if vals.HasOwnProp(bProp) {
                 cfg.%bProp% := !!vals.%bProp%
                 cfg.WriteBool("Settings", bProp, cfg.%bProp%)

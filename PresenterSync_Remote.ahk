@@ -422,6 +422,8 @@ class RemoteState {
     slideIndex := 0
     slideTotal := 0
     slideTitle := ""
+    slideNotes := ""
+    meetBgTabWarn := false
     quickDeckGui := ""
     quickDeckCtrls := ""
     _lastVoiceWarnTick := 0
@@ -1644,6 +1646,16 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
         state.timerRemainingSec := Integer(ev.timerRemainingSec)
     if (ev.HasOwnProp("timerPresetSec") && Integer(ev.timerPresetSec) > 0)
         state.timerPresetSec := Integer(ev.timerPresetSec)
+    if (ev.HasOwnProp("slideIndex"))
+        state.slideIndex := Max(0, Integer(ev.slideIndex))
+    if (ev.HasOwnProp("slideTotal"))
+        state.slideTotal := Max(0, Integer(ev.slideTotal))
+    if (ev.HasOwnProp("slideTitle"))
+        state.slideTitle := String(ev.slideTitle)
+    if (ev.HasOwnProp("slideNotes"))
+        state.slideNotes := String(ev.slideNotes)
+    if (ev.HasOwnProp("meetBgTabWarn"))
+        state.meetBgTabWarn := !!ev.meetBgTabWarn
 
     if (state.HasOwnProp("presenterTickFn") && IsObject(state.presenterTickFn)) {
         if (state.timerState = "running" || state.timerState = "overtime")
@@ -1924,8 +1936,9 @@ InitRemoteHUD(cfg, state) {
     UpdateRemoteIdleDimTimer(cfg, state)
 
     OnMessage(0x0201, WM_REMOTE_LBUTTONDOWN.Bind(cfg, state))
-    OnMessage(0x0203, (wP, lP, m, h) => (IsObject(state.MicGui) && h == state.MicGui.Hwnd) ? ShowRemoteTouchDeckGUI(cfg, state) : 0)
+    OnMessage(0x0203, (wP, lP, m, h) => (IsObject(state.MicGui) && h == state.MicGui.Hwnd) ? WM_REMOTE_LBUTTONDOWN(cfg, state, wP, lP, m, h) : 0)
     OnMessage(0x0205, WM_REMOTE_RBUTTONUP.Bind(state))
+    OnMessage(0x0208, (wP, lP, m, h) => (IsObject(state.MicGui) && h == state.MicGui.Hwnd) ? ShowRemoteTouchDeckGUI(cfg, state) : 0)
     OnMessage(0x02E0, WM_REMOTE_DPICHANGED.Bind(cfg, state))
     OnMessage(0x007E, OnRemoteDisplayChange.Bind(cfg, state))
     OnMessage(0x0211, OnRemoteMenuLoop.Bind(state, true))
@@ -3194,7 +3207,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     }
     btnPasteUri.OnEvent("Click", PastePairingUriAction)
 
-    btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt, (ddlNetMode.Value == 2 ? "Internet" : "LAN"), editPair.Value, editRelayUrl.Value))
+    btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt, (ddlNetMode.Value == 2 ? "Internet" : "LAN"), editPair.Value, editRelayUrl.Value, editBridgePort.Value))
     btnGuide.OnEvent("Click", (*) => ShowRemoteHelpUI(cfg, state))
 
     btnSave := dlg.Add("Button", "xm w360 h32 y+12 Default", isInitialBoot ? "Connect & Start" : "Save & Reconnect")
@@ -3320,7 +3333,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     return dlg
 }
 
-TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode := "LAN", pairingCode := "", relayBaseUrl := "https://ntfy.sh") {
+TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode := "LAN", pairingCode := "", relayBaseUrl := "https://ntfy.sh", bridgePortStr := "4456") {
     if (dlg._closed || !WinExist("ahk_id " dlg.Hwnd))
         return
 
@@ -3442,7 +3455,9 @@ TestConnectionAction(dlg, btnTest, hostStr, portStr, pwStr, statusLabel, netMode
     testSuccess := false
     btnTest.Enabled := false
     firstTarget := endpoints[1]
-    dualRes := ProbeRemoteDualEndpoints(firstTarget.host, 4456, Integer(portClean))
+    bpClean := Trim(String(bridgePortStr))
+    bpNum := (IsInteger(bpClean) && Integer(bpClean) >= 1 && Integer(bpClean) <= 65535) ? Integer(bpClean) : 4456
+    dualRes := ProbeRemoteDualEndpoints(firstTarget.host, bpNum, Integer(portClean))
 
     TryNextCandidate() {
         ClearProbeTimer()

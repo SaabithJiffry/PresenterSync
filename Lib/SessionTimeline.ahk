@@ -279,6 +279,68 @@ class SessionTimeline {
         return !FileExist(target)
     }
 
+    static ArchiveAutosave(filePath := "") {
+        this.FlushAutosave()
+        target := (Trim(String(filePath)) != "") ? Trim(String(filePath)) : this.AutosaveFile
+        if (target = "" || !FileExist(target))
+            return ""
+        sz := 0
+        try sz := FileGetSize(target)
+        if (sz <= 0) {
+            try FileDelete(target)
+            return ""
+        }
+        SplitPath(target, , &dir)
+        baseDir := (dir != "") ? dir : A_ScriptDir
+        stamp := FormatTime(A_NowUTC, "yyyyMMdd_HHmmss")
+        archPath := baseDir "\SessionTimeline_archived_" stamp ".jsonl"
+        suffix := 1
+        while (FileExist(archPath) && suffix <= 50) {
+            archPath := baseDir "\SessionTimeline_archived_" stamp "_" suffix ".jsonl"
+            suffix += 1
+        }
+        moved := false
+        try {
+            FileMove(target, archPath, 1)
+            moved := true
+        } catch {
+            try {
+                FileCopy(target, archPath, 1)
+                FileDelete(target)
+                moved := true
+            } catch {
+                moved := false
+            }
+        }
+        if (!moved)
+            return ""
+        try {
+            archFiles := []
+            Loop Files, baseDir "\SessionTimeline_archived_*.jsonl" {
+                archFiles.Push(A_LoopFileFullPath)
+            }
+            if (archFiles.Length > 10) {
+                ; Sort lexicographically by timestamped filename so oldest are deleted first.
+                Loop archFiles.Length - 1 {
+                    i := A_Index
+                    Loop archFiles.Length - i {
+                        j := i + A_Index
+                        if (StrCompare(archFiles[i], archFiles[j]) > 0) {
+                            tmp := archFiles[i]
+                            archFiles[i] := archFiles[j]
+                            archFiles[j] := tmp
+                        }
+                    }
+                }
+                removeCount := archFiles.Length - 10
+                Loop removeCount {
+                    try FileDelete(archFiles[A_Index])
+                }
+            }
+        }
+        return archPath
+    }
+
     static _ComputeOffsetSec(state := "", offsetSecOverride := -1) {
         this._EnsureInit()
         if (IsInteger(offsetSecOverride) && Integer(offsetSecOverride) >= 0)

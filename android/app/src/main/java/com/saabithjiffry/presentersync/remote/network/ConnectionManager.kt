@@ -381,9 +381,19 @@ class ConnectionManager(
             recSeconds = 0,
             streamDropWarn = false,
             voiceWhileMuted = false,
+            osMicMutedDrift = false,
+            lowDiskWarnLevel = 0,
+            lowDiskMb = -1,
+            deadMicWarn = false,
             isStandby = if (clearSessionTelemetry) false else cur.isStandby,
+            standbyScene = if (clearSessionTelemetry) "BRB" else cur.standbyScene,
             timerState = if (clearSessionTelemetry) "stopped" else cur.timerState,
-            scenes = if (clearSessionTelemetry) emptyList() else cur.scenes
+            scenes = if (clearSessionTelemetry) emptyList() else cur.scenes,
+            quickNudges = emptyList(),
+            slideIndex = 0,
+            slideTotal = 0,
+            slideTitle = "",
+            slideNotes = ""
         )
     }
 

@@ -1186,7 +1186,9 @@ RunPreFlightRehearsalChecks(cfg, state := "", overrides := "") {
         checks.Push({ name: "OBS :4455, Transition & Audio Input", status: "PASS", detail: "OBS :4455 connected, transition & audio input ready." })
 
     ; 2. Physical Mic Signal (> 5%)
-    defaultPeak := (IsObject(state) && state.HasOwnProp("voicePeak")) ? Number(state.voicePeak) : (IsSet(AudioMeter) && AudioMeter.HasMethod("GetPeakLevel") ? Number(AudioMeter.GetPeakLevel()) : 0.0)
+    defaultPeak := (IsObject(state) && state.HasOwnProp("voicePeak")) ? Number(state.voicePeak) : 0.0
+    if (defaultPeak <= 0 && IsSet(AudioMeter) && AudioMeter.HasMethod("GetPeak"))
+        try defaultPeak := Number(AudioMeter.GetPeak())
     micPeak := Number(_PreFlightOv(overrides, "micPeak", defaultPeak))
     if (micPeak >= 0.05)
         checks.Push({ name: "Physical Mic Signal (> 5%)", status: "PASS", detail: Format("Live mic peak {:.0f}% detected.", micPeak * 100) })
@@ -1208,23 +1210,30 @@ RunPreFlightRehearsalChecks(cfg, state := "", overrides := "") {
     ; 4. Host Bridge & Paired Remotes
     defaultBrRun := IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasOwnProp("running") ? !!g_HostCompanionBridge.running : false
     defaultBrPort := IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasOwnProp("boundTcpPort") ? g_HostCompanionBridge.boundTcpPort : 4456
-    defaultPaired := (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasOwnProp("pairedDevices") && IsObject(g_HostCompanionBridge.pairedDevices)) ? g_HostCompanionBridge.pairedDevices.Count : 0
+    defaultPaired := (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasMethod("GetConnectedClientCount")) ? g_HostCompanionBridge.GetConnectedClientCount() : 0
     brRun := !!_PreFlightOv(overrides, "bridgeRunning", defaultBrRun)
     brPort := Integer(_PreFlightOv(overrides, "bridgePort", defaultBrPort))
     pCount := Integer(_PreFlightOv(overrides, "pairedCount", defaultPaired))
     if (!brRun)
         checks.Push({ name: "Host Bridge & Paired Remotes", status: "FAIL", detail: "Host Companion Bridge is not running." })
     else if (pCount <= 0)
-        checks.Push({ name: "Host Bridge & Paired Remotes", status: "WARN", detail: "Bridge active on :" brPort ", 0 paired remotes connected." })
+        checks.Push({ name: "Host Bridge & Paired Remotes", status: "WARN", detail: "Bridge active on :" brPort ", 0 connected remotes." })
     else
-        checks.Push({ name: "Host Bridge & Paired Remotes", status: "PASS", detail: "Bridge active on :" brPort " (" pCount " paired remote(s))." })
+        checks.Push({ name: "Host Bridge & Paired Remotes", status: "PASS", detail: "Bridge active on :" brPort " (" pCount " connected remote(s))." })
 
     ; 5. Recording Disk Space
     freeMB := Number(_PreFlightOv(overrides, "freeMB", -1))
     if (freeMB < 0) {
-        try freeMB := Number(DriveGetSpaceFree(SubStr(A_ScriptDir, 1, 3)))
-        catch
-            freeMB := 0
+        recDir := (IsObject(state) && state.HasOwnProp("recordDirectory") && Trim(String(state.recordDirectory)) != "") ? Trim(String(state.recordDirectory)) : A_ScriptDir
+        try freeMB := Number(DriveGetSpaceFree(recDir))
+        catch {
+            try freeMB := Number(DriveGetSpaceFree(SubStr(recDir, 1, 3)))
+            catch {
+                try freeMB := Number(DriveGetSpaceFree(SubStr(A_ScriptDir, 1, 3)))
+                catch
+                    freeMB := 0
+            }
+        }
     }
     if (freeMB < 512)
         checks.Push({ name: "Recording Disk Space", status: "FAIL", detail: Format("Critical low disk space: {} MB free (< 512 MB).", Round(freeMB)) })

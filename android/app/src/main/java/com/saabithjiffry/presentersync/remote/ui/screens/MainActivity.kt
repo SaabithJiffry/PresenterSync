@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -113,11 +114,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openOverlayPermissionSettings() {
-        val intent = Intent(
+        val packageIntent = Intent(
             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
             Uri.parse("package:$packageName")
         )
-        startActivity(intent)
+        if (runCatching { startActivity(packageIntent) }.isSuccess) return
+
+        val genericOverlayIntent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+        if (runCatching { startActivity(genericOverlayIntent) }.isSuccess) return
+
+        val appDetailsIntent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:$packageName")
+        )
+        if (runCatching { startActivity(appDetailsIntent) }.isSuccess) return
+
+        Toast.makeText(
+            this,
+            "Overlay permission settings unavailable on this device. Grant 'Display over other apps' in system settings if needed.",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     /**

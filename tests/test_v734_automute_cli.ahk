@@ -126,6 +126,8 @@ AssertTrue(ParseHostCliArgs(["--nudge=2m left"]) = "nudge:2m left", "ParseHostCl
 AssertTrue(ParseHostCliArgs(["--scene", "Main"]) = "scene:Main", "ParseHostCliArgs --scene <name>")
 AssertTrue(ParseHostCliArgs(["--scene=Slides"]) = "scene:Slides", "ParseHostCliArgs --scene=<name>")
 AssertTrue(ParseHostCliArgs(["--unknown"]) = "", "ParseHostCliArgs ignores unknown flags")
+AssertTrue(HasUnknownHostCliFlag(["--unknown"]) == true, "HasUnknownHostCliFlag flags unknown -- flags")
+AssertTrue(HasUnknownHostCliFlag(["--cleanup-old-exe", "old.exe"]) == false && HasUnknownHostCliFlag(["--nudge", "--safe-text"]) == false, "HasUnknownHostCliFlag allows valid updater/value args")
 
 ; 6. Live 64-bit WM_COPYDATA roundtrip
 testTitle := "PresenterSync_TestIpc_" A_TickCount

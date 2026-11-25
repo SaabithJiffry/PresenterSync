@@ -46,6 +46,7 @@ object DeepLinkParser {
         val sessionCode = SessionPairingCodeNormalizer.normalize(queryParams["code"].orEmpty())
         val internetCode = queryParams["rc"].orEmpty()
             .ifBlank { queryParams["relayCode"].orEmpty() }
+            .ifBlank { queryParams["wan"].orEmpty() }
             .trim()
             .uppercase()
 
@@ -54,13 +55,19 @@ object DeepLinkParser {
         }
 
         val obsPort = queryParams["port"]?.toIntOrNull()?.takeIf { it in 1..65535 }
+            ?: queryParams["obsPort"]?.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: AppConstants.DEFAULT_OBS_PORT
         val bridgePort = queryParams["bp"]?.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: queryParams["bridgePort"]?.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: AppConstants.DEFAULT_BRIDGE_PORT
-        val obsPw = queryParams["pw"].orEmpty().ifEmpty { queryParams["password"].orEmpty() }
+        val obsPw = queryParams["pw"].orEmpty()
+            .ifEmpty { queryParams["obsPass"].orEmpty() }
+            .ifEmpty { queryParams["password"].orEmpty() }
         val mic = queryParams["mic"].orEmpty().trim().ifEmpty { AppConstants.DEFAULT_MIC_NAME }
-        val mode = if (queryParams["mode"].equals("internet", ignoreCase = true)) {
+        val rawMode = queryParams["mode"].orEmpty().trim()
+        val mode = if (rawMode.equals("internet", ignoreCase = true) ||
+            (rawMode.isEmpty() && hosts.isEmpty() && sessionCode.isEmpty() && internetCode.isNotEmpty())
+        ) {
             NetworkMode.INTERNET
         } else {
             NetworkMode.LAN
@@ -87,13 +94,15 @@ object DeepLinkParser {
             val json = JSONObject(rawJson)
             val hosts = json.optString("hosts", json.optString("host", "")).trim()
             val code = SessionPairingCodeNormalizer.normalize(json.optString("code", ""))
-            val rc = json.optString("rc", json.optString("relayCode", "")).trim().uppercase()
+            val rc = json.optString("rc", json.optString("relayCode", json.optString("wan", "")))
+                .trim()
+                .uppercase()
             if (hosts.isEmpty() && code.isEmpty() && rc.isEmpty()) return null
-            val obsPort = json.optInt("port", AppConstants.DEFAULT_OBS_PORT).takeIf { it in 1..65535 }
-                ?: AppConstants.DEFAULT_OBS_PORT
+            val obsPort = json.optInt("port", json.optInt("obsPort", AppConstants.DEFAULT_OBS_PORT))
+                .takeIf { it in 1..65535 } ?: AppConstants.DEFAULT_OBS_PORT
             val bp = json.optInt("bp", json.optInt("bridgePort", AppConstants.DEFAULT_BRIDGE_PORT))
                 .takeIf { it in 1..65535 } ?: AppConstants.DEFAULT_BRIDGE_PORT
-            val pw = json.optString("pw", json.optString("password", ""))
+            val pw = json.optString("pw", json.optString("obsPass", json.optString("password", "")))
             val mic = json.optString("mic", AppConstants.DEFAULT_MIC_NAME).trim().ifEmpty { AppConstants.DEFAULT_MIC_NAME }
             val mode = if (json.optString("mode", "lan").equals("internet", ignoreCase = true)) {
                 NetworkMode.INTERNET

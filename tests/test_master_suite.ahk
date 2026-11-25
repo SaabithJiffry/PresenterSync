@@ -2778,12 +2778,19 @@ stM7.isMuted := false
 stM7.recState := 1
 cfgM7.AudioRoutingMode := 2 ; deterministic optimistic SyncUIState in offline test
 cfgM7.StandbySceneName := "BRB"
+cfgM7.ExitBrbSafelyMuted := true
 enterBrb := ExecuteHostToggleStandby(cfgM7, stM7, true)
 duringStandbyOk := (stM7.isStandby == true && stM7.isMuted == true && stM7.currentSceneName == "BRB" && stM7.recState == 2)
 exitBrb := ExecuteHostToggleStandby(cfgM7, stM7, false)
-restoredStandbyOk := (stM7.isStandby == false && stM7.isMuted == false && stM7.currentSceneName == "Main Slides" && stM7.recState == 1)
-Assert("ExecuteHostToggleStandby snapshots mute/scene/rec on enter and restores exact state on exit",
-    enterBrb && duringStandbyOk && exitBrb && restoredStandbyOk)
+restoredSafeOk := (stM7.isStandby == false && stM7.isMuted == true && stM7.currentSceneName == "Main Slides" && stM7.recState == 1)
+cfgM7.ExitBrbSafelyMuted := false
+stM7.isMuted := false
+ExecuteHostToggleStandby(cfgM7, stM7, true)
+ExecuteHostToggleStandby(cfgM7, stM7, false)
+restoredUnmutedOk := (stM7.isStandby == false && stM7.isMuted == false && stM7.currentSceneName == "Main Slides" && stM7.recState == 1)
+cfgM7.ExitBrbSafelyMuted := true
+Assert("ExecuteHostToggleStandby keeps mic safely muted by default on exit and restores prior mute when ExitBrbSafelyMuted=false",
+    enterBrb && duringStandbyOk && exitBrb && restoredSafeOk && restoredUnmutedOk)
 
 swOk := ExecuteHostSwitchScene(cfgM7, stM7, "Webcam Full")
 spOk := ExecuteHostSplitRecord(cfgM7, stM7)

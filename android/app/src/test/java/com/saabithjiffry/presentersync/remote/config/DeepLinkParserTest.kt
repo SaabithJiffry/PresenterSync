@@ -67,4 +67,25 @@ class DeepLinkParserTest {
         assertEquals("K9P-4X7", parsed!!.sessionCode)
         assertEquals("192.168.1.50,HOST.local", parsed.hostsCsv)
     }
+
+    @Test
+    fun parsesPairingUriBuilderOutputRoundTrip() {
+        val cfg = RemoteConfig(
+            hostAddress = "192.168.1.50",
+            bridgePort = 4458,
+            sessionPairingCode = "K7M-9P2",
+            hostPort = 4455,
+            obsPassword = "My Pass!&1",
+            internetPairingCode = "WAN-123"
+        )
+        val built = PairingUriBuilder.build(cfg)
+        val parsed = DeepLinkParser.parse(built)
+        assertNotNull(parsed)
+        assertEquals("192.168.1.50", parsed!!.hostsCsv)
+        assertEquals(4458, parsed.bridgePort)
+        assertEquals("K7M-9P2", parsed.sessionCode)
+        assertEquals(4455, parsed.obsPort)
+        assertEquals("My Pass!&1", parsed.obsPassword)
+        assertEquals("WAN-123", parsed.internetPairingCode)
+    }
 }

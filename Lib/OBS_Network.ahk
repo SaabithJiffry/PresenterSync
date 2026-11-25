@@ -556,6 +556,32 @@ ParseHostCliArgs(args) {
     return ""
 }
 
+HasUnknownHostCliFlag(args) {
+    if (!IsObject(args) || args.Length == 0)
+        return false
+    i := 1
+    while (i <= args.Length) {
+        a := Trim(String(args[i]))
+        aLow := StrLower(a)
+        if (aLow = "--nudge" || aLow = "--scene" || aLow = "--cleanup-old-exe" || aLow = "-cleanup-old-exe"
+            || aLow = "--config" || aLow = "-config" || aLow = "--instance" || aLow = "-instance") {
+            i += 2
+            continue
+        }
+        if (aLow = "--mute" || aLow = "--unmute" || aLow = "--toggle-mute" || aLow = "--transition"
+            || aLow = "--standby" || aLow = "--split"
+            || SubStr(aLow, 1, 8) = "--nudge=" || SubStr(aLow, 1, 8) = "--scene="
+            || RegExMatch(aLow, "^--?(cleanup-old-exe|config|instance)=")) {
+            i += 1
+            continue
+        }
+        if (SubStr(aLow, 1, 2) = "--")
+            return true
+        i += 1
+    }
+    return false
+}
+
 SendHostCliCopyData(cmdStr, targetTitle := "PresenterSync_HostIpcMsg ahk_class AutoHotkeyGUI") {
     cmd := Trim(String(cmdStr))
     if (cmd = "")
@@ -872,6 +898,14 @@ EscapeJsonStr(str) {
     s := StrReplace(s, "`r", "\r")
     s := StrReplace(s, "`n", "\n")
     s := StrReplace(s, "`t", "\t")
+    if (RegExMatch(s, "[\x00-\x1f]")) {
+        out := ""
+        Loop Parse, s {
+            code := Ord(A_LoopField)
+            out .= (code < 32) ? Format("\u{:04x}", code) : A_LoopField
+        }
+        return out
+    }
     return s
 }
 
@@ -1630,8 +1664,11 @@ _DispatchZoomOrLocalRecordState(cfg, state, targetState) {
     return true
 }
 
-ExecuteHostToggleRecord(cfg, state) {
+ExecuteHostToggleRecord(cfg, state, requireStopConfirm := false) {
     if (!IsObject(cfg) || !IsObject(state))
+        return false
+    isRecording := (state.HasOwnProp("recState") && state.recState != 0) || (state.HasOwnProp("obsRecState") && state.obsRecState != 0)
+    if (requireStopConfirm && isRecording && IsSet(TryConfirmStopRecording) && !TryConfirmStopRecording(cfg, state))
         return false
     if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
         return SendObsRequest(state.obsWs, "ToggleRecord", "ClickToggleRec")
@@ -1807,6 +1844,7 @@ ExecuteHostToggleStandby(cfg, state, enterStandby := "") {
             ShowStageNudgeBanner("Standby Mode ON (" brbScene ") — Mic Muted & Rec Paused", "F59E0B", 3500, "Director")
     } else {
         snap := state.HasOwnProp("standbySnapshot") ? state.standbySnapshot : ""
+        safeExitMuted := (!cfg.HasOwnProp("ExitBrbSafelyMuted") || cfg.ExitBrbSafelyMuted)
         state.isStandby := false
         state.standbySnapshot := ""
         if (IsObject(snap)) {
@@ -1814,11 +1852,15 @@ ExecuteHostToggleStandby(cfg, state, enterStandby := "") {
                 ExecuteHostSwitchScene(cfg, state, snap.scene)
             if (snap.HasOwnProp("recWasActive") && snap.recWasActive && state.HasOwnProp("recState") && state.recState == 2)
                 ExecuteHostPauseRecord(cfg, state)
-            if (snap.HasOwnProp("muted"))
-                ExecuteHostRemoteSetMute(cfg, state, snap.muted)
+        }
+        if (safeExitMuted) {
+            if (!state.isMuted)
+                ExecuteHostRemoteSetMute(cfg, state, true)
+        } else if (IsObject(snap) && snap.HasOwnProp("muted")) {
+            ExecuteHostRemoteSetMute(cfg, state, snap.muted)
         }
         if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
-            ShowStageNudgeBanner("Standby Mode OFF — Session Restored", "10B981", 3200, "Director")
+            ShowStageNudgeBanner(safeExitMuted ? "Standby Mode OFF — Session Restored (Mic Kept Safely Muted)" : "Standby Mode OFF — Session Restored", "10B981", 3200, "Director")
     }
     HostBridgeBroadcastMuteState(cfg, state)
     BroadcastHostRelayDirectorState(cfg, state)
@@ -1907,10 +1949,14 @@ StepHostPresenterTimerTick(cfg, state) {
     if (state.timerRemainingSec <= 0 && cur = "running") {
         state.timerState := "overtime"
         BroadcastHostStageNudge(cfg, state, "Time Up — Overtime (" FormatCountdownClock(state.timerRemainingSec) ")", "Timer", "EF4444")
+        HostBridgeBroadcastMuteState(cfg, state)
+        BroadcastHostRelayDirectorState(cfg, state)
         return true
     }
     if (prevRem == 121 && state.timerRemainingSec == 120) {
         BroadcastHostStageNudge(cfg, state, "2:00 Remaining", "Timer", "F59E0B")
+        HostBridgeBroadcastMuteState(cfg, state)
+        BroadcastHostRelayDirectorState(cfg, state)
         return true
     }
     if (Mod(Abs(state.timerRemainingSec), 5) == 0) {

@@ -264,7 +264,9 @@ _RBC_ParseProfileLine(rawVal) {
         code: params.Has("code") ? params["code"] : "",
         wanCode: params.Has("wan") ? params["wan"] : "",
         obsPass: params.Has("pw") ? params["pw"] : "",
-        networkMode: (params.Has("mode") && StrLower(params["mode"]) = "internet") ? "Internet" : "LAN"
+        networkMode: (params.Has("mode") && StrLower(params["mode"]) = "internet") ? "Internet" : "LAN",
+        targetMic: params.Has("mic") ? params["mic"] : "",
+        relayBaseUrl: params.Has("relay") ? params["relay"] : ""
     }
 }
 
@@ -303,7 +305,13 @@ SaveHostProfile(cfg, profileName, data) {
     wn := data.HasOwnProp("wanCode") ? String(data.wanCode) : ""
     pw := data.HasOwnProp("obsPass") ? String(data.obsPass) : ""
     md := (data.HasOwnProp("networkMode") && StrLower(String(data.networkMode)) = "internet") ? "Internet" : "LAN"
+    mc := data.HasOwnProp("targetMic") ? String(data.targetMic) : ""
+    rl := data.HasOwnProp("relayBaseUrl") ? String(data.relayBaseUrl) : ""
     enc := "host=" _RBC_UrlEncode(h) "&bp=" bp "&obsport=" op "&code=" _RBC_UrlEncode(cd) "&wan=" _RBC_UrlEncode(wn) "&pw=" _RBC_UrlEncode(pw) "&mode=" md
+    if (mc != "")
+        enc .= "&mic=" _RBC_UrlEncode(mc)
+    if (rl != "")
+        enc .= "&relay=" _RBC_UrlEncode(rl)
     try {
         IniWrite(enc, cfg.ConfigFile, "HostProfiles", clean)
         return true
@@ -341,17 +349,29 @@ ApplyHostProfile(cfg, state, profileName) {
     cfg.BridgePort := Integer(target.bridgePort)
     cfg.HostPort := target.obsPort
     cfg.SessionPairingCode := target.code
+    cfg.SessionToken := ""
+    cfg.PairedHostUuid := ""
     cfg.InternetPairingCode := target.wanCode
     cfg.ObsPassword := target.obsPass
     cfg.NetworkMode := target.networkMode
+    if (target.HasOwnProp("targetMic") && target.targetMic != "" && cfg.HasOwnProp("TargetMicName"))
+        cfg.TargetMicName := target.targetMic
+    if (target.HasOwnProp("relayBaseUrl") && target.relayBaseUrl != "" && cfg.HasOwnProp("RelayBaseUrl"))
+        cfg.RelayBaseUrl := IsSet(NormalizeRelayBaseUrl) ? NormalizeRelayBaseUrl(target.relayBaseUrl) : target.relayBaseUrl
     if (cfg.HasMethod("Write")) {
-        cfg.Write("Settings", "HostAddress", cfg.HostAddress)
-        cfg.Write("Settings", "BridgePort", cfg.BridgePort)
-        cfg.Write("Settings", "HostPort", cfg.HostPort)
-        cfg.Write("Settings", "SessionPairingCode", cfg.SessionPairingCode)
-        cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode)
-        cfg.Write("Settings", "ObsPassword", cfg.ObsPassword)
-        cfg.Write("Settings", "NetworkMode", cfg.NetworkMode)
+        cfg.Write("Connection", "HostAddress", cfg.HostAddress)
+        cfg.Write("Connection", "BridgePort", cfg.BridgePort)
+        cfg.Write("Connection", "HostPort", cfg.HostPort)
+        cfg.Write("Connection", "SessionPairingCode", cfg.SessionPairingCode)
+        cfg.Write("Connection", "SessionToken", "")
+        cfg.Write("Connection", "PairedHostUuid", "")
+        cfg.Write("Connection", "InternetPairingCode", cfg.InternetPairingCode)
+        cfg.Write("Connection", "ObsPassword", cfg.ObsPassword)
+        cfg.Write("Connection", "NetworkMode", cfg.NetworkMode)
+        if (cfg.HasOwnProp("TargetMicName"))
+            cfg.Write("Connection", "TargetMicName", cfg.TargetMicName)
+        if (cfg.HasOwnProp("RelayBaseUrl"))
+            cfg.Write("Connection", "RelayBaseUrl", cfg.RelayBaseUrl)
     }
     if (IsObject(state)) {
         HandleRemotePowerBroadcast(0x7, state)
@@ -1026,9 +1046,19 @@ ResetRemoteConnectionTelemetry(state, resetFallback := false) {
     state.recSeconds := 0
     state.streamDropWarn := false
     state.voiceWhileMuted := false
+    state.osMicMutedDrift := false
+    state.lowDiskWarnLevel := 0
+    state.lowDiskMb := -1
+    state.deadMicWarn := false
+    state.meetBgTabWarn := false
     state.isStandby := false
     state.timerState := "stopped"
     state.scenes := []
+    state.quickNudges := []
+    state.slideIndex := 0
+    state.slideTotal := 0
+    state.slideTitle := ""
+    state.slideNotes := ""
 }
 
 IsRemoteDirectObsReady(cfg, state) {
@@ -1125,10 +1155,26 @@ ParseHostBridgeWsEvent(rawText) {
         isMuted: _RBC_JsonGetBool(rawText, "isMuted", false),
         routingMode: _RBC_JsonGetInt(rawText, "routingMode", 1),
         targetMicName: _RBC_JsonGetStr(rawText, "targetMicName"),
+        conferencingApp: _RBC_JsonGetStr(rawText, "conferencingApp"),
+        detectedConfApp: _RBC_JsonGetStr(rawText, "detectedConfApp"),
+        meetBgTabWarn: _RBC_JsonGetBool(rawText, "meetBgTabWarn", false),
+        slideIndex: _RBC_JsonGetInt(rawText, "slideIndex", 0),
+        slideTotal: _RBC_JsonGetInt(rawText, "slideTotal", 0),
+        slideTitle: _RBC_JsonGetStr(rawText, "slideTitle"),
+        slideNotes: _RBC_JsonGetStr(rawText, "slideNotes"),
         recState: _RBC_JsonGetInt(rawText, "recState", 0),
+        obsRecState: _RBC_JsonGetInt(rawText, "obsRecState", 0),
+        confRecState: _RBC_JsonGetInt(rawText, "confRecState", 0),
+        recSourceTag: _RBC_JsonGetStr(rawText, "recSourceTag"),
         recSeconds: _RBC_JsonGetInt(rawText, "recSeconds", 0),
+        obsConnected: _RBC_JsonGetBool(rawText, "obsConnected", false),
         streamDropWarn: _RBC_JsonGetBool(rawText, "streamDropWarn", false),
         voiceWhileMuted: _RBC_JsonGetBool(rawText, "voiceWhileMuted", false),
+        osMicMutedDrift: _RBC_JsonGetBool(rawText, "osMicMutedDrift", false),
+        lowDiskWarnLevel: _RBC_JsonGetInt(rawText, "lowDiskWarnLevel", 0),
+        lowDiskMb: _RBC_JsonGetInt(rawText, "lowDiskMb", -1),
+        deadMicWarn: _RBC_JsonGetBool(rawText, "deadMicWarn", false),
+        quickNudges: _RBC_JsonGetStrArray(rawText, "quickNudges"),
         activeScene: _RBC_JsonGetStr(rawText, "activeScene"),
         scenes: _RBC_JsonGetStrArray(rawText, "scenes"),
         isStandby: _RBC_JsonGetBool(rawText, "isStandby", false),

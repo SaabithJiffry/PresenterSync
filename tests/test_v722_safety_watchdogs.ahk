@@ -143,6 +143,24 @@ AssertTrue(InStr(json, '"lowDiskWarnLevel":2'), "_BuildMuteStateJson includes lo
 AssertTrue(InStr(json, '"lowDiskMb":300'), "_BuildMuteStateJson includes lowDiskMb")
 AssertTrue(InStr(json, '"deadMicWarn":true'), "_BuildMuteStateJson includes deadMicWarn")
 
+; 7. M1.4 BRB Standby suppression & Solo Primary Voice-While-Muted monitor
+st.isMuted := true
+st.isStandby := true
+st.voiceWhileMuted := false
+st.mutedVoiceAboveSince := 0
+EvaluateMutedVoiceAlert(cfg, st, 0.85, 1000)
+EvaluateMutedVoiceAlert(cfg, st, 0.85, 3000)
+AssertTrue(!st.voiceWhileMuted, "EvaluateMutedVoiceAlert suppressed during BRB standby")
+st.isStandby := false
+AssertTrue(EvaluateMutedVoiceAlert(cfg, st, 0.85, 4000) == false && EvaluateMutedVoiceAlert(cfg, st, 0.85, 5600) == true && st.voiceWhileMuted, "Voice-While-Muted resumes once BRB ends")
+st.isMuted := true
+st.voiceWhileMuted := false
+st.mutedVoiceAboveSince := 0
+MutedVoiceMonitorTick(cfg, st, (*) => 0.60)
+AssertTrue(st.mutedVoiceAboveSince > 0, "MutedVoiceMonitorTick evaluates solo Primary mic signal even with 0 remote clients")
+st.isMuted := false
+EvaluateMutedVoiceAlert(cfg, st, 0.0, 5700)
+
 try FileDelete(tmpIni)
 try FileAppend("PASS=" passed " FAIL=" failed "`n", "*")
 ExitApp(failed > 0 ? 1 : 0)

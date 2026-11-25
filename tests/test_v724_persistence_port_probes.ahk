@@ -57,6 +57,13 @@ AssertTrue(SessionTimeline.Entries[1].category = "Mute" && SessionTimeline.Entri
 
 SessionTimeline.ClearAutosave(tmpJsonl)
 AssertTrue(!FileExist(tmpJsonl), "ClearAutosave removes JSONL autosave file")
+
+; ArchiveAutosave preserves non-empty JSONL to timestamped archive file
+SessionTimeline.Record("Scene", "Pre-Shutdown Scene")
+archFile := SessionTimeline.ArchiveAutosave(tmpJsonl)
+AssertTrue(archFile != "" && FileExist(archFile) && !FileExist(tmpJsonl) && InStr(FileRead(archFile, "UTF-8"), "Pre-Shutdown Scene"), "ArchiveAutosave preserves timeline to timestamped archive on clean exit")
+try FileDelete(archFile)
+
 SessionTimeline.AutosaveFile := origAutosaveFile
 SessionTimeline.EnableAutosave := origAutosaveEnabled
 SessionTimeline.Entries := []

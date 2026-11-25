@@ -489,6 +489,16 @@ def main() -> int:
                         is True,
                         timeout=5.0,
                     )
+                    reset_dom = cdp.eval_js(
+                        "({sc: document.getElementById('scName').textContent, "
+                        "title: document.getElementById('slTitle').textContent, "
+                        "notes: document.getElementById('slNotes').textContent})"
+                    )
+                    assert (
+                        reset_dom["sc"] == "Scene"
+                        and reset_dom["title"] == ""
+                        and reset_dom["notes"] == "No speaker notes."
+                    ), f"Clean disconnect left stale DOM telemetry: {reset_dom}"
                     cdp.drain_events(0.15)
 
                     # Notice any non-favicon 0 JS exception / console error requirement

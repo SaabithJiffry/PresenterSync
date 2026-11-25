@@ -93,6 +93,15 @@ AssertTrue(TryConfirmRemoteStopRecording(remCfg, remSt, 63500) == false, "Remote
 remCfg.ConfirmBeforeStopRecording := false
 AssertTrue(TryConfirmRemoteStopRecording(remCfg, remSt, 70000) == true, "Remote disabled ConfirmBeforeStopRecording returns true immediately")
 
+; 5. ExecuteHostToggleRecord respects ConfirmBeforeStopRecording when requireStopConfirm=true
+cfg.ConfirmBeforeStopRecording := true
+cfg.EnableWS := false
+st.recState := 1
+st.obsRecState := 1
+st.stopRecConfirmUntil := 0
+AssertTrue(ExecuteHostToggleRecord(cfg, st, true) == false && st.recState == 1 && st.stopRecConfirmUntil > 0, "ExecuteHostToggleRecord requireStopConfirm=true arms 1st tap without stopping")
+AssertTrue(ExecuteHostToggleRecord(cfg, st, true) == true && st.recState == 0, "ExecuteHostToggleRecord requireStopConfirm=true confirms stop on 2nd tap")
+
 try FileDelete(tmpIni)
 try FileAppend("PASS=" passed " FAIL=" failed "`n", "*")
 ExitApp(failed > 0 ? 1 : 0)

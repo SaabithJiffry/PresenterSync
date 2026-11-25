@@ -1408,6 +1408,7 @@ class Config {
     CustomLiveHex := "107C10"
     CustomMutedHex := "C42B1C"
     StandbySceneName := "BRB"
+    ExitBrbSafelyMuted := true
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -1709,6 +1710,7 @@ class Config {
         this.EnableForgottenRecordWatchdog := this.ReadBool("Settings", "EnableForgottenRecordWatchdog", true)
         this.AutoRecordOnStreamDrop := this.ReadBool("Settings", "AutoRecordOnStreamDrop", true)
         this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", true)
+        this.ExitBrbSafelyMuted := this.ReadBool("Settings", "ExitBrbSafelyMuted", true)
         this.AutoMuteOnLock := this.ReadBool("Settings", "AutoMuteOnLock", true)
         this.AutoMuteOnMeetingEnd := this.ReadBool("Settings", "AutoMuteOnMeetingEnd", false)
         this.AutoMuteOnFirstObsConnect := this.ReadBool("Settings", "AutoMuteOnFirstObsConnect", false)
@@ -1915,6 +1917,7 @@ class Config {
             { sec: "Settings", key: "CustomLiveHex", prop: "CustomLiveHex", kind: "str" },
             { sec: "Settings", key: "CustomMutedHex", prop: "CustomMutedHex", kind: "str" },
             { sec: "Settings", key: "StandbySceneName", prop: "StandbySceneName", kind: "str" },
+            { sec: "Settings", key: "ExitBrbSafelyMuted", prop: "ExitBrbSafelyMuted", kind: "bool" },
             { sec: "Settings", key: "ShowText", prop: "ShowText", kind: "bool" },
             { sec: "Settings", key: "MonoIcon", prop: "MonoIcon", kind: "bool" },
             { sec: "Settings", key: "SleekCorners", prop: "SleekCorners", kind: "bool" },
@@ -2486,7 +2489,7 @@ ExportPortableSettingsBundle(cfg, targetPath, includeSecrets := false) {
     if (!IsObject(cfg) || targetPath = "")
         return { ok: false, path: targetPath, count: 0, error: "Invalid config or target path." }
     specs := cfg.GetProfileFieldSpecs()
-    isIni := (StrLower(SubStr(targetPath, -3)) = ".ini")
+    isIni := (StrLower(SubStr(targetPath, -4)) = ".ini")
     count := 0
     try {
         try FileDelete(targetPath)
@@ -2540,7 +2543,7 @@ ImportPortableSettingsBundle(cfg, state, sourcePath) {
     applied := 0
     try {
         raw := FileRead(sourcePath, "UTF-8")
-        isIni := (StrLower(SubStr(sourcePath, -3)) = ".ini") || RegExMatch(LTrim(raw), "^\[")
+        isIni := (StrLower(SubStr(sourcePath, -4)) = ".ini") || RegExMatch(LTrim(raw), "^\[")
         if (isIni) {
             for spec in specs {
                 if (_IsBundleSecretProp(spec.prop))

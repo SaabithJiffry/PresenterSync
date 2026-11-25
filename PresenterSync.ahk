@@ -41,6 +41,10 @@ if (A_Args.Length > 0) {
         okCli := SendHostCliCopyData(cliCmd)
         ExitApp(okCli ? 0 : 1)
     }
+    if (HasUnknownHostCliFlag(A_Args)) {
+        try FileAppend("Unknown PresenterSync CLI flag.`n", "*")
+        ExitApp(2)
+    }
 }
 
 EnforceHostSingleInstance() {
@@ -105,7 +109,7 @@ ShutdownHostApp(*) {
     if (IsSet(AppConfig) && IsObject(AppConfig) && AppConfig.HasMethod("FlushDeferredWrites"))
         try AppConfig.FlushDeferredWrites()
     try SessionTimeline.FlushAutosave()
-    try SessionTimeline.ClearAutosave()
+    try SessionTimeline.ArchiveAutosave()
     try StopHostCompanionBridge()
     try HudArcadeBase.StopActiveGame()
     try AudioMeter.Shutdown()
@@ -240,6 +244,7 @@ BuildTrayMenu(cfg, state) {
     }
     DirectorMenu.Add("Switch OBS Scene", SceneSwitchMenu)
     DirectorMenu.Add()
+    DirectorMenu.Add("Start / Stop Recording", (*) => ExecuteHostToggleRecord(cfg, state, true))
     DirectorMenu.Add("Pause / Resume Recording", (*) => ExecuteHostPauseRecord(cfg, state))
     DirectorMenu.Add("Split Recording Chapter", (*) => ExecuteHostSplitRecord(cfg, state))
     DirectorMenu.Add()

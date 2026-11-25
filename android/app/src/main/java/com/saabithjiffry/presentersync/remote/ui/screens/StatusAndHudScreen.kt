@@ -113,6 +113,7 @@ import com.saabithjiffry.presentersync.remote.ui.theme.CompactExplorerButtonPadd
 import com.saabithjiffry.presentersync.remote.ui.theme.ExplorerCard
 import com.saabithjiffry.presentersync.remote.ui.theme.PresenterSyncTheme
 import com.saabithjiffry.presentersync.remote.ui.theme.ResponsiveExplorerActionRow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -169,6 +170,20 @@ internal fun StatusAndActionsCard(
     }
 
     ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
+        var pendingStopRecordUntilMs by remember { mutableStateOf(0L) }
+        val isRecording = conn.recState != 0
+        val isConfirmingStop = isRecording && pendingStopRecordUntilMs > 0L
+
+        LaunchedEffect(pendingStopRecordUntilMs, conn.recState) {
+            if (conn.recState == 0) {
+                pendingStopRecordUntilMs = 0L
+            } else if (pendingStopRecordUntilMs > 0L) {
+                val remaining = (pendingStopRecordUntilMs - System.currentTimeMillis()).coerceAtLeast(0L)
+                delay(remaining)
+                pendingStopRecordUntilMs = 0L
+            }
+        }
+
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -364,12 +379,32 @@ internal fun StatusAndActionsCard(
                         Text("◀ Prev", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                     OutlinedButton(
-                        onClick = onToggleRecord,
+                        onClick = {
+                            val res = evaluateStopRecordTap(
+                                isRecording = isRecording,
+                                confirmEnabled = cfg.confirmBeforeStopRecording,
+                                pendingUntilMs = pendingStopRecordUntilMs,
+                                nowMs = System.currentTimeMillis()
+                            )
+                            pendingStopRecordUntilMs = res.nextPendingUntilMs
+                            if (res.shouldExecuteStop) {
+                                onToggleRecord()
+                            }
+                        },
                         contentPadding = CompactExplorerButtonPadding,
+                        colors = if (isConfirmingStop) {
+                            ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD97706))
+                        } else {
+                            ButtonDefaults.outlinedButtonColors()
+                        },
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(
-                            if (conn.recState == 1) "⏹ Stop Rec" else "⏺ Rec",
+                            when {
+                                isConfirmingStop -> "Confirm Stop?"
+                                isRecording -> "⏹ Stop Rec"
+                                else -> "⏺ Rec"
+                            },
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis

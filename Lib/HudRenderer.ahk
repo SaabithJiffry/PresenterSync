@@ -1229,7 +1229,8 @@ EvaluateMutedVoiceAlert(cfg, state, rawPeak, nowTick := "") {
     if (nowTick = "")
         nowTick := A_TickCount
     alertEnabled := (!cfg.HasOwnProp("EnableVoiceWhileMutedAlert") || cfg.EnableVoiceWhileMutedAlert)
-    if (!state.isMuted || !alertEnabled) {
+    inStandby := (state.HasOwnProp("isStandby") && state.isStandby)
+    if (!state.isMuted || !alertEnabled || inStandby) {
         wasWarn := state.HasOwnProp("voiceWhileMuted") ? state.voiceWhileMuted : false
         state.voiceWhileMuted := false
         state.mutedVoiceAboveSince := 0
@@ -1294,12 +1295,30 @@ MutedVoiceMonitorTick(cfg, state, readerFn := "") {
             _NotifyHostTelemetryChanged(cfg, state, true)
         return
     }
-    if (!IsObject(readerFn) && GetHostBridgeStatusSummary().connectedCount <= 0 && (!state.HasOwnProp("relayConnected") || !state.relayConnected))
+    if (state.HasOwnProp("isStandby") && state.isStandby) {
+        if (EvaluateMutedVoiceAlert(cfg, state, 0.0))
+            _NotifyHostTelemetryChanged(cfg, state, true)
         return
+    }
+    wasWarn := state.HasOwnProp("voiceWhileMuted") ? !!state.voiceWhileMuted : false
     newPeak := IsObject(readerFn) ? Float(readerFn.Call()) : AudioMeter.GetPeak()
     newPeak := Min(1.0, Max(0.0, newPeak))
-    if (EvaluateMutedVoiceAlert(cfg, state, newPeak))
+    if (EvaluateMutedVoiceAlert(cfg, state, newPeak)) {
         _NotifyHostTelemetryChanged(cfg, state, true)
+        if (!wasWarn && state.voiceWhileMuted && (!IsSet(g_IsTestMode) || !g_IsTestMode)) {
+            nowTick := A_TickCount
+            lastWarn := state.HasOwnProp("_lastPrimaryVoiceWarnTick") ? state._lastPrimaryVoiceWarnTick : 0
+            if (lastWarn = 0 || (nowTick - lastWarn) >= 5000) {
+                state._lastPrimaryVoiceWarnTick := nowTick
+                if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)) {
+                    ShowStageNudgeBanner("You're on mute — mic signal detected!", "F59E0B", 3200, "Mic Alert")
+                } else {
+                    ToolTip("⚠ You're on mute — mic signal detected!")
+                    SetTimer(_ClearHudToolTip, -2800)
+                }
+            }
+        }
+    }
 }
 
 EvaluateOsMicDrift(cfg, state, osMuted, nowTick := "") {

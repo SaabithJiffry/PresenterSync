@@ -97,7 +97,8 @@ rawJson := FileRead(jsonPath, "UTF-8")
 AssertTrue(InStr(rawJson, "PresenterSyncBundle_v1") && !InStr(rawJson, "TopSecret123"), "JSON bundle includes schema and redacts obsPassword by default")
 
 okExpIni := ExportPortableSettingsBundle(cfg, iniBundlePath, false)
-AssertTrue((IsObject(okExpIni) ? okExpIni.ok : okExpIni) == true && FileExist(iniBundlePath), "ExportPortableSettingsBundle writes .ini")
+rawIni := FileExist(iniBundlePath) ? FileRead(iniBundlePath, "UTF-8") : ""
+AssertTrue((IsObject(okExpIni) ? okExpIni.ok : okExpIni) == true && FileExist(iniBundlePath) && InStr(rawIni, "[Bundle]"), "ExportPortableSettingsBundle writes real .ini sections for .ini extension")
 
 ; Modify cfg, then import JSON bundle back
 cfg.QuickNudgePresets := "Changed"
@@ -128,6 +129,7 @@ bridge.cfg := cfg
 bridge.state := st
 bJson := bridge._BuildMuteStateJson()
 AssertTrue(InStr(bJson, '"quickNudges":["Hold On","5m Left","Check Slides"]'), "HostBridge _BuildMuteStateJson emits quickNudges JSON array")
+AssertTrue(_HB_JsonEscape("a" Chr(11) "b") == "a\u000bb" && EscapeJsonStr("a" Chr(11) "b") == "a\u000bb", "JSON escapers escape control chars < 0x20 including vertical tab")
 
 reloaded.DeleteFile()
 

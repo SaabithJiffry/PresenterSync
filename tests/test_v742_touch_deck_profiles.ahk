@@ -70,9 +70,17 @@ AssertTrue(okSave1 && okSave2, "SaveHostProfile persists two room profiles")
 profs := LoadSavedHostProfiles(cfg)
 AssertTrue(profs.Length == 2 && profs[1].name = "Hall A" && profs[1].obsPass = "sec&1" && profs[2].name = "Hall B" && profs[2].networkMode = "Internet", "LoadSavedHostProfiles restores both profiles with special chars")
 
+cfg.SessionToken := "stale-token-999"
+cfg.PairedHostUuid := "stale-uuid-999"
 st := { lastRxTick: 12345, reconnecting: true, obsConnected: true, obsWs: "", reconnectCalls: 0 }
 okApply := ApplyHostProfile(cfg, st, "Hall A")
-AssertTrue(okApply == true && cfg.HostAddress = "10.0.0.10" && cfg.BridgePort == 4456 && cfg.SessionPairingCode = "AAA-111" && cfg.ObsPassword = "sec&1" && st.lastRxTick == 0 && !st.reconnecting, "ApplyHostProfile updates config and resets connection state")
+AssertTrue(okApply == true && cfg.HostAddress = "10.0.0.10" && cfg.BridgePort == 4456 && cfg.SessionPairingCode = "AAA-111" && cfg.ObsPassword = "sec&1" && cfg.SessionToken = "" && cfg.PairedHostUuid = "" && st.lastRxTick == 0 && !st.reconnecting, "ApplyHostProfile updates config, clears stale token/uuid, and resets connection state")
+AssertTrue(IniRead(tmpIni, "Connection", "HostAddress", "") = "10.0.0.10" && IniRead(tmpIni, "Settings", "HostAddress", "") = "", "ApplyHostProfile persists to [Connection] section")
+
+; 4. ParseHostBridgeWsEvent parses M1.4 extended telemetry fields
+rawBridgeEv := '{"type":"mute_state","isMuted":true,"osMicMutedDrift":true,"lowDiskWarnLevel":2,"lowDiskMb":256,"deadMicWarn":true,"quickNudges":["Hold","Wrap"],"slideIndex":3,"slideTotal":12,"slideTitle":"Agenda","slideNotes":"Say hi","obsConnected":true,"obsRecState":1,"confRecState":0,"recSourceTag":"OBS","conferencingApp":"Zoom","detectedConfApp":"Zoom","meetBgTabWarn":true}'
+evParsed := ParseHostBridgeWsEvent(rawBridgeEv)
+AssertTrue(IsObject(evParsed) && evParsed.osMicMutedDrift && evParsed.lowDiskWarnLevel == 2 && evParsed.lowDiskMb == 256 && evParsed.deadMicWarn && evParsed.quickNudges.Length == 2 && evParsed.slideIndex == 3 && evParsed.slideTotal == 12 && evParsed.slideTitle = "Agenda" && evParsed.slideNotes = "Say hi" && evParsed.obsConnected && evParsed.obsRecState == 1 && evParsed.recSourceTag = "OBS" && evParsed.meetBgTabWarn, "ParseHostBridgeWsEvent extracts all extended telemetry fields")
 
 okDel := DeleteHostProfile(cfg, "Hall A")
 AssertTrue(okDel == true && LoadSavedHostProfiles(cfg).Length == 1 && LoadSavedHostProfiles(cfg)[1].name = "Hall B", "DeleteHostProfile removes only target profile")

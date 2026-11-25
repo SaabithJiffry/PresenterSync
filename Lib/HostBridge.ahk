@@ -150,9 +150,19 @@ _HB_JsonEscape(str) {
     s := String(str)
     s := StrReplace(s, "\", "\\")
     s := StrReplace(s, '"', '\"')
+    s := StrReplace(s, "`b", "\b")
+    s := StrReplace(s, "`f", "\f")
     s := StrReplace(s, "`r", "\r")
     s := StrReplace(s, "`n", "\n")
     s := StrReplace(s, "`t", "\t")
+    if (RegExMatch(s, "[\x00-\x1f]")) {
+        out := ""
+        Loop Parse, s {
+            code := Ord(A_LoopField)
+            out .= (code < 32) ? Format("\u{:04x}", code) : A_LoopField
+        }
+        return out
+    }
     return s
 }
 
