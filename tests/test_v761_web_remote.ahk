@@ -210,8 +210,8 @@ LoopbackWsPumpAndFind(sock, pattern, timeoutMs := 2000) {
 wsSock := LoopbackWsOpen(bridgePort, "/ws?code=WEB-761&deviceId=dev-web-1&deviceName=WebTest&platform=Web")
 gotAuth := LoopbackWsPumpAndFind(wsSock, "auth_ok", 2500)
 Assert("Loopback WS authenticates Web Remote client", gotAuth && bridge.pairedDevices.Has("dev-web-1"))
-gotObsFb := LoopbackWsPumpAndFind(wsSock, '"obsFallback":{"port":4455,"targetMic":"Mic/Aux","password":"TopSecretOBS4455!"}', 1000)
-Assert("Post-auth auth_ok includes obsFallback metadata when EnableWS=true (M5A.3)", gotObsFb)
+gotObsFb := LoopbackWsPumpAndFind(wsSock, '"obsFallback":{"port":4455,"targetMic":"Mic/Aux","password":"","directObsAllowed":false}', 1000)
+Assert("Post-auth auth_ok includes obsFallback metadata & withholds obsPassword for Presenter (C3 / M5A.3)", gotObsFb)
 
 LoopbackWsSendText(wsSock, '{"type":"ping"}')
 gotPong := LoopbackWsPumpAndFind(wsSock, '"type":"pong"', 2000)

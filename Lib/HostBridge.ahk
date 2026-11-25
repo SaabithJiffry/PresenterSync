@@ -39,6 +39,7 @@ class HostBridgeConstants {
     static PAIR_LOCKOUT_MS := 30000
     static UDP_COOLDOWN_MS := 200
     static WS_GUID := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    static ROLES := ["Tally-Only", "Presenter", "Director"]
 }
 
 GetBridgeFallbackPorts(preferredPort := 4456) {
@@ -726,6 +727,121 @@ class HostCompanionBridge {
         }
     }
 
+    static NormalizeRole(role) {
+        r := StrLower(Trim(String(role)))
+        if (r = "tally-only" || r = "tally" || r = "tally_only")
+            return "Tally-Only"
+        if (r = "director")
+            return "Director"
+        return "Presenter"
+    }
+
+    static NormalizeTrustTier(tier) {
+        t := StrLower(Trim(String(tier)))
+        if (t = "pinned room" || t = "pinned" || t = "pinned_room")
+            return "Pinned Room"
+        return "Ephemeral Guest"
+    }
+
+    static GetPermissionsForRole(role) {
+        norm := HostCompanionBridge.NormalizeRole(role)
+        if (norm = "Tally-Only")
+            return ["read_state", "ping", "sync_req"]
+        if (norm = "Director")
+            return ["read_state", "ping", "sync_req", "mute", "ppt", "timer", "stage_nudge", "record", "scene", "standby", "direct_obs"]
+        return ["read_state", "ping", "sync_req", "mute", "ppt", "timer", "stage_nudge"]
+    }
+
+    static HasPermissionForCmd(role, msgType) {
+        norm := HostCompanionBridge.NormalizeRole(role)
+        if (norm = "Director")
+            return true
+        cmd := StrLower(Trim(String(msgType)))
+        if (cmd = "ping" || cmd = "sync_req" || cmd = "disconnect" || cmd = "unpair" || cmd = "reconcile_fallback_state")
+            return true
+        if (norm = "Tally-Only")
+            return false
+        ; Presenter allows mute, ppt, timer, stage_nudge — blocks record, scene, standby
+        return (cmd = "toggle_mute" || cmd = "set_mute"
+            || cmd = "ppt_next" || cmd = "ppt_prev" || cmd = "slide_start"
+            || cmd = "timer_start" || cmd = "timer_pause" || cmd = "timer_reset"
+            || cmd = "stage_nudge")
+    }
+
+    _SyncClientPolicyFromDevice(devId) {
+        if (!this.pairedDevices.Has(devId))
+            return
+        d := this.pairedDevices[devId]
+        for _, cli in this.clients {
+            if (cli.deviceId = devId) {
+                cli.role := d.HasOwnProp("role") ? HostCompanionBridge.NormalizeRole(d.role) : "Presenter"
+                cli.trustTier := d.HasOwnProp("trustTier") ? HostCompanionBridge.NormalizeTrustTier(d.trustTier) : "Ephemeral Guest"
+                cli.allowDirectObsFallback := d.HasOwnProp("allowDirectObsFallback") ? !!d.allowDirectObsFallback : false
+                cli.inputPaused := d.HasOwnProp("paused") ? !!d.paused : false
+                cli.expiresAt := d.HasOwnProp("expiresAt") ? Integer(d.expiresAt) : 0
+            }
+        }
+    }
+
+    SetDeviceRole(devId, role) {
+        if (!this.pairedDevices.Has(devId))
+            return false
+        this.pairedDevices[devId].role := HostCompanionBridge.NormalizeRole(role)
+        this._SyncClientPolicyFromDevice(devId)
+        this.SavePairedDevices()
+        return true
+    }
+
+    SetDeviceTrustTier(devId, trustTier) {
+        if (!this.pairedDevices.Has(devId))
+            return false
+        this.pairedDevices[devId].trustTier := HostCompanionBridge.NormalizeTrustTier(trustTier)
+        this._SyncClientPolicyFromDevice(devId)
+        this.SavePairedDevices()
+        return true
+    }
+
+    SetDeviceDirectObsFallback(devId, allow) {
+        if (!this.pairedDevices.Has(devId))
+            return false
+        this.pairedDevices[devId].allowDirectObsFallback := !!allow
+        this._SyncClientPolicyFromDevice(devId)
+        this.SavePairedDevices()
+        return true
+    }
+
+    SetDevicePaused(devId, paused) {
+        if (!this.pairedDevices.Has(devId))
+            return false
+        this.pairedDevices[devId].paused := !!paused
+        this._SyncClientPolicyFromDevice(devId)
+        this.SavePairedDevices()
+        return true
+    }
+
+    SetDeviceTtlHours(devId, ttlHours := 0) {
+        if (!this.pairedDevices.Has(devId))
+            return false
+        hrs := Float(ttlHours)
+        exp := (hrs > 0) ? (GetCurrentUnixEpoch() + Round(hrs * 3600)) : 0
+        this.pairedDevices[devId].expiresAt := exp
+        this._SyncClientPolicyFromDevice(devId)
+        this.SavePairedDevices()
+        return true
+    }
+
+    RevokeEphemeralGuests() {
+        toRemove := []
+        for devId, d in this.pairedDevices {
+            tier := d.HasOwnProp("trustTier") ? HostCompanionBridge.NormalizeTrustTier(d.trustTier) : "Ephemeral Guest"
+            if (tier != "Pinned Room")
+                toRemove.Push(devId)
+        }
+        for _, devId in toRemove
+            this.DisconnectDevice(devId, true)
+        return toRemove.Length
+    }
+
     GetDeviceList() {
         list := []
         for _, d in this.pairedDevices {
@@ -737,7 +853,12 @@ class HostCompanionBridge {
                 transport: d.transport,
                 pairedAt: d.pairedAt,
                 connected: d.connected,
-                customName: d.HasOwnProp("customName") ? d.customName : false
+                customName: d.HasOwnProp("customName") ? d.customName : false,
+                role: d.HasOwnProp("role") ? HostCompanionBridge.NormalizeRole(d.role) : "Presenter",
+                trustTier: d.HasOwnProp("trustTier") ? HostCompanionBridge.NormalizeTrustTier(d.trustTier) : "Ephemeral Guest",
+                allowDirectObsFallback: d.HasOwnProp("allowDirectObsFallback") ? !!d.allowDirectObsFallback : false,
+                paused: d.HasOwnProp("paused") ? !!d.paused : false,
+                expiresAt: d.HasOwnProp("expiresAt") ? Integer(d.expiresAt) : 0
             })
         }
         return list
@@ -948,18 +1069,26 @@ class HostCompanionBridge {
         tokField := (IsObject(c) && c.HasOwnProp("sessionToken") && c.sessionToken != "")
             ? ',"sessionToken":"' _HB_JsonEscape(c.sessionToken) '"'
             : ""
+        devRole := (IsObject(c) && c.HasOwnProp("role") && c.role != "") ? HostCompanionBridge.NormalizeRole(c.role) : "Presenter"
+        devTier := (IsObject(c) && c.HasOwnProp("trustTier") && c.trustTier != "") ? HostCompanionBridge.NormalizeTrustTier(c.trustTier) : "Ephemeral Guest"
+        allowObsFb := (devRole = "Director") || (IsObject(c) && c.HasOwnProp("allowDirectObsFallback") && !!c.allowDirectObsFallback)
         obsField := ""
         if (IsObject(this.cfg) && this.cfg.HasOwnProp("EnableWS") && this.cfg.EnableWS) {
             micName := (this.cfg.HasOwnProp("targetMicName") && Trim(String(this.cfg.targetMicName)) != "")
                 ? Trim(String(this.cfg.targetMicName))
                 : "Mic/Aux"
-            obsPass := this.cfg.HasOwnProp("obsPassword") ? String(this.cfg.obsPassword) : ""
-            obsField := ',"obsFallback":{"port":4455,"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(obsPass) '"}'
+            obsPass := (allowObsFb && this.cfg.HasOwnProp("obsPassword")) ? String(this.cfg.obsPassword) : ""
+            obsField := ',"obsFallback":{"port":4455,"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(obsPass) '","directObsAllowed":' (allowObsFb ? "true" : "false") '}'
         }
+        perms := HostCompanionBridge.GetPermissionsForRole(devRole)
+        permJson := "["
+        for idx, p in perms
+            permJson .= (idx > 1 ? "," : "") '"' _HB_JsonEscape(p) '"'
+        permJson .= "]"
         ver := _HB_JsonEscape(UIConstants.APP_VERSION)
         bootId := _HB_JsonEscape(this._EnsureBootId())
-        caps := '["protocol_v2","cmd_dedup","set_state","ack_nack","stage_nudge","director_deck"]'
-        return '{"type":"auth_ok","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"capabilities":' caps ',"hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' ver '"' tokField obsField '}'
+        caps := '["protocol_v2","cmd_dedup","set_state","ack_nack","stage_nudge","director_deck","rbac_v1"]'
+        return '{"type":"auth_ok","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"role":"' _HB_JsonEscape(devRole) '","trustTier":"' _HB_JsonEscape(devTier) '","allowDirectObsFallback":' (allowObsFb ? "true" : "false") ',"permissions":' permJson ',"capabilities":' caps ',"hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' ver '"' tokField obsField '}'
     }
 
     _OnUdpMessage(wParam, lParam, msg, hwnd) {
@@ -1950,6 +2079,20 @@ class HostCompanionBridge {
                 this._FlushSendQueue(c)
                 return
             }
+            if (c.deviceId != "" && this.pairedDevices.Has(c.deviceId)) {
+                d := this.pairedDevices[c.deviceId]
+                c.role := d.HasOwnProp("role") ? HostCompanionBridge.NormalizeRole(d.role) : "Presenter"
+                c.trustTier := d.HasOwnProp("trustTier") ? HostCompanionBridge.NormalizeTrustTier(d.trustTier) : "Ephemeral Guest"
+                c.allowDirectObsFallback := d.HasOwnProp("allowDirectObsFallback") ? !!d.allowDirectObsFallback : false
+                c.inputPaused := d.HasOwnProp("paused") ? !!d.paused : false
+                c.expiresAt := d.HasOwnProp("expiresAt") ? Integer(d.expiresAt) : 0
+                if (c.expiresAt > 0 && GetCurrentUnixEpoch() >= c.expiresAt) {
+                    this._QueueWsFrame(c, 0x1, '{"type":"auth_error","error":"Guest access expired"}')
+                    c.closeAfterSend := true
+                    this._FlushSendQueue(c)
+                    return
+                }
+            }
             c.protocolVersion := Max(1, JsonCodec.GetInt(msgObj, "protocolVersion", 1))
             c.appVersion := JsonCodec.GetStr(msgObj, "appVersion")
             caps := JsonCodec.GetStrArray(msgObj, "capabilities")
@@ -1995,8 +2138,19 @@ class HostCompanionBridge {
 
         cmdId := JsonCodec.GetStr(msgObj, "cmdId")
         expSeq := JsonCodec.GetInt(msgObj, "expectedStateSeq", 0)
+        cRole := (c.HasOwnProp("role") && c.role != "") ? HostCompanionBridge.NormalizeRole(c.role) : "Presenter"
+        if (c.HasOwnProp("expiresAt") && Integer(c.expiresAt) > 0 && GetCurrentUnixEpoch() >= Integer(c.expiresAt)) {
+            this._QueueWsFrame(c, 0x1, '{"type":"auth_error","error":"Guest access expired"}')
+            c.closeAfterSend := true
+            this._FlushSendQueue(c)
+            return
+        }
         if (c.HasOwnProp("inputPaused") && c.inputPaused) {
             this._QueueCmdResult(c, msgType, false, cmdId, "input_paused", "Remote input is temporarily paused by host")
+            return
+        }
+        if (!HostCompanionBridge.HasPermissionForCmd(cRole, msgType)) {
+            this._QueueCmdResult(c, msgType, false, cmdId, "forbidden", "Role '" cRole "' lacks permission for " msgType)
             return
         }
         if (expSeq > 0 && expSeq < this.stateSeq) {
@@ -2252,8 +2406,13 @@ UnpairHostPairedDevice(devId) {
 
 _HB_SerializePairedDevice(dev) {
     customFlag := (dev.HasOwnProp("customName") && dev.customName) ? "1" : "0"
+    roleStr := dev.HasOwnProp("role") ? HostCompanionBridge.NormalizeRole(dev.role) : "Presenter"
+    tierStr := dev.HasOwnProp("trustTier") ? HostCompanionBridge.NormalizeTrustTier(dev.trustTier) : "Ephemeral Guest"
+    obsFbFlag := (dev.HasOwnProp("allowDirectObsFallback") && dev.allowDirectObsFallback) ? "1" : "0"
+    pausedFlag := (dev.HasOwnProp("paused") && dev.paused) ? "1" : "0"
+    expEpoch := dev.HasOwnProp("expiresAt") ? Integer(dev.expiresAt) : 0
     tokProtected := ConfigStore.ProtectSecret(dev.token)
-    return "v1|" UriEncodeComponent(dev.deviceName) "|" UriEncodeComponent(dev.platform) "|" UriEncodeComponent(tokProtected) "|" UriEncodeComponent(dev.pairedAt) "|" UriEncodeComponent(dev.ip) "|" UriEncodeComponent(dev.transport) "|" customFlag
+    return "v1|" UriEncodeComponent(dev.deviceName) "|" UriEncodeComponent(dev.platform) "|" UriEncodeComponent(tokProtected) "|" UriEncodeComponent(dev.pairedAt) "|" UriEncodeComponent(dev.ip) "|" UriEncodeComponent(dev.transport) "|" customFlag "|" UriEncodeComponent(roleStr) "|" UriEncodeComponent(tierStr) "|" obsFbFlag "|" pausedFlag "|" expEpoch
 }
 
 _HB_ParsePairedDevice(devId, rawVal) {
@@ -2263,6 +2422,13 @@ _HB_ParsePairedDevice(devId, rawVal) {
     tok := ConfigStore.UnprotectSecret(UriDecodeComponent(parts[4]), "HostBridgePairedDevice." devId)
     if (tok = "" || devId = "")
         return ""
+    roleStr := (parts.Length >= 9 && parts[9] != "") ? HostCompanionBridge.NormalizeRole(UriDecodeComponent(parts[9])) : "Presenter"
+    tierStr := (parts.Length >= 10 && parts[10] != "") ? HostCompanionBridge.NormalizeTrustTier(UriDecodeComponent(parts[10])) : "Ephemeral Guest"
+    obsFb := (parts.Length >= 11 && parts[11] = "1")
+    paused := (parts.Length >= 12 && parts[12] = "1")
+    expEpoch := 0
+    if (parts.Length >= 13 && IsInteger(parts[13]))
+        expEpoch := Integer(parts[13])
     return {
         deviceId: devId,
         deviceName: UriDecodeComponent(parts[2]),
@@ -2272,6 +2438,11 @@ _HB_ParsePairedDevice(devId, rawVal) {
         ip: UriDecodeComponent(parts[6]),
         transport: UriDecodeComponent(parts[7]),
         customName: (parts.Length >= 8 && parts[8] = "1"),
+        role: roleStr,
+        trustTier: tierStr,
+        allowDirectObsFallback: obsFb,
+        paused: paused,
+        expiresAt: expEpoch,
         lastSeenTick: 0,
         connected: false
     }

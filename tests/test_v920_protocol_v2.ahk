@@ -288,6 +288,7 @@ SendRawBuf(sV2, BuildClientWsFrame(0x0, true, true, p2))
 authResp := BytesToAscii(RawRecvBytes(sV2, 1200))
 AssertTrue(InStr(authResp, '"type":"auth_ok"') && InStr(authResp, '"protocolVersion":2') && InStr(authResp, '"hostBootId":"') && InStr(authResp, '"stateSeq":'),
     "Fragmented auth + Ping interleave authenticates with Protocol v2 auth_ok envelope", authResp)
+g_HostCompanionBridge.SetDeviceRole("v2-dev-1", "Director")
 
 ; cmdId idempotency (toggle_mute twice with same cmdId -> st.isMuted flips ONCE, second returns cached dedup ack)
 muteBefore := st.isMuted
