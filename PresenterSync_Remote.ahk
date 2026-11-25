@@ -617,10 +617,16 @@ class RemoteState {
             this.savedY := pos.y
         } else {
             sx := Integer(rawX), sy := Integer(rawY)
-            vLeft := SysGet(76), vTop := SysGet(77)
-            vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
-            this.savedX := Max(vLeft, Min(sx, vRight - this.baseWidth))
-            this.savedY := Max(vTop, Min(sy, vBottom - this.baseHeight))
+            if (IsSet(CaptureSafety)) {
+                clamped := CaptureSafety.ClampRectToMonitors(sx, sy, this.baseWidth, this.baseHeight)
+                this.savedX := clamped.x
+                this.savedY := clamped.y
+            } else {
+                vLeft := SysGet(76), vTop := SysGet(77)
+                vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+                this.savedX := Max(vLeft, Min(sx, vRight - this.baseWidth))
+                this.savedY := Max(vTop, Min(sy, vBottom - this.baseHeight))
+            }
         }
     }
 }
@@ -1735,11 +1741,17 @@ OnRemoteDisplayChange(cfg, state, wParam, lParam, msg, hwnd) {
     prevX := state.savedX
     prevY := state.savedY
     state.ComputeDimensions(cfg)
-    vLeft := SysGet(76), vTop := SysGet(77)
-    vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
-    clamped := ClampRemotePositionToBounds(state.savedX, state.savedY, state.baseWidth, state.baseHeight, vLeft, vTop, vRight, vBottom)
-    state.savedX := clamped.x
-    state.savedY := clamped.y
+    if (IsSet(CaptureSafety)) {
+        clamped := CaptureSafety.ClampRectToMonitors(state.savedX, state.savedY, state.baseWidth, state.baseHeight)
+        state.savedX := clamped.x
+        state.savedY := clamped.y
+    } else {
+        vLeft := SysGet(76), vTop := SysGet(77)
+        vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+        clamped := ClampRemotePositionToBounds(state.savedX, state.savedY, state.baseWidth, state.baseHeight, vLeft, vTop, vRight, vBottom)
+        state.savedX := clamped.x
+        state.savedY := clamped.y
+    }
     if (clamped.x != prevX || clamped.y != prevY) {
         try state.MicGui.Move(clamped.x, clamped.y, state.baseWidth, state.baseHeight)
         if (IsObject(cfg) && cfg.HasMethod("Write")) {

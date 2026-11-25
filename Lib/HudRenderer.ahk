@@ -34,8 +34,13 @@ ComputeSecondaryMicLayout(cfg, state) {
         vBottom := vTop + 1080
 
     if (rawX != "Default" && rawY != "Default" && IsInteger(rawX) && IsInteger(rawY)) {
-        sx := Max(vLeft, Min(Integer(rawX), vRight - w))
-        sy := Max(vTop, Min(Integer(rawY), vBottom - h))
+        if (IsSet(CaptureSafety)) {
+            clamped := CaptureSafety.ClampRectToMonitors(Integer(rawX), Integer(rawY), w, h)
+            sx := clamped.x, sy := clamped.y
+        } else {
+            sx := Max(vLeft, Min(Integer(rawX), vRight - w))
+            sy := Max(vTop, Min(Integer(rawY), vBottom - h))
+        }
     } else {
         MonitorGetWorkArea(1, &Left, &Top, &Right, &Bottom)
         primX := (IsObject(state) && state.HasOwnProp("savedX")) ? Integer(state.savedX) : (Right - w - UIConstants.SCREEN_MARGIN_X)
@@ -2958,18 +2963,49 @@ WM_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
 }
 
 WM_DPICHANGED(state, wParam, lParam, msg, hwnd) {
-    if (!IsObject(state.MicGui) || hwnd != state.MicGui.Hwnd)
+    if (!IsObject(state))
         return
     newLeft := NumGet(lParam, 0, "Int")
     newTop := NumGet(lParam, 4, "Int")
-    UpdateHudLayout(state, newLeft, newTop)
-    if (state.HasOwnProp("hudCfg") && IsObject(state.hudCfg))
-        ApplyHudCaptureExclusion(state.hudCfg, state)
+    if (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd) {
+        state.savedX := newLeft
+        state.savedY := newTop
+        UpdateHudLayout(state, newLeft, newTop)
+        if (state.HasOwnProp("hudCfg") && IsObject(state.hudCfg)) {
+            RenderAllHudPills(state.hudCfg, state)
+            ApplyHudCaptureExclusion(state.hudCfg, state)
+        }
+        return
+    }
+    if (state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui) && hwnd == state.SecondaryMicGui.Hwnd) {
+        state.savedSecondaryX := newLeft
+        state.savedSecondaryY := newTop
+        if (state.HasOwnProp("hudCfg") && IsObject(state.hudCfg)) {
+            ApplySecondaryMicAppearance(state.hudCfg, state)
+            ApplyHudCaptureExclusion(state.hudCfg, state)
+        }
+    }
 }
 
 WM_DISPLAYCHANGE(cfg, state, *) {
-    if (IsObject(state) && IsObject(cfg))
-        RefreshHudAppearance(cfg, state)
+    if (!IsObject(state) || !IsObject(cfg))
+        return
+    if (IsSet(CaptureSafety) && state.HasOwnProp("savedX") && state.HasOwnProp("savedY")) {
+        cPrim := CaptureSafety.ClampRectToMonitors(state.savedX, state.savedY, state.baseWidth, state.baseHeight)
+        if (cPrim.clamped) {
+            state.savedX := cPrim.x
+            state.savedY := cPrim.y
+        }
+        if (state.HasOwnProp("savedSecondaryX") && state.HasOwnProp("savedSecondaryY")) {
+            secW := (state.HasOwnProp("secWidth") && state.secWidth > 0) ? state.secWidth : state.baseWidth
+            cSec := CaptureSafety.ClampRectToMonitors(state.savedSecondaryX, state.savedSecondaryY, secW, state.baseHeight)
+            if (cSec.clamped) {
+                state.savedSecondaryX := cSec.x
+                state.savedSecondaryY := cSec.y
+            }
+        }
+    }
+    RefreshHudAppearance(cfg, state)
 }
 
 ToggleHudOptionAndRebuild(cfg, state, propName, cfgSection, refreshFn, rebuildTrayFn, afterFn := "") {

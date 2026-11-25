@@ -14,6 +14,7 @@ class CaptureSafety {
     static LastFailureCount := 0
     static LastErrorCode := 0
     static LastMode := ""
+    static ProtectedWindows := Map()
 
     static GetOsBuildNumber(osVerOverride := "") {
         verStr := (osVerOverride != "") ? String(osVerOverride) : String(A_OSVersion)
@@ -60,7 +61,92 @@ class CaptureSafety {
         }
 
         this.LastMode := (!exclude ? "none" : (applied == this.WDA_EXCLUDEFROMCAPTURE ? "exclude" : "monitor_fallback"))
+        if (exclude)
+            this.ProtectedWindows[hwnd] := { exclude: true, applied: applied, tick: A_TickCount }
+        else if (this.ProtectedWindows.Has(hwnd))
+            this.ProtectedWindows.Delete(hwnd)
         return true
+    }
+
+    static VerifyHudProtection(hwnds, expectedExclude := true, osBuildOverride := "") {
+        expected := this.ResolveDesiredAffinity(expectedExclude, osBuildOverride)
+        total := 0, okCount := 0, mismatchedCount := 0, failedCount := 0
+        details := []
+        for _, hwnd in hwnds {
+            if (!hwnd)
+                continue
+            total += 1
+            res := this.GetWindowAffinity(hwnd)
+            if (!res.ok) {
+                failedCount += 1
+                details.Push({ hwnd: hwnd, ok: false, affinity: 0, expected: expected })
+            } else if (expectedExclude && (res.affinity == this.WDA_EXCLUDEFROMCAPTURE || res.affinity == this.WDA_MONITOR)) {
+                okCount += 1
+                details.Push({ hwnd: hwnd, ok: true, affinity: res.affinity, expected: expected })
+            } else if (!expectedExclude && res.affinity == this.WDA_NONE) {
+                okCount += 1
+                details.Push({ hwnd: hwnd, ok: true, affinity: res.affinity, expected: expected })
+            } else {
+                mismatchedCount += 1
+                details.Push({ hwnd: hwnd, ok: false, affinity: res.affinity, expected: expected })
+            }
+        }
+        return { total: total, okCount: okCount, mismatchedCount: mismatchedCount, failedCount: failedCount, details: details }
+    }
+
+    static GetMonitorWorkAreas() {
+        mons := []
+        cnt := 0
+        try cnt := MonitorGetCount()
+        if (cnt <= 0)
+            return [{ left: 0, top: 0, right: A_ScreenWidth, bottom: A_ScreenHeight }]
+        Loop cnt {
+            mL := 0, mT := 0, mR := 0, mB := 0
+            try {
+                MonitorGetWorkArea(A_Index, &mL, &mT, &mR, &mB)
+                if (mR > mL && mB > mT)
+                    mons.Push({ left: mL, top: mT, right: mR, bottom: mB })
+            }
+        }
+        if (mons.Length == 0)
+            mons.Push({ left: 0, top: 0, right: A_ScreenWidth, bottom: A_ScreenHeight })
+        return mons
+    }
+
+    static IsRectOnAnyMonitor(x, y, w, h, monitors := "", minOverlapPx := 16) {
+        mons := IsObject(monitors) ? monitors : this.GetMonitorWorkAreas()
+        for _, m in mons {
+            ox := Min(x + w, m.right) - Max(x, m.left)
+            oy := Min(y + h, m.bottom) - Max(y, m.top)
+            if (ox >= minOverlapPx && oy >= minOverlapPx)
+                return true
+        }
+        return false
+    }
+
+    ; Preserves any rect already visible on ANY connected monitor (including extended Monitor 2),
+    ; clamping only when completely off-screen (e.g. L-shaped dead corner or unplugged display).
+    static ClampRectToMonitors(x, y, w, h, monitors := "") {
+        mons := IsObject(monitors) ? monitors : this.GetMonitorWorkAreas()
+        if (this.IsRectOnAnyMonitor(x, y, w, h, mons))
+            return { x: x, y: y, clamped: false }
+
+        bestMon := mons[1]
+        bestDist := 1e15
+        cx := x + (w / 2.0)
+        cy := y + (h / 2.0)
+        for _, m in mons {
+            mcx := (m.left + m.right) / 2.0
+            mcy := (m.top + m.bottom) / 2.0
+            d := ((cx - mcx) ** 2) + ((cy - mcy) ** 2)
+            if (d < bestDist) {
+                bestDist := d
+                bestMon := m
+            }
+        }
+        nx := Max(bestMon.left, Min(x, bestMon.right - w))
+        ny := Max(bestMon.top, Min(y, bestMon.bottom - h))
+        return { x: nx, y: ny, clamped: true }
     }
 
     static GetWindowAffinity(hwnd) {
