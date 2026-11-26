@@ -766,7 +766,7 @@ class HostCompanionBridge {
         return (cmd = "toggle_mute" || cmd = "set_mute"
             || cmd = "ppt_next" || cmd = "ppt_prev" || cmd = "slide_start"
             || cmd = "timer_start" || cmd = "timer_pause" || cmd = "timer_reset"
-            || cmd = "stage_nudge")
+            || cmd = "stage_nudge" || cmd = "add_bookmark")
     }
 
     _SyncClientPolicyFromDevice(devId) {
@@ -2336,6 +2336,14 @@ class HostCompanionBridge {
             case "save_replay_buffer":
                 ok := ExecuteHostSaveReplayBuffer(this.cfg, this.state)
                 this._QueueCmdResult(c, "save_replay_buffer", ok, cmdId, ok ? "" : "obs_offline")
+            case "add_bookmark":
+                lbl := JsonCodec.GetStr(msgObj, "label")
+                ok := IsSet(SessionTimeline) ? SessionTimeline.AddBookmark(lbl, this.state, actorName) : false
+                this._QueueCmdResult(c, "add_bookmark", ok, cmdId)
+            case "session_reset":
+                rev := JsonCodec.GetBool(msgObj, "revokeGuests", true)
+                ok := ExecuteHostSessionTurnover(this.cfg, this.state, rev)
+                this._QueueCmdResult(c, "session_reset", ok, cmdId)
             case "transition_scene":
                 ok := false
                 if (IsObject(this.state) && this.state.HasOwnProp("triggerTransitionFn") && IsObject(this.state.triggerTransitionFn))
@@ -2544,6 +2552,14 @@ class HostCompanionBridge {
 
     _BuildSyncResyncJson(reason := "wake") {
         return '{"type":"sync_resync","reason":"' _HB_JsonEscape(reason) '",' this._BuildStateFieldsJson() '}'
+    }
+
+    BroadcastSessionReset() {
+        payload := '{"type":"session_reset","timestamp":' A_TickCount '}'
+        for _, cli in this.clients {
+            if (cli.isWs && !cli.closed && cli.authed)
+                this._QueueWsFrame(cli, 0x1, payload)
+        }
     }
 }
 

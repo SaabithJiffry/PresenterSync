@@ -2690,6 +2690,8 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                         SendObsRequest(ws, "GetRecordStatus", "SyncRecStatus")
                 } else if (outState = "OBS_WEBSOCKET_OUTPUT_STOPPED") {
                     SyncRecState(cfg, state, 0)
+                    if (IsSet(SessionTimeline))
+                        try SessionTimeline.AutoExportSidecars(state)
                 }
             }
         }
@@ -3011,6 +3013,34 @@ ExecuteHostSaveReplayBuffer(cfg, state) {
     if (!IsObject(cfg) || !IsObject(state) || !cfg.EnableWS || !state.obsConnected || !IsObject(state.obsWs))
         return false
     return SendObsRequest(state.obsWs, "SaveReplayBuffer", "HostSaveReplay")
+}
+
+ExecuteHostSessionTurnover(cfg, state, revokeGuests := true) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (state.HasOwnProp("recState") && state.recState != 0) {
+        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+            SendObsRequest(state.obsWs, "StopRecord", "TurnoverStopRec")
+        SyncRecState(cfg, state, 0)
+    }
+    if (IsSet(SessionTimeline)) {
+        try SessionTimeline.AutoExportSidecars(state)
+        try SessionTimeline.ArchiveActiveSession()
+    }
+    ResetHostPresenterTimer(cfg, state, 0)
+    if (state.HasOwnProp("isStandby") && state.isStandby)
+        ExecuteHostToggleStandby(cfg, state, false)
+    if (state.HasOwnProp("isPanic") && state.isPanic)
+        ExecuteHostEmergencyPanic(cfg, state, false)
+    state.unreadChatCount := 0
+    ExecuteHostRemoteSetMute(cfg, state, true)
+    if (revokeGuests && IsSet(g_HostBridge) && IsObject(g_HostBridge))
+        try g_HostBridge.RevokeEphemeralGuests()
+    if (IsSet(g_HostBridge) && IsObject(g_HostBridge) && g_HostBridge.HasMethod("BroadcastSessionReset"))
+        try g_HostBridge.BroadcastSessionReset()
+    HostBridgeBroadcastMuteState(cfg, state)
+    BroadcastHostRelayDirectorState(cfg, state)
+    return true
 }
 
 PushObsMuteToZoom(cfg, state, obsIsMuted, mockZoomState := "", sendFn := "") {

@@ -500,6 +500,53 @@ class SessionTimeline {
         }
     }
 
+    static AddBookmark(label, state := "", actor := "Host") {
+        lbl := Trim(String(label))
+        if (lbl = "")
+            lbl := "Bookmark"
+        det := "actor=" actor
+        if (IsObject(state) && state.HasOwnProp("recElapsedSec"))
+            det .= " | rec=" Integer(state.recElapsedSec) "s"
+        return this.Record("Bookmark", lbl, state, det)
+    }
+
+    static AutoExportSidecars(state := "", outDir := "") {
+        if (this.Entries.Length == 0)
+            return false
+        dir := Trim(String(outDir))
+        if (dir = "" && IsObject(state) && state.HasOwnProp("recordDirectory") && Trim(state.recordDirectory) != "")
+            dir := Trim(state.recordDirectory)
+        if (dir = "")
+            dir := A_ScriptDir "\logs\archive"
+        try {
+            if (!DirExist(dir))
+                DirCreate(dir)
+            ts := FormatTime(A_Now, "yyyyMMdd_HHmmss")
+            base := dir "\PresenterSync_Session_" ts
+            FileAppend(this.ExportChapterCsv("All"), base ".csv", "UTF-8")
+            FileAppend(this.ExportYouTubeChapters("All"), base "_chapters.txt", "UTF-8")
+            FileAppend(this.ExportMarkdownSummary("PresenterSync Broadcast Health & Slide-Pace Report", "All"), base "_report.md", "UTF-8")
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static ArchiveActiveSession() {
+        this.FlushAutosave()
+        try {
+            archDir := A_ScriptDir "\logs\archive"
+            if (!DirExist(archDir))
+                DirCreate(archDir)
+            if (this.AutosaveFile != "" && FileExist(this.AutosaveFile)) {
+                ts := FormatTime(A_Now, "yyyyMMdd_HHmmss")
+                FileMove(this.AutosaveFile, archDir "\SessionTimeline_" ts ".jsonl", 1)
+            }
+        }
+        this.Entries := []
+        return true
+    }
+
     static ShowTimelineWindow(cfg := "", state := "", *) {
         existing := Theme.FocusExistingWindow("PresenterSync - Session Timeline & Chapters")
         if IsObject(existing)

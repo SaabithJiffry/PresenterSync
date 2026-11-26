@@ -103,7 +103,11 @@ class OperatorConsole {
         c["btnObsFb"].OnEvent("Click", (*) => this._RosterAction("obsfb"))
 
         ; Footer
-        c["btnClose"] := g.AddButton("xm y+14 w100 h28", "Close")
+        c["btnBookmark"] := g.AddButton("xm y+14 w125 h28", "Bookmark Moment")
+        c["btnBookmark"].OnEvent("Click", (*) => (IsSet(SessionTimeline) ? SessionTimeline.AddBookmark("Live Bookmark", this._state, "Operator") : 0, this.Refresh()))
+        c["btnTurnover"] := g.AddButton("x+8 yp w175 h28", "End Session / Next Class")
+        c["btnTurnover"].OnEvent("Click", (*) => (IsSet(ExecuteHostSessionTurnover) ? ExecuteHostSessionTurnover(this._cfg, this._state, true) : 0, this.Refresh()))
+        c["btnClose"] := g.AddButton("x+8 yp w100 h28", "Close")
         c["btnClose"].OnEvent("Click", (*) => this.Close())
 
         g.OnEvent("Close", (*) => (this.Close(), 0))

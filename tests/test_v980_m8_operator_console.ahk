@@ -77,6 +77,21 @@ try {
     for _, s in mWs.sent
         all82 .= s "`n"
     AssertTrue(InStr(all82, "SetCurrentPreviewScene") && InStr(all82, "SetSceneItemEnabled") && InStr(all82, "SetInputVolume") && InStr(all82, "SaveReplayBuffer"), "M8.2: All OBS requests dispatched")
+
+    ; ---- M8.3: AddBookmark, AutoExportSidecars, ArchiveActiveSession, SessionTurnover ----
+    tmpArch := A_Temp "\ps_m83_rec_" A_TickCount
+    DirCreate(tmpArch)
+    st.recordDirectory := tmpArch
+    st.recElapsedSec := 42
+    st.isPanic := false
+    st.isStandby := false
+    SessionTimeline.Entries := []
+    SessionTimeline.AddBookmark("Key Concept", st, "Director")
+    AssertTrue(SessionTimeline.Entries.Length >= 1, "M8.3: AddBookmark records event")
+    AssertTrue(SessionTimeline.AutoExportSidecars(st, tmpArch), "M8.3: AutoExportSidecars writes csv/txt/md")
+    AssertTrue(ExecuteHostSessionTurnover(cfg, st, true), "M8.3: ExecuteHostSessionTurnover succeeds")
+    AssertTrue(st.isMuted && !st.isStandby && !st.isPanic && st.unreadChatCount == 0, "M8.3: Turnover resets state & safely mutes")
+    try DirDelete(tmpArch, true)
     try FileDelete(pIni)
 } catch as err {
     g_Failed++

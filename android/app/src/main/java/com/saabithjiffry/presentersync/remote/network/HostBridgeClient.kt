@@ -380,6 +380,32 @@ class HostBridgeClient(
 
     fun sendSaveReplayBuffer(source: String = "director"): Boolean = sendDeviceAction("save_replay_buffer", source)
 
+    fun sendAddBookmark(label: String, source: String = "quick_menu"): Boolean {
+        if (!authenticated) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "add_bookmark")
+            put("cmdId", nextCmdId())
+            put("label", label.trim().ifEmpty { "Bookmark" })
+            put("deviceId", deviceId)
+            put("source", source)
+        }.toString()
+        return ws.send(payload)
+    }
+
+    fun sendSessionReset(revokeGuests: Boolean = true, source: String = "director"): Boolean {
+        if (!authenticated) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "session_reset")
+            put("cmdId", nextCmdId())
+            put("revokeGuests", revokeGuests)
+            put("deviceId", deviceId)
+            put("source", source)
+        }.toString()
+        return ws.send(payload)
+    }
+
     fun sendEmergencyPanic(active: Boolean? = null, source: String = "quick_menu"): Boolean {
         if (!authenticated) return false
         val ws = webSocket ?: return false

@@ -1738,6 +1738,19 @@ class ConnectionManager(
             relayAction = { false }
         )
 
+    fun sendAddBookmark(label: String, source: String = "quick_menu"): Boolean =
+        sendPresenterAction(
+            bridgeAction = { it.sendAddBookmark(label, source) },
+            relayAction = { false }
+        )
+
+    fun sendSessionReset(revokeGuests: Boolean = true, source: String = "director"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendSessionReset(revokeGuests, source) },
+            obsAction = { false },
+            relayAction = { false }
+        )
+
     fun sendTransitionScene(source: String = "director"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendTransitionScene(source) },
