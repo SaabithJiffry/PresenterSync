@@ -7,7 +7,9 @@ import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -114,24 +116,41 @@ fun PodiumDeckScreen(
                 onToggleMute = { podiumRunWithCooldown(muteTapGate, 80L) { app.connectionManager.toggleMuteFromHud() } }
             )
 
-            Button(
-                onClick = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendTransitionScene("podium") } },
-                enabled = conn.connected,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF0067C0),
-                    contentColor = Color.White
-                )
+            PodiumActiveSceneCard(conn = conn)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "⇄ OBS Transition (Preview ↔ Program) • ${conn.activeScene}",
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Button(
+                    onClick = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendTransitionScene("podium") } },
+                    enabled = conn.connected,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0067C0),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(
+                        text = "⇄ OBS Transition",
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                OutlinedButton(
+                    onClick = { podiumRunWithCooldown(deckTapGate, 250L) { app.connectionManager.sendResetActiveScene("podium") } },
+                    enabled = conn.connected,
+                    modifier = Modifier.height(52.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.65f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8))
+                ) {
+                    Text("↺ Reset Scene", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                }
             }
 
             PodiumSlidesAndNotesCard(
@@ -152,7 +171,11 @@ fun PodiumDeckScreen(
                 conn = conn,
                 onSendNudge = { nudge -> podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendStageNudge(nudge) } },
                 onSignalHost = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendPresenterSignal("Need Assistance", "sticky") } },
-                onAckNudge = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendNudgeAck(System.currentTimeMillis().toString()) } }
+                onAckNudge = {
+                    podiumRunWithCooldown(deckTapGate, 200L) {
+                        app.connectionManager.sendNudgeAck(conn.lastNudgeId.ifBlank { "latest" })
+                    }
+                }
             )
         }
     }
@@ -423,7 +446,7 @@ private fun PodiumTimerAndStandbyCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                for ((lbl, sec) in listOf("5m" to 300, "10m" to 600, "15m" to 900)) {
+                for ((lbl, sec) in listOf("5m" to 300, "10m" to 600, "15m" to 900, "45m" to 2700)) {
                     OutlinedButton(
                         onClick = { onTimerCommand("timer_start", sec) },
                         enabled = conn.connected,
@@ -431,26 +454,46 @@ private fun PodiumTimerAndStandbyCard(
                         border = BorderStroke(1.dp, PodiumOledBorder),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                     ) {
-                        Text(lbl, fontWeight = FontWeight.Bold)
+                        Text(lbl, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                     }
                 }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedButton(
-                    onClick = { onTimerCommand("timer_pause", 0) },
+                    onClick = {
+                        if (conn.timerState == "stopped") {
+                            onTimerCommand("timer_start", conn.timerPresetSec.coerceAtLeast(60))
+                        } else {
+                            onTimerCommand("timer_pause", 0)
+                        }
+                    },
                     enabled = conn.connected,
                     modifier = Modifier.weight(1f),
                     border = BorderStroke(1.dp, PodiumOledBorder),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                 ) {
-                    Text(if (conn.timerState == "paused") "▶" else "❚❚", fontWeight = FontWeight.Bold)
+                    Text(
+                        when (conn.timerState) {
+                            "running", "overtime" -> "❚❚ Pause Timer"
+                            "paused" -> "▶ Resume Timer"
+                            else -> "▶ Start Timer"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
                 OutlinedButton(
-                    onClick = { onTimerCommand("timer_reset", 0) },
+                    onClick = { onTimerCommand("timer_reset", conn.timerPresetSec) },
                     enabled = conn.connected,
                     modifier = Modifier.weight(1f),
                     border = BorderStroke(1.dp, PodiumOledBorder),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                 ) {
-                    Text("↺", fontWeight = FontWeight.Bold)
+                    Text("↺ Reset Timer", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -502,6 +545,22 @@ private fun PodiumQuickNudgeCard(
                     }
                 }
             }
+            if (conn.lastNudgeMessage.isNotBlank()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = PodiumAmberAlert.copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, PodiumAmberAlert.copy(alpha = 0.45f))
+                ) {
+                    Text(
+                        text = "${conn.lastNudgeSender.ifBlank { "Stage" }}: ${conn.lastNudgeMessage}",
+                        color = Color(0xFFFDE68A),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -516,6 +575,50 @@ private fun PodiumQuickNudgeCard(
                         Text(nudge, fontWeight = FontWeight.SemiBold)
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PodiumActiveSceneCard(conn: ConnectionUiState) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = PodiumOledCard,
+        border = BorderStroke(1.dp, PodiumOledBorder)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = "ACTIVE PROGRAM SCENE",
+                color = Color(0xFF94A3B8),
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.1.sp
+            )
+            Text(
+                text = conn.activeScene.ifBlank { "Scene" },
+                color = Color(0xFF34D399),
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .basicMarquee()
+            )
+            if (conn.studioModeActive && conn.previewScene.isNotBlank()) {
+                Text(
+                    text = "Preview Next: ${conn.previewScene}",
+                    color = Color(0xFF38BDF8),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

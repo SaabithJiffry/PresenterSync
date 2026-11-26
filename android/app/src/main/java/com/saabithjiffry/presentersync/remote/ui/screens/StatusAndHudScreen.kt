@@ -632,7 +632,9 @@ internal fun FloatingPillQuickCard(
     formFactor: ResolvedFormFactor,
     onToggleIndicator: (Boolean) -> Unit,
     onToggleText: (Boolean) -> Unit,
-    onResetPosition: () -> Unit
+    onResetPosition: () -> Unit,
+    onToggleSceneIndicator: (Boolean) -> Unit = {},
+    onResetScenePosition: () -> Unit = {}
 ) {
     ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -687,6 +689,47 @@ internal fun FloatingPillQuickCard(
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Reset Position", maxLines = 1, softWrap = false)
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(
+                        "Show Active Scene Pill (2nd HUD)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        "Tap = Transition • Hold = Scene Menu • Very-Long-Hold = Reset Scene",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = cfg.showSceneIndicator, onCheckedChange = onToggleSceneIndicator)
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            ResponsiveExplorerActionRow(
+                title = "Scene Pill Position",
+                subtitle = if (cfg.sceneSavedX < 0 && cfg.sceneSavedXRatio < 0f) {
+                    "Top-Left Default"
+                } else if (cfg.sceneSavedXRatio in 0f..1f) {
+                    "Saved (${(cfg.sceneSavedXRatio * 100).toInt()}%, ${(cfg.sceneSavedYRatio * 100).toInt()}% • Rotation-safe)"
+                } else {
+                    "(${cfg.sceneSavedX}, ${cfg.sceneSavedY})"
+                },
+                isTightWidth = formFactor.isTightWidth
+            ) {
+                OutlinedButton(
+                    onClick = onResetScenePosition,
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Reset Scene Pos", maxLines = 1, softWrap = false)
                 }
             }
         }

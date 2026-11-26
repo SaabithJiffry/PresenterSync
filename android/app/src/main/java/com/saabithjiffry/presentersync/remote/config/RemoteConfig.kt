@@ -148,6 +148,7 @@ data class RemoteConfig(
     val hotkeysSuspended: Boolean = false,
 
     val showIndicator: Boolean = true,
+    val showSceneIndicator: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val hudColorPreset: String = "Standard",
     val customLiveHex: String = "#107C10",
@@ -200,6 +201,10 @@ data class RemoteConfig(
     val savedY: Int = -1,
     val savedXRatio: Float = -1f,
     val savedYRatio: Float = -1f,
+    val sceneSavedX: Int = -1,
+    val sceneSavedY: Int = -1,
+    val sceneSavedXRatio: Float = -1f,
+    val sceneSavedYRatio: Float = -1f,
     val snakeHighScore: Int = 0,
     val arcadeHighScores: Map<String, Int> = emptyMap()
 ) {
@@ -320,6 +325,7 @@ class RemoteConfigStore private constructor(
             exitShortcut = prefs.getString("exitShortcut", "Alt+Shift+F12").orEmpty().ifBlank { "Alt+Shift+F12" },
             hotkeysSuspended = prefs.getBoolean("hotkeysSuspended", false),
             showIndicator = prefs.getBoolean("showIndicator", true),
+            showSceneIndicator = prefs.getBoolean("showSceneIndicator", false),
             themeMode = ThemeMode.fromRaw(prefs.getString("themeMode", "System")),
             hudColorPreset = HudColorPalettes.normalize(prefs.getString("hudColorPreset", "Standard").orEmpty()),
             customLiveHex = HudColorPalettes.normalizeColorHex(prefs.getString("customLiveHex", "#107C10").orEmpty(), "#107C10"),
@@ -371,6 +377,10 @@ class RemoteConfigStore private constructor(
             savedY = prefs.getInt("savedY", -1),
             savedXRatio = prefs.getFloat("savedXRatio", -1f).let { if (it in 0f..1f) it else -1f },
             savedYRatio = prefs.getFloat("savedYRatio", -1f).let { if (it in 0f..1f) it else -1f },
+            sceneSavedX = prefs.getInt("sceneSavedX", -1),
+            sceneSavedY = prefs.getInt("sceneSavedY", -1),
+            sceneSavedXRatio = prefs.getFloat("sceneSavedXRatio", -1f).let { if (it in 0f..1f) it else -1f },
+            sceneSavedYRatio = prefs.getFloat("sceneSavedYRatio", -1f).let { if (it in 0f..1f) it else -1f },
             snakeHighScore = prefs.getInt("snakeHighScore", 0).coerceAtLeast(0),
             arcadeHighScores = ArcadeHighScoresCodec.fromJsonString(prefs.getString("arcadeHighScoresJson", null))
         )
@@ -387,6 +397,10 @@ class RemoteConfigStore private constructor(
 
     fun resetPosition() = update {
         it.copy(savedX = -1, savedY = -1, savedXRatio = -1f, savedYRatio = -1f)
+    }
+
+    fun resetScenePosition() = update {
+        it.copy(sceneSavedX = -1, sceneSavedY = -1, sceneSavedXRatio = -1f, sceneSavedYRatio = -1f)
     }
 
     fun updateSnakeHighScore(score: Int): RemoteConfig = updateArcadeHighScore("snake", score)
@@ -601,6 +615,7 @@ class RemoteConfigStore private constructor(
             .putString("exitShortcut", c.exitShortcut)
             .putBoolean("hotkeysSuspended", c.hotkeysSuspended)
             .putBoolean("showIndicator", c.showIndicator)
+            .putBoolean("showSceneIndicator", c.showSceneIndicator)
             .putString("themeMode", c.themeMode.label)
             .putString("hudColorPreset", c.hudColorPreset)
             .putString("customLiveHex", HudColorPalettes.normalizeColorHex(c.customLiveHex, "#107C10"))
@@ -657,6 +672,10 @@ class RemoteConfigStore private constructor(
             .putInt("savedY", c.savedY)
             .putFloat("savedXRatio", c.savedXRatio)
             .putFloat("savedYRatio", c.savedYRatio)
+            .putInt("sceneSavedX", c.sceneSavedX)
+            .putInt("sceneSavedY", c.sceneSavedY)
+            .putFloat("sceneSavedXRatio", c.sceneSavedXRatio)
+            .putFloat("sceneSavedYRatio", c.sceneSavedYRatio)
             .putInt("snakeHighScore", c.snakeHighScore)
             .putString("arcadeHighScoresJson", ArcadeHighScoresCodec.toJsonString(c.arcadeHighScores))
             .apply()

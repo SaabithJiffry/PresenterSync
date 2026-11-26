@@ -136,6 +136,10 @@ fun HudAppearanceScreen(
                 app.configStore.resetPosition()
                 Toast.makeText(context, "Pill position reset to bottom-right", Toast.LENGTH_SHORT).show()
             },
+            onResetScenePosition = {
+                app.configStore.resetScenePosition()
+                Toast.makeText(context, "Scene pill position reset to top-left", Toast.LENGTH_SHORT).show()
+            },
             onResetAppearance = {
                 app.configStore.resetAppearance()
                 Toast.makeText(context, "HUD appearance reset to defaults", Toast.LENGTH_SHORT).show()
@@ -728,6 +732,7 @@ private fun SmartBoardErgonomicsCard(
     formFactor: ResolvedFormFactor,
     configStore: RemoteConfigStore,
     onResetPosition: () -> Unit,
+    onResetScenePosition: () -> Unit,
     onResetAppearance: () -> Unit
 ) {
     ExplorerCard(contentPadding = formFactor.cardPaddingDp) {
@@ -813,6 +818,12 @@ private fun SmartBoardErgonomicsCard(
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             ExplorerSettingToggleRow(
+                title = "Show Active Scene Floating Pill (2nd HUD)",
+                subtitle = "Standalone draggable OBS Scene badge (Tap = Transition • Hold = Quick Menu • Very-Long-Hold = Reset Scene)",
+                checked = cfg.showSceneIndicator,
+                onCheckedChange = { v -> configStore.update { it.copy(showSceneIndicator = v) } }
+            )
+            ExplorerSettingToggleRow(
                 title = "Start HUD Automatically on Boot",
                 subtitle = "Auto-start PresenterSync Remote when Android powers on (OFF by default)",
                 checked = cfg.startOnBoot,
@@ -833,7 +844,15 @@ private fun SmartBoardErgonomicsCard(
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Reset Position", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    Text("Reset Mic Pos", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                }
+                OutlinedButton(
+                    onClick = onResetScenePosition,
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Reset Scene Pos", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 }
                 OutlinedButton(
                     onClick = onResetAppearance,

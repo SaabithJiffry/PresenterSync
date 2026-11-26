@@ -34,6 +34,7 @@ import com.saabithjiffry.presentersync.remote.network.RemoteEvent
 import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeOverlayHost
 import com.saabithjiffry.presentersync.remote.ui.arcade.ArcadeVaultManager
 import com.saabithjiffry.presentersync.remote.ui.overlay.FloatingMicOverlayManager
+import com.saabithjiffry.presentersync.remote.ui.overlay.FloatingSceneOverlayManager
 import com.saabithjiffry.presentersync.remote.ui.overlay.FloatingToastBannerManager
 import com.saabithjiffry.presentersync.remote.ui.overlay.HudSnakeOverlayManager
 import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
@@ -43,6 +44,7 @@ import kotlinx.coroutines.launch
 class FloatingHudForegroundService : LifecycleService() {
     private lateinit var app: PresenterSyncRemoteApp
     private lateinit var overlayManager: FloatingMicOverlayManager
+    private lateinit var sceneOverlayManager: FloatingSceneOverlayManager
     private lateinit var hudSnakeOverlayManager: HudSnakeOverlayManager
     private lateinit var arcadeOverlayHost: ArcadeOverlayHost
     private val overlayMuteController = ClickerMuteController()
@@ -70,6 +72,9 @@ class FloatingHudForegroundService : LifecycleService() {
     private val wakeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             overlayManager.onDisplayConfigurationChanged()
+            if (::sceneOverlayManager.isInitialized) {
+                sceneOverlayManager.onDisplayConfigurationChanged()
+            }
             if (::hudSnakeOverlayManager.isInitialized) {
                 hudSnakeOverlayManager.onDisplayConfigurationChanged()
             }
@@ -85,6 +90,9 @@ class FloatingHudForegroundService : LifecycleService() {
         val anyArcade = (::hudSnakeOverlayManager.isInitialized && hudSnakeOverlayManager.isActive) ||
             (::arcadeOverlayHost.isInitialized && arcadeOverlayHost.isActive)
         overlayManager.setHiddenForEasterEgg(anyArcade)
+        if (::sceneOverlayManager.isInitialized) {
+            sceneOverlayManager.setHiddenForEasterEgg(anyArcade)
+        }
     }
 
     private fun handleOverlayMuteKeyEvent(event: KeyEvent): Boolean {
@@ -175,6 +183,11 @@ class FloatingHudForegroundService : LifecycleService() {
             onLaunchEasterSnake = { launchArcadeGameById("snake") },
             onLaunchArcadeGame = { gameId -> launchArcadeGameById(gameId) }
         )
+        sceneOverlayManager = FloatingSceneOverlayManager(
+            context = this,
+            configStore = app.configStore,
+            connectionManager = app.connectionManager
+        )
         toastBannerManager = FloatingToastBannerManager(this)
         audioCuePlayer = AudioCuePlayer()
         hapticAlertPlayer = HapticAlertPlayer(this)
@@ -207,6 +220,7 @@ class FloatingHudForegroundService : LifecycleService() {
                 cfg to conn
             }.collect { (cfg, conn) ->
                 overlayManager.showOrUpdate(cfg, conn)
+                sceneOverlayManager.showOrUpdate(cfg, conn)
 
                 val snakeCfgKey = "${cfg.showIndicator}|${cfg.themeMode}|${cfg.hudColorPreset}|${cfg.opacityLevel}|${cfg.indicatorScale}|${cfg.hideFromScreenCapture}|${cfg.snakeHighScore}"
                 if (snakeCfgKey != lastSnakeCfgKey) {
@@ -357,6 +371,9 @@ class FloatingHudForegroundService : LifecycleService() {
         }
         toastBannerManager.hide()
         overlayManager.hide()
+        if (::sceneOverlayManager.isInitialized) {
+            sceneOverlayManager.hide()
+        }
         audioCuePlayer.release()
         hapticAlertPlayer.cancel()
         if (::backgroundMediaClickerController.isInitialized) {
@@ -373,6 +390,9 @@ class FloatingHudForegroundService : LifecycleService() {
         super.onConfigurationChanged(newConfig)
         if (::overlayManager.isInitialized) {
             overlayManager.onDisplayConfigurationChanged()
+        }
+        if (::sceneOverlayManager.isInitialized) {
+            sceneOverlayManager.onDisplayConfigurationChanged()
         }
         if (::hudSnakeOverlayManager.isInitialized) {
             hudSnakeOverlayManager.onDisplayConfigurationChanged()
@@ -394,6 +414,9 @@ class FloatingHudForegroundService : LifecycleService() {
         }
         toastBannerManager.hide()
         overlayManager.hide()
+        if (::sceneOverlayManager.isInitialized) {
+            sceneOverlayManager.hide()
+        }
         audioCuePlayer.release()
         hapticAlertPlayer.cancel()
         if (::backgroundMediaClickerController.isInitialized) {

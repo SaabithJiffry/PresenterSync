@@ -309,15 +309,16 @@ fun PointerSettingsScreen(
                     )
                 }
                 if (cfg.enableBackgroundMediaClicker) {
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
                             "Play/Pause Action:",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.align(Alignment.CenterVertically)
                         )
                         FilterChip(
                             selected = cfg.backgroundMediaPrimaryAction == com.saabithjiffry.presentersync.remote.input.BubbleGestureAction.TOGGLE_MUTE,

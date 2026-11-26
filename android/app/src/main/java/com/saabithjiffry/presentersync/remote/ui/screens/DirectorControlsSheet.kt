@@ -168,10 +168,12 @@ internal fun DirectorDeckAndTimerCard(
     onAddBookmark: (String) -> Unit = {},
     onSessionReset: () -> Unit = {},
     onSendPresenterSignal: (String) -> Unit = {},
-    onAckNudge: (String) -> Unit = {}
+    onAckNudge: (String) -> Unit = {},
+    onResetActiveScene: () -> Unit = {}
 ) {
     val isDirectObsFallback = conn.usingDirectObsFallback ||
         conn.channelType == com.saabithjiffry.presentersync.remote.network.ChannelType.DIRECT_OBS
+    val bridgeOnlyEnabled = conn.usingBridge
     if (!conn.connected || (!conn.usingBridge && !conn.usingRelayFallback && !isDirectObsFallback)) return
 
     var nudgeDraft by remember { mutableStateOf("") }
@@ -267,39 +269,49 @@ internal fun DirectorDeckAndTimerCard(
                     Text(if (conn.isPanic) "PANIC ON" else "PANIC", maxLines = 1, softWrap = false)
                 }
                 OutlinedButton(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onResetActiveScene() } },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("↺ Reset Scene", maxLines = 1, softWrap = false)
+                }
+                OutlinedButton(
                     onClick = { directorRunWithCooldown(deckTapGate) { onSaveReplayBuffer() } },
+                    enabled = bridgeOnlyEnabled,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Replay", maxLines = 1, softWrap = false)
                 }
                 OutlinedButton(
                     onClick = { directorRunWithCooldown(deckTapGate) { onAddBookmark("Marked from Android") } },
+                    enabled = bridgeOnlyEnabled,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Bookmark", maxLines = 1, softWrap = false)
                 }
-                if (conn.activeScene.isNotBlank()) {
-                    OutlinedButton(
-                        onClick = { directorRunWithCooldown(deckTapGate) { onSetPreviewScene(conn.activeScene) } },
-                        contentPadding = CompactExplorerButtonPadding
-                    ) {
-                        Text("Preview Active", maxLines = 1, softWrap = false)
-                    }
-                }
                 OutlinedButton(
-                    onClick = { directorRunWithCooldown(deckTapGate) { onAudioHandoff("host") } },
+                    onClick = { directorRunWithCooldown(deckTapGate) { onAudioHandoff("solo_a") } },
+                    enabled = bridgeOnlyEnabled,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Mic -> Host", maxLines = 1, softWrap = false)
                 }
                 OutlinedButton(
-                    onClick = { directorRunWithCooldown(deckTapGate) { onAudioHandoff("remote") } },
+                    onClick = { directorRunWithCooldown(deckTapGate) { onAudioHandoff("solo_b") } },
+                    enabled = bridgeOnlyEnabled,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Mic -> Remote", maxLines = 1, softWrap = false)
                 }
                 OutlinedButton(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onAudioHandoff("both") } },
+                    enabled = bridgeOnlyEnabled,
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Mic -> Both", maxLines = 1, softWrap = false)
+                }
+                OutlinedButton(
                     onClick = { directorRunWithCooldown(deckTapGate) { onSessionReset() } },
+                    enabled = bridgeOnlyEnabled,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Reset Session", maxLines = 1, softWrap = false)
@@ -384,6 +396,27 @@ internal fun DirectorDeckAndTimerCard(
                                 onClick = { directorRunWithCooldown(deckTapGate) { onSwitchScene(sceneName) } },
                                 label = { Text(sceneName, maxLines = 1, softWrap = false) }
                             )
+                        }
+                    }
+                    if (conn.studioModeActive && bridgeOnlyEnabled) {
+                        Text(
+                            text = "Set Preview Scene (Studio Mode)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            conn.scenes.forEach { sceneName ->
+                                val selected = sceneName == conn.previewScene
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { directorRunWithCooldown(deckTapGate) { onSetPreviewScene(sceneName) } },
+                                    label = { Text(sceneName, maxLines = 1, softWrap = false) }
+                                )
+                            }
                         }
                     }
                 }
@@ -488,6 +521,21 @@ internal fun DirectorDeckAndTimerCard(
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Medium
             )
+            if (conn.lastNudgeMessage.isNotBlank()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFF59E0B).copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.45f))
+                ) {
+                    Text(
+                        text = "${conn.lastNudgeSender.ifBlank { "Stage" }}: ${conn.lastNudgeMessage}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -534,13 +582,15 @@ internal fun DirectorDeckAndTimerCard(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Button(
-                    onClick = { directorRunWithCooldown(deckTapGate) { onAckNudge(System.currentTimeMillis().toString()) } },
+                    onClick = { directorRunWithCooldown(deckTapGate) { onAckNudge(conn.lastNudgeId.ifBlank { "latest" }) } },
+                    enabled = bridgeOnlyEnabled,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Got It ✓", maxLines = 1, softWrap = false)
                 }
                 OutlinedButton(
                     onClick = { directorRunWithCooldown(deckTapGate) { onSendPresenterSignal("Need Assistance") } },
+                    enabled = bridgeOnlyEnabled,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Signal Host", maxLines = 1, softWrap = false)

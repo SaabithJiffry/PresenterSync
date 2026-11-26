@@ -529,7 +529,8 @@ internal fun RemoteDashboardScreen(
                                     onAddBookmark = { lbl -> app.connectionManager.sendAddBookmark(lbl, "dashboard") },
                                     onSessionReset = { app.connectionManager.sendSessionReset(true, "dashboard") },
                                     onSendPresenterSignal = { msg -> app.connectionManager.sendPresenterSignal(msg, "sticky") },
-                                    onAckNudge = { nid -> app.connectionManager.sendNudgeAck(nid) }
+                                    onAckNudge = { nid -> app.connectionManager.sendNudgeAck(nid) },
+                                    onResetActiveScene = { app.connectionManager.sendResetActiveScene("dashboard") }
                                 )
 
                                 FormFactorOptimizationCard(
@@ -558,7 +559,9 @@ internal fun RemoteDashboardScreen(
                                     formFactor = formFactor,
                                     onToggleIndicator = { v -> app.configStore.update { it.copy(showIndicator = v) } },
                                     onToggleText = { v -> app.configStore.update { it.copy(showText = v) } },
-                                    onResetPosition = { app.configStore.resetPosition() }
+                                    onResetPosition = { app.configStore.resetPosition() },
+                                    onToggleSceneIndicator = { v -> app.configStore.update { it.copy(showSceneIndicator = v) } },
+                                    onResetScenePosition = { app.configStore.resetScenePosition() }
                                 )
 
                                 CurrentProfileSummaryCard(cfg = cfg, formFactor = formFactor)
@@ -628,7 +631,8 @@ internal fun RemoteDashboardScreen(
                             onAddBookmark = { lbl -> app.connectionManager.sendAddBookmark(lbl, "dashboard") },
                             onSessionReset = { app.connectionManager.sendSessionReset(true, "dashboard") },
                             onSendPresenterSignal = { msg -> app.connectionManager.sendPresenterSignal(msg, "sticky") },
-                            onAckNudge = { nid -> app.connectionManager.sendNudgeAck(nid) }
+                            onAckNudge = { nid -> app.connectionManager.sendNudgeAck(nid) },
+                            onResetActiveScene = { app.connectionManager.sendResetActiveScene("dashboard") }
                         )
 
                         FormFactorOptimizationCard(
@@ -652,7 +656,9 @@ internal fun RemoteDashboardScreen(
                             formFactor = formFactor,
                             onToggleIndicator = { v -> app.configStore.update { it.copy(showIndicator = v) } },
                             onToggleText = { v -> app.configStore.update { it.copy(showText = v) } },
-                            onResetPosition = { app.configStore.resetPosition() }
+                            onResetPosition = { app.configStore.resetPosition() },
+                            onToggleSceneIndicator = { v -> app.configStore.update { it.copy(showSceneIndicator = v) } },
+                            onResetScenePosition = { app.configStore.resetScenePosition() }
                         )
 
                         CurrentProfileSummaryCard(cfg = cfg, formFactor = formFactor)

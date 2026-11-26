@@ -626,9 +626,10 @@ private fun HelpDiagnosticsTab(
             ) {
                 OutlinedButton(
                     onClick = { traceSteps = onRunTrace() },
+                    contentPadding = CompactExplorerButtonPadding,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("5-Step Trace", maxLines = 1, softWrap = false)
+                    Text("5-Step Trace", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 }
                 OutlinedButton(
                     onClick = {
@@ -637,9 +638,10 @@ private fun HelpDiagnosticsTab(
                         cm?.setPrimaryClip(ClipData.newPlainText("PresenterSync Log Tail", tail))
                         Toast.makeText(context, "Recent log tail copied", Toast.LENGTH_SHORT).show()
                     },
+                    contentPadding = CompactExplorerButtonPadding,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Copy Log Tail", maxLines = 1, softWrap = false)
+                    Text("Copy Log Tail", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 }
             }
             if (traceSteps.isNotEmpty()) {
