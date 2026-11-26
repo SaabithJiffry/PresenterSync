@@ -519,6 +519,7 @@ class AudioMeter {
     }
 
     static GetPeak() {
+        this.CheckHotSwapRebind()
         try {
             if (!IsObject(this._meter)) {
                 meter := this._ActivateCaptureInterface("{C02216F6-8C67-4B5B-9D00-D008E73E0064}", "_nextRetryTick")
@@ -1493,6 +1494,7 @@ class Config {
     ObsWsHost := "127.0.0.1"
     ObsWsPort := 4455
     EnableLanSelfUpdate := false
+    KioskPin := ""
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -1784,6 +1786,7 @@ class Config {
         this.ObsWsHost := (rawHost != "") ? rawHost : "127.0.0.1"
         this.ObsWsPort := Max(1, Min(65535, this.ReadInt("Settings", "ObsWsPort", 4455)))
         this.EnableLanSelfUpdate := this.ReadBool("Settings", "EnableLanSelfUpdate", false)
+        this.KioskPin := Trim(this.Read("Settings", "KioskPin", ""))
         this.AutoMuteOnLock := this.ReadBool("Settings", "AutoMuteOnLock", true)
         this.AutoMuteOnMeetingEnd := this.ReadBool("Settings", "AutoMuteOnMeetingEnd", false)
         this.AutoMuteOnFirstObsConnect := this.ReadBool("Settings", "AutoMuteOnFirstObsConnect", false)
@@ -2007,6 +2010,7 @@ class Config {
             { sec: "Settings", key: "ObsWsHost", prop: "ObsWsHost", kind: "str" },
             { sec: "Settings", key: "ObsWsPort", prop: "ObsWsPort", kind: "int" },
             { sec: "Settings", key: "EnableLanSelfUpdate", prop: "EnableLanSelfUpdate", kind: "bool" },
+            { sec: "Settings", key: "KioskPin", prop: "KioskPin", kind: "str" },
             { sec: "Settings", key: "ShowText", prop: "ShowText", kind: "bool" },
             { sec: "Settings", key: "MonoIcon", prop: "MonoIcon", kind: "bool" },
             { sec: "Settings", key: "SleekCorners", prop: "SleekCorners", kind: "bool" },

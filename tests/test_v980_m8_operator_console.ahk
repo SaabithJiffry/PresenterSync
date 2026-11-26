@@ -91,6 +91,17 @@ try {
     AssertTrue(SessionTimeline.AutoExportSidecars(st, tmpArch), "M8.3: AutoExportSidecars writes csv/txt/md")
     AssertTrue(ExecuteHostSessionTurnover(cfg, st, true), "M8.3: ExecuteHostSessionTurnover succeeds")
     AssertTrue(st.isMuted && !st.isStandby && !st.isPanic && st.unreadChatCount == 0, "M8.3: Turnover resets state & safely mutes")
+
+    ; ---- P0-2 Regression: g_HostCompanionBridge Roster, Guest Revoke & SessionReset ----
+    global g_HostCompanionBridge := hb
+    hb.pairedDevices["guest-1"] := { deviceId: "guest-1", deviceName: "GuestBoard", role: "Presenter", trustTier: "Ephemeral Guest", allowDirectObsFallback: false, paused: false }
+    hb.pairedDevices["pin-1"] := { deviceId: "pin-1", deviceName: "PinnedRoom", role: "Director", trustTier: "Pinned Room", allowDirectObsFallback: true, paused: false }
+    OperatorConsole.Show(cfg, st)
+    AssertTrue(OperatorConsole._ctrls["roster"].GetCount() >= 2, "P0-2: OperatorConsole Roster populates via g_HostCompanionBridge")
+    OperatorConsole.Close()
+    ExecuteHostSessionTurnover(cfg, st, true)
+    AssertTrue(!hb.pairedDevices.Has("guest-1") && hb.pairedDevices.Has("pin-1"), "P0-2: SessionTurnover revokes Ephemeral Guest while keeping Pinned Room")
+    g_HostCompanionBridge := ""
     try DirDelete(tmpArch, true)
     try FileDelete(pIni)
 } catch as err {

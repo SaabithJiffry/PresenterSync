@@ -678,10 +678,11 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     Theme.ApplyToWindow(dlg)
     Theme.NamedWindows["Remote Companion Connection Info"] := dlg
 
+    global g_HostCompanionBridge
     dlg.SetFont("s10 w600", Theme.UiFont)
     Theme.RegisterControl(dlg, dlg.Add("Text", "x20 y14 w700", "Host Details for PresenterSync Remote (Android / Smart Board | Web QR | Windows)"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    activePort := (IsSet(g_HostBridge) && IsObject(g_HostBridge) && g_HostBridge.HasOwnProp("activeTcpPort") && g_HostBridge.activeTcpPort > 0) ? g_HostBridge.activeTcpPort : 4456
+    activePort := (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasOwnProp("boundTcpPort") && g_HostCompanionBridge.boundTcpPort > 0) ? g_HostCompanionBridge.boundTcpPort : 4456
     subTxt := (activePort >= 4458) ? ("NOTICE: Bridge fell back to port :" activePort " (4456-4457 busy). Remotes must use :" activePort " or scan QR.") : "Configure how your secondary device (Smart Board / Laptop / Android / Web) connects:"
     subLbl := dlg.Add("Text", "x20 y+2 w700", subTxt)
     Theme.RegisterControl(dlg, subLbl, "Text", "muted")

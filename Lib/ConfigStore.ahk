@@ -16,10 +16,10 @@ class ConfigStore {
         sec := StrLower(Trim(String(section)))
         k := StrLower(Trim(String(key)))
         if (k = "obspassword" || k = "bridgetoken" || k = "sessiontoken"
-            || k = "sessionpairingcode" || k = "internetpairingcode")
+            || k = "sessionpairingcode" || k = "internetpairingcode" || k = "kioskpin")
             return true
         if (InStr(sec, "profile:") = 1) {
-            if (RegExMatch(k, "^(settings|connection)_(obspassword|bridgetoken|sessiontoken|sessionpairingcode|internetpairingcode)$"))
+            if (RegExMatch(k, "^(settings|connection)_(obspassword|bridgetoken|sessiontoken|sessionpairingcode|internetpairingcode|kioskpin)$"))
                 return true
         }
         return false

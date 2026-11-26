@@ -188,6 +188,7 @@ data class RemoteConfig(
     val lastUpdateCheckMs: Long = 0L,
     val skippedUpdateVersion: String = "",
     val customUpdateUrl: String = "",
+    val kioskPin: String = "",
     val deviceProfileMode: DeviceProfileMode = DeviceProfileMode.AUTO,
     val keepScreenOn: Boolean = false,
     val idleDimAfterSec: Int = 0,
@@ -304,6 +305,7 @@ class RemoteConfigStore private constructor(
             hostPort = validPort,
             bridgePort = validBridgePort,
             obsPassword = secretVault.getSecret("obsPassword"),
+            kioskPin = secretVault.getSecret("kioskPin").trim(),
             targetMicName = mic,
             heartbeatSeconds = validHb,
             hwMuteHotkey = prefs.getString("hwMuteHotkey", "KEYCODE_B").orEmpty().ifBlank { "KEYCODE_B" },
@@ -571,6 +573,7 @@ class RemoteConfigStore private constructor(
         secretVault.putSecret("sessionPairingCode", c.sessionPairingCode)
         secretVault.putSecret("sessionToken", c.sessionToken)
         secretVault.putSecret("obsPassword", c.obsPassword)
+        secretVault.putSecret("kioskPin", c.kioskPin)
         secretVault.putSecret("savedProfilesJson", SavedHostProfileCodec.toJsonString(c.savedProfiles))
 
         prefs.edit()

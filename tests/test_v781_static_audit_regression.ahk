@@ -76,6 +76,20 @@ AssertTrue(InStr(psSrc, "finally {") && InStr(psSrc, "HotIf()"), "PresenterSync.
 pgSrc := FileRead(A_ScriptDir "\..\android\app\proguard-rules.pro", "UTF-8")
 AssertTrue(InStr(pgSrc, "AppWidgetProvider") || InStr(pgSrc, "PresenterSyncWidgetProvider"), "proguard-rules.pro keeps AppWidgetProvider")
 
+; 4. P1-1 Static Audit: zero native ToolTip calls outside Lib\CaptureSafety.ahk
+toolTipHits := 0
+ttPaths := [A_ScriptDir "\..\PresenterSync.ahk", A_ScriptDir "\..\PresenterSync_Remote.ahk"]
+Loop Files A_ScriptDir "\..\Lib\*.ahk" {
+    if (A_LoopFileName != "CaptureSafety.ahk")
+        ttPaths.Push(A_LoopFileFullPath)
+}
+for _, scanPath in ttPaths {
+    srcTxt := FileRead(scanPath, "UTF-8")
+    if (RegExMatch(srcTxt, "im`a)^[ \t]*ToolTip(?:\([^)\r\n]*\)|[ \t]+`"[^`"\r\n]+`")"))
+        toolTipHits++
+}
+AssertTrue(toolTipHits == 0, "Zero native ToolTip calls outside Lib\CaptureSafety.ahk (found " toolTipHits ")")
+
 cfg.DeleteFile()
 
 try FileAppend("PASS=" passed " FAIL=" failed "`n", "*")

@@ -182,7 +182,8 @@ def main() -> int:
             },
         )
         assert st == 200 and pair_ok["ok"] is True
-        assert pair_ok["obsPassword"] == "bridgePass123"
+        assert pair_ok["obsPassword"] == ""  # C3: withheld for default Presenter/Guest unless Director or allowDirectObsFallback
+        assert pair_ok.get("allowDirectObsFallback") is False
         assert pair_ok["targetMicName"] == "Studio Mic"
         assert pair_ok["routingMode"] == 2
         assert pair_ok["internetPairingCode"] == "PS-BRDG-777"

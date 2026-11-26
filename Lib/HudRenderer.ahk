@@ -1552,6 +1552,7 @@ EvaluateForgottenRecordWatchdog(cfg, state, isSlideshowActive, nowTick := "") {
 
     if (!enabled || !modeOk || !isSlideshowActive || !micLive || !obsStopped) {
         state._forgotRecSinceTick := 0
+        state.forgotStopWarn := false
         return false
     }
 
@@ -1560,6 +1561,7 @@ EvaluateForgottenRecordWatchdog(cfg, state, isSlideshowActive, nowTick := "") {
     if ((nowTick - state._forgotRecSinceTick) < 15000)
         return false
 
+    state.forgotStopWarn := true
     if (state._lastForgotRecWarnTick = 0 || (nowTick - state._lastForgotRecWarnTick) >= 120000) {
         state._lastForgotRecWarnTick := nowTick
         _EmitWatchdogAlert(cfg, state, "Safety", "ForgottenRecordWarn", "Slideshow LIVE >=15s without OBS recording",

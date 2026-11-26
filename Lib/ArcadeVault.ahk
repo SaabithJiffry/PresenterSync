@@ -243,7 +243,7 @@ class ArcadeVault {
         dlg.OnEvent("Close", CloseTerm)
         dlg.OnEvent("Escape", CloseTerm)
 
-        dlg.Show("AutoSize Center")
+        WindowFit.Show(dlg, "AutoSize Center")
         edPass.Focus()
         return dlg
     }

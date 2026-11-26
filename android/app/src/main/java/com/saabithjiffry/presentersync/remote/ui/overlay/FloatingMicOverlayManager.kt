@@ -637,6 +637,9 @@ class FloatingMicOverlayManager(
         view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    if (ScreenBoundsCalculator.isPalmTouch(event.getToolType(0), event.touchMajor)) {
+                        return@setOnTouchListener false
+                    }
                     dismissQuickMenu()
                     resetIdleDimTimer(wakeNow = true)
                     downRawX = event.rawX
@@ -1098,6 +1101,17 @@ class FloatingMicOverlayManager(
         }
         addMenuRow("Enable Click-Through Mode") {
             configStore.update { it.copy(hudClickThrough = true) }
+        }
+        addMenuRow("Flip Opposite Corner") {
+            val lp = layoutParams ?: return@addMenuRow
+            val pv = pillView ?: return@addMenuRow
+            val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+            val flipped = ScreenBoundsCalculator.computeOppositeCornerFlip(lp.x, lp.y, lp.width, lp.height, bounds)
+            lp.x = flipped.x
+            lp.y = flipped.y
+            try { windowManager.updateViewLayout(pv, lp) } catch (_: Exception) {}
+            val (rx, ry) = ScreenBoundsCalculator.computePositionRatios(lp.x, lp.y, bounds, lp.width, lp.height)
+            configStore.update { it.copy(savedX = lp.x, savedY = lp.y, savedXRatio = rx, savedYRatio = ry) }
         }
         addMenuRow("Hide Floating Pill") {
             configStore.update { it.copy(showIndicator = false) }

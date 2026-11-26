@@ -226,7 +226,7 @@ BuildTrayMenu(cfg, state) {
     RoutingMenu := Menu()
     RoutingModes := [{ label: "1: Pro OBS Setup (VB-Cable)", mode: 1 }, { label: "2: Standard Direct Mic (Zoom-Only)", mode: 2 }, { label: "3: Dual App Sync (OBS + Zoom)", mode: 3 }]
     for rm in RoutingModes
-        _AddCheckedMenuItem(RoutingMenu, rm.label, SetRoutingMode.Bind(cfg, rm.mode), cfg.AudioRoutingMode == rm.mode)
+        _AddCheckedMenuItem(RoutingMenu, rm.label, SetRoutingMode.Bind(cfg, rm.mode, state), cfg.AudioRoutingMode == rm.mode)
     SyncMenu.Add("Audio Routing Mode", RoutingMenu)
 
     ConfMenu := Menu()
@@ -234,6 +234,7 @@ BuildTrayMenu(cfg, state) {
         _AddCheckedMenuItem(ConfMenu, cApp, SetConferencingApp.Bind(cfg, state, cApp), NormalizeConferencingApp(cfg.ConferencingApp) = cApp)
     SyncMenu.Add("Conferencing Platform", ConfMenu)
     LiveMenu.Add("Sync Engines", SyncMenu)
+    LiveMenu.Add("Pop-Out / Focus Conferencing Window", (*) => FocusConferencingWindow(cfg))
     LiveMenu.Add()
     LiveMenu.Add("Go Live 10-Second Rehearsal...", (*) => ShowPreFlightRehearsalDialog(cfg, state))
     A_TrayMenu.Add("Live Controls", LiveMenu)
@@ -419,16 +420,15 @@ TogglePPT(cfg, state := "", *) {
     if (cfg.EnablePPT) {
         cfg.EnableMicOnly := false
         cfg.WriteBool("Settings", "EnableMicOnly", false)
-        ToolTip "Pointer Mode: Full PPT + Mute"
+        ShowCaptureSafeMicroToast("Pointer Mode: Full PPT + Mute", UIConstants.TOOLTIP_DURATION_MS)
     } else {
-        ToolTip "Pointer Mode: OFF"
+        ShowCaptureSafeMicroToast("Pointer Mode: OFF", UIConstants.TOOLTIP_DURATION_MS)
     }
 
     cfg.WriteBool("Settings", "EnablePPT", cfg.EnablePPT)
     RebindAllHostHotkeys(cfg, state)
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 ToggleMicOnly(cfg, state := "", *) {
@@ -439,16 +439,15 @@ ToggleMicOnly(cfg, state := "", *) {
     if (cfg.EnableMicOnly) {
         cfg.EnablePPT := false
         cfg.WriteBool("Settings", "EnablePPT", false)
-        ToolTip "Pointer Mode: Mute Only"
+        ShowCaptureSafeMicroToast("Pointer Mode: Mute Only", UIConstants.TOOLTIP_DURATION_MS)
     } else {
-        ToolTip "Pointer Mode: OFF"
+        ShowCaptureSafeMicroToast("Pointer Mode: OFF", UIConstants.TOOLTIP_DURATION_MS)
     }
 
     cfg.WriteBool("Settings", "EnableMicOnly", cfg.EnableMicOnly)
     RebindAllHostHotkeys(cfg, state)
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 TogglePointerTransition(cfg, state := "", *) {
@@ -460,7 +459,6 @@ TogglePointerTransition(cfg, state := "", *) {
     ShowCaptureSafeMicroToast("Pointer OBS Scene Transition: " (cfg.EnablePointerTransition ? "ON" : "OFF"), UIConstants.TOOLTIP_DURATION_MS)
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 CyclePointerMode(cfg, state := "", *) {
@@ -471,21 +469,20 @@ CyclePointerMode(cfg, state := "", *) {
         cfg.EnableMicOnly := true
         cfg.WriteBool("Settings", "EnablePPT", false)
         cfg.WriteBool("Settings", "EnableMicOnly", true)
-        ToolTip "Pointer Mode: Mute Only"
+        ShowCaptureSafeMicroToast("Pointer Mode: Mute Only", UIConstants.TOOLTIP_DURATION_MS)
     } else if (cfg.EnableMicOnly) {
         cfg.EnableMicOnly := false
         cfg.WriteBool("Settings", "EnableMicOnly", false)
-        ToolTip "Pointer Mode: OFF"
+        ShowCaptureSafeMicroToast("Pointer Mode: OFF", UIConstants.TOOLTIP_DURATION_MS)
     } else {
         cfg.EnablePPT := true
         cfg.WriteBool("Settings", "EnablePPT", true)
-        ToolTip "Pointer Mode: Full PPT + Mute"
+        ShowCaptureSafeMicroToast("Pointer Mode: Full PPT + Mute", UIConstants.TOOLTIP_DURATION_MS)
     }
 
     RebindAllHostHotkeys(cfg, state)
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 ToggleWS(cfg, state, *) {
@@ -495,11 +492,11 @@ ToggleWS(cfg, state, *) {
 
     if (cfg.EnableWS) {
         cfg.WriteBool("Settings", "EnableWS", true)
-        ToolTip "WebSocket Sync: ON"
+        ShowCaptureSafeMicroToast("WebSocket Sync: ON", UIConstants.TOOLTIP_DURATION_MS)
         SetTimer state.obsTimerFn, -UIConstants.OBS_INIT_DELAY_MS
     } else {
         cfg.WriteBool("Settings", "EnableWS", false)
-        ToolTip "WebSocket Sync: OFF"
+        ShowCaptureSafeMicroToast("WebSocket Sync: OFF", UIConstants.TOOLTIP_DURATION_MS)
         SetTimer state.obsTimerFn, 0
         state.obsConnected := false
         if IsObject(state.obsWs) {
@@ -517,7 +514,6 @@ ToggleWS(cfg, state, *) {
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 ToggleZoom(cfg, state, *) {
@@ -529,7 +525,7 @@ ToggleZoom(cfg, state, *) {
         state.zoomRecGraceUntil := 0
         state.zoomSawRecControl := false
         cfg.WriteBool("Settings", "EnableZoom", true)
-        ToolTip "Zoom Monitoring: ON"
+        ShowCaptureSafeMicroToast("Zoom Monitoring: ON", UIConstants.TOOLTIP_DURATION_MS)
     } else {
         cfg.WriteBool("Settings", "EnableZoom", false)
         state.zoomConnected := false
@@ -538,14 +534,13 @@ ToggleZoom(cfg, state, *) {
         state.zoomSawRecControl := false
         SyncRecState(cfg, state, 0, -1, "conf")
         SyncChatState(cfg, state, 0)
-        ToolTip "Zoom Monitoring: OFF"
+        ShowCaptureSafeMicroToast("Zoom Monitoring: OFF", UIConstants.TOOLTIP_DURATION_MS)
     }
 
     UpdateZoomMonitorTimer(cfg, state)
     RefreshHudAppearance(cfg, state)
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
 }
 
 ToggleIndicator(cfg, state, *) {

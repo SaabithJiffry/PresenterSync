@@ -1996,6 +1996,14 @@ ShowControlCenterWindow(cfg, state := "", *) {
     existing := Theme.FocusExistingWindow("PresenterSync - Control Center")
     if IsObject(existing)
         return existing
+    if (IsObject(cfg) && cfg.HasOwnProp("KioskPin") && Trim(cfg.KioskPin) != "") {
+        ib := InputBox("Enter Kiosk PIN to open Control Center:", "PresenterSync Kiosk Lock", "Password w260 h120")
+        if (ib.Result != "OK" || Trim(ib.Value) !== Trim(cfg.KioskPin)) {
+            if (IsSet(ShowCaptureSafeMicroToast))
+                try ShowCaptureSafeMicroToast("Incorrect Kiosk PIN", 2000)
+            return ""
+        }
+    }
 
     Theme.AcquireSuspend()
 

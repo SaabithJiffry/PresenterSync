@@ -417,8 +417,10 @@ PollPowerPointSlideTelemetry(state, pptApp := "") {
                 state.slideTotal := total
                 state.slideTitle := title
                 state.slideNotes := notes
-                if (curIdx > 0 && curIdx != prevIdx && IsSet(SessionTimeline)) {
-                    try SessionTimeline.Record("slide", "Slide " curIdx (total > 0 ? ("/" total) : "") (title != "" ? (" - " title) : ""), state, title)
+                if (curIdx > 0 && curIdx != prevIdx) {
+                    if (IsSet(SessionTimeline))
+                        try SessionTimeline.Record("slide", "Slide " curIdx (total > 0 ? ("/" total) : "") (title != "" ? (" - " title) : ""), state, title)
+                    _ScheduleSlidePreviewExport(curIdx)
                 }
                 return true
             }
@@ -430,6 +432,41 @@ PollPowerPointSlideTelemetry(state, pptApp := "") {
     state.slideTitle := ""
     state.slideNotes := ""
     return false
+}
+
+_ScheduleSlidePreviewExport(slideIdx) {
+    static _slidePreviewTimerFn := ""
+    if (IsObject(_slidePreviewTimerFn))
+        try SetTimer(_slidePreviewTimerFn, 0)
+    _slidePreviewTimerFn := _RunDebouncedSlidePreviewExport.Bind(slideIdx)
+    try SetTimer(_slidePreviewTimerFn, -200)
+}
+
+_RunDebouncedSlidePreviewExport(expectedIdx) {
+    global g_HostCompanionBridge
+    if (!IsSet(g_HostCompanionBridge) || !IsObject(g_HostCompanionBridge))
+        return
+    tmpJpg := A_Temp "\ps_slide_preview_" A_TickCount ".jpg"
+    try {
+        ppt := ComObjActive("PowerPoint.Application")
+        if (!IsObject(ppt) || Integer(ppt.SlideShowWindows.Count) < 1)
+            return
+        ssWin := _GetComItemOrIndex(ppt.SlideShowWindows, 1)
+        if (!IsObject(ssWin))
+            return
+        view := ssWin.View
+        if (Integer(view.CurrentShowPosition) != expectedIdx)
+            return
+        slideObj := view.Slide
+        slideObj.Export(tmpJpg, "JPG", 640, 360)
+        if (FileExist(tmpJpg)) {
+            g_HostCompanionBridge.cachedSlidePreviewBuf := FileRead(tmpJpg, "RAW")
+            try FileDelete(tmpJpg)
+        }
+    } catch {
+        try if FileExist(tmpJpg)
+            FileDelete(tmpJpg)
+    }
 }
 
 StartPowerPointSlideshow(pptApp := "") {
@@ -915,8 +952,8 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
         pktStr := BuildOutboundRelayPacket(cfg, state, "remote", "set_mute", valStr)
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
         if (!PublishInternetRelayPacket(topic, pktStr, GetEffectiveRelayBaseUrl(cfg), mockWs)) {
-            ToolTip "PresenterSync Remote: Internet Relay unreachable"
-            SetTimer ClearObsNetworkToolTip, -2000
+            if (IsSet(ShowCaptureSafeMicroToast))
+                ShowCaptureSafeMicroToast("PresenterSync Remote: Internet Relay unreachable", 2000)
             return false
         }
         if (IsSet(ApplyRemoteOptimisticMute))
@@ -929,8 +966,8 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
         cid := _NextRemoteBridgeCmdId(cfg, state)
         payload := '{"type":"set_mute","cmdId":"' cid '","isMuted":' (targetMuted ? "true" : "false") ',"deviceId":"' devId '","source":"hud"}'
         if (!TrySendWsText(state.obsWs, payload)) {
-            ToolTip "PresenterSync Remote: Host Bridge disconnected"
-            SetTimer ClearObsNetworkToolTip, -2000
+            if (IsSet(ShowCaptureSafeMicroToast))
+                ShowCaptureSafeMicroToast("PresenterSync Remote: Host Bridge disconnected", 2000)
             return false
         }
         if (IsSet(ApplyRemoteOptimisticMute))
@@ -939,14 +976,14 @@ DispatchRemoteSetMute(cfg, state, targetMuted) {
     }
 
     if (!IsObject(state) || !IsObject(state.obsWs)) {
-        ToolTip "PresenterSync Remote: Not connected to OBS host"
-        SetTimer ClearObsNetworkToolTip, -2000
+        if (IsSet(ShowCaptureSafeMicroToast))
+            ShowCaptureSafeMicroToast("PresenterSync Remote: Not connected to OBS host", 2000)
         return false
     }
     escMic := EscapeJsonStr(cfg.TargetMicName)
     if (!SendObsRequest(state.obsWs, "SetInputMute", "RemoteClickerSetMute", '{"inputName":"' escMic '","inputMuted":' (targetMuted ? "true" : "false") '}')) {
-        ToolTip "PresenterSync Remote: Not connected to OBS host"
-        SetTimer ClearObsNetworkToolTip, -2000
+        if (IsSet(ShowCaptureSafeMicroToast))
+            ShowCaptureSafeMicroToast("PresenterSync Remote: Not connected to OBS host", 2000)
         return false
     }
     if (IsSet(ApplyRemoteOptimisticMute))
@@ -961,8 +998,8 @@ DispatchRemoteMuteToggle(cfg, state) {
         pktStr := BuildOutboundRelayPacket(cfg, state, "remote", "toggle_mute", "1")
         mockWs := (state.HasOwnProp("relayMockWs") && IsObject(state.relayMockWs)) ? state.relayMockWs : ""
         if (!PublishInternetRelayPacket(topic, pktStr, GetEffectiveRelayBaseUrl(cfg), mockWs)) {
-            ToolTip "PresenterSync Remote: Internet Relay unreachable"
-            SetTimer ClearObsNetworkToolTip, -2000
+            if (IsSet(ShowCaptureSafeMicroToast))
+                ShowCaptureSafeMicroToast("PresenterSync Remote: Internet Relay unreachable", 2000)
             return false
         }
         if (IsSet(ApplyRemoteOptimisticMute))
@@ -975,8 +1012,8 @@ DispatchRemoteMuteToggle(cfg, state) {
         cid := _NextRemoteBridgeCmdId(cfg, state)
         payload := '{"type":"toggle_mute","cmdId":"' cid '","deviceId":"' devId '","source":"clicker"}'
         if (!TrySendWsText(state.obsWs, payload)) {
-            ToolTip "PresenterSync Remote: Host Bridge disconnected"
-            SetTimer ClearObsNetworkToolTip, -2000
+            if (IsSet(ShowCaptureSafeMicroToast))
+                ShowCaptureSafeMicroToast("PresenterSync Remote: Host Bridge disconnected", 2000)
             return false
         }
         if (IsSet(ApplyRemoteOptimisticMute))
@@ -985,8 +1022,8 @@ DispatchRemoteMuteToggle(cfg, state) {
     }
 
     if (!SendObsToggleInputMute(state.obsWs, cfg.TargetMicName, "RemoteClickerMute")) {
-        ToolTip "PresenterSync Remote: Not connected to OBS host"
-        SetTimer ClearObsNetworkToolTip, -2000
+        if (IsSet(ShowCaptureSafeMicroToast))
+            ShowCaptureSafeMicroToast("PresenterSync Remote: Not connected to OBS host", 2000)
         return false
     }
     if (IsSet(ApplyRemoteOptimisticMute))
@@ -3034,10 +3071,11 @@ ExecuteHostSessionTurnover(cfg, state, revokeGuests := true) {
         ExecuteHostEmergencyPanic(cfg, state, false)
     state.unreadChatCount := 0
     ExecuteHostRemoteSetMute(cfg, state, true)
-    if (revokeGuests && IsSet(g_HostBridge) && IsObject(g_HostBridge))
-        try g_HostBridge.RevokeEphemeralGuests()
-    if (IsSet(g_HostBridge) && IsObject(g_HostBridge) && g_HostBridge.HasMethod("BroadcastSessionReset"))
-        try g_HostBridge.BroadcastSessionReset()
+    global g_HostCompanionBridge
+    if (revokeGuests && IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge))
+        try g_HostCompanionBridge.RevokeEphemeralGuests()
+    if (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasMethod("BroadcastSessionReset"))
+        try g_HostCompanionBridge.BroadcastSessionReset()
     HostBridgeBroadcastMuteState(cfg, state)
     BroadcastHostRelayDirectorState(cfg, state)
     return true

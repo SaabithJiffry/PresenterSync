@@ -1853,6 +1853,11 @@ class HostCompanionBridge {
                 devName := this.pairedDevices[devId].deviceName
         }
         hadCustom := this.pairedDevices.Has(devId) && this.pairedDevices[devId].HasOwnProp("customName") && this.pairedDevices[devId].customName
+        prevRole := (this.pairedDevices.Has(devId) && this.pairedDevices[devId].HasOwnProp("role")) ? HostCompanionBridge.NormalizeRole(this.pairedDevices[devId].role) : "Presenter"
+        prevTrust := (this.pairedDevices.Has(devId) && this.pairedDevices[devId].HasOwnProp("trustTier")) ? HostCompanionBridge.NormalizeTrustTier(this.pairedDevices[devId].trustTier) : "Ephemeral Guest"
+        prevAllowFb := (this.pairedDevices.Has(devId) && this.pairedDevices[devId].HasOwnProp("allowDirectObsFallback")) ? !!this.pairedDevices[devId].allowDirectObsFallback : false
+        prevPaused := (this.pairedDevices.Has(devId) && this.pairedDevices[devId].HasOwnProp("paused")) ? !!this.pairedDevices[devId].paused : false
+        prevExp := (this.pairedDevices.Has(devId) && this.pairedDevices[devId].HasOwnProp("expiresAt")) ? Integer(this.pairedDevices[devId].expiresAt) : 0
         sessionToken := this._IssueSessionToken(devId)
 
         this.validTokens[sessionToken] := devId
@@ -1866,7 +1871,12 @@ class HostCompanionBridge {
             pairedAt: FormatTime(, "HH:mm:ss"),
             lastSeenTick: A_TickCount,
             connected: false,
-            customName: hadCustom
+            customName: hadCustom,
+            role: prevRole,
+            trustTier: prevTrust,
+            allowDirectObsFallback: prevAllowFb,
+            paused: prevPaused,
+            expiresAt: prevExp
         }
         this.SavePairedDevices()
 
@@ -1879,7 +1889,9 @@ class HostCompanionBridge {
         mode := this.cfg.HasOwnProp("AudioRoutingMode") ? this.cfg.AudioRoutingMode : 0
         confApp := this.cfg.HasOwnProp("ConferencingApp") ? this.cfg.ConferencingApp : "Zoom"
         isMutedStr := (this.state.HasOwnProp("isMuted") && this.state.isMuted) ? "true" : "false"
-        obsPw := this.cfg.HasOwnProp("obsPassword") ? this.cfg.obsPassword : ""
+        allowObsFb := (prevRole = "Director") || prevAllowFb
+        obsPw := (allowObsFb && this.cfg.HasOwnProp("obsPassword")) ? this.cfg.obsPassword : ""
+        obsPortVal := (this.cfg.HasOwnProp("ObsWsPort") && Integer(this.cfg.ObsWsPort) > 0) ? Integer(this.cfg.ObsWsPort) : 4455
         micName := this.cfg.HasOwnProp("targetMicName") ? this.cfg.targetMicName : "Mic/Aux"
         relayCode := this.cfg.HasOwnProp("InternetPairingCode") ? this.cfg.InternetPairingCode : ""
 
@@ -1890,7 +1902,10 @@ class HostCompanionBridge {
             . '"hostName":"' _HB_JsonEscape(A_ComputerName) '",'
             . '"version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '",'
             . '"bridgePort":' this.boundTcpPort ','
-            . '"obsPort":4455,'
+            . '"obsPort":' obsPortVal ','
+            . '"role":"' _HB_JsonEscape(prevRole) '",'
+            . '"trustTier":"' _HB_JsonEscape(prevTrust) '",'
+            . '"allowDirectObsFallback":' (allowObsFb ? "true" : "false") ','
             . '"obsPassword":"' _HB_JsonEscape(obsPw) '",'
             . '"targetMicName":"' _HB_JsonEscape(micName) '",'
             . '"routingMode":' mode ','
@@ -2534,6 +2549,7 @@ class HostCompanionBridge {
         recStallStr := (this.state.HasOwnProp("recStallWarn") && this.state.recStallWarn) ? "true" : "false"
         encOverStr := (this.state.HasOwnProp("encoderOverloadWarn") && this.state.encoderOverloadWarn) ? "true" : "false"
         obsCrashStr := (this.state.HasOwnProp("obsCrashedRecWarn") && this.state.obsCrashedRecWarn) ? "true" : "false"
+        forgotStopStr := (this.state.HasOwnProp("forgotStopWarn") && this.state.forgotStopWarn) ? "true" : "false"
         obsFps := this.state.HasOwnProp("obsActiveFps") ? Float(this.state.obsActiveFps) : 0.0
         obsRSkip := this.state.HasOwnProp("obsRenderSkipped") ? Integer(this.state.obsRenderSkipped) : 0
         obsOSkip := this.state.HasOwnProp("obsOutputSkipped") ? Integer(this.state.obsOutputSkipped) : 0
@@ -2572,7 +2588,7 @@ class HostCompanionBridge {
         hostUuid := EnsureHostUuid(this.cfg)
         bootId := _HB_JsonEscape(this._EnsureBootId())
         ver := _HB_JsonEscape(UIConstants.APP_VERSION)
-        return '"protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"lastActionActor":"' _HB_JsonEscape(lastActor) '","routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"cameraActive":' camActStr ',"raisedHandCount":' handsCnt ',"screenShareActive":' shareActStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"studioModeActive":' studioActStr ',"previewSceneName":"' _HB_JsonEscape(prevScene) '","streamState":' strmSt ',"streamCongestion":' strmCong ',"streamSkippedFrames":' strmSkip ',"vcamActive":' vcamStr ',"unreadChatCount":' unreadCnt ',"voicePeak":' vPeak ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"recStallWarn":' recStallStr ',"encoderOverloadWarn":' encOverStr ',"obsCrashedRecWarn":' obsCrashStr ',"obsStats":{"activeFps":' obsFps ',"renderSkippedFrames":' obsRSkip ',"outputSkippedFrames":' obsOSkip ',"averageFrameRenderTime":' obsAvgMs '},"quickNudges":' qnJson ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"isPanic":' panicStr ',"panicUnmuteLocked":' panicLockStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' ver '","timestamp":' A_TickCount
+        return '"protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"lastActionActor":"' _HB_JsonEscape(lastActor) '","routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"cameraActive":' camActStr ',"raisedHandCount":' handsCnt ',"screenShareActive":' shareActStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"studioModeActive":' studioActStr ',"previewSceneName":"' _HB_JsonEscape(prevScene) '","streamState":' strmSt ',"streamCongestion":' strmCong ',"streamSkippedFrames":' strmSkip ',"vcamActive":' vcamStr ',"unreadChatCount":' unreadCnt ',"voicePeak":' vPeak ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"recStallWarn":' recStallStr ',"encoderOverloadWarn":' encOverStr ',"obsCrashedRecWarn":' obsCrashStr ',"forgotStopWarn":' forgotStopStr ',"obsStats":{"activeFps":' obsFps ',"renderSkippedFrames":' obsRSkip ',"outputSkippedFrames":' obsOSkip ',"averageFrameRenderTime":' obsAvgMs '},"quickNudges":' qnJson ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"isPanic":' panicStr ',"panicUnmuteLocked":' panicLockStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' ver '","timestamp":' A_TickCount
     }
 
     _BuildMuteStateJson() {

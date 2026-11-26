@@ -176,6 +176,18 @@ internal fun RemoteDashboardScreen(
 
     var showSetupWizard by rememberSaveable { mutableStateOf(cfg.firstRun) }
     var showConnectionDialog by rememberSaveable { mutableStateOf(false) }
+    var showKioskPinPrompt by rememberSaveable { mutableStateOf(false) }
+    var kioskPinInput by rememberSaveable { mutableStateOf("") }
+    var kioskPinError by rememberSaveable { mutableStateOf(false) }
+    fun requestOpenConnectionSettings() {
+        if (cfg.kioskPin.isNotBlank()) {
+            kioskPinInput = ""
+            kioskPinError = false
+            showKioskPinPrompt = true
+        } else {
+            showConnectionDialog = true
+        }
+    }
     var showQuickQrScanner by rememberSaveable { mutableStateOf(false) }
     var showHelpDialog by rememberSaveable { mutableStateOf(false) }
     var showAboutDialog by rememberSaveable { mutableStateOf(false) }
@@ -250,7 +262,7 @@ internal fun RemoteDashboardScreen(
                         IconButton(onClick = { showAboutDialog = true }, modifier = iconBtnMod) {
                             Icon(Icons.Default.Info, contentDescription = "About & Updates")
                         }
-                        IconButton(onClick = { showConnectionDialog = true }, modifier = iconBtnMod) {
+                        IconButton(onClick = { requestOpenConnectionSettings() }, modifier = iconBtnMod) {
                             Icon(Icons.Default.Settings, contentDescription = "Connection Settings")
                         }
                     }
@@ -629,6 +641,40 @@ internal fun RemoteDashboardScreen(
                 }
             }
         }
+    }
+
+    if (showKioskPinPrompt) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showKioskPinPrompt = false },
+            properties = androidx.compose.ui.window.DialogProperties(securePolicy = androidx.compose.ui.window.SecureFlagPolicy.SecureOn),
+            title = { Text("Kiosk PIN Required") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = kioskPinInput,
+                        onValueChange = { kioskPinInput = it; kioskPinError = false },
+                        label = { Text("Enter Kiosk PIN") },
+                        singleLine = true
+                    )
+                    if (kioskPinError) {
+                        Text("Incorrect PIN", color = Color(0xFFDC2626))
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (kioskPinInput.trim() == cfg.kioskPin.trim()) {
+                        showKioskPinPrompt = false
+                        showConnectionDialog = true
+                    } else {
+                        kioskPinError = true
+                    }
+                }) { Text("Unlock") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showKioskPinPrompt = false }) { Text("Cancel") }
+            }
+        )
     }
 
     if (showConnectionDialog) {

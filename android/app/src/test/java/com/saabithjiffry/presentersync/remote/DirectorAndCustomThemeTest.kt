@@ -175,7 +175,6 @@ class DirectorAndCustomThemeTest {
         val nudgeCaptured = AtomicReference<String>()
         val code = "PS-M7-UNIT"
         val pw = "pwM7"
-        val auth = RelayCrypto.getInternetRelayAuthToken(code, pw)
 
         val relay = RelayClient(
             httpClient = httpClient,

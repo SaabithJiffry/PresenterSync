@@ -3,6 +3,8 @@ package com.saabithjiffry.presentersync.remote
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Context
+import android.content.RestrictionsManager
 import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
 import com.saabithjiffry.presentersync.remote.network.ApkSelfInstaller
@@ -21,6 +23,7 @@ class PresenterSyncRemoteApp : Application() {
     override fun onCreate() {
         super.onCreate()
         configStore = RemoteConfigStore(this)
+        applyManagedRestrictions()
         connectionManager = ConnectionManager(this, configStore)
         DiagnosticLogger.init(
             directory = File(filesDir, "logs"),
@@ -62,6 +65,27 @@ class PresenterSyncRemoteApp : Application() {
         apkSelfInstaller = ApkSelfInstaller(this, configStore, connectionManager.sharedHttpClient)
         apkSelfInstaller.clearStaleUpdateCache()
         createNotificationChannel()
+    }
+
+    private fun applyManagedRestrictions() {
+        try {
+            val rm = getSystemService(Context.RESTRICTIONS_SERVICE) as? RestrictionsManager ?: return
+            val bundle = rm.applicationRestrictions ?: return
+            val mdmHost = bundle.getString("host_address").orEmpty().trim()
+            val mdmPort = bundle.getInt("bridge_port", 0)
+            val mdmPin = bundle.getString("kiosk_pin").orEmpty().trim()
+            val mdmRole = bundle.getString("default_role").orEmpty().trim()
+            if (mdmHost.isNotEmpty() || mdmPort in 1..65535 || mdmPin.isNotEmpty() || mdmRole.isNotEmpty()) {
+                configStore.update { cur ->
+                    cur.copy(
+                        hostAddress = mdmHost.ifEmpty { cur.hostAddress },
+                        bridgePort = if (mdmPort in 1..65535) mdmPort else cur.bridgePort,
+                        kioskPin = mdmPin.ifEmpty { cur.kioskPin }
+                    )
+                }
+            }
+        } catch (_: Exception) {
+        }
     }
 
     private fun createNotificationChannel() {

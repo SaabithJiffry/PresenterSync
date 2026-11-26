@@ -105,6 +105,8 @@ class OperatorConsole {
         ; Footer
         c["btnBookmark"] := g.AddButton("xm y+14 w125 h28", "Bookmark Moment")
         c["btnBookmark"].OnEvent("Click", (*) => (IsSet(SessionTimeline) ? SessionTimeline.AddBookmark("Live Bookmark", this._state, "Operator") : 0, this.Refresh()))
+        c["btnFocusConf"] := g.AddButton("x+8 yp w125 h28", "Focus Meet/Zoom")
+        c["btnFocusConf"].OnEvent("Click", (*) => (IsSet(FocusConferencingWindow) ? FocusConferencingWindow(this._cfg) : 0))
         c["btnTurnover"] := g.AddButton("x+8 yp w175 h28", "End Session / Next Class")
         c["btnTurnover"].OnEvent("Click", (*) => (IsSet(ExecuteHostSessionTurnover) ? ExecuteHostSessionTurnover(this._cfg, this._state, true) : 0, this.Refresh()))
         c["btnClose"] := g.AddButton("x+8 yp w100 h28", "Close")
@@ -138,7 +140,8 @@ class OperatorConsole {
     }
 
     static _RosterAction(kind) {
-        if (!IsSet(g_HostBridge) || !IsObject(g_HostBridge) || !this._ctrls.Has("roster"))
+        global g_HostCompanionBridge
+        if (!IsSet(g_HostCompanionBridge) || !IsObject(g_HostCompanionBridge) || !this._ctrls.Has("roster"))
             return
         lv := this._ctrls["roster"]
         row := lv.GetNext(0, "Focused")
@@ -148,7 +151,7 @@ class OperatorConsole {
             return
         devName := lv.GetText(row, 1)
         targetId := ""
-        for devId, d in g_HostBridge.pairedDevices {
+        for devId, d in g_HostCompanionBridge.pairedDevices {
             lbl := (d.HasOwnProp("name") && d.name != "") ? d.name : devId
             if (lbl = devName || devId = devName) {
                 targetId := devId
@@ -158,17 +161,17 @@ class OperatorConsole {
         if (targetId = "")
             return
         if (kind = "flash")
-            g_HostBridge.FlashDevicePill(targetId)
+            g_HostCompanionBridge.FlashDevicePill(targetId)
         else if (kind = "pause") {
-            cur := g_HostBridge.pairedDevices[targetId].HasOwnProp("paused") ? !!g_HostBridge.pairedDevices[targetId].paused : false
-            g_HostBridge.SetDevicePaused(targetId, !cur)
+            cur := g_HostCompanionBridge.pairedDevices[targetId].HasOwnProp("paused") ? !!g_HostCompanionBridge.pairedDevices[targetId].paused : false
+            g_HostCompanionBridge.SetDevicePaused(targetId, !cur)
         } else if (kind = "role") {
-            curR := g_HostBridge.pairedDevices[targetId].HasOwnProp("role") ? g_HostBridge.pairedDevices[targetId].role : "Presenter"
+            curR := g_HostCompanionBridge.pairedDevices[targetId].HasOwnProp("role") ? g_HostCompanionBridge.pairedDevices[targetId].role : "Presenter"
             nxt := (curR = "Tally-Only") ? "Presenter" : ((curR = "Presenter") ? "Director" : "Tally-Only")
-            g_HostBridge.SetDeviceRole(targetId, nxt)
+            g_HostCompanionBridge.SetDeviceRole(targetId, nxt)
         } else if (kind = "obsfb") {
-            curFb := g_HostBridge.pairedDevices[targetId].HasOwnProp("allowDirectObsFallback") ? !!g_HostBridge.pairedDevices[targetId].allowDirectObsFallback : false
-            g_HostBridge.SetDeviceObsFallbackAllowed(targetId, !curFb)
+            curFb := g_HostCompanionBridge.pairedDevices[targetId].HasOwnProp("allowDirectObsFallback") ? !!g_HostCompanionBridge.pairedDevices[targetId].allowDirectObsFallback : false
+            g_HostCompanionBridge.SetDeviceObsFallbackAllowed(targetId, !curFb)
         }
         this.Refresh()
     }
@@ -214,11 +217,12 @@ class OperatorConsole {
                 c["inbox"].Value := lines
         }
 
-        if (IsSet(g_HostBridge) && IsObject(g_HostBridge)) {
+        global g_HostCompanionBridge
+        if (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge)) {
             lv := c["roster"]
             lv.Delete()
-            for devId, d in g_HostBridge.pairedDevices {
-                lbl := (d.HasOwnProp("name") && d.name != "") ? d.name : devId
+            for devId, d in g_HostCompanionBridge.pairedDevices {
+                lbl := (d.HasOwnProp("deviceName") && d.deviceName != "") ? d.deviceName : ((d.HasOwnProp("name") && d.name != "") ? d.name : devId)
                 role := d.HasOwnProp("role") ? d.role : "Presenter"
                 trust := d.HasOwnProp("trustTier") ? d.trustTier : "Guest"
                 fb := (d.HasOwnProp("allowDirectObsFallback") && d.allowDirectObsFallback) ? "Yes" : "No"

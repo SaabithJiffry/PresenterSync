@@ -127,6 +127,7 @@ class RemoteConfig {
     ExcludeFromCapture := true
     HudVisibilityMode := "Always"
     SlideTargetMode := "Host"
+    KioskPin := ""
     ConfirmBeforeStopRecording := true
     OpacityLevel := 220
     IndicatorScale := 1.0
@@ -350,6 +351,7 @@ class RemoteConfig {
         this.ShowPillMiniBadges := this.ReadBool("Appearance", "ShowPillMiniBadges", 1)
         this.ExcludeFromCapture := this.ReadBool("Appearance", "ExcludeFromCapture", 1)
         this.HudVisibilityMode := NormalizeHudVisibilityMode(this.Read("Appearance", "HudVisibilityMode", "Always"))
+        this.KioskPin := Trim(this.Read("Settings", "KioskPin", ""))
         this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", 1)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
@@ -1570,8 +1572,7 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     state.connStatus := "mic_error"
                     state.NotifyTrayStatus()
                 }
-                ToolTip "PresenterSync Remote: Audio source '" cfg.TargetMicName "' not found in OBS"
-                SetTimer RemoveToolTip, -2500
+                ShowCaptureSafeMicroToast("PresenterSync Remote: Audio source '" cfg.TargetMicName "' not found in OBS", 2500)
             } else if (state.connStatus = "mic_error" && RegExMatch(msg, '"result"\s*:\s*true')) {
                 state.connStatus := "connected"
                 state.NotifyTrayStatus()
@@ -2103,8 +2104,7 @@ OnRemoteClickerMute(cfg, state, thisHotkeyOrFromHud := "", *) {
     lastTick := now
 
     if (!state.obsConnected || !IsObject(state.obsWs)) {
-        ToolTip "PresenterSync Remote: Not connected to OBS host"
-        SetTimer RemoveToolTip, -2000
+        ShowCaptureSafeMicroToast("PresenterSync Remote: Not connected to OBS host", 2000)
         return
     }
 
@@ -2902,10 +2902,10 @@ ToggleRemotePointerMute(cfg, state, *) {
     cfg.WriteBool("Pointer", "EnablePointerMute", cfg.EnablePointerMute)
     if (cfg.EnablePointerMute) {
         RegisterRemotePointerHotkey(cfg, state)
-        ToolTip "Pointer Mute Control: ON"
+        ShowCaptureSafeMicroToast("Pointer Mute Control: ON", UIConstants.TOOLTIP_DURATION_MS)
     } else {
         UnregisterRemotePointerHotkey(cfg, state)
-        ToolTip "Pointer Mute Control: OFF"
+        ShowCaptureSafeMicroToast("Pointer Mute Control: OFF", UIConstants.TOOLTIP_DURATION_MS)
     }
     BuildRemoteTrayMenu(cfg, state)
     SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
@@ -3296,6 +3296,13 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
 }
 
 ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
+    if (!isInitialBoot && IsObject(cfg) && cfg.HasOwnProp("KioskPin") && Trim(cfg.KioskPin) != "") {
+        ib := InputBox("Enter Kiosk PIN to unlock Remote Connection Settings:", "PresenterSync Kiosk Lock", "Password w260 h120")
+        if (ib.Result != "OK" || Trim(ib.Value) !== Trim(cfg.KioskPin)) {
+            ShowCaptureSafeMicroToast("Incorrect Kiosk PIN", 2000)
+            return ""
+        }
+    }
     dlgRes := CreateThemedRemoteDialog("OBS Remote Connection", "OBS Remote Connection", 20, 16, true)
     if IsObject(dlgRes.existing)
         return dlgRes.existing
