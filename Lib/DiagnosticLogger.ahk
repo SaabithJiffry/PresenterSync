@@ -370,7 +370,7 @@ class DiagnosticLogger {
         if (!IsObject(cfg))
             return secrets
         seen := Map()
-        for _, sf in ["obsPassword", "ObsPassword", "InternetPairingCode", "SessionPairingCode", "SessionToken"] {
+        for _, sf in ["obsPassword", "ObsPassword", "InternetPairingCode", "SessionPairingCode", "SessionToken", "KioskPin", "kioskPin"] {
             if (cfg.HasOwnProp(sf)) {
                 sv := Trim(String(cfg.%sf%))
                 if (StrLen(sv) >= 4 && !seen.Has(sv)) {
@@ -401,9 +401,9 @@ class DiagnosticLogger {
                 out := StrReplace(out, s, "[REDACTED]")
         }
         ; Scrub AES-256-GCM relay envelopes, legacy relay auth tokens, bearer/header tokens, JSON secret fields & pairing URI params
-        out := RegExReplace(out, "PSGCM1\|[A-Za-z0-9+/=]+\|[A-Za-z0-9+/=]+", "PSGCM1|[REDACTED]")
+        out := RegExReplace(out, "(PSGCM[12]\|)[A-Za-z0-9+/=]+\|[A-Za-z0-9+/=]+", "$1[REDACTED]")
         out := RegExReplace(out, "(PSRELAY\|[^|\r\n`"]+\|[^|\r\n`"]+\|[^|\r\n`"]*\|)[^|\r\n\s`"}]+", "$1[REDACTED]")
-        out := RegExReplace(out, "i)(\\`"?(?:obsPassword|password|sessionToken|token|internetPairingCode|sessionPairingCode|code|auth)\\`"?\s*:\s*\\?`")[^`"\r\n]+", "$1[REDACTED]")
+        out := RegExReplace(out, "i)(\\`"?(?:obsPassword|password|sessionToken|token|internetPairingCode|sessionPairingCode|kioskPin|code|auth)\\`"?\s*:\s*\\?`")[^`"\r\n]+", "$1[REDACTED]")
         out := RegExReplace(out, "i)(X-PresenterSync-Token\s*:\s*)[^\r\n\s]+", "$1[REDACTED]")
         out := RegExReplace(out, "i)(Authorization\s*:\s*Bearer\s+)[^\r\n\s]+", "$1[REDACTED]")
         out := RegExReplace(out, "i)([?&](?:pw|password|token|code|pair)=)[^&\s`"'<>]+", "$1[REDACTED]")

@@ -24,7 +24,7 @@ class HostBridgeConstants {
     static MAX_BUFFER_BYTES := 65536
     static MAX_HTTP_HEADER_BYTES := 16384
     static MAX_HTTP_BODY_BYTES := 8192
-    static MAX_HTTP_SEND_BYTES := 1048576
+    static MAX_HTTP_SEND_BYTES := 16777216
     static CMD_DEDUP_TTL_MS := 5000
     static CMD_DEDUP_MAX := 256
     static AUTH_TIMEOUT_MS := 3000
@@ -120,6 +120,10 @@ _HB_GetEndpointsSignature(endpoints) {
         joined .= (idx > 1 ? "," : "") item
     mdnsVal := endpoints.HasOwnProp("mdns") ? endpoints.mdns : ""
     return mdnsVal "|" joined
+}
+
+_HB_GetObsWsPort(cfg) {
+    return (IsObject(cfg) && cfg.HasOwnProp("ObsWsPort") && Integer(cfg.ObsWsPort) > 0) ? Integer(cfg.ObsWsPort) : 4455
 }
 
 BuildPublicDiscoveryBeaconJson(cfg, bridgePort := 4456, obsPort := 4455) {
@@ -750,7 +754,7 @@ class HostCompanionBridge {
             return ["read_state", "ping", "sync_req"]
         if (norm = "Director")
             return ["read_state", "ping", "sync_req", "mute", "ppt", "timer", "stage_nudge", "record", "scene", "standby", "direct_obs"]
-        return ["read_state", "ping", "sync_req", "mute", "ppt", "timer", "stage_nudge"]
+        return ["read_state", "ping", "sync_req", "mute", "ppt", "timer", "stage_nudge", "scene"]
     }
 
     static CheckVersionSkew(clientVer, clientProto := 2) {
@@ -772,11 +776,12 @@ class HostCompanionBridge {
             return true
         if (norm = "Tally-Only")
             return false
-        ; Presenter allows mute, ppt, timer, stage_nudge — blocks record, scene, standby
+        ; Presenter allows mute, ppt, timer, stage_nudge, and live scene control (#1/#3) — blocks record, standby, panic, handoff, session_reset
         return (cmd = "toggle_mute" || cmd = "set_mute"
             || cmd = "ppt_next" || cmd = "ppt_prev" || cmd = "slide_start"
             || cmd = "timer_start" || cmd = "timer_pause" || cmd = "timer_reset"
-            || cmd = "stage_nudge" || cmd = "add_bookmark")
+            || cmd = "stage_nudge" || cmd = "add_bookmark"
+            || cmd = "switch_scene" || cmd = "transition_scene" || cmd = "reset_active_scene")
     }
 
     _SyncClientPolicyFromDevice(devId) {
@@ -929,7 +934,8 @@ class HostCompanionBridge {
                 cliRole := (cli.HasOwnProp("role") && cli.role != "") ? HostCompanionBridge.NormalizeRole(cli.role) : "Presenter"
                 allowFb := (cliRole = "Director") || (cli.HasOwnProp("allowDirectObsFallback") && !!cli.allowDirectObsFallback)
                 cliPass := allowFb ? obsPass : ""
-                payload := '{"type":"obs_fallback_update","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"obsFallback":{"port":4455,"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(cliPass) '","directObsAllowed":' (allowFb ? "true" : "false") '}}'
+                obsPort := _HB_GetObsWsPort(useCfg)
+                payload := '{"type":"obs_fallback_update","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"obsFallback":{"port":' obsPort ',"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(cliPass) '","directObsAllowed":' (allowFb ? "true" : "false") '}}'
                 this._QueueWsFrame(cli, 0x1, payload)
                 sent += 1
             }
@@ -1203,7 +1209,7 @@ class HostCompanionBridge {
                 if ((now - rl.lastV1Tick) < 80)
                     continue
                 rl.lastV1Tick := now
-                reply := BuildPublicDiscoveryBeaconJson(this.cfg, this.boundTcpPort, 4455)
+                reply := BuildPublicDiscoveryBeaconJson(this.cfg, this.boundTcpPort, _HB_GetObsWsPort(this.cfg))
                 rLen := 0
                 rBuf := _HB_StrToUtf8Buf(reply, &rLen)
                 DllCall("ws2_32\sendto", "Ptr", targetSock, "Ptr", rBuf, "Int", rLen, "Int", 0, "Ptr", fromAddr, "Int", 16, "Int")
@@ -1221,7 +1227,7 @@ class HostCompanionBridge {
                 if (reqCode != "" && reqCode == hostCode) {
                     this._ResetPairingFailures(ip)
                     mode := this.cfg.HasOwnProp("AudioRoutingMode") ? this.cfg.AudioRoutingMode : 0
-                    reply := "PSYNC_OFFER|" A_ComputerName "|" this.boundTcpPort "|4455|" UIConstants.APP_VERSION "|" mode
+                    reply := "PSYNC_OFFER|" A_ComputerName "|" this.boundTcpPort "|" _HB_GetObsWsPort(this.cfg) "|" UIConstants.APP_VERSION "|" mode
                     rLen := 0
                     rBuf := _HB_StrToUtf8Buf(reply, &rLen)
                     DllCall("ws2_32\sendto", "Ptr", targetSock, "Ptr", rBuf, "Int", rLen, "Int", 0, "Ptr", fromAddr, "Int", 16, "Int")
@@ -1550,18 +1556,31 @@ class HostCompanionBridge {
         this._QueueRawBytes(c, frame.Ptr, hdrLen + pLen)
     }
 
-    _SendHttpResponse(c, statusLine, jsonBody, extraHeaders := "") {
+    _ResolveLanUpdateArtifact(fileName) {
+        if (IsObject(this.cfg) && this.cfg.HasOwnProp("LanUpdateDir") && this.cfg.LanUpdateDir != "") {
+            candCfg := RTrim(String(this.cfg.LanUpdateDir), "\/") "\" fileName
+            if (FileExist(candCfg))
+                return candCfg
+        }
+        for _, cand in [A_ScriptDir "\" fileName, A_ScriptDir "\dist\" fileName] {
+            if (FileExist(cand))
+                return cand
+        }
+        return ""
+    }
+
+    _SendHttpResponse(c, statusLine, jsonBody, extraHeaders := "", contentType := "application/json; charset=utf-8") {
         bLen := 0
         _HB_StrToUtf8Buf(jsonBody, &bLen)
         hdr := "HTTP/1.1 " statusLine "`r`n"
-            . "Content-Type: application/json; charset=utf-8`r`n"
+            . "Content-Type: " contentType "`r`n"
             . "X-Content-Type-Options: nosniff`r`n"
             . "Content-Length: " bLen "`r`n"
             . "Connection: close`r`n"
             . extraHeaders
             . "`r`n"
         c.closeAfterSend := true
-        this._QueueText(c, hdr . jsonBody)
+        this._QueueText(c, hdr . jsonBody, HostBridgeConstants.MAX_HTTP_SEND_BYTES)
     }
 
     _SendHtmlResponse(c, statusLine, htmlBody, extraHeaders := "") {
@@ -1714,7 +1733,7 @@ class HostCompanionBridge {
                 c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
                 mode := this.cfg.HasOwnProp("AudioRoutingMode") ? this.cfg.AudioRoutingMode : 0
                 uuid := EnsureHostUuid(this.cfg)
-                body := '{"ok":true,"hostUuid":"' _HB_JsonEscape(uuid) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","bridgePort":' this.boundTcpPort ',"obsPort":4455,"routingMode":' mode '}'
+                body := '{"ok":true,"hostUuid":"' _HB_JsonEscape(uuid) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' _HB_JsonEscape(UIConstants.APP_VERSION) '","bridgePort":' this.boundTcpPort ',"obsPort":' _HB_GetObsWsPort(this.cfg) ',"routingMode":' mode '}'
                 this._SendHttpResponse(c, "200 OK", body)
                 return
             }
@@ -1754,13 +1773,14 @@ class HostCompanionBridge {
                     this._SendHttpResponse(c, "403 Forbidden", '{"ok":false,"error":"LAN self-update is disabled"}')
                     return
                 }
-                targetFile := (cleanPath = "/update/sha256") ? (A_ScriptDir "\dist\SHA256SUMS.txt") : (A_ScriptDir "\dist\PresenterSync_Remote.apk")
-                if (!FileExist(targetFile)) {
+                artName := (cleanPath = "/update/sha256") ? "SHA256SUMS.txt" : "PresenterSync_Remote.apk"
+                targetFile := this._ResolveLanUpdateArtifact(artName)
+                if (targetFile = "" || !FileExist(targetFile)) {
                     this._SendHttpResponse(c, "404 Not Found", '{"ok":false,"error":"Artifact not found on host"}')
                     return
                 }
                 if (cleanPath = "/update/sha256") {
-                    this._SendHttpResponse(c, "200 OK", FileRead(targetFile, "UTF-8"), "text/plain; charset=utf-8")
+                    this._SendHttpResponse(c, "200 OK", FileRead(targetFile, "UTF-8"), "", "text/plain; charset=utf-8")
                 } else {
                     bin := FileRead(targetFile, "RAW")
                     this._SendBinaryResponse(c, "200 OK", "application/vnd.android.package-archive", bin, bin.Size)
@@ -1962,12 +1982,51 @@ class HostCompanionBridge {
                 this._FlushSendQueue(c)
                 return
             }
-            this._QueueWsFrame(c, 0x1, this._BuildAuthOkJson(c))
-            this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            if (!this._FinalizeWsClientAuth(c, "", qParams))
+                return
         }
 
         if (c.recvLen > 0)
             this._DrainWsFrames(c)
+    }
+
+    _FinalizeWsClientAuth(c, msgObj := "", qParams := "") {
+        if (c.deviceId != "" && this.pairedDevices.Has(c.deviceId)) {
+            d := this.pairedDevices[c.deviceId]
+            c.role := d.HasOwnProp("role") ? HostCompanionBridge.NormalizeRole(d.role) : "Presenter"
+            c.trustTier := d.HasOwnProp("trustTier") ? HostCompanionBridge.NormalizeTrustTier(d.trustTier) : "Ephemeral Guest"
+            c.allowDirectObsFallback := d.HasOwnProp("allowDirectObsFallback") ? !!d.allowDirectObsFallback : false
+            c.inputPaused := d.HasOwnProp("paused") ? !!d.paused : false
+            c.expiresAt := d.HasOwnProp("expiresAt") ? Integer(d.expiresAt) : 0
+            if (c.expiresAt > 0 && GetCurrentUnixEpoch() >= c.expiresAt) {
+                c.authenticated := false
+                d.connected := false
+                this._QueueWsFrame(c, 0x1, '{"type":"auth_error","error":"Guest access expired"}')
+                c.closeAfterSend := true
+                this._FlushSendQueue(c)
+                return false
+            }
+        }
+        if (IsObject(msgObj)) {
+            c.protocolVersion := Max(1, JsonCodec.GetInt(msgObj, "protocolVersion", 1))
+            c.appVersion := JsonCodec.GetStr(msgObj, "appVersion")
+            caps := JsonCodec.GetStrArray(msgObj, "capabilities")
+            if (caps.Length > 0)
+                c.capabilities := caps
+        } else if (IsObject(qParams)) {
+            qProto := qParams.Get("protocolVersion", "")
+            c.protocolVersion := (qProto != "" && IsInteger(qProto)) ? Max(1, Integer(qProto)) : HostBridgeConstants.PROTOCOL_VERSION
+            c.appVersion := qParams.Get("appVersion", "")
+        }
+        skew := HostCompanionBridge.CheckVersionSkew(c.appVersion, c.protocolVersion)
+        c.versionSkewWarning := (IsObject(skew) && skew.HasOwnProp("skewed") && skew.skewed && skew.HasOwnProp("reason")) ? skew.reason : ""
+        this._QueueWsFrame(c, 0x1, this._BuildAuthOkJson(c))
+        if (IsObject(msgObj) && msgObj.Has("clientFallbackState") && (msgObj["clientFallbackState"] is Map))
+            this._ReconcileClientFallbackState(c, msgObj["clientFallbackState"])
+        this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+        if (IsSet(SessionTimeline))
+            SessionTimeline.Record("Remote", "Remote Joined: " (c.deviceName != "" ? c.deviceName : c.deviceId), this.state, c.platform)
+        return true
     }
 
     _TryAuthenticateWsClient(c, token, code, devId, devName, plat) {
@@ -2229,33 +2288,7 @@ class HostCompanionBridge {
                 this._FlushSendQueue(c)
                 return
             }
-            if (c.deviceId != "" && this.pairedDevices.Has(c.deviceId)) {
-                d := this.pairedDevices[c.deviceId]
-                c.role := d.HasOwnProp("role") ? HostCompanionBridge.NormalizeRole(d.role) : "Presenter"
-                c.trustTier := d.HasOwnProp("trustTier") ? HostCompanionBridge.NormalizeTrustTier(d.trustTier) : "Ephemeral Guest"
-                c.allowDirectObsFallback := d.HasOwnProp("allowDirectObsFallback") ? !!d.allowDirectObsFallback : false
-                c.inputPaused := d.HasOwnProp("paused") ? !!d.paused : false
-                c.expiresAt := d.HasOwnProp("expiresAt") ? Integer(d.expiresAt) : 0
-                if (c.expiresAt > 0 && GetCurrentUnixEpoch() >= c.expiresAt) {
-                    this._QueueWsFrame(c, 0x1, '{"type":"auth_error","error":"Guest access expired"}')
-                    c.closeAfterSend := true
-                    this._FlushSendQueue(c)
-                    return
-                }
-            }
-            c.protocolVersion := Max(1, JsonCodec.GetInt(msgObj, "protocolVersion", 1))
-            c.appVersion := JsonCodec.GetStr(msgObj, "appVersion")
-            caps := JsonCodec.GetStrArray(msgObj, "capabilities")
-            if (caps.Length > 0)
-                c.capabilities := caps
-            skew := HostCompanionBridge.CheckVersionSkew(c.appVersion, c.protocolVersion)
-            c.versionSkewWarning := (IsObject(skew) && skew.HasOwnProp("skewed") && skew.skewed && skew.HasOwnProp("reason")) ? skew.reason : ""
-            this._QueueWsFrame(c, 0x1, this._BuildAuthOkJson(c))
-            if (msgObj.Has("clientFallbackState") && (msgObj["clientFallbackState"] is Map))
-                this._ReconcileClientFallbackState(c, msgObj["clientFallbackState"])
-            this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
-            if (IsSet(SessionTimeline))
-                SessionTimeline.Record("Remote", "Remote Joined: " (c.deviceName != "" ? c.deviceName : c.deviceId), this.state, c.platform)
+            this._FinalizeWsClientAuth(c, msgObj)
             return
         }
 
@@ -2416,7 +2449,18 @@ class HostCompanionBridge {
                     ok := (this.state.triggerTransitionFn.Call() != false)
                 else if (IsSet(TriggerObsSceneTransition))
                     ok := TriggerObsSceneTransition(this.cfg, this.state, true)
-                this._QueueCmdResult(c, "transition_scene", ok, cmdId, ok ? "" : "obs_offline")
+                failCode := (IsObject(this.state) && this.state.HasOwnProp("lastTransitionFailReason") && this.state.lastTransitionFailReason != "")
+                    ? this.state.lastTransitionFailReason
+                    : "obs_offline"
+                this._QueueCmdResult(c, "transition_scene", ok, cmdId, ok ? "" : failCode)
+            case "reset_active_scene":
+                ok := false
+                if (IsObject(this.state) && this.state.HasOwnProp("obsSceneResetFn") && IsObject(this.state.obsSceneResetFn))
+                    ok := (this.state.obsSceneResetFn.Call() != false)
+                else if (IsSet(ExecuteHostResetActiveScene))
+                    ok := ExecuteHostResetActiveScene(this.cfg, this.state)
+                failCode := (!ok && IsObject(this.state) && this.state.HasOwnProp("sceneResetInProgress") && this.state.sceneResetInProgress) ? "reset_in_progress" : "obs_offline"
+                this._QueueCmdResult(c, "reset_active_scene", ok, cmdId, ok ? "" : failCode)
             case "toggle_standby":
                 ok := ExecuteHostToggleStandby(this.cfg, this.state)
                 this._QueueCmdResult(c, "toggle_standby", ok, cmdId)
@@ -2623,10 +2667,7 @@ class HostCompanionBridge {
 
     BroadcastSessionReset() {
         payload := '{"type":"session_reset","timestamp":' A_TickCount '}'
-        for _, cli in this.clients {
-            if (cli.isWs && !cli.closed && cli.authed)
-                this._QueueWsFrame(cli, 0x1, payload)
-        }
+        return this._BroadcastJsonToAuthenticated(payload)
     }
 }
 
@@ -2915,7 +2956,7 @@ BuildHostPairingUri(cfg, candidateIps := "", bridgePortOverride := 0) {
         hostStr .= (A_Index > 1 ? "," : "") hosts[A_Index]
     }
 
-    obsPort := 4455
+    obsPort := _HB_GetObsWsPort(cfg)
     bridgePort := 0
     try bridgePort := Integer(bridgePortOverride)
     if (bridgePort <= 0 && IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.running && g_HostCompanionBridge.boundTcpPort > 0)
@@ -2924,7 +2965,6 @@ BuildHostPairingUri(cfg, candidateIps := "", bridgePortOverride := 0) {
         bridgePort := Integer(AppState.activeBridgePort)
     if (bridgePort <= 0)
         bridgePort := (IsObject(cfg) && cfg.HasOwnProp("BridgePort")) ? Integer(cfg.BridgePort) : 4456
-    obsPw := (IsObject(cfg) && cfg.HasOwnProp("obsPassword")) ? cfg.obsPassword : ""
     sessCode := (IsObject(cfg) && cfg.HasOwnProp("SessionPairingCode")) ? cfg.SessionPairingCode : ""
     micName := (IsObject(cfg) && cfg.HasOwnProp("targetMicName")) ? cfg.targetMicName : "Mic/Aux"
     netMode := (IsObject(cfg) && cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet") ? "internet" : "lan"
@@ -2942,8 +2982,6 @@ BuildHostPairingUri(cfg, candidateIps := "", bridgePortOverride := 0) {
         . "&mode=" netMode
     if (uuid != "")
         uri .= "&uuid=" UriEncodeComponent(uuid)
-    if (obsPw != "")
-        uri .= "&pw=" UriEncodeComponent(obsPw)
     if (rc != "")
         uri .= "&rc=" UriEncodeComponent(rc)
     if (preset != "" && preset != "Standard")

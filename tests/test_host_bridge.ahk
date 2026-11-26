@@ -89,6 +89,11 @@ st := {
     relayConnected: false,
     relayWs: "",
     recState: 0,
+    obsRecState: 0,
+    confRecState: 0,
+    obsRecElapsedSec: 0,
+    confRecElapsedSec: 0,
+    recSourceTag: "",
     recElapsedSec: 0,
     streamState: 0,
     voiceWhileMuted: false,
@@ -159,6 +164,21 @@ if (serveMode) {
             st.streamState := 2
             st.voiceWhileMuted := true
             HostBridgeBroadcastMuteState(cfg, st)
+        } else if (SubStr(cmd, 1, 18) = "ENABLE_LAN_UPDATE:") {
+            cfg.EnableLanSelfUpdate := true
+            cfg.LanUpdateDir := Trim(SubStr(cmd, 19))
+            FileAppend("ok", readyPath ".lan_ready", "UTF-8")
+        } else if (cmd = "PREPARE_SLIDE_PREVIEW") {
+            st.slideIndex := 3
+            st.slideTotal := 10
+            st.slideTitle := "Demo Slide"
+            st.slideNotes := "Sensitive Speaker Note"
+            st.presenterSignals := [{ message: "Old signal" }]
+            bridge.cachedSlidePreviewBuf := Buffer(32, 0x5A)
+            FileAppend("ok", readyPath ".slide_ready", "UTF-8")
+        } else if (cmd = "SESSION_TURNOVER") {
+            ExecuteHostSessionTurnover(cfg, st, false)
+            FileAppend("ok", readyPath ".turnover_done", "UTF-8")
         } else if (cmd = "POWER_SUSPEND") {
             HandleHostPowerEvent(cfg, st, 4)
             FileAppend("suspended", readyPath ".power", "UTF-8")
@@ -402,6 +422,33 @@ wsCode := _TestWsOpen(bRestart.boundTcpPort, "/ws?token=stale_token_xyz&code=" c
 Assert("Re-bind after Host restart accepts saved sessionPairingCode when token is stale",
     InStr(wsCode.raw, '"type":"auth_ok"') && bRestart.pairedDevices.Has("sb-rebind-code") && bRestart.pairedDevices["sb-rebind-code"].token != "")
 _TestWsClose(wsCode)
+
+; 5. v10.1.0 V2-M1: P2-2 query-string WS upgrade enforces expiresAt, P2-3 PSGCM2/KioskPin scrub, P2-6 KioskPin DPAPI migration
+bRestart.pairedDevices["guest-exp"] := {
+    deviceId: "guest-exp", deviceName: "ExpiredGuest", platform: "Web", token: "tok_exp_999",
+    pairedAt: "1700000", ip: "127.0.0.1", transport: "WS", role: "Presenter",
+    trustTier: "Ephemeral Guest", allowDirectObsFallback: false, paused: false,
+    expiresAt: (GetCurrentUnixEpoch() - 30), connected: false
+}
+bRestart.validTokens["tok_exp_999"] := "guest-exp"
+wsExp := _TestWsOpen(bRestart.boundTcpPort, "/ws?token=tok_exp_999&deviceId=guest-exp")
+Assert("P2-2: Query-string WS upgrade rejects expired guest with auth_error",
+    InStr(wsExp.raw, '"type":"auth_error"') > 0 && InStr(wsExp.raw, "expired") > 0 && !InStr(wsExp.raw, '"type":"auth_ok"'), wsExp.raw)
+_TestWsClose(wsExp)
+
+scrubOut := DiagnosticLogger._ScrubSecrets('PSGCM2|AQID|cipher== {"kioskPin":"8421"} PSGCM1|AAAA|BBBB', ["8421"])
+Assert("P2-3: _ScrubSecrets redacts PSGCM2|, PSGCM1|, and KioskPin",
+    !InStr(scrubOut, "cipher==") && !InStr(scrubOut, "BBBB") && !InStr(scrubOut, "8421") && InStr(scrubOut, "PSGCM2|[REDACTED]"), scrubOut)
+
+migIni := A_Temp "\ps_v2m1_mig_test_" A_TickCount ".ini"
+try FileDelete(migIni)
+IniWrite("1", migIni, "ConfigMeta", "SchemaVersion")
+IniWrite("7391", migIni, "Settings", "KioskPin")
+ConfigStore.MigrateIniSchema(migIni)
+rawKiosk := IniRead(migIni, "Settings", "KioskPin", "")
+Assert("P2-6: ConfigStore.MigrateIniSchema encrypts plaintext KioskPin with DPAPI",
+    ConfigStore.IsSecretValueEncrypted(rawKiosk) && ConfigStore.UnprotectSecret(rawKiosk) = "7391", rawKiosk)
+try FileDelete(migIni)
 
 StopHostCompanionBridge()
 Assert("StopHostCompanionBridge shuts down cleanly", !IsObject(g_HostCompanionBridge) && !GetHostBridgeStatusSummary().running)

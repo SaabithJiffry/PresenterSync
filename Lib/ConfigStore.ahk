@@ -386,7 +386,7 @@ class ConfigStore {
         tmpPath := iniPath ".mig.tmp"
         try {
             FileCopy(iniPath, tmpPath, 1)
-            secretKeys := ["ObsPassword", "BridgeToken", "SessionToken", "SessionPairingCode", "InternetPairingCode"]
+            secretKeys := ["ObsPassword", "BridgeToken", "SessionToken", "SessionPairingCode", "InternetPairingCode", "KioskPin"]
             for _, k in secretKeys {
                 rawVal := ""
                 try rawVal := IniRead(tmpPath, secretSection, k, "__MISSING__")

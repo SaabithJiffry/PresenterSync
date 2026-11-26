@@ -431,6 +431,9 @@ PollPowerPointSlideTelemetry(state, pptApp := "") {
     state.slideTotal := 0
     state.slideTitle := ""
     state.slideNotes := ""
+    global g_HostCompanionBridge
+    if (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge))
+        g_HostCompanionBridge.cachedSlidePreviewBuf := ""
     return false
 }
 
@@ -1872,7 +1875,7 @@ ExecuteHostSwitchScene(cfg, state, sceneName) {
         _CommitHostSceneChange(cfg, state, clean)
         return true
     }
-    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+    if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
         ok := SendObsRequest(state.obsWs, "SetCurrentProgramScene", "SwitchScene", '{"sceneName":"' EscapeJsonStr(clean) '"}')
         if (ok)
             _CommitHostSceneChange(cfg, state, clean)
@@ -1893,12 +1896,14 @@ TriggerObsSceneTransition(cfg, state, fromHudClick := false) {
     lastTick := now
 
     t0 := A_TickCount
+    state.lastTransitionFailReason := ""
     if (IsSet(DiagnosticLogger))
         DiagnosticLogger.RecordBreadcrumb("Input", "TriggerObsSceneTransition", fromHudClick ? "hud_or_remote" : "pointer")
 
     dispatched := false
     detail := ""
-    if (state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+    obsReady := (state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs))
+    if (obsReady) {
         if (state.HasOwnProp("studioModeActive") && state.studioModeActive) {
             dispatched := SendObsRequest(state.obsWs, "TriggerStudioModeTransition", "HostSceneTransition")
             detail := "ws:TriggerStudioModeTransition"
@@ -1933,6 +1938,8 @@ TriggerObsSceneTransition(cfg, state, fromHudClick := false) {
         dispatched := true
         detail := "controlsend:" cfg.ObsTransitionHotkey
     }
+    if (!dispatched)
+        state.lastTransitionFailReason := obsReady ? "no_target_scene" : "obs_offline"
 
     if (IsSet(DiagnosticLogger))
         DiagnosticLogger.CheckLatency("Input", "TriggerObsSceneTransition", t0, 120, detail)
@@ -1950,7 +1957,7 @@ ExecuteHostPauseRecord(cfg, state) {
             SyncRecState(cfg, state, state.recState == 1 ? 2 : 1)
         return true
     }
-    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+    if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
         reqName := (state.recState == 1) ? "PauseRecord" : ((state.recState == 2) ? "ResumeRecord" : "ToggleRecordPause")
         ok := SendObsRequest(state.obsWs, reqName, "HostPauseRec")
         if (ok && (state.recState == 1 || state.recState == 2))
@@ -1977,7 +1984,7 @@ ExecuteHostSplitRecord(cfg, state) {
         res := state.obsRecSplitFn.Call()
         return (res != false)
     }
-    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+    if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
         return SendObsRequest(state.obsWs, "SplitRecordFile", "HostSplitRec")
     }
     return false
@@ -2383,11 +2390,12 @@ SendCloseRemoteSignal(cfg, state) {
     sentWan := false
     sentBridge := (HostBridgeBroadcastCloseRemote() > 0)
 
+    obsPort := (IsObject(cfg) && cfg.HasOwnProp("ObsWsPort") && Integer(cfg.ObsWsPort) > 0) ? Integer(cfg.ObsWsPort) : 4455
     ; 1. Dispatch over active OBS WebSocket (LAN Mode)
     if (IsObject(state) && state.obsConnected && IsObject(state.obsWs)) {
         sentLan := SendObsBroadcastCloseRemote(state.obsWs)
-    } else if (IsLocalTcpPortListening(4455)) {
-        ; One-shot loopback connect to local OBS 127.0.0.1:4455 in case Host WS Sync is currently off
+    } else if (IsLocalTcpPortListening(obsPort)) {
+        ; One-shot loopback connect to local OBS in case Host WS Sync is currently off
         try {
             tempBox := {ws: ""}
             CleanupTempWs() {
@@ -2412,7 +2420,7 @@ SendCloseRemoteSignal(cfg, state) {
                     SetTimer CleanupTempWs, -250
                 }
             }
-            tempBox.ws := WebSocket("ws://127.0.0.1:4455", {
+            tempBox.ws := WebSocket("ws://127.0.0.1:" obsPort, {
                 message: OnTempMsg,
                 close: (wsObj, st, re) => CleanupTempWs()
             }, true, "", 1000)
@@ -2886,6 +2894,9 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                 BroadcastHostRelayDirectorState(cfg, state)
             }
         }
+        else if (InStr(msg, '"requestId":"ResetActiveSceneList"') || InStr(msg, '"requestId": "ResetActiveSceneList"')) {
+            _HandleResetActiveSceneItemList(cfg, state, msg)
+        }
         else if (InStr(msg, '"requestId":"InitInputList"') || InStr(msg, '"requestId": "InitInputList"')) {
             parsedInputs := ParseObsInputList(msg)
             state.obsInputs := parsedInputs.all
@@ -2981,7 +2992,7 @@ ExecuteHostSetPreviewScene(cfg, state, sceneName) {
     sc := Trim(String(sceneName))
     if (!IsObject(cfg) || !IsObject(state) || sc = "")
         return false
-    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+    if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
         state.previewSceneName := sc
         ok := SendObsRequest(state.obsWs, "SetCurrentPreviewScene", "HostSetPreviewScene", '{"sceneName":"' EscapeJsonStr(sc) '"}')
         HostBridgeBroadcastMuteState(cfg, state)
@@ -2994,7 +3005,7 @@ ExecuteHostSetSceneItemEnabled(cfg, state, sceneName, sceneItemId, enabled) {
     sc := Trim(String(sceneName))
     if (!IsObject(cfg) || !IsObject(state) || sc = "" || Integer(sceneItemId) <= 0)
         return false
-    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+    if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
         return SendObsRequest(state.obsWs, "SetSceneItemEnabled", "HostSetSceneItem", '{"sceneName":"' EscapeJsonStr(sc) '","sceneItemId":' Integer(sceneItemId) ',"sceneItemEnabled":' (enabled ? "true" : "false") '}')
     }
     return false
@@ -3005,16 +3016,120 @@ ExecuteHostSetInputVolume(cfg, state, inputName, volumeMul) {
     if (!IsObject(cfg) || !IsObject(state) || inName = "")
         return false
     mul := Max(0.0, Min(2.0, Float(volumeMul)))
-    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+    if (cfg.HasOwnProp("EnableWS") && cfg.EnableWS && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
         return SendObsRequest(state.obsWs, "SetInputVolume", "HostSetInputVol", '{"inputName":"' EscapeJsonStr(inName) '","inputVolumeMul":' Round(mul, 3) '}')
     }
     return false
 }
 
+_ClearSceneResetWatchdog(state) {
+    if (IsObject(state) && state.HasOwnProp("sceneResetWatchdogFn") && IsObject(state.sceneResetWatchdogFn)) {
+        try SetTimer(state.sceneResetWatchdogFn, 0)
+        state.sceneResetWatchdogFn := ""
+    }
+}
+
+_OnSceneResetWatchdog(state) {
+    if (!IsObject(state))
+        return
+    state.sceneResetWatchdogFn := ""
+    state.sceneResetInProgress := false
+    state.pendingSceneResetTarget := ""
+}
+
+_ScheduleSceneResetWatchdog(state, targetScene) {
+    _ClearSceneResetWatchdog(state)
+    wdFn := _OnSceneResetWatchdog.Bind(state)
+    state.sceneResetWatchdogFn := wdFn
+    try SetTimer(wdFn, -3000)
+}
+
+_CompleteResetActiveSceneItems(cfg, state, targetScene, itemIds) {
+    _ClearSceneResetWatchdog(state)
+    if (IsObject(cfg) && IsObject(state) && cfg.EnableWS && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+        for _, itemId in itemIds
+            ExecuteHostSetSceneItemEnabled(cfg, state, targetScene, itemId, true)
+    }
+    if (IsObject(state)) {
+        state.sceneResetInProgress := false
+        state.pendingSceneResetTarget := ""
+    }
+    if (IsSet(SessionTimeline))
+        try SessionTimeline.Record("OBS", "Scene Sources Reset: " targetScene, state, "Reset")
+    if (IsSet(ShowStageNudgeBanner) && (!IsObject(state) || !state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+        ShowStageNudgeBanner("Scene Sources Reset: " targetScene, "10B981", 2200, "OBS")
+}
+
+_HandleResetActiveSceneItemList(cfg, state, rawMsg) {
+    if (!IsObject(state) || !state.HasOwnProp("sceneResetInProgress") || !state.sceneResetInProgress)
+        return false
+    targetScene := (state.HasOwnProp("pendingSceneResetTarget") && state.pendingSceneResetTarget != "")
+        ? Trim(String(state.pendingSceneResetTarget))
+        : (state.HasOwnProp("currentSceneName") ? Trim(String(state.currentSceneName)) : "")
+    parsed := JsonCodec.Parse(rawMsg, &parseErr)
+    dObj := (IsObject(parsed) && (parsed is Map) && parsed.Has("d") && (parsed["d"] is Map)) ? parsed["d"] : ""
+    statusOk := (IsObject(dObj) && dObj.Has("requestStatus") && (dObj["requestStatus"] is Map) && dObj["requestStatus"].Has("result"))
+        ? !!dObj["requestStatus"]["result"]
+        : true
+    enabledIds := []
+    if (statusOk && targetScene != "" && IsObject(dObj) && dObj.Has("responseData") && (dObj["responseData"] is Map)) {
+        rd := dObj["responseData"]
+        if (rd.Has("sceneItems") && (rd["sceneItems"] is Array)) {
+            for _, item in rd["sceneItems"] {
+                if (IsObject(item) && (item is Map) && item.Has("sceneItemId") && item.Has("sceneItemEnabled") && !!item["sceneItemEnabled"]) {
+                    try enabledIds.Push(Integer(item["sceneItemId"]))
+                }
+            }
+        }
+    }
+    if (!statusOk || targetScene = "" || enabledIds.Length = 0) {
+        _ClearSceneResetWatchdog(state)
+        state.sceneResetInProgress := false
+        state.pendingSceneResetTarget := ""
+        if (statusOk && enabledIds.Length = 0 && IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("No active scene sources to reset", "F59E0B", 2000, "OBS")
+        return false
+    }
+    for _, itemId in enabledIds
+        ExecuteHostSetSceneItemEnabled(cfg, state, targetScene, itemId, false)
+    ; Capture exact targetScene + enabledIds so a scene change within 250ms still re-enables the right items
+    doneFn := _CompleteResetActiveSceneItems.Bind(cfg, state, targetScene, enabledIds)
+    try SetTimer(doneFn, -250)
+    return true
+}
+
+ExecuteHostResetActiveScene(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (state.HasOwnProp("sceneResetInProgress") && state.sceneResetInProgress)
+        return false
+    if (state.HasOwnProp("obsSceneResetFn") && IsObject(state.obsSceneResetFn)) {
+        res := state.obsSceneResetFn.Call()
+        return (res != false)
+    }
+    targetScene := state.HasOwnProp("currentSceneName") ? Trim(String(state.currentSceneName)) : ""
+    if (targetScene = "" || !cfg.EnableWS || !state.HasOwnProp("obsConnected") || !state.obsConnected || !state.HasOwnProp("obsWs") || !IsObject(state.obsWs))
+        return false
+    state.sceneResetInProgress := true
+    state.pendingSceneResetTarget := targetScene
+    _ScheduleSceneResetWatchdog(state, targetScene)
+    ok := SendObsRequest(state.obsWs, "GetSceneItemList", "ResetActiveSceneList", '{"sceneName":"' EscapeJsonStr(targetScene) '"}')
+    if (!ok) {
+        _ClearSceneResetWatchdog(state)
+        state.sceneResetInProgress := false
+        state.pendingSceneResetTarget := ""
+    }
+    return ok
+}
+
 ExecuteHostAudioHandoff(cfg, state, mode := "both") {
-    if (!IsObject(cfg) || !IsObject(state) || !cfg.EnableWS || !state.obsConnected || !IsObject(state.obsWs))
+    if (!IsObject(cfg) || !IsObject(state) || !cfg.HasOwnProp("EnableWS") || !cfg.EnableWS || !state.HasOwnProp("obsConnected") || !state.obsConnected || !state.HasOwnProp("obsWs") || !IsObject(state.obsWs))
         return false
     m := StrLower(Trim(String(mode)))
+    if (m = "host")
+        m := "solo_a"
+    else if (m = "remote")
+        m := "solo_b"
     primary := cfg.HasOwnProp("targetMicName") ? Trim(cfg.targetMicName) : "Mic/Aux"
     secList := []
     if (cfg.HasOwnProp("SecondaryAudioSources") && Trim(String(cfg.SecondaryAudioSources)) != "") {
@@ -3070,8 +3185,15 @@ ExecuteHostSessionTurnover(cfg, state, revokeGuests := true) {
     if (state.HasOwnProp("isPanic") && state.isPanic)
         ExecuteHostEmergencyPanic(cfg, state, false)
     state.unreadChatCount := 0
+    state.slideIndex := 0
+    state.slideTotal := 0
+    state.slideTitle := ""
+    state.slideNotes := ""
+    state.presenterSignals := []
     ExecuteHostRemoteSetMute(cfg, state, true)
     global g_HostCompanionBridge
+    if (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge))
+        g_HostCompanionBridge.cachedSlidePreviewBuf := ""
     if (revokeGuests && IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge))
         try g_HostCompanionBridge.RevokeEphemeralGuests()
     if (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge) && g_HostCompanionBridge.HasMethod("BroadcastSessionReset"))

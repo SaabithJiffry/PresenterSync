@@ -113,7 +113,16 @@ def http_json(method: str, url: str, payload: dict | None = None) -> tuple[int, 
 
 
 def main() -> int:
-    for p in [READY_FILE, READY_FILE + ".cmd", READY_FILE + ".rotated"]:
+    for p in [
+        READY_FILE,
+        READY_FILE + ".cmd",
+        READY_FILE + ".rotated",
+        READY_FILE + ".rec_ready",
+        READY_FILE + ".events",
+        READY_FILE + ".lan_ready",
+        READY_FILE + ".slide_ready",
+        READY_FILE + ".turnover_done",
+    ]:
         if os.path.exists(p):
             os.remove(p)
 
@@ -308,13 +317,85 @@ def main() -> int:
         assert ev["ppt"] == "next,prev" and ev["hasToggleRecord"] is True and ev["hasSwitchScene"] is True and ev["hasPauseRec"] is True and ev["hasSplitRec"] is True and ev["isStandby"] is True and ev["timerState"] == "running", f"Unexpected host events: {ev}"
         print("[PASS] Host Bridge executed real PPT handlers, OBS Director commands, Standby & Timer")
 
+        # 7. v10.1.0 V2-M1: P0-1 (/update/sha256 Content-Type + >2.5MB /update/android), #1 reset_active_scene, P0-2 session_reset + P1-3 slide preview clear
+        import hashlib, tempfile, shutil
+        upd_dir = tempfile.mkdtemp(prefix="ps_upd_e2e_")
+        try:
+            apk_bytes = os.urandom(2_600_000)
+            apk_sha = hashlib.sha256(apk_bytes).hexdigest()
+            sums_text = f"{apk_sha}  PresenterSync_Remote.apk\n"
+            with open(os.path.join(upd_dir, "PresenterSync_Remote.apk"), "wb") as f:
+                f.write(apk_bytes)
+            with open(os.path.join(upd_dir, "SHA256SUMS.txt"), "w", encoding="utf-8", newline="\n") as f:
+                f.write(sums_text)
+
+            with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+                f.write(f"ENABLE_LAN_UPDATE:{upd_dir}")
+            t0 = time.time()
+            while not os.path.exists(READY_FILE + ".lan_ready"):
+                if time.time() - t0 > 5:
+                    raise RuntimeError("ENABLE_LAN_UPDATE timeout")
+                time.sleep(0.05)
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{tcp_port}/update/sha256", timeout=5) as resp:
+                ct = (resp.headers.get("Content-Type") or "").lower()
+                body_txt = resp.read().decode("utf-8-sig").replace("\r\n", "\n")
+                assert resp.status == 200 and "text/plain" in ct and "charset=utf-8" in ct and body_txt == sums_text, f"Bad /update/sha256 header/body: {resp.status} ct={ct} body={body_txt!r}"
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{tcp_port}/update/android", timeout=10) as resp:
+                ct_apk = (resp.headers.get("Content-Type") or "").lower()
+                got_apk = resp.read()
+                assert resp.status == 200 and "application/vnd.android.package-archive" in ct_apk
+                assert len(got_apk) == len(apk_bytes) and hashlib.sha256(got_apk).hexdigest() == apk_sha, f"APK truncated/corrupt: len={len(got_apk)}"
+            print("[PASS] P0-1: GET /update/sha256 (valid text/plain header) & /update/android (>2.5 MB intact)")
+        finally:
+            shutil.rmtree(upd_dir, ignore_errors=True)
+
+        ws_send_text(s_ok, json.dumps({"type": "reset_active_scene", "cmdId": "e2e-rst-1"}))
+        rst_ack = None
+        for _ in range(8):
+            pkt = ws_recv_json(s_ok, buf_ok)
+            if pkt.get("type") in ("ack", "nack") and pkt.get("action") == "reset_active_scene":
+                rst_ack = pkt
+                break
+        assert rst_ack is not None and rst_ack.get("action") == "reset_active_scene", f"Missing reset_active_scene response: {rst_ack}"
+        print("[PASS] #1: WS reset_active_scene handled by HostBridge")
+
+        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+            f.write("PREPARE_SLIDE_PREVIEW")
+        t0 = time.time()
+        while not os.path.exists(READY_FILE + ".slide_ready"):
+            if time.time() - t0 > 5:
+                raise RuntimeError("PREPARE_SLIDE_PREVIEW timeout")
+            time.sleep(0.05)
+
+        req_prev = urllib.request.Request(f"http://127.0.0.1:{tcp_port}/slide-preview.jpg?token={token}")
+        with urllib.request.urlopen(req_prev, timeout=5) as resp:
+            assert resp.status == 200 and len(resp.read()) == 32
+
+        with open(READY_FILE + ".cmd", "w", encoding="utf-8") as f:
+            f.write("SESSION_TURNOVER")
+        reset_pkt = None
+        for _ in range(10):
+            pkt = ws_recv_json(s_ok, buf_ok)
+            if pkt.get("type") == "session_reset":
+                reset_pkt = pkt
+                break
+        assert reset_pkt is not None, "P0-2: Connected WS client did not receive session_reset on ExecuteHostSessionTurnover"
+        try:
+            urllib.request.urlopen(req_prev, timeout=5)
+            raise AssertionError("P1-3: Expected 404 for /slide-preview.jpg after session turnover")
+        except urllib.error.HTTPError as e:
+            assert e.code == 404, f"P1-3: Expected 404 after turnover, got {e.code}"
+        print("[PASS] P0-2 + P1-3: SESSION_TURNOVER delivers session_reset & clears cached /slide-preview.jpg")
+
         ws_send_text(s_ok, json.dumps({"type": "unpair"}))
         try:
             ws_recv_json(s_ok, buf_ok, timeout=1.5)
         except Exception:
             pass
         s_ok.close()
-        for p in [READY_FILE + ".rec_ready", READY_FILE + ".events"]:
+        for p in [READY_FILE + ".rec_ready", READY_FILE + ".events", READY_FILE + ".lan_ready", READY_FILE + ".slide_ready", READY_FILE + ".turnover_done"]:
             if os.path.exists(p):
                 os.remove(p)
 
@@ -323,6 +404,17 @@ def main() -> int:
         proc.wait(timeout=5)
         print("=== ALL HOST BRIDGE E2E TESTS PASSED ===")
         return 0
+    except Exception:
+        try:
+            res_log = os.path.join(REPO_DIR, "tests", "host_bridge_results.log")
+            if os.path.exists(res_log):
+                with open(res_log, "r", encoding="utf-8", errors="replace") as lf:
+                    print("[HOST BRIDGE LOG]", lf.read())
+            if proc.poll() is not None and proc.stderr is not None:
+                print("[SERVER STDERR]", proc.stderr.read().decode("utf-8", errors="replace"))
+        except Exception:
+            pass
+        raise
     finally:
         if proc.poll() is None:
             proc.terminate()
