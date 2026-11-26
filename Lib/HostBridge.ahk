@@ -1151,7 +1151,8 @@ class HostCompanionBridge {
                 ? Trim(String(this.cfg.targetMicName))
                 : "Mic/Aux"
             obsPass := (allowObsFb && this.cfg.HasOwnProp("obsPassword")) ? String(this.cfg.obsPassword) : ""
-            obsField := ',"obsFallback":{"port":4455,"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(obsPass) '","directObsAllowed":' (allowObsFb ? "true" : "false") '}'
+            obsPort := (this.cfg.HasOwnProp("ObsWsPort") && IsInteger(this.cfg.ObsWsPort)) ? Integer(this.cfg.ObsWsPort) : 4455
+            obsField := ',"obsFallback":{"port":' obsPort ',"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(obsPass) '","directObsAllowed":' (allowObsFb ? "true" : "false") '}'
         }
         perms := HostCompanionBridge.GetPermissionsForRole(devRole)
         permJson := "["
@@ -1160,8 +1161,11 @@ class HostCompanionBridge {
         permJson .= "]"
         ver := _HB_JsonEscape(UIConstants.APP_VERSION)
         bootId := _HB_JsonEscape(this._EnsureBootId())
+        skewWarn := (IsObject(c) && c.HasOwnProp("versionSkewWarning") && c.versionSkewWarning != "")
+            ? ',"versionSkewWarning":"' _HB_JsonEscape(c.versionSkewWarning) '"'
+            : ""
         caps := '["protocol_v2","cmd_dedup","set_state","ack_nack","stage_nudge","director_deck","rbac_v1"]'
-        return '{"type":"auth_ok","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"role":"' _HB_JsonEscape(devRole) '","trustTier":"' _HB_JsonEscape(devTier) '","allowDirectObsFallback":' (allowObsFb ? "true" : "false") ',"permissions":' permJson ',"capabilities":' caps ',"hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' ver '"' tokField obsField '}'
+        return '{"type":"auth_ok","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"role":"' _HB_JsonEscape(devRole) '","trustTier":"' _HB_JsonEscape(devTier) '","allowDirectObsFallback":' (allowObsFb ? "true" : "false") ',"permissions":' permJson ',"capabilities":' caps ',"hostUuid":"' _HB_JsonEscape(EnsureHostUuid(this.cfg)) '","hostName":"' _HB_JsonEscape(A_ComputerName) '","version":"' ver '"' skewWarn tokField obsField '}'
     }
 
     _OnUdpMessage(wParam, lParam, msg, hwnd) {
@@ -2228,6 +2232,8 @@ class HostCompanionBridge {
             caps := JsonCodec.GetStrArray(msgObj, "capabilities")
             if (caps.Length > 0)
                 c.capabilities := caps
+            skew := HostCompanionBridge.CheckVersionSkew(c.appVersion, c.protocolVersion)
+            c.versionSkewWarning := (IsObject(skew) && skew.HasOwnProp("skewed") && skew.skewed && skew.HasOwnProp("reason")) ? skew.reason : ""
             this._QueueWsFrame(c, 0x1, this._BuildAuthOkJson(c))
             if (msgObj.Has("clientFallbackState") && (msgObj["clientFallbackState"] is Map))
                 this._ReconcileClientFallbackState(c, msgObj["clientFallbackState"])

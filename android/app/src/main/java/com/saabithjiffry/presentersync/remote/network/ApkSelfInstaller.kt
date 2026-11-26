@@ -126,7 +126,9 @@ class ApkSelfInstaller(
             _bannerDismissed.value = false
             _installState.value = UpdateInstallState.Checking
         }
-        val res = AppUpdater.checkLatestRelease(httpClient)
+        val customFeed = configStore.config.value.customUpdateUrl.trim()
+        val apiUrl = if (customFeed.isNotBlank()) customFeed else com.saabithjiffry.presentersync.remote.config.AppConstants.GITHUB_RELEASES_API
+        val res = AppUpdater.checkLatestRelease(httpClient, apiUrl = apiUrl)
         if (res.errorMessage == null) {
             configStore.update { it.copy(lastUpdateCheckMs = now) }
             _latestCheck.value = res

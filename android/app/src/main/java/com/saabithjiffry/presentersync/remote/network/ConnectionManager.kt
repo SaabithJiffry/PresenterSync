@@ -1799,6 +1799,12 @@ class ConnectionManager(
             relayAction = { it.sendStageNudge(message) }
         )
 
+    fun sendNudgeAck(nudgeId: String): Boolean =
+        sendBridgeDeckAction { it.sendNudgeAck(nudgeId) }
+
+    fun sendPresenterSignal(message: String, urgency: String = "sticky"): Boolean =
+        sendBridgeDeckAction { it.sendPresenterSignal(message, urgency) }
+
     private fun sendBridgeDeckAction(action: (HostBridgeClient) -> Boolean): Boolean {
         val st = _uiState.value
         val bridge = bridgeClient

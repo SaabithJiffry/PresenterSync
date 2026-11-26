@@ -2745,7 +2745,18 @@ BuildRemoteTrayMenu(cfg, state) {
     _AddRemoteCheckedMenuItem(BehaviorMenu, "Auto-Dim HUD When Idle (10s)", (*) => ToggleHudOptionAndRebuild(cfg, state, "EnableIdleAutoDim", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu), cfg.EnableIdleAutoDim)
     _AddRemoteCheckedMenuItem(BehaviorMenu, "Lock Pill Position", (*) => ToggleHudOptionAndRebuild(cfg, state, "LockHudPosition", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu), cfg.LockHudPosition)
     _AddRemoteCheckedMenuItem(BehaviorMenu, "Hide HUD from Screen Share / Capture", (*) => ToggleHudOptionAndRebuild(cfg, state, "ExcludeFromCapture", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu), cfg.ExcludeFromCapture)
+    VisModeMenu := Menu()
+    for _, vMode in ["Always", "MutedOrAlert", "CornerTallyDot"]
+        _AddRemoteCheckedMenuItem(VisModeMenu, vMode, ((m, *) => (cfg.HudVisibilityMode := m, cfg.Write("Appearance", "HudVisibilityMode", m), RefreshRemoteHudAppearance(cfg, state), BuildRemoteTrayMenu(cfg, state))).Bind(vMode), (cfg.HasOwnProp("HudVisibilityMode") && cfg.HudVisibilityMode = vMode))
+    BehaviorMenu.Add("HUD Visibility Mode", VisModeMenu)
     AppearanceMenu.Add("Behavior && Capture Safety", BehaviorMenu)
+
+    SnapCornerMenu := Menu()
+    SnapCornerMenu.Add("Top-Left", (*) => SnapHudToCorner(cfg, state, "TL", 0))
+    SnapCornerMenu.Add("Top-Right", (*) => SnapHudToCorner(cfg, state, "TR", 0))
+    SnapCornerMenu.Add("Bottom-Left", (*) => SnapHudToCorner(cfg, state, "BL", 0))
+    SnapCornerMenu.Add("Bottom-Right", (*) => SnapHudToCorner(cfg, state, "BR", 0))
+    AppearanceMenu.Add("Snap HUD to Corner", SnapCornerMenu)
 
     AppearanceMenu.Add()
     AppearanceMenu.Add("Reset Indicator Position", ResetRemotePositionAction.Bind(cfg, state))
@@ -2784,6 +2795,8 @@ BuildRemoteTrayMenu(cfg, state) {
     ; 5. HELP & DIAGNOSTICS
     HelpMenu := Menu()
     HelpMenu.Add("Help && Setup Guide...", (*) => ShowRemoteHelpUI(cfg, state))
+    HelpMenu.Add("First-Run Setup Wizard...", (*) => ShowRemoteFirstRunWizard(cfg, state))
+    HelpMenu.Add("Run 5-Step Connection Tracer...", (*) => ShowRemoteTracerSummary(cfg, state))
     HelpMenu.Add()
     HelpMenu.Add("View Error && Diagnostic Log...", (*) => DiagnosticLogger.ShowLogViewerWindow(cfg, state))
     HelpMenu.Add("Export Sanitized Diagnostics...", (*) => ExportRemoteSanitizedDiagnostics(cfg, state))
@@ -3209,6 +3222,16 @@ RunRemoteConnectionTracer(host, port := 4456, state := "") {
     obsOk := (IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected)
     steps.Push({ step: "5. OBS / Mic", ok: obsOk, detail: obsOk ? "OBS connected" : "OBS offline or bridged" })
     return steps
+}
+
+ShowRemoteTracerSummary(cfg, state := "", *) {
+    h := IsObject(cfg) && cfg.HasOwnProp("HostAddress") ? cfg.HostAddress : ""
+    bp := (IsObject(cfg) && cfg.HasOwnProp("BridgePort") && IsInteger(cfg.BridgePort)) ? Integer(cfg.BridgePort) : 4456
+    steps := RunRemoteConnectionTracer(h, bp, state)
+    out := ""
+    for _, st in steps
+        out .= (st.ok ? "[OK] " : "[WAIT] ") st.step ": " st.detail "`r`n"
+    ShowCaptureSafeMicroToast(Trim(out, "`r`n"), 5500)
 }
 
 ShowRemoteFirstRunWizard(cfg, state := "", *) {

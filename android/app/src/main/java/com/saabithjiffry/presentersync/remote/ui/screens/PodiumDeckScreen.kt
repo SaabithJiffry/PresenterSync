@@ -144,12 +144,15 @@ fun PodiumDeckScreen(
             PodiumTimerAndStandbyCard(
                 conn = conn,
                 onToggleStandby = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendToggleStandby("podium") } },
+                onTogglePanic = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendEmergencyPanic(null, "podium") } },
                 onTimerCommand = { action, sec -> podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendTimerCommand(action, sec, "podium") } }
             )
 
             PodiumQuickNudgeCard(
                 conn = conn,
-                onSendNudge = { nudge -> podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendStageNudge(nudge) } }
+                onSendNudge = { nudge -> podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendStageNudge(nudge) } },
+                onSignalHost = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendPresenterSignal("Need Assistance", "sticky") } },
+                onAckNudge = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendNudgeAck(System.currentTimeMillis().toString()) } }
             )
         }
     }
@@ -361,6 +364,7 @@ private fun PodiumSlidesAndNotesCard(
 private fun PodiumTimerAndStandbyCard(
     conn: ConnectionUiState,
     onToggleStandby: () -> Unit,
+    onTogglePanic: () -> Unit,
     onTimerCommand: (String, Int) -> Unit
 ) {
     Surface(
@@ -388,17 +392,30 @@ private fun PodiumTimerAndStandbyCard(
                     text = "Timer: ${conn.formattedCountdown()} (${conn.timerState})",
                     color = timerColor,
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
                 )
-                Button(
-                    onClick = onToggleStandby,
-                    enabled = conn.connected,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (conn.isStandby) PodiumAmberAlert else Color(0xFF1E293B),
-                        contentColor = Color.White
-                    )
-                ) {
-                    Text(if (conn.isStandby) "Exit BRB" else "BRB", fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = onToggleStandby,
+                        enabled = conn.connected,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (conn.isStandby) PodiumAmberAlert else Color(0xFF1E293B),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text(if (conn.isStandby) "Exit BRB" else "BRB", fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = onTogglePanic,
+                        enabled = conn.connected,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (conn.isPanic) Color(0xFF991B1B) else Color(0xFF7F1D1D),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text(if (conn.isPanic) "PANIC ON" else "PANIC", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
 
@@ -443,7 +460,9 @@ private fun PodiumTimerAndStandbyCard(
 @Composable
 private fun PodiumQuickNudgeCard(
     conn: ConnectionUiState,
-    onSendNudge: (String) -> Unit
+    onSendNudge: (String) -> Unit,
+    onSignalHost: () -> Unit = {},
+    onAckNudge: () -> Unit = {}
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -455,12 +474,34 @@ private fun PodiumQuickNudgeCard(
             modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "Quick Stage Nudge",
-                color = Color(0xFF94A3B8),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Quick Stage Nudge",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilledTonalButton(
+                        onClick = onAckNudge,
+                        enabled = conn.connected && conn.usingBridge
+                    ) {
+                        Text("Got It ✓", fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = onSignalHost,
+                        enabled = conn.connected && conn.usingBridge,
+                        border = BorderStroke(1.dp, PodiumOledBorder),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    ) {
+                        Text("Signal Host", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

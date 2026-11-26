@@ -268,6 +268,30 @@ fun AboutUpdateDialog(
                                 )
                             }
 
+                            var customFeedDraft by remember(cfg.customUpdateUrl) { mutableStateOf(cfg.customUpdateUrl) }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = customFeedDraft,
+                                    onValueChange = { customFeedDraft = it },
+                                    label = { Text("Custom Update Feed URL (optional)") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedButton(
+                                    onClick = {
+                                        app.configStore.update { it.copy(customUpdateUrl = customFeedDraft.trim()) }
+                                        Toast.makeText(context, "Update feed saved", Toast.LENGTH_SHORT).show()
+                                    },
+                                    contentPadding = CompactExplorerButtonPadding
+                                ) {
+                                    Text("Save")
+                                }
+                            }
+
                             if (installState !is UpdateInstallState.Idle) {
                                 UpdateInstallProgressBody(
                                     app = app,

@@ -160,7 +160,15 @@ internal fun DirectorDeckAndTimerCard(
     onTimerCommand: (String, Int) -> Unit,
     onSendNudge: (String) -> Unit,
     onToggleRecord: () -> Unit = {},
-    confirmBeforeStopRecording: Boolean = true
+    confirmBeforeStopRecording: Boolean = true,
+    onEmergencyPanic: () -> Unit = {},
+    onSetPreviewScene: (String) -> Unit = {},
+    onAudioHandoff: (String) -> Unit = {},
+    onSaveReplayBuffer: () -> Unit = {},
+    onAddBookmark: (String) -> Unit = {},
+    onSessionReset: () -> Unit = {},
+    onSendPresenterSignal: (String) -> Unit = {},
+    onAckNudge: (String) -> Unit = {}
 ) {
     val isDirectObsFallback = conn.usingDirectObsFallback ||
         conn.channelType == com.saabithjiffry.presentersync.remote.network.ChannelType.DIRECT_OBS
@@ -242,6 +250,59 @@ internal fun DirectorDeckAndTimerCard(
                     )
                 ) {
                     Text(if (conn.isStandby) "Exit BRB" else "Standby BRB", maxLines = 1, softWrap = false)
+                }
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Button(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onEmergencyPanic() } },
+                    contentPadding = CompactExplorerButtonPadding,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (conn.isPanic) Color(0xFF991B1B) else Color(0xFF7F1D1D)
+                    )
+                ) {
+                    Text(if (conn.isPanic) "PANIC ON" else "PANIC", maxLines = 1, softWrap = false)
+                }
+                OutlinedButton(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onSaveReplayBuffer() } },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Replay", maxLines = 1, softWrap = false)
+                }
+                OutlinedButton(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onAddBookmark("Marked from Android") } },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Bookmark", maxLines = 1, softWrap = false)
+                }
+                if (conn.activeScene.isNotBlank()) {
+                    OutlinedButton(
+                        onClick = { directorRunWithCooldown(deckTapGate) { onSetPreviewScene(conn.activeScene) } },
+                        contentPadding = CompactExplorerButtonPadding
+                    ) {
+                        Text("Preview Active", maxLines = 1, softWrap = false)
+                    }
+                }
+                OutlinedButton(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onAudioHandoff("host") } },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Mic -> Host", maxLines = 1, softWrap = false)
+                }
+                OutlinedButton(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onAudioHandoff("remote") } },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Mic -> Remote", maxLines = 1, softWrap = false)
+                }
+                OutlinedButton(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onSessionReset() } },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Reset Session", maxLines = 1, softWrap = false)
                 }
             }
 
@@ -465,6 +526,24 @@ internal fun DirectorDeckAndTimerCard(
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Send")
+                }
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Button(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onAckNudge(System.currentTimeMillis().toString()) } },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Got It ✓", maxLines = 1, softWrap = false)
+                }
+                OutlinedButton(
+                    onClick = { directorRunWithCooldown(deckTapGate) { onSendPresenterSignal("Need Assistance") } },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text("Signal Host", maxLines = 1, softWrap = false)
                 }
             }
         }

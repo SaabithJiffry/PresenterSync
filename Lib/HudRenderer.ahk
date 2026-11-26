@@ -807,6 +807,14 @@ ApplyRecAppearance(cfg, state) {
         bg := state.colors.recOff, brd := state.colors.recBorderOff, ic := cfg.MonoIcon ? state.colors.recIconOff : "D1D5DB"
         glyph := Chr(0xE71A), lbl := "NOT REC"
     }
+    if (cfg.ShowText) {
+        if (state.HasOwnProp("isPanic") && state.isPanic)
+            lbl .= " [PANIC]"
+        else if (state.HasOwnProp("isStandby") && state.isStandby)
+            lbl .= " [BRB]"
+        if (state.HasOwnProp("timerState") && (state.timerState = "running" || state.timerState = "overtime") && state.HasOwnProp("timerRemainingSec"))
+            lbl .= " T:" FormatElapsedShort(Max(0, Integer(state.timerRemainingSec)))
+    }
     contentArgb := Gdip.HexToArgb(ic)
 
     if (cfg.ShowText) {

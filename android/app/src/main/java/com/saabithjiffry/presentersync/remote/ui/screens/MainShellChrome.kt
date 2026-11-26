@@ -518,7 +518,15 @@ internal fun RemoteDashboardScreen(
                                     onTimerCommand = { act, dur -> app.connectionManager.sendTimerCommand(act, dur, "dashboard") },
                                     onSendNudge = { msg -> app.connectionManager.sendStageNudge(msg) },
                                     onToggleRecord = { app.connectionManager.sendToggleRecord("dashboard") },
-                                    confirmBeforeStopRecording = cfg.confirmBeforeStopRecording
+                                    confirmBeforeStopRecording = cfg.confirmBeforeStopRecording,
+                                    onEmergencyPanic = { app.connectionManager.sendEmergencyPanic(null, "dashboard") },
+                                    onSetPreviewScene = { sc -> app.connectionManager.sendSetPreviewScene(sc, "dashboard") },
+                                    onAudioHandoff = { md -> app.connectionManager.sendAudioHandoff(md, "dashboard") },
+                                    onSaveReplayBuffer = { app.connectionManager.sendSaveReplayBuffer("dashboard") },
+                                    onAddBookmark = { lbl -> app.connectionManager.sendAddBookmark(lbl, "dashboard") },
+                                    onSessionReset = { app.connectionManager.sendSessionReset(true, "dashboard") },
+                                    onSendPresenterSignal = { msg -> app.connectionManager.sendPresenterSignal(msg, "sticky") },
+                                    onAckNudge = { nid -> app.connectionManager.sendNudgeAck(nid) }
                                 )
 
                                 FormFactorOptimizationCard(
@@ -609,7 +617,15 @@ internal fun RemoteDashboardScreen(
                             onTimerCommand = { act, dur -> app.connectionManager.sendTimerCommand(act, dur, "dashboard") },
                             onSendNudge = { msg -> app.connectionManager.sendStageNudge(msg) },
                             onToggleRecord = { app.connectionManager.sendToggleRecord("dashboard") },
-                            confirmBeforeStopRecording = cfg.confirmBeforeStopRecording
+                            confirmBeforeStopRecording = cfg.confirmBeforeStopRecording,
+                            onEmergencyPanic = { app.connectionManager.sendEmergencyPanic(null, "dashboard") },
+                            onSetPreviewScene = { sc -> app.connectionManager.sendSetPreviewScene(sc, "dashboard") },
+                            onAudioHandoff = { md -> app.connectionManager.sendAudioHandoff(md, "dashboard") },
+                            onSaveReplayBuffer = { app.connectionManager.sendSaveReplayBuffer("dashboard") },
+                            onAddBookmark = { lbl -> app.connectionManager.sendAddBookmark(lbl, "dashboard") },
+                            onSessionReset = { app.connectionManager.sendSessionReset(true, "dashboard") },
+                            onSendPresenterSignal = { msg -> app.connectionManager.sendPresenterSignal(msg, "sticky") },
+                            onAckNudge = { nid -> app.connectionManager.sendNudgeAck(nid) }
                         )
 
                         FormFactorOptimizationCard(

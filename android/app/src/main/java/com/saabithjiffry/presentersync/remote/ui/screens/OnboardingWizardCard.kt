@@ -388,6 +388,42 @@ fun OnboardingWizardCard(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
+            // Optional Reliability Check: Unrestricted Battery Optimization
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (batteryOptimizationExempt) "Battery: Unrestricted" else "Battery Optimization Active",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (batteryOptimizationExempt) Color(0xFF10B981) else Color(0xFFD97706)
+                    )
+                    Text(
+                        text = if (batteryOptimizationExempt) {
+                            "Background HUD & Bridge sync exempt from OEM doze throttling."
+                        } else {
+                            "Recommended for Smart Boards & Xiaomi/Samsung phones to prevent sleep drops."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (!batteryOptimizationExempt) {
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = onRequestBatteryUnrestricted,
+                        contentPadding = CompactExplorerButtonPadding
+                    ) {
+                        Text("Allow", maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),

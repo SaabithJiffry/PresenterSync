@@ -1,6 +1,7 @@
 package com.saabithjiffry.presentersync.remote.ui.screens
 
 import android.Manifest
+import com.saabithjiffry.presentersync.remote.util.DiagnosticLogger
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -394,7 +395,8 @@ fun HelpCenterDialog(
                         else -> HelpDiagnosticsTab(
                             context = context,
                             cfg = cfg,
-                            conn = conn
+                            conn = conn,
+                            onRunTrace = { app.connectionManager.traceConnectionSteps() }
                         )
                     }
                 }
@@ -566,8 +568,10 @@ private fun HelpSearchTab(
 private fun HelpDiagnosticsTab(
     context: Context,
     cfg: com.saabithjiffry.presentersync.remote.config.RemoteConfig,
-    conn: com.saabithjiffry.presentersync.remote.network.ConnectionUiState
+    conn: com.saabithjiffry.presentersync.remote.network.ConnectionUiState,
+    onRunTrace: () -> List<String> = { emptyList() }
 ) {
+    var traceSteps by remember { mutableStateOf<List<String>>(emptyList()) }
     val overlayOk = Settings.canDrawOverlays(context)
     val notifOk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
@@ -616,6 +620,36 @@ private fun HelpDiagnosticsTab(
             ProfileLine("HUD Style", "${cfg.hudColorPreset} • ${cfg.indicatorScale}x • ClickThru=${cfg.hudClickThrough}")
 
             Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { traceSteps = onRunTrace() },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("5-Step Trace", maxLines = 1, softWrap = false)
+                }
+                OutlinedButton(
+                    onClick = {
+                        val tail = DiagnosticLogger.getRecentLogTail(12000).ifBlank { "(No diagnostic log entries yet)" }
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        cm?.setPrimaryClip(ClipData.newPlainText("PresenterSync Log Tail", tail))
+                        Toast.makeText(context, "Recent log tail copied", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Copy Log Tail", maxLines = 1, softWrap = false)
+                }
+            }
+            if (traceSteps.isNotEmpty()) {
+                Text(
+                    text = traceSteps.joinToString("\n"),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Button(
                 onClick = {
                     val summary = buildString {
