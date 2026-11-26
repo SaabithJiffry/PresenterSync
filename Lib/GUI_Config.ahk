@@ -2263,6 +2263,9 @@ class OverlayState {
     sceneMarqueeSpan := 0
     sceneMarqueeFontPt := 9.0
     sceneMarqueeTimerFn := ""
+    sceneHoldProgress := 0.0
+    sceneResetInProgress := false
+    pendingSceneResetTarget := ""
 
     baseAlpha := 220
     currentAlpha := 220
@@ -2717,6 +2720,82 @@ ImportPortableSettingsBundle(cfg, state, sourcePath) {
     } catch as err {
         return { ok: false, appliedCount: 0, error: err.Message }
     }
+}
+
+PromptKioskPinModal(promptText, title := "PresenterSync Kiosk Lock", allowEmpty := false, modalTestFn := "") {
+    if (IsObject(modalTestFn))
+        return modalTestFn.Call(promptText, title, allowEmpty)
+    if (IsSet(Theme) && Theme.HasMethod("AcquireSuspend"))
+        Theme.AcquireSuspend()
+    g := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", title)
+    g.MarginX := 18
+    g.MarginY := 14
+    if (IsSet(Theme) && Theme.HasMethod("ApplyToWindow"))
+        Theme.ApplyToWindow(g)
+    g.SetFont("s9 w600", IsSet(Theme) ? Theme.UiFont : "Segoe UI")
+    lbl := g.Add("Text", "xm w300", promptText)
+    if (IsSet(Theme) && Theme.HasMethod("RegisterControl"))
+        Theme.RegisterControl(g, lbl, "Text")
+    g.SetFont("s10 w400", IsSet(Theme) ? Theme.UiFont : "Segoe UI")
+    ed := g.Add("Edit", "xm y+8 w300 Password")
+    if (IsSet(Theme) && Theme.HasMethod("RegisterControl"))
+        Theme.RegisterControl(g, ed, "Edit")
+    btnOk := g.Add("Button", "xm y+14 w144 h30 Default", "OK")
+    btnCancel := g.Add("Button", "x+12 yp w144 h30", "Cancel")
+    if (IsSet(Theme) && Theme.HasMethod("RegisterControl")) {
+        Theme.RegisterControl(g, btnOk, "Button", "accent")
+        Theme.RegisterControl(g, btnCancel, "Button")
+    }
+    res := { Result: "Cancel", Value: "" }
+    done := false
+    FinishPin(okFlag, *) {
+        if (done)
+            return
+        done := true
+        res := { Result: okFlag ? "OK" : "Cancel", Value: okFlag ? ed.Value : "" }
+        try g.Destroy()
+    }
+    btnOk.OnEvent("Click", (*) => FinishPin(true))
+    btnCancel.OnEvent("Click", (*) => FinishPin(false))
+    g.OnEvent("Close", (*) => FinishPin(false))
+    g.OnEvent("Escape", (*) => FinishPin(false))
+    if (IsSet(ProtectWindowFromCapture)) {
+        try ProtectWindowFromCapture(g.Hwnd)
+    } else if (IsSet(ApplyWindowCaptureAffinity)) {
+        try ApplyWindowCaptureAffinity(g.Hwnd, true)
+    }
+    if (IsSet(WindowFit))
+        WindowFit.Show(g, "AutoSize Center")
+    else
+        g.Show("AutoSize Center")
+    ed.Focus()
+    WinWaitClose("ahk_id " g.Hwnd)
+    if (IsSet(Theme) && Theme.HasMethod("ReleaseSuspend"))
+        Theme.ReleaseSuspend()
+    return res
+}
+
+OpenSetClearKioskPinDialog(cfg, state := "", modalTestFn := "") {
+    if (!IsObject(cfg))
+        return false
+    curPin := cfg.HasOwnProp("KioskPin") ? Trim(String(cfg.KioskPin)) : ""
+    if (curPin != "") {
+        vRes := PromptKioskPinModal("Enter current Kiosk PIN to modify or clear it:", "Verify Kiosk PIN", false, modalTestFn)
+        if (!IsObject(vRes) || vRes.Result != "OK" || Trim(String(vRes.Value)) !== curPin) {
+            if (IsSet(ShowCaptureSafeMicroToast))
+                try ShowCaptureSafeMicroToast("Incorrect Kiosk PIN", 2000)
+            return false
+        }
+    }
+    nRes := PromptKioskPinModal("Enter new Kiosk PIN (leave blank to remove Kiosk Lock):", "Set / Clear Kiosk PIN", true, modalTestFn)
+    if (!IsObject(nRes) || nRes.Result != "OK")
+        return false
+    newPin := Trim(String(nRes.Value))
+    cfg.KioskPin := newPin
+    try cfg.Write("Settings", "KioskPin", newPin)
+    if (IsSet(ShowCaptureSafeMicroToast))
+        try ShowCaptureSafeMicroToast(newPin = "" ? "Kiosk PIN cleared — Settings unlocked" : "Kiosk PIN saved (Settings locked)", 2500)
+    return true
 }
 #Include "%A_LineFile%\..\CaptureSafety.ahk"
 #Include "%A_LineFile%\..\HudRenderer.ahk"

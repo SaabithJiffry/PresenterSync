@@ -12,6 +12,9 @@ class OperatorConsole {
     static _state := ""
     static _timerFn := ""
     static _ctrls := Map()
+    static _rosterIds := []
+    static _lastRosterFp := ""
+    static _lastSceneFp := Map()
 
     static IsOpen() {
         return IsObject(this._gui) && this._gui.Hwnd && WinExist("ahk_id " this._gui.Hwnd)
@@ -33,6 +36,9 @@ class OperatorConsole {
         }
         this._gui := ""
         this._ctrls := Map()
+        this._rosterIds := []
+        this._lastRosterFp := ""
+        this._lastSceneFp := Map()
     }
 
     static Show(cfg, state) {
@@ -149,16 +155,19 @@ class OperatorConsole {
             row := lv.GetNext(0)
         if (row <= 0)
             return
-        devName := lv.GetText(row, 1)
-        targetId := ""
-        for devId, d in g_HostCompanionBridge.pairedDevices {
-            lbl := (d.HasOwnProp("name") && d.name != "") ? d.name : devId
-            if (lbl = devName || devId = devName) {
-                targetId := devId
-                break
+        targetId := (row <= this._rosterIds.Length) ? this._rosterIds[row] : ""
+        if (targetId = "" || !g_HostCompanionBridge.pairedDevices.Has(targetId)) {
+            devName := lv.GetText(row, 1)
+            targetId := ""
+            for devId, d in g_HostCompanionBridge.pairedDevices {
+                lbl := (d.HasOwnProp("deviceName") && d.deviceName != "") ? d.deviceName : ((d.HasOwnProp("name") && d.name != "") ? d.name : devId)
+                if (lbl = devName || devId = devName) {
+                    targetId := devId
+                    break
+                }
             }
         }
-        if (targetId = "")
+        if (targetId = "" || !g_HostCompanionBridge.pairedDevices.Has(targetId))
             return
         if (kind = "flash")
             g_HostCompanionBridge.FlashDevicePill(targetId)
@@ -173,6 +182,7 @@ class OperatorConsole {
             curFb := g_HostCompanionBridge.pairedDevices[targetId].HasOwnProp("allowDirectObsFallback") ? !!g_HostCompanionBridge.pairedDevices[targetId].allowDirectObsFallback : false
             g_HostCompanionBridge.SetDeviceObsFallbackAllowed(targetId, !curFb)
         }
+        this._lastRosterFp := ""
         this.Refresh()
     }
 
@@ -201,8 +211,8 @@ class OperatorConsole {
         if (st.HasOwnProp("sceneList") && IsObject(st.sceneList) && st.sceneList.Length > 0) {
             curProg := st.HasOwnProp("currentSceneName") ? st.currentSceneName : ""
             curPrev := st.HasOwnProp("previewSceneName") ? st.previewSceneName : ""
-            this._SyncSceneDrop(c["progDrop"], st.sceneList, curProg)
-            this._SyncSceneDrop(c["prevDrop"], st.sceneList, curPrev)
+            this._SyncSceneDrop(c["progDrop"], st.sceneList, curProg, "prog")
+            this._SyncSceneDrop(c["prevDrop"], st.sceneList, curPrev, "prev")
         }
 
         if (IsSet(GetStageNudgeHistory)) {
@@ -220,24 +230,52 @@ class OperatorConsole {
         global g_HostCompanionBridge
         if (IsSet(g_HostCompanionBridge) && IsObject(g_HostCompanionBridge)) {
             lv := c["roster"]
-            lv.Delete()
+            fp := ""
+            rows := []
             for devId, d in g_HostCompanionBridge.pairedDevices {
                 lbl := (d.HasOwnProp("deviceName") && d.deviceName != "") ? d.deviceName : ((d.HasOwnProp("name") && d.name != "") ? d.name : devId)
                 role := d.HasOwnProp("role") ? d.role : "Presenter"
                 trust := d.HasOwnProp("trustTier") ? d.trustTier : "Guest"
                 fb := (d.HasOwnProp("allowDirectObsFallback") && d.allowDirectObsFallback) ? "Yes" : "No"
                 paused := (d.HasOwnProp("paused") && d.paused) ? "Paused" : "Active"
-                lv.Add("", lbl, role, trust, fb, paused)
+                fp .= devId "|" lbl "|" role "|" trust "|" fb "|" paused "`n"
+                rows.Push({ id: devId, lbl: lbl, role: role, trust: trust, fb: fb, paused: paused })
+            }
+            if (fp != this._lastRosterFp) {
+                selRow := lv.GetNext(0, "Focused")
+                if (selRow <= 0)
+                    selRow := lv.GetNext(0)
+                selDevId := (selRow > 0 && selRow <= this._rosterIds.Length) ? this._rosterIds[selRow] : ""
+                lv.Delete()
+                this._rosterIds := []
+                newSelRow := 0
+                for idx, r in rows {
+                    lv.Add("", r.lbl, r.role, r.trust, r.fb, r.paused)
+                    this._rosterIds.Push(r.id)
+                    if (selDevId != "" && r.id = selDevId)
+                        newSelRow := idx
+                }
+                if (newSelRow > 0)
+                    try lv.Modify(newSelRow, "Select Focus Vis")
+                this._lastRosterFp := fp
             }
         }
     }
 
-    static _SyncSceneDrop(ctrl, scenes, selected) {
+    static _SyncSceneDrop(ctrl, scenes, selected, key := "prog") {
         try {
-            ctrl.Delete()
-            ctrl.Add(scenes)
-            if (selected != "")
-                ctrl.Text := selected
+            fp := ""
+            for idx, s in scenes
+                fp .= (idx > 1 ? "|" : "") s
+            if (!this._lastSceneFp.Has(key) || this._lastSceneFp[key] != fp) {
+                ctrl.Delete()
+                ctrl.Add(scenes)
+                this._lastSceneFp[key] := fp
+            }
+            if (selected != "" && !SendMessage(0x0157, 0, 0, ctrl.Hwnd)) {
+                if (ctrl.Text != selected)
+                    ctrl.Text := selected
+            }
         }
     }
 }

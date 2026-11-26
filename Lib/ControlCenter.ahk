@@ -1997,7 +1997,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     if IsObject(existing)
         return existing
     if (IsObject(cfg) && cfg.HasOwnProp("KioskPin") && Trim(cfg.KioskPin) != "") {
-        ib := InputBox("Enter Kiosk PIN to open Control Center:", "PresenterSync Kiosk Lock", "Password w260 h120")
+        ib := PromptKioskPinModal("Enter Kiosk PIN to open Control Center:", "PresenterSync Kiosk Lock")
         if (ib.Result != "OK" || Trim(ib.Value) !== Trim(cfg.KioskPin)) {
             if (IsSet(ShowCaptureSafeMicroToast))
                 try ShowCaptureSafeMicroToast("Incorrect Kiosk PIN", 2000)
@@ -2521,6 +2521,10 @@ ShowControlCenterWindow(cfg, state := "", *) {
     btnPreFlightCC := ccGui.Add("Button", "x430 y354 w250 h30", "Go Live 10-Second Rehearsal...")
     Theme.RegisterControl(ccGui, btnPreFlightCC, "Button", "tabButton")
     btnPreFlightCC.OnEvent("Click", (*) => ShowPreFlightRehearsalDialog(cfg, state))
+
+    btnKioskPinCC := ccGui.Add("Button", "x32 y354 w220 h30", "Set / Clear Kiosk PIN...")
+    Theme.RegisterControl(ccGui, btnKioskPinCC, "Button", "tabButton")
+    btnKioskPinCC.OnEvent("Click", (*) => OpenSetClearKioskPinDialog(cfg, state))
 
     btnExportBundleCC := ccGui.Add("Button", "x430 y390 w122 h30", "Export Bundle...")
     btnImportBundleCC := ccGui.Add("Button", "x558 y390 w122 h30", "Import Bundle...")

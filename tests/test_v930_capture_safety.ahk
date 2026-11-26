@@ -153,6 +153,13 @@ try {
     dockRes := SnapHudToCorner(m33Cfg, m33State, "BR", 0)
     AssertEq(dockRes.w, 120, "SnapHudToCorner width=120")
     AssertEq(dockRes.h, 40, "SnapHudToCorner height=40")
+    AssertTrue(m33Cfg.HasOwnProp("savedXRatio") && m33Cfg.savedXRatio != "" && m33Cfg.HasOwnProp("savedYRatio") && m33Cfg.savedYRatio != "", "P2-5: SnapHudToCorner updates savedXRatio/savedYRatio cleanly")
+    snapIni := A_Temp "\ps_snap_ini_" A_TickCount ".ini"
+    try FileDelete(snapIni)
+    snapCfg := Config(snapIni)
+    SnapHudToCorner(snapCfg, m33State, "TL", 0)
+    AssertTrue(IniRead(snapIni, "Position", "XRatio", "") != "" && IniRead(snapIni, "Position", "YRatio", "") != "", "P2-5: SnapHudToCorner writes XRatio/YRatio to INI")
+    try FileDelete(snapIni)
     readout := GetHudPixelReadout(m33Cfg, m33State)
     AssertTrue(InStr(readout, "120×40 px @ (") > 0, "GetHudPixelReadout formats WxH px @ (X, Y)")
 
@@ -160,6 +167,27 @@ try {
     AssertTrue(InStr(banner19041, "WDA_EXCLUDEFROMCAPTURE") > 0 && InStr(banner19041, "NDI") > 0, "Banner mentions 19041+ and NDI tip")
     bannerLegacy := CaptureSafety.GetCaptureSafetyBannerText(true, 18363)
     AssertTrue(InStr(bannerLegacy, "WDA_MONITOR") > 0, "Banner mentions WDA_MONITOR for pre-19041")
+
+    ; v10.1.0 V2-M2 regressions (P0-5, P1-7, P1-8, P2-4, #1, #6)
+    pinBox := { calls: 0 }
+    pinOk := OpenSetClearKioskPinDialog(m33Cfg, m33State, (p, t, a := false) => (pinBox.calls += 1, { Result: "OK", Value: "4829" }))
+    AssertTrue(pinOk && m33Cfg.KioskPin = "4829" && pinBox.calls == 1, "P0-5: OpenSetClearKioskPinDialog sets KioskPin cleanly")
+    clrOk := OpenSetClearKioskPinDialog(m33Cfg, m33State, (p, t, a := false) => (InStr(p, "current") ? { Result: "OK", Value: "4829" } : { Result: "OK", Value: "" }))
+    AssertTrue(clrOk && m33Cfg.KioskPin = "", "P0-5: OpenSetClearKioskPinDialog verifies current PIN before clearing")
+
+    ccSrc := FileRead(A_ScriptDir "\..\Lib\ControlCenter.ahk", "UTF-8")
+    AssertTrue(InStr(ccSrc, "PromptKioskPinModal(") > 0 && !InStr(ccSrc, 'InputBox("Enter Kiosk PIN'), "P0-5: ControlCenter uses capture-excluded PromptKioskPinModal instead of native InputBox")
+
+    dlSrc := FileRead(A_ScriptDir "\..\Lib\DiagnosticLogger.ahk", "UTF-8")
+    AssertTrue(InStr(dlSrc, 'WindowFit.Show(vGui, "w804 h518 Center")') > 0, "P2-4: DiagnosticLogger uses WindowFit.Show")
+
+    hrSrc := FileRead(A_ScriptDir "\..\Lib\HudRenderer.ahk", "UTF-8")
+    AssertTrue(InStr(hrSrc, "IsCornerTallyDotActive(cfg, state)") > 0 && InStr(hrSrc, "dotSz") > 0 && InStr(hrSrc, 'UpdateHudVisibility(cfg, state)') > 0, "P1-7: HudRenderer wires CornerTallyDot compact mode and SyncUIState visibility updates")
+    AssertTrue(InStr(hrSrc, "sceneHoldProgress") > 0 && InStr(hrSrc, "ExecuteHostResetActiveScene(cfg, state)") > 0 && InStr(hrSrc, "0xFF06B6D4") > 0, "#1: Primary SceneGui renders cyan hold ring and triggers ExecuteHostResetActiveScene")
+
+    remSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
+    AssertTrue(InStr(remSrc, "ShowSceneIndicator") > 0 && InStr(remSrc, "ScenePosition") > 0 && InStr(remSrc, "ApplyRemoteSceneAppearance") > 0 && InStr(remSrc, "SendRemoteResetActiveScene") > 0 && InStr(remSrc, "ShowRemoteSceneSwitcherMenu") > 0, "#6: Windows Remote implements standalone toggleable Scene HUD with marquee, hold reset, and scene switcher menu")
+    AssertTrue(InStr(remSrc, 'ev.kind = "session_reset"') > 0 && InStr(remSrc, '"no_target_scene"') > 0 && InStr(remSrc, "state.usingBridge") > 0 && InStr(remSrc, "PromptKioskPinModal(") > 0, "P1-2/P1-8/P0-5: Windows Remote handles session_reset, full NACK toasts, real Tracer props, and PromptKioskPinModal")
 
 } catch as err {
     g_Failed++

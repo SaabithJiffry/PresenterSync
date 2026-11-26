@@ -1534,7 +1534,7 @@ Assert("Control Center registers all 45 tab Checkboxes, warns on invalid hotkey 
 ; 21.6 Scope Guard: PresenterSync_Remote remains strictly 1-tier Mic HUD (no multi-tier GUIs)
 remoteSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk")
 Assert("Scope guard: PresenterSync_Remote stays strictly 1-tier Mic HUD",
-    !RegExMatch(remoteSrc, "\b(RecGui|ChatGui|StudioGui|SceneGui|StreamGui|VCamGui)\b"))
+    !RegExMatch(remoteSrc, "\b(RecGui|ChatGui|StudioGui|StreamGui|VCamGui)\b"))
 
 ; 21.7 v3.0.1 UI Layout, Single-Row Tab & Overlap Regressions
 CheckGuiNoOverlaps(gObj) {

@@ -244,6 +244,11 @@ def main() -> int:
                 'stOk := DownloadVerifyAndStageWindowsUpdate(uOk, okDest, "", (r, t, p) => pctList.Push(p))\n'
                 'LogChk("Valid download succeeds with SHA-256 + monotonic progress", stOk.ok && stOk.shaVerified && FileExist(okDest) && pctList.Length > 0 && pctList[pctList.Length] == 100)\n'
                 '\n'
+                'uNoSha := { latest: uOk.latest, assetName: uOk.assetName, assetUrl: uOk.assetUrl, assetSize: uOk.assetSize, sha256Url: "" }\n'
+                f'noShaDest := "{tmp_dir}\\no_sha.exe"\n'
+                'stNoSha := DownloadVerifyAndStageWindowsUpdate(uNoSha, noShaDest)\n'
+                'LogChk("P1-4: Fail-closed when SHA256SUMS.txt URL is missing", !stNoSha.ok && InStr(stNoSha.reason, "SHA256SUMS") && !FileExist(noShaDest))\n'
+                '\n'
                 f'FileAppend("PASS=" passes " FAIL=" fails "`n", "{part_a_log}", "UTF-8")\n'
                 'ExitApp(fails > 0 ? 1 : 0)\n'
             )

@@ -288,7 +288,10 @@ class DiagnosticLogger {
             )
         ))
 
-        vGui.Show("w804 h518")
+        if (IsSet(WindowFit))
+            WindowFit.Show(vGui, "w804 h518 Center")
+        else
+            vGui.Show("w804 h518")
         return {shown: true, testMode: false, logPath: logPath, gui: vGui}
     }
 

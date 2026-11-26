@@ -126,6 +126,7 @@ class RemoteConfig {
     ShowPillMiniBadges := true
     ExcludeFromCapture := true
     HudVisibilityMode := "Always"
+    ShowSceneIndicator := false
     SlideTargetMode := "Host"
     KioskPin := ""
     ConfirmBeforeStopRecording := true
@@ -145,6 +146,10 @@ class RemoteConfig {
     savedY := "Default"
     savedXRatio := ""
     savedYRatio := ""
+    sceneSavedX := "Default"
+    sceneSavedY := "Default"
+    sceneSavedXRatio := ""
+    sceneSavedYRatio := ""
     _deferredWrites := Map()
     _deferredWriteTimerFn := ""
 
@@ -351,6 +356,7 @@ class RemoteConfig {
         this.ShowPillMiniBadges := this.ReadBool("Appearance", "ShowPillMiniBadges", 1)
         this.ExcludeFromCapture := this.ReadBool("Appearance", "ExcludeFromCapture", 1)
         this.HudVisibilityMode := NormalizeHudVisibilityMode(this.Read("Appearance", "HudVisibilityMode", "Always"))
+        this.ShowSceneIndicator := this.ReadBool("Appearance", "ShowSceneIndicator", 0)
         this.KioskPin := Trim(this.Read("Settings", "KioskPin", ""))
         this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", 1)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
@@ -373,6 +379,10 @@ class RemoteConfig {
         this.savedY := this.Read("Position", "Y", "Default")
         this.savedXRatio := this.Read("Position", "XRatio", "")
         this.savedYRatio := this.Read("Position", "YRatio", "")
+        this.sceneSavedX := this.Read("ScenePosition", "X", "Default")
+        this.sceneSavedY := this.Read("ScenePosition", "Y", "Default")
+        this.sceneSavedXRatio := this.Read("ScenePosition", "XRatio", "")
+        this.sceneSavedYRatio := this.Read("ScenePosition", "YRatio", "")
         if (IsSet(ConfigStore) && FileExist(this.ConfigFile)) {
             if (Trim(IniRead(this.ConfigFile, "ConfigMeta", "SchemaVersion", "")) = "")
                 try IniWrite(ConfigStore.CURRENT_SCHEMA_VERSION, this.ConfigFile, "ConfigMeta", "SchemaVersion")
@@ -389,6 +399,17 @@ class RemoteConfig {
         this.Write("Position", "Y", "Default")
         this.Write("Position", "XRatio", "")
         this.Write("Position", "YRatio", "")
+    }
+
+    ResetScenePosition() {
+        this.sceneSavedX := "Default"
+        this.sceneSavedY := "Default"
+        this.sceneSavedXRatio := ""
+        this.sceneSavedYRatio := ""
+        this.Write("ScenePosition", "X", "Default")
+        this.Write("ScenePosition", "Y", "Default")
+        this.Write("ScenePosition", "XRatio", "")
+        this.Write("ScenePosition", "YRatio", "")
     }
 
     ResetAppearance() {
@@ -536,6 +557,7 @@ class RemoteState {
     onRemoteCloseSignal := ""
 
     MicGui := ""
+    SceneGui := ""
     IconFont := ""
 
     baseWidth := 80
@@ -546,11 +568,29 @@ class RemoteState {
     chatW := 34
     row3Height := 30
     studioW := 28
-    sceneW := 46
+    sceneW := 152
+    sceneH := 30
+    miniTextSize := 9.0
     iconSize := 18
     textSize := 13
     savedX := 0
     savedY := 0
+    sceneSavedX := 0
+    sceneSavedY := 0
+    sceneHoldProgress := 0.0
+    sceneResetInProgress := false
+    pendingSceneResetTarget := ""
+    sceneResetWatchdogFn := ""
+    sceneMarqueeOffset := 0.0
+    sceneMarqueePhase := "pause_start"
+    sceneMarqueeTicks := 0
+    sceneMarqueeMaxOffset := 0.0
+    sceneMarqueeTextW := 0.0
+    sceneMarqueeSpan := 0.0
+    sceneMarqueeFontPt := 8.5
+    sceneMarqueeLastTick := 0
+    sceneMarqueeTimerFn := ""
+    _sceneMeasureCache := ""
 
     colors := {
         live: UIConstants.COLOR_LIVE,
@@ -558,7 +598,10 @@ class RemoteState {
         borderLive: UIConstants.BORDER_LIVE,
         borderMuted: UIConstants.BORDER_MUTED,
         iconLive: UIConstants.ICON_LIVE,
-        iconMuted: UIConstants.ICON_MUTED
+        iconMuted: UIConstants.ICON_MUTED,
+        scene: "1E2430",
+        sceneBorder: "475569",
+        sceneText: "F8FAFC"
     }
 
     __New(cfg) {
@@ -579,6 +622,7 @@ class RemoteState {
         this.lanRepromoteTimerFn := TryPromoteRemoteWanToLan.Bind(cfg, this)
         this.presenterTickFn := RemoteTimerTick.Bind(cfg, this)
         this.recTickFn := RemoteLocalRecTick.Bind(cfg, this)
+        this.sceneMarqueeTimerFn := RemoteSceneMarqueeTick.Bind(cfg, this)
         this.pointerHotIfFn := CheckRemotePointerEnable.Bind(cfg)
 
         this.ComputeDimensions(cfg)
@@ -603,6 +647,9 @@ class RemoteState {
         this.colors := UIConstants.GetColorPalette(cfg.HasOwnProp("HudColorPreset") ? cfg.HudColorPreset : "Standard", cLive, cMuted)
         this.baseWidth := Round((cfg.ShowText ? UIConstants.BASE_WIDTH_TEXT : UIConstants.BASE_WIDTH_ICON) * cfg.IndicatorScale)
         this.baseHeight := Round(UIConstants.BASE_HEIGHT * cfg.IndicatorScale)
+        this.sceneH := Round(UIConstants.ROW3_HEIGHT * cfg.IndicatorScale)
+        this.sceneW := Max(112, Round(Max(UIConstants.BASE_WIDTH_TEXT, 148) * cfg.IndicatorScale))
+        this.miniTextSize := Max(7.0, Round(UIConstants.MINI_TEXT_SIZE * cfg.IndicatorScale, 1))
         this.iconSize := Max(1, Round(UIConstants.MIC_ICON_SIZE * cfg.IndicatorScale))
         this.textSize := Max(1, Round(UIConstants.MIC_TEXT_SIZE * cfg.IndicatorScale))
 
@@ -632,6 +679,44 @@ class RemoteState {
                 vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
                 this.savedX := Max(vLeft, Min(sx, vRight - this.baseWidth))
                 this.savedY := Max(vTop, Min(sy, vBottom - this.baseHeight))
+            }
+        }
+
+        sRawX := cfg.HasOwnProp("sceneSavedX") ? cfg.sceneSavedX : "Default"
+        sRawY := cfg.HasOwnProp("sceneSavedY") ? cfg.sceneSavedY : "Default"
+        sHasRatio := (cfg.HasOwnProp("sceneSavedXRatio") && cfg.HasOwnProp("sceneSavedYRatio")
+            && cfg.sceneSavedXRatio != "" && cfg.sceneSavedYRatio != ""
+            && IsNumber(cfg.sceneSavedXRatio) && IsNumber(cfg.sceneSavedYRatio))
+        if (sRawX = "Default" || sRawY = "Default" || (!sHasRatio && (!IsInteger(sRawX) || !IsInteger(sRawY)))) {
+            defX := this.savedX + Round((this.baseWidth - this.sceneW) / 2)
+            defY := this.savedY - this.sceneH - this.hudGap
+            if (defY < SysGet(77) + 4)
+                defY := this.savedY + this.baseHeight + this.hudGap
+            if (IsSet(CaptureSafety)) {
+                clSc := CaptureSafety.ClampRectToMonitors(defX, defY, this.sceneW, this.sceneH)
+                this.sceneSavedX := clSc.x
+                this.sceneSavedY := clSc.y
+            } else {
+                this.sceneSavedX := defX
+                this.sceneSavedY := defY
+            }
+        } else if (sHasRatio) {
+            vLeft := SysGet(76), vTop := SysGet(77)
+            vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+            sPos := ResolvePositionFromRatio(cfg.sceneSavedXRatio, cfg.sceneSavedYRatio, this.sceneW, this.sceneH, vLeft, vTop, vRight, vBottom)
+            this.sceneSavedX := sPos.x
+            this.sceneSavedY := sPos.y
+        } else {
+            scX := Integer(sRawX), scY := Integer(sRawY)
+            if (IsSet(CaptureSafety)) {
+                clSc := CaptureSafety.ClampRectToMonitors(scX, scY, this.sceneW, this.sceneH)
+                this.sceneSavedX := clSc.x
+                this.sceneSavedY := clSc.y
+            } else {
+                vLeft := SysGet(76), vTop := SysGet(77)
+                vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+                this.sceneSavedX := Max(vLeft, Min(scX, vRight - this.sceneW))
+                this.sceneSavedY := Max(vTop, Min(scY, vBottom - this.sceneH))
             }
         }
     }
@@ -736,6 +821,8 @@ NotifyRemoteActivity(cfg, state) {
         state.currentAlpha := GetRemoteEffectiveAlpha(state)
         if (state.HasOwnProp("MicGui") && IsGuiValid(state.MicGui))
             try Gdip.SetLayeredAlpha(state.MicGui.Hwnd, state.currentAlpha)
+        if (state.HasOwnProp("SceneGui") && IsGuiValid(state.SceneGui) && _ShouldShowRemoteSceneHud(cfg, state))
+            try Gdip.SetLayeredAlpha(state.SceneGui.Hwnd, state.currentAlpha)
     }
 }
 
@@ -751,6 +838,8 @@ UpdateRemoteIdleDimTimer(cfg, state) {
         state.currentAlpha := GetRemoteEffectiveAlpha(state)
         if (IsGuiValid(state.MicGui))
             try Gdip.SetLayeredAlpha(state.MicGui.Hwnd, state.currentAlpha)
+        if (state.HasOwnProp("SceneGui") && IsGuiValid(state.SceneGui) && _ShouldShowRemoteSceneHud(cfg, state))
+            try Gdip.SetLayeredAlpha(state.SceneGui.Hwnd, state.currentAlpha)
     }
 }
 
@@ -764,8 +853,11 @@ RemoteIdleDimTick(cfg, state) {
     pt := Buffer(8, 0)
     if (DllCall("GetCursorPos", "Ptr", pt, "Int")) {
         mx := NumGet(pt, 0, "Int"), my := NumGet(pt, 4, "Int")
-        if (mx >= state.savedX && mx <= (state.savedX + state.baseWidth)
-            && my >= state.savedY && my <= (state.savedY + state.baseHeight)) {
+        overMic := (mx >= state.savedX && mx <= (state.savedX + state.baseWidth)
+            && my >= state.savedY && my <= (state.savedY + state.baseHeight))
+        overScene := (_ShouldShowRemoteSceneHud(cfg, state) && mx >= state.sceneSavedX && mx <= (state.sceneSavedX + state.sceneW)
+            && my >= state.sceneSavedY && my <= (state.sceneSavedY + state.sceneH))
+        if (overMic || overScene) {
             NotifyRemoteActivity(cfg, state)
             return
         }
@@ -774,6 +866,8 @@ RemoteIdleDimTick(cfg, state) {
         state.isIdleDimmed := true
         state.currentAlpha := GetRemoteEffectiveAlpha(state)
         try Gdip.SetLayeredAlpha(state.MicGui.Hwnd, state.currentAlpha)
+        if (state.HasOwnProp("SceneGui") && IsGuiValid(state.SceneGui) && _ShouldShowRemoteSceneHud(cfg, state))
+            try Gdip.SetLayeredAlpha(state.SceneGui.Hwnd, state.currentAlpha)
     }
 }
 
@@ -1318,6 +1412,21 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         } else if (ev.kind = "stage_nudge") {
             if (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)
                 ShowStageNudgeBanner(ev.message, (ev.accentHex != "" ? ev.accentHex : "F59E0B"), 4500, ev.sender)
+        } else if (ev.kind = "session_reset") {
+            state.slideIndex := 0
+            state.slideTotal := 0
+            state.slideTitle := ""
+            state.slideNotes := ""
+            state.quickNudges := []
+            state.activeScene := "Scene"
+            state.previewScene := ""
+            state.lastActionActor := ""
+            UpdateRemoteTouchDeckUI(cfg, state)
+            if (IsSet(ApplyRemoteSceneAppearance) && cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator)
+                try ApplyRemoteSceneAppearance(cfg, state)
+            state.NotifyTrayStatus()
+            if (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)
+                ShowCaptureSafeMicroToast("Session Reset by Host", 2500)
         } else if (ev.kind = "nack") {
             wasOpt := (state.HasOwnProp("_optimisticMutePending") && state._optimisticMutePending)
             CancelRemoteOptimisticReconcile(state)
@@ -1325,8 +1434,9 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 try TrySendWsText(ws, BuildRemoteBridgeSyncReqJson(cfg))
             if (IsSet(DiagnosticLogger))
                 try DiagnosticLogger.RecordBreadcrumb("Bridge", "CommandNack", ev.action " code=" ev.code " reason=" ev.reason)
-            if (ev.code = "obs_offline" || ev.code = "role_denied" || ev.code = "input_paused" || ev.code = "confirm_required")
-                try TrayTip("Host declined '" ev.action "': " (ev.reason != "" ? ev.reason : ev.code), "PresenterSync Remote", 2)
+            if (ev.code = "forbidden" || ev.code = "panic_locked" || ev.code = "no_target_scene"
+                || ev.code = "obs_offline" || ev.code = "role_denied" || ev.code = "input_paused" || ev.code = "confirm_required")
+                ShowCaptureSafeMicroToast("Host declined '" ev.action "': " (ev.reason != "" ? ev.reason : ev.code), 2800)
         } else if (ev.kind = "close_remote") {
             if (state.HasOwnProp("onRemoteCloseSignal") && IsObject(state.onRemoteCloseSignal))
                 state.onRemoteCloseSignal.Call()
@@ -1611,6 +1721,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     if (state.activeScene != "" && state.activeScene != "Scene" && state.activeScene != newSc)
                         state.previousProgramScene := state.activeScene
                     state.activeScene := newSc
+                    if (cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator && IsSet(ApplyRemoteSceneAppearance))
+                        try ApplyRemoteSceneAppearance(cfg, state)
                     state.NotifyTrayStatus()
                 }
             }
@@ -1630,6 +1742,10 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     state.NotifyTrayStatus()
                 }
             }
+        }
+        else if (InStr(msg, '"requestId":"RemoteResetSceneList"') || InStr(msg, '"requestId": "RemoteResetSceneList"')) {
+            if (IsSet(_HandleRemoteResetSceneItemList))
+                _HandleRemoteResetSceneItemList(cfg, state, msg)
         }
     }
 }
@@ -1839,6 +1955,8 @@ SyncRemoteMuteState(cfg, state, newMuted, isOptimistic := false) {
             state.voiceWhileMuted := false
         PlayMuteAnimation(cfg, state)
         UpdateRemoteTouchDeckUI(cfg, state)
+        if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot"))
+            RefreshRemoteHudAppearance(cfg, state)
         if (state.HasMethod("NotifyTrayStatus"))
             state.NotifyTrayStatus()
         if (!isOptimistic) {
@@ -1935,6 +2053,13 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
         }
     }
 
+    if (prevScene != state.activeScene && cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator && IsSet(ApplyRemoteSceneAppearance))
+        try ApplyRemoteSceneAppearance(cfg, state)
+
+    alertChanged := (prevWarn != state.streamDropWarn || prevVoiceWarn != state.voiceWhileMuted || prevOsDrift != state.osMicMutedDrift || prevDiskLvl != state.lowDiskWarnLevel || prevDeadMic != state.deadMicWarn)
+    if (alertChanged && cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot"))
+        RefreshRemoteHudAppearance(cfg, state)
+
     changed := (prevRec != state.recState || prevDiskLvl != state.lowDiskWarnLevel || prevDeadMic != state.deadMicWarn || prevOsDrift != state.osMicMutedDrift || prevWarn != state.streamDropWarn || prevVoiceWarn != state.voiceWhileMuted
         || prevStandby != state.isStandby || prevTimerSt != state.timerState || prevTimerRem != state.timerRemainingSec
         || prevScene != state.activeScene || state.recState > 0)
@@ -2020,6 +2145,265 @@ SendRemoteSwitchScene(cfg, state, sceneName) {
 
 SendRemoteTransitionScene(cfg, state) {
     return SendRemoteBridgeDeckCommand(cfg, state, "transition_scene")
+}
+
+_ClearRemoteSceneResetWatchdog(state) {
+    if (IsObject(state) && state.HasOwnProp("sceneResetWatchdogFn") && IsObject(state.sceneResetWatchdogFn)) {
+        try SetTimer(state.sceneResetWatchdogFn, 0)
+        state.sceneResetWatchdogFn := ""
+    }
+}
+
+_OnRemoteSceneResetWatchdog(state) {
+    if (!IsObject(state))
+        return
+    state.sceneResetWatchdogFn := ""
+    state.sceneResetInProgress := false
+    state.pendingSceneResetTarget := ""
+}
+
+_CompleteRemoteResetSceneItems(cfg, state, targetScene, itemIds) {
+    _ClearRemoteSceneResetWatchdog(state)
+    if (IsObject(state) && state.obsConnected && IsObject(state.obsWs)) {
+        for _, itemId in itemIds
+            SendObsRequest(state.obsWs, "SetSceneItemEnabled", "RemoteResetSetItem", '{"sceneName":"' EscapeJsonStr(targetScene) '","sceneItemId":' Integer(itemId) ',"sceneItemEnabled":true}')
+    }
+    if (IsObject(state)) {
+        state.sceneResetInProgress := false
+        state.pendingSceneResetTarget := ""
+    }
+    if (!IsObject(state) || !state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)
+        ShowCaptureSafeMicroToast("Scene Sources Reset: " targetScene, 2200)
+}
+
+_HandleRemoteResetSceneItemList(cfg, state, rawMsg) {
+    if (!IsObject(state) || !state.HasOwnProp("sceneResetInProgress") || !state.sceneResetInProgress)
+        return false
+    targetScene := (state.HasOwnProp("pendingSceneResetTarget") && state.pendingSceneResetTarget != "")
+        ? Trim(String(state.pendingSceneResetTarget))
+        : (state.HasOwnProp("activeScene") ? Trim(String(state.activeScene)) : "")
+    parsed := JsonCodec.Parse(rawMsg, &parseErr)
+    dObj := (IsObject(parsed) && (parsed is Map) && parsed.Has("d") && (parsed["d"] is Map)) ? parsed["d"] : ""
+    statusOk := (IsObject(dObj) && dObj.Has("requestStatus") && (dObj["requestStatus"] is Map) && dObj["requestStatus"].Has("result"))
+        ? !!dObj["requestStatus"]["result"]
+        : true
+    enabledIds := []
+    if (statusOk && targetScene != "" && IsObject(dObj) && dObj.Has("responseData") && (dObj["responseData"] is Map)) {
+        rd := dObj["responseData"]
+        if (rd.Has("sceneItems") && (rd["sceneItems"] is Array)) {
+            for _, item in rd["sceneItems"] {
+                if (IsObject(item) && (item is Map) && item.Has("sceneItemId") && item.Has("sceneItemEnabled") && !!item["sceneItemEnabled"]) {
+                    try enabledIds.Push(Integer(item["sceneItemId"]))
+                }
+            }
+        }
+    }
+    if (!statusOk || targetScene = "" || enabledIds.Length = 0) {
+        _ClearRemoteSceneResetWatchdog(state)
+        state.sceneResetInProgress := false
+        state.pendingSceneResetTarget := ""
+        if (statusOk && enabledIds.Length = 0 && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowCaptureSafeMicroToast("No active scene sources to reset", 2000)
+        return false
+    }
+    for _, itemId in enabledIds
+        SendObsRequest(state.obsWs, "SetSceneItemEnabled", "RemoteResetSetItem", '{"sceneName":"' EscapeJsonStr(targetScene) '","sceneItemId":' Integer(itemId) ',"sceneItemEnabled":false}')
+    doneFn := _CompleteRemoteResetSceneItems.Bind(cfg, state, targetScene, enabledIds)
+    try SetTimer(doneFn, -250)
+    return true
+}
+
+SendRemoteResetActiveScene(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (IsRemoteUsingInternetChannel(cfg, state))
+        return _SendRemoteRelayAction(cfg, state, "reset_active_scene", "1")
+    if (IsRemoteUsingBridgeChannel(cfg, state))
+        return TrySendWsText(state.obsWs, BuildRemoteBridgeDeckJson(cfg, "reset_active_scene"))
+    if (IsRemoteDirectObsReady(cfg, state)) {
+        if (state.HasOwnProp("sceneResetInProgress") && state.sceneResetInProgress)
+            return false
+        targetScene := state.HasOwnProp("activeScene") ? Trim(String(state.activeScene)) : ""
+        if (targetScene = "" || targetScene = "Scene")
+            return false
+        state.sceneResetInProgress := true
+        state.pendingSceneResetTarget := targetScene
+        _ClearRemoteSceneResetWatchdog(state)
+        wdFn := _OnRemoteSceneResetWatchdog.Bind(state)
+        state.sceneResetWatchdogFn := wdFn
+        try SetTimer(wdFn, -3000)
+        ok := SendObsRequest(state.obsWs, "GetSceneItemList", "RemoteResetSceneList", '{"sceneName":"' EscapeJsonStr(targetScene) '"}')
+        if (!ok) {
+            _ClearRemoteSceneResetWatchdog(state)
+            state.sceneResetInProgress := false
+            state.pendingSceneResetTarget := ""
+        }
+        return ok
+    }
+    ShowCaptureSafeMicroToast("Reset Scene requires an active Bridge or Direct OBS connection.", 2200)
+    return false
+}
+
+_ShouldShowRemoteSceneHud(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (!cfg.HasOwnProp("ShowIndicator") || !cfg.ShowIndicator)
+        return false
+    if (!cfg.HasOwnProp("ShowSceneIndicator") || !cfg.ShowSceneIndicator)
+        return false
+    if (IsSet(HudSnake) && HudSnake.IsActive)
+        return false
+    if (ShouldHideForMutedOrAlertMode(cfg, state) || IsCornerTallyDotActive(cfg, state))
+        return false
+    return true
+}
+
+ApplyRemoteSceneAppearance(cfg, state, fromMarqueeTick := false) {
+    if (!IsObject(state) || !state.HasOwnProp("SceneGui") || !IsGuiValid(state.SceneGui))
+        return false
+    sceneTxt := (state.HasOwnProp("activeScene") && Trim(String(state.activeScene)) != "") ? Trim(String(state.activeScene)) : "Scene"
+    scPad := Round(UIConstants.SCENE_PAD_X * cfg.IndicatorScale)
+    availW := Max(UIConstants.MIN_TEXT_WIDTH, state.sceneW - 2 * scPad)
+    fitFontPt := state.HasOwnProp("miniTextSize") ? Float(state.miniTextSize) : 9.0
+    minFontPt := Max(6.5, Round(7.5 * cfg.IndicatorScale, 1))
+    cacheKey := sceneTxt "|" cfg.IndicatorScale "|" availW "|" fitFontPt
+    if (state.HasOwnProp("_sceneMeasureCache") && IsObject(state._sceneMeasureCache) && state._sceneMeasureCache.key == cacheKey) {
+        cachedM := state._sceneMeasureCache
+        fullW := cachedM.fullW
+        fitFontPt := cachedM.fitFontPt
+        marqueeFontPt := cachedM.marqueeFontPt
+        nameW := cachedM.nameW
+        dotChar := cachedM.dotChar
+        dotW := cachedM.dotW
+    } else {
+        fullW := Gdip.MeasureTextWidthFloat(sceneTxt, "Segoe UI", fitFontPt, 1, false)
+        while (fullW > Float(availW) && fitFontPt > minFontPt) {
+            fitFontPt := Max(minFontPt, Round(fitFontPt - 0.5, 1))
+            fullW := Gdip.MeasureTextWidthFloat(sceneTxt, "Segoe UI", fitFontPt, 1, false)
+        }
+        marqueeFontPt := Max(7.0, Round(8.0 * cfg.IndicatorScale, 1))
+        nameW := (fullW > Float(availW)) ? Gdip.MeasureTextWidthFloat(sceneTxt, "Segoe UI", marqueeFontPt, 1, false) : fullW
+        dotChar := Chr(0x2022)
+        dotW := (fullW > Float(availW)) ? Gdip.MeasureTextWidthFloat(dotChar, "Segoe UI", marqueeFontPt, 1, false) : 0.0
+        state._sceneMeasureCache := {
+            key: cacheKey,
+            fullW: fullW,
+            fitFontPt: fitFontPt,
+            marqueeFontPt: marqueeFontPt,
+            nameW: nameW,
+            dotChar: dotChar,
+            dotW: dotW
+        }
+    }
+
+    scTextHex := (IsObject(state.colors) && state.colors.HasOwnProp("sceneText")) ? state.colors.sceneText : "F8FAFC"
+    scBgHex := (IsObject(state.colors) && state.colors.HasOwnProp("scene")) ? state.colors.scene : "1E2430"
+    scBrd := (IsObject(state.colors) && state.colors.HasOwnProp("sceneBorder")) ? state.colors.sceneBorder : "475569"
+    sceneTextArgb := Gdip.HexToArgb(scTextHex)
+
+    if (fullW <= Float(availW)) {
+        if (state.HasOwnProp("sceneMarqueeTimerFn") && IsObject(state.sceneMarqueeTimerFn))
+            try SetTimer(state.sceneMarqueeTimerFn, 0)
+        state.sceneMarqueeMaxOffset := 0.0
+        state.sceneMarqueeOffset := 0.0
+        labelCfg := {
+            text: sceneTxt,
+            size: fitFontPt,
+            bold: true,
+            color: sceneTextArgb,
+            x: scPad,
+            w: availW,
+            align: 1,
+            autoFit: true
+        }
+    } else {
+        sepGapPx := 28.0 * Float(cfg.IndicatorScale)
+        singleSpan := nameW + sepGapPx
+        state.sceneMarqueeFontPt := marqueeFontPt
+        state.sceneMarqueeTextW := nameW
+        state.sceneMarqueeSepGap := sepGapPx
+        state.sceneMarqueeSpan := singleSpan
+        state.sceneMarqueeMaxOffset := Max(0.0, nameW - Float(availW))
+        if (!fromMarqueeTick) {
+            state.sceneMarqueeOffset := 0.0
+            state.sceneMarqueePhase := "pause_start"
+            state.sceneMarqueeTicks := 0
+            state.sceneMarqueeLastTick := 0
+            if (_ShouldShowRemoteSceneHud(cfg, state) && state.HasOwnProp("sceneMarqueeTimerFn") && IsObject(state.sceneMarqueeTimerFn))
+                try SetTimer(state.sceneMarqueeTimerFn, 25)
+        }
+        x1 := Float(scPad) - Float(state.sceneMarqueeOffset)
+        xDot := x1 + nameW + (sepGapPx - dotW) / 2.0
+        x2 := x1 + singleSpan
+        labelCfg := {
+            size: marqueeFontPt,
+            bold: true,
+            color: sceneTextArgb,
+            align: 0,
+            autoFit: false,
+            clipX: scPad,
+            clipW: availW,
+            draws: [
+                { text: sceneTxt, x: x1, w: nameW + 8.0 },
+                { text: dotChar, x: xDot, w: dotW + 8.0 },
+                { text: sceneTxt, x: x2, w: nameW + 8.0 }
+            ]
+        }
+    }
+    sceneHold := state.HasOwnProp("sceneHoldProgress") ? Float(state.sceneHoldProgress) : 0.0
+    alpha := GetRemoteEffectiveAlpha(state)
+    return Gdip.RenderPill(state.SceneGui.Hwnd, state.sceneSavedX, state.sceneSavedY, state.sceneW, state.sceneH, Gdip.HexToArgb(scBgHex), Gdip.BgrToArgb(scBrd), alpha, GetCornerRadius(cfg, state.sceneH), "", labelCfg, 0.0, 0, sceneHold, 0xFF06B6D4)
+}
+
+RemoteSceneMarqueeTick(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("SceneGui") || !IsGuiValid(state.SceneGui) || !_ShouldShowRemoteSceneHud(cfg, state) || state.sceneMarqueeMaxOffset <= 0) {
+        if (IsObject(state) && state.HasOwnProp("sceneMarqueeTimerFn") && IsObject(state.sceneMarqueeTimerFn))
+            try SetTimer(state.sceneMarqueeTimerFn, 0)
+        return
+    }
+    if (state.isDraggingHud)
+        return
+    if (state.sceneMarqueePhase = "pause_start") {
+        state.sceneMarqueeTicks += 1
+        if (state.sceneMarqueeTicks < 60)
+            return
+        state.sceneMarqueeTicks := 0
+        state.sceneMarqueePhase := "scroll"
+        state.sceneMarqueeLastTick := A_TickCount
+        return
+    }
+    nowTick := A_TickCount
+    dt := (state.HasOwnProp("sceneMarqueeLastTick") && state.sceneMarqueeLastTick > 0) ? Min(120, Max(1, nowTick - state.sceneMarqueeLastTick)) : 25
+    state.sceneMarqueeLastTick := nowTick
+    stepPx := (36.0 * Float(cfg.IndicatorScale)) * (dt / 1000.0)
+    state.sceneMarqueeOffset += stepPx
+    spanPx := (state.HasOwnProp("sceneMarqueeSpan") && state.sceneMarqueeSpan > 0) ? state.sceneMarqueeSpan : (state.sceneMarqueeMaxOffset + 40.0)
+    if (state.sceneMarqueeOffset >= spanPx) {
+        state.sceneMarqueeOffset := 0.0
+        state.sceneMarqueePhase := "pause_start"
+        state.sceneMarqueeTicks := 0
+        state.sceneMarqueeLastTick := 0
+    }
+    ApplyRemoteSceneAppearance(cfg, state, true)
+}
+
+ShowRemoteSceneSwitcherMenu(cfg, state) {
+    scMenu := Menu()
+    curSc := (IsObject(state) && state.HasOwnProp("activeScene")) ? state.activeScene : ""
+    if (IsObject(state) && state.HasOwnProp("scenes") && IsObject(state.scenes) && state.scenes.Length > 0) {
+        for scItem in state.scenes {
+            dispSc := StrReplace(scItem, "&", "&&")
+            _AddRemoteCheckedMenuItem(scMenu, dispSc, ((s, *) => SendRemoteSwitchScene(cfg, state, s)).Bind(scItem), curSc == scItem)
+        }
+    } else {
+        scMenu.Add("No OBS scenes loaded yet", (*) => 0)
+        scMenu.Disable("No OBS scenes loaded yet")
+    }
+    scMenu.Add()
+    scMenu.Add("Transition (Preview <-> Program)", (*) => SendRemoteTransitionScene(cfg, state))
+    scMenu.Add("Reset Active Program Scene", (*) => SendRemoteResetActiveScene(cfg, state))
+    scMenu.Add("Hide Active Scene Indicator", ToggleRemoteSceneIndicator.Bind(cfg, state))
+    scMenu.Show()
 }
 
 SendRemoteTimerCommand(cfg, state, action, durationSec := 0) {
@@ -2217,31 +2601,21 @@ InitRemoteHUD(cfg, state) {
     state.ComputeDimensions(cfg)
     state.currentAlpha := GetRemoteEffectiveAlpha(state)
 
-    ; Only create a single layered GDI+ window for the Mic HUD
+    ; Create standalone layered GDI+ windows for Mic HUD and optional Scene HUD (#6)
     hudTitle := "PresenterSync Remote HUD" (cfg.HasOwnProp("InstanceName") && cfg.InstanceName != "" ? " [" cfg.InstanceName "]" : "")
-    state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale", hudTitle)
-    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
-    ApplyMicAppearance(cfg, state)
-
-    if (cfg.ShowIndicator) {
-        state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", state.savedX, state.savedY, state.baseWidth, state.baseHeight))
-        if (state.isMuted && state.obsConnected)
-            SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
-    }
-    ApplyHudClickThroughStyle(cfg, state)
     excl := cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true
+    state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale", hudTitle)
     ApplyWindowCaptureAffinity(state.MicGui.Hwnd, excl)
-    if (state.HasOwnProp("quickDeckGui") && IsObject(state.quickDeckGui)) {
-        try if (WinExist("ahk_id " state.quickDeckGui.Hwnd))
-            ApplyWindowCaptureAffinity(state.quickDeckGui.Hwnd, excl)
-    }
-    UpdateAutoDodgeTimer(cfg, state)
-    UpdateRemoteIdleDimTimer(cfg, state)
+
+    state.SceneGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale", hudTitle " [Scene]")
+    ApplyWindowCaptureAffinity(state.SceneGui.Hwnd, excl)
+
+    RefreshRemoteHudAppearance(cfg, state)
 
     OnMessage(0x0201, WM_REMOTE_LBUTTONDOWN.Bind(cfg, state))
-    OnMessage(0x0203, (wP, lP, m, h) => (IsObject(state.MicGui) && h == state.MicGui.Hwnd) ? WM_REMOTE_LBUTTONDOWN(cfg, state, wP, lP, m, h) : 0)
-    OnMessage(0x0205, WM_REMOTE_RBUTTONUP.Bind(state))
-    OnMessage(0x0208, (wP, lP, m, h) => (IsObject(state.MicGui) && h == state.MicGui.Hwnd) ? ShowRemoteTouchDeckGUI(cfg, state) : 0)
+    OnMessage(0x0203, (wP, lP, m, h) => (IsObject(state.MicGui) && h == state.MicGui.Hwnd) || (IsObject(state.SceneGui) && h == state.SceneGui.Hwnd) ? WM_REMOTE_LBUTTONDOWN(cfg, state, wP, lP, m, h) : 0)
+    OnMessage(0x0205, WM_REMOTE_RBUTTONUP.Bind(cfg, state))
+    OnMessage(0x0208, (wP, lP, m, h) => (IsObject(state.MicGui) && h == state.MicGui.Hwnd) || (IsObject(state.SceneGui) && h == state.SceneGui.Hwnd) ? ShowRemoteTouchDeckGUI(cfg, state) : 0)
     OnMessage(0x02E0, WM_REMOTE_DPICHANGED.Bind(cfg, state))
     OnMessage(0x007E, OnRemoteDisplayChange.Bind(cfg, state))
     OnMessage(0x0211, OnRemoteMenuLoop.Bind(state, true))
@@ -2249,12 +2623,16 @@ InitRemoteHUD(cfg, state) {
 }
 
 WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
-    if (!IsObject(state.MicGui) || hwnd != state.MicGui.Hwnd)
+    isMic := (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
+    isScene := (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd)
+    if (!isMic && !isScene)
         return
 
     NotifyRemoteActivity(cfg, state)
-    prevX := state.savedX
-    prevY := state.savedY
+    prevX := isScene ? state.sceneSavedX : state.savedX
+    prevY := isScene ? state.sceneSavedY : state.savedY
+    pillW := isScene ? state.sceneW : state.baseWidth
+    pillH := isScene ? state.sceneH : state.baseHeight
     prevMouseMode := A_CoordModeMouse
     CoordMode("Mouse", "Screen")
     MouseGetPos(&startMX, &startMY)
@@ -2262,27 +2640,54 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
 
     dragInitiated := false
     if (!cfg.HasOwnProp("EnableHudClickActions") || cfg.EnableHudClickActions) {
-        UpdateRemoteMicHold(p) {
-            if (p != state.micHoldProgress) {
-                state.micHoldProgress := p
-                ApplyMicAppearance(cfg, state)
+        if (isScene) {
+            UpdateRemoteSceneHold(p) {
+                curH := state.HasOwnProp("sceneHoldProgress") ? Float(state.sceneHoldProgress) : 0.0
+                if (p != curH) {
+                    state.sceneHoldProgress := p
+                    ApplyRemoteSceneAppearance(cfg, state, true)
+                }
             }
+            scRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, 700, 90, 700, UpdateRemoteSceneHold, (*) => SendRemoteResetActiveScene(cfg, state))
+            if (scRes.verdict = "hold_handled" || scRes.verdict = "hold") {
+                CoordMode("Mouse", prevMouseMode)
+                if (scRes.verdict = "hold")
+                    SendRemoteResetActiveScene(cfg, state)
+                return
+            }
+            if (scRes.verdict = "tap") {
+                CoordMode("Mouse", prevMouseMode)
+                SendRemoteTransitionScene(cfg, state)
+                return
+            }
+            if (scRes.verdict = "cancel" || (cfg.HasOwnProp("LockHudPosition") && cfg.LockHudPosition)) {
+                CoordMode("Mouse", prevMouseMode)
+                return
+            }
+            dragInitiated := true
+        } else {
+            UpdateRemoteMicHold(p) {
+                if (p != state.micHoldProgress) {
+                    state.micHoldProgress := p
+                    ApplyMicAppearance(cfg, state)
+                }
+            }
+            micRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, UIConstants.MIC_LONG_PRESS_MS, UpdateRemoteMicHold, (*) => HandleRemoteHudClick(cfg, state))
+            if (micRes.verdict = "hold_handled") {
+                CoordMode("Mouse", prevMouseMode)
+                return
+            }
+            if (micRes.verdict = "tap" || micRes.verdict = "hold") {
+                CoordMode("Mouse", prevMouseMode)
+                HandleRemoteHudClick(cfg, state)
+                return
+            }
+            if (micRes.verdict = "cancel" || (cfg.HasOwnProp("LockHudPosition") && cfg.LockHudPosition)) {
+                CoordMode("Mouse", prevMouseMode)
+                return
+            }
+            dragInitiated := true
         }
-        micRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, UIConstants.MIC_LONG_PRESS_MS, 90, UIConstants.MIC_LONG_PRESS_MS, UpdateRemoteMicHold, (*) => HandleRemoteHudClick(cfg, state))
-        if (micRes.verdict = "hold_handled") {
-            CoordMode("Mouse", prevMouseMode)
-            return
-        }
-        if (micRes.verdict = "tap" || micRes.verdict = "hold") {
-            CoordMode("Mouse", prevMouseMode)
-            HandleRemoteHudClick(cfg, state)
-            return
-        }
-        if (micRes.verdict = "cancel" || (cfg.HasOwnProp("LockHudPosition") && cfg.LockHudPosition)) {
-            CoordMode("Mouse", prevMouseMode)
-            return
-        }
-        dragInitiated := true
     }
 
     if (cfg.HasOwnProp("LockHudPosition") && cfg.LockHudPosition) {
@@ -2290,8 +2695,12 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         MouseGetPos(&endMX, &endMY)
         CoordMode("Mouse", prevMouseMode)
         isShortClick := (Abs(endMX - startMX) <= 6 && Abs(endMY - startMY) <= 6 && (A_TickCount - downTick) < 400)
-        if (isShortClick)
-            HandleRemoteHudClick(cfg, state)
+        if (isShortClick) {
+            if (isScene)
+                SendRemoteTransitionScene(cfg, state)
+            else
+                HandleRemoteHudClick(cfg, state)
+        }
         return
     }
 
@@ -2307,40 +2716,72 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     isShortClick := (Abs(endMX - startMX) <= 3 && Abs(endMY - startMY) <= 3 && (A_TickCount - downTick) < 400)
 
     if (isShortClick) {
-        state.savedX := prevX
-        state.savedY := prevY
-        state.MicGui.Move(prevX, prevY, state.baseWidth, state.baseHeight)
+        if (isScene) {
+            state.sceneSavedX := prevX
+            state.sceneSavedY := prevY
+            state.SceneGui.Move(prevX, prevY, pillW, pillH)
+        } else {
+            state.savedX := prevX
+            state.savedY := prevY
+            state.MicGui.Move(prevX, prevY, pillW, pillH)
+        }
     } else {
         WinGetPos(&X, &Y,,, "ahk_id " hwnd)
         if (!cfg.HasOwnProp("EnableMagneticSnap") || cfg.EnableMagneticSnap) {
-            snap := ComputeMagneticSnap(X, Y, state.baseWidth, state.baseHeight, 0, UIConstants.SNAP_THRESHOLD_PX, GetCandidateSnapWindowRects(state))
+            snap := ComputeMagneticSnap(X, Y, pillW, pillH, 0, UIConstants.SNAP_THRESHOLD_PX, GetCandidateSnapWindowRects(state))
             X := snap.x, Y := snap.y
         }
-        state.savedX := X
-        state.savedY := Y
-        state.MicGui.Move(X, Y, state.baseWidth, state.baseHeight)
-        if (X != prevX || Y != prevY) {
-            cfg.savedX := X
-            cfg.savedY := Y
-            cfg.Write("Position", "X", X)
-            cfg.Write("Position", "Y", Y)
-            vLeft := SysGet(76), vTop := SysGet(77)
-            vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
-            ratio := ComputePositionRatio(X, Y, vLeft, vTop, vRight, vBottom)
-            cfg.savedXRatio := ratio.xRatio
-            cfg.savedYRatio := ratio.yRatio
-            cfg.Write("Position", "XRatio", ratio.xRatio)
-            cfg.Write("Position", "YRatio", ratio.yRatio)
+        if (isScene) {
+            state.sceneSavedX := X
+            state.sceneSavedY := Y
+            state.SceneGui.Move(X, Y, pillW, pillH)
+            if (X != prevX || Y != prevY) {
+                cfg.sceneSavedX := X
+                cfg.sceneSavedY := Y
+                cfg.Write("ScenePosition", "X", X)
+                cfg.Write("ScenePosition", "Y", Y)
+                vLeft := SysGet(76), vTop := SysGet(77)
+                vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+                sRatio := ComputePositionRatio(X, Y, vLeft, vTop, vRight, vBottom)
+                cfg.sceneSavedXRatio := sRatio.xRatio
+                cfg.sceneSavedYRatio := sRatio.yRatio
+                cfg.Write("ScenePosition", "XRatio", sRatio.xRatio)
+                cfg.Write("ScenePosition", "YRatio", sRatio.yRatio)
+            }
+        } else {
+            state.savedX := X
+            state.savedY := Y
+            state.MicGui.Move(X, Y, pillW, pillH)
+            if (X != prevX || Y != prevY) {
+                cfg.savedX := X
+                cfg.savedY := Y
+                cfg.Write("Position", "X", X)
+                cfg.Write("Position", "Y", Y)
+                vLeft := SysGet(76), vTop := SysGet(77)
+                vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+                ratio := ComputePositionRatio(X, Y, vLeft, vTop, vRight, vBottom)
+                cfg.savedXRatio := ratio.xRatio
+                cfg.savedYRatio := ratio.yRatio
+                cfg.Write("Position", "XRatio", ratio.xRatio)
+                cfg.Write("Position", "YRatio", ratio.yRatio)
+            }
         }
     }
     state.currentAlpha := GetRemoteEffectiveAlpha(state)
-    ApplyMicAppearance(cfg, state)
+    if (isScene)
+        ApplyRemoteSceneAppearance(cfg, state)
+    else
+        ApplyMicAppearance(cfg, state)
     ApplyHudClickThroughStyle(cfg, state)
-    if (cfg.ShowIndicator && state.obsConnected && state.isMuted)
+    if (cfg.ShowIndicator && !ShouldHideForMutedOrAlertMode(cfg, state) && state.obsConnected && state.isMuted)
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 
-    if (isShortClick && !dragInitiated)
-        HandleRemoteHudClick(cfg, state)
+    if (isShortClick && !dragInitiated) {
+        if (isScene)
+            SendRemoteTransitionScene(cfg, state)
+        else
+            HandleRemoteHudClick(cfg, state)
+    }
 }
 
 HandleRemoteHudClick(cfg, state) {
@@ -2356,7 +2797,12 @@ HandleRemoteHudClick(cfg, state) {
     return true
 }
 
-WM_REMOTE_RBUTTONUP(state, wParam, lParam, msg, hwnd) {
+WM_REMOTE_RBUTTONUP(cfg, state, wParam, lParam, msg, hwnd) {
+    if (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd) {
+        NotifyRemoteActivity(cfg, state)
+        ShowRemoteSceneSwitcherMenu(cfg, state)
+        return
+    }
     if (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd) {
         NotifyRemoteActivity("", state)
         A_TrayMenu.Show()
@@ -2381,15 +2827,26 @@ OnRemoteMenuLoop(state, isEnter, wParam, lParam, msg, hwnd) {
 }
 
 WM_REMOTE_DPICHANGED(cfg, state, wParam, lParam, msg, hwnd) {
-    if (!IsObject(state.MicGui) || hwnd != state.MicGui.Hwnd)
+    isMic := (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd)
+    isScene := (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd)
+    if (!isMic && !isScene)
         return
     newLeft := NumGet(lParam, 0, "Int")
     newTop := NumGet(lParam, 4, "Int")
-    state.savedX := newLeft
-    state.savedY := newTop
-    state.MicGui.Move(newLeft, newTop, state.baseWidth, state.baseHeight)
-    ApplyMicAppearance(cfg, state)
-    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true)
+    excl := cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true
+    if (isScene) {
+        state.sceneSavedX := newLeft
+        state.sceneSavedY := newTop
+        state.SceneGui.Move(newLeft, newTop, state.sceneW, state.sceneH)
+        ApplyRemoteSceneAppearance(cfg, state)
+        ApplyWindowCaptureAffinity(state.SceneGui.Hwnd, excl)
+    } else {
+        state.savedX := newLeft
+        state.savedY := newTop
+        state.MicGui.Move(newLeft, newTop, state.baseWidth, state.baseHeight)
+        ApplyMicAppearance(cfg, state)
+        ApplyWindowCaptureAffinity(state.MicGui.Hwnd, excl)
+    }
 }
 
 RefreshRemoteHudAppearance(cfg, state) {
@@ -2398,18 +2855,45 @@ RefreshRemoteHudAppearance(cfg, state) {
     state.breathDir := cfg.AggressivePulse ? -UIConstants.PULSE_STEP_AGGRESSIVE : -UIConstants.PULSE_STEP_NORMAL
     state.ComputeDimensions(cfg)
     state.currentAlpha := GetRemoteEffectiveAlpha(state)
-    ApplyMicAppearance(cfg, state)
-    if (cfg.ShowIndicator) {
-        state.MicGui.Move(state.savedX, state.savedY, state.baseWidth, state.baseHeight)
-        state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", state.savedX, state.savedY, state.baseWidth, state.baseHeight))
+
+    hideMutedAlert := ShouldHideForMutedOrAlertMode(cfg, state)
+    tallyDotMode := IsCornerTallyDotActive(cfg, state)
+    showMic := cfg.ShowIndicator && !hideMutedAlert
+    if (showMic && IsObject(state.MicGui)) {
+        ApplyMicAppearance(cfg, state)
+        if (tallyDotMode) {
+            dotSz := Max(16, Round(20 * cfg.IndicatorScale))
+            state.MicGui.Move(state.savedX, state.savedY, dotSz, dotSz)
+            state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", state.savedX, state.savedY, dotSz, dotSz))
+        } else {
+            state.MicGui.Move(state.savedX, state.savedY, state.baseWidth, state.baseHeight)
+            state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", state.savedX, state.savedY, state.baseWidth, state.baseHeight))
+        }
         SyncRemoteBreathTimer(cfg, state)
     } else {
-        state.MicGui.Hide()
+        if (IsObject(state.MicGui))
+            state.MicGui.Hide()
         SetTimer state.breathTimerFn, 0
     }
+
+    if (IsObject(state.SceneGui)) {
+        if (_ShouldShowRemoteSceneHud(cfg, state)) {
+            ApplyRemoteSceneAppearance(cfg, state)
+            state.SceneGui.Move(state.sceneSavedX, state.sceneSavedY, state.sceneW, state.sceneH)
+            state.SceneGui.Show(Format("NoActivate x{} y{} w{} h{}", state.sceneSavedX, state.sceneSavedY, state.sceneW, state.sceneH))
+        } else {
+            if (state.HasOwnProp("sceneMarqueeTimerFn") && IsObject(state.sceneMarqueeTimerFn))
+                try SetTimer(state.sceneMarqueeTimerFn, 0)
+            state.SceneGui.Hide()
+        }
+    }
+
     ApplyHudClickThroughStyle(cfg, state)
     excl := cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true
-    ApplyWindowCaptureAffinity(state.MicGui.Hwnd, excl)
+    if (IsObject(state.MicGui))
+        ApplyWindowCaptureAffinity(state.MicGui.Hwnd, excl)
+    if (IsObject(state.SceneGui))
+        ApplyWindowCaptureAffinity(state.SceneGui.Hwnd, excl)
     if (state.HasOwnProp("quickDeckGui") && IsObject(state.quickDeckGui)) {
         try if (WinExist("ahk_id " state.quickDeckGui.Hwnd))
             ApplyWindowCaptureAffinity(state.quickDeckGui.Hwnd, excl)
@@ -2759,7 +3243,9 @@ BuildRemoteTrayMenu(cfg, state) {
     AppearanceMenu.Add("Snap HUD to Corner", SnapCornerMenu)
 
     AppearanceMenu.Add()
+    _AddRemoteCheckedMenuItem(AppearanceMenu, "Show Active Scene Indicator", ToggleRemoteSceneIndicator.Bind(cfg, state), cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator)
     AppearanceMenu.Add("Reset Indicator Position", ResetRemotePositionAction.Bind(cfg, state))
+    AppearanceMenu.Add("Reset Scene Indicator Position", ResetRemoteScenePositionAction.Bind(cfg, state))
     AppearanceMenu.Add("Restore Default Appearance", ResetRemoteAppearanceAction.Bind(cfg, state))
     A_TrayMenu.Add("HUD && Appearance", AppearanceMenu)
 
@@ -2787,6 +3273,7 @@ BuildRemoteTrayMenu(cfg, state) {
     PtrConnMenu.Add("Switch Room / Profile", ProfilesMenu)
     PtrConnMenu.Add()
     PtrConnMenu.Add("Change Host / OBS Connection...", (*) => ShowRemoteConnectionUI(cfg, state, false))
+    PtrConnMenu.Add("Set / Clear Kiosk PIN...", (*) => OpenSetClearKioskPinDialog(cfg, state))
     PtrConnMenu.Add("Change App Shortcuts...", (*) => ChangeRemoteAppHotkeysUI(cfg, state))
     PtrConnMenu.Add("Create Desktop Shortcut for Instance...", (*) => ShowCreateRemoteShortcutUI(cfg, state))
     _AddRemoteCheckedMenuItem(PtrConnMenu, "Start with Windows", ToggleStartWithWindows.Bind(cfg, state), cfg.StartWithWindows)
@@ -2815,6 +3302,7 @@ BuildRemoteTrayMenu(cfg, state) {
 }
 
 ToggleRemoteIndicator(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowIndicator", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
+ToggleRemoteSceneIndicator(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowSceneIndicator", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
 ToggleRemoteText(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowText", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
 ToggleRemoteMono(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "MonoIcon", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
 ToggleRemoteCorners(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "SleekCorners", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
@@ -2898,6 +3386,13 @@ ShowCreateRemoteShortcutUI(cfg, state := "", *) {
 
 ResetRemotePositionAction(cfg, state, *) {
     cfg.ResetPosition()
+    RefreshRemoteHudAppearance(cfg, state)
+    if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
+        try state.refreshHelpFn.Call()
+}
+
+ResetRemoteScenePositionAction(cfg, state, *) {
+    cfg.ResetScenePosition()
     RefreshRemoteHudAppearance(cfg, state)
     if (IsObject(state) && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
         try state.refreshHelpFn.Call()
@@ -3213,13 +3708,17 @@ ShowRemoteHelpUI(cfg, state, *) {
 RunRemoteConnectionTracer(host, port := 4456, state := "") {
     steps := []
     h := Trim(String(host))
+    isBridge := (IsObject(state) && state.HasOwnProp("usingBridge") && state.usingBridge)
+    isConn := (IsObject(state) && state.HasOwnProp("connStatus") && state.connStatus = "connected")
+    isObs := (IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected)
     steps.Push({ step: "1. Host / mDNS", ok: (h != ""), detail: (h != "") ? h : "No host configured" })
     steps.Push({ step: "2. UDP :4457 Discovery", ok: true, detail: "LAN broadcast listener ready" })
-    tcpOk := (h = "127.0.0.1" || h = "localhost") ? IsLocalTcpPortListening(port) : (IsObject(state) && state.HasOwnProp("bridgeConnected") && state.bridgeConnected)
+    tcpOk := (h = "127.0.0.1" || h = "localhost") ? IsLocalTcpPortListening(port) : (isBridge && isConn)
     steps.Push({ step: "3. Bridge TCP :" port, ok: tcpOk, detail: tcpOk ? "Port reachable" : "Not reachable / check firewall" })
-    authOk := (IsObject(state) && state.HasOwnProp("bridgeAuthed") && state.bridgeAuthed)
-    steps.Push({ step: "4. Auth & Role", ok: authOk, detail: authOk ? "Authenticated" : "Pending pairing code" })
-    obsOk := (IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected)
+    authOk := isConn && (isBridge || isObs)
+    roleLbl := (IsObject(state) && state.HasOwnProp("activeRole") && state.activeRole != "") ? (" (" state.activeRole ")") : ""
+    steps.Push({ step: "4. Auth & Role", ok: authOk, detail: authOk ? ("Authenticated" roleLbl) : "Pending pairing code" })
+    obsOk := isObs
     steps.Push({ step: "5. OBS / Mic", ok: obsOk, detail: obsOk ? "OBS connected" : "OBS offline or bridged" })
     return steps
 }
@@ -3320,7 +3819,7 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
 
 ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     if (!isInitialBoot && IsObject(cfg) && cfg.HasOwnProp("KioskPin") && Trim(cfg.KioskPin) != "") {
-        ib := InputBox("Enter Kiosk PIN to unlock Remote Connection Settings:", "PresenterSync Kiosk Lock", "Password w260 h120")
+        ib := PromptKioskPinModal("Enter Kiosk PIN to unlock Remote Connection Settings:", "PresenterSync Kiosk Lock")
         if (ib.Result != "OK" || Trim(ib.Value) !== Trim(cfg.KioskPin)) {
             ShowCaptureSafeMicroToast("Incorrect Kiosk PIN", 2000)
             return ""

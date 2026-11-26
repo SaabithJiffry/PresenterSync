@@ -492,6 +492,8 @@ DownloadVerifyAndStageWindowsUpdate(updRes, destPath, onStatus := "", onProgress
 
     assetNm := (updRes.HasOwnProp("assetName") && updRes.assetName != "") ? updRes.assetName : GetDefaultWindowsAssetName()
     expectedSha := ""
+    if (!updRes.HasOwnProp("sha256Url") || Trim(String(updRes.sha256Url)) = "")
+        return { ok: false, cancelled: false, shaVerified: false, reason: "SHA256SUMS.txt URL is missing; refusing unverified update." }
     if (updRes.HasOwnProp("sha256Url") && updRes.sha256Url != "") {
         if (IsObject(onStatus))
             onStatus.Call("Fetching SHA256SUMS.txt...")

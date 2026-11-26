@@ -67,14 +67,36 @@ SnapHudToCorner(cfg, state, corner := "BR", margin := 0) {
     c := StrUpper(Trim(String(corner)))
     nx := (c = "TL" || c = "BL") ? (targetMon.left + mgn) : (targetMon.right - w - mgn)
     ny := (c = "TL" || c = "TR") ? (targetMon.top + mgn) : (targetMon.bottom - h - mgn)
+    if (IsCornerTallyDotActive(cfg, state)) {
+        dotSz := Max(16, Round(20 * cfg.IndicatorScale))
+        nx := (c = "TL" || c = "BL") ? (targetMon.left + mgn) : (targetMon.right - dotSz - mgn)
+        ny := (c = "TL" || c = "TR") ? (targetMon.top + mgn) : (targetMon.bottom - dotSz - mgn)
+    }
     state.savedX := nx
     state.savedY := ny
     cfg.savedX := nx
     cfg.savedY := ny
+    vLeft := SysGet(76), vTop := SysGet(77)
+    vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+    vW := Max(1, Number(vRight) - Number(vLeft))
+    vH := Max(1, Number(vBottom) - Number(vTop))
+    xRatio := Round(Max(0.0, Min(1.0, (Number(nx) - Number(vLeft)) / vW)), 6)
+    yRatio := Round(Max(0.0, Min(1.0, (Number(ny) - Number(vTop)) / vH)), 6)
+    cfg.savedXRatio := xRatio
+    cfg.savedYRatio := yRatio
+    try cfg.Write("Position", "X", String(nx))
+    try cfg.Write("Position", "Y", String(ny))
     try cfg.Write("Position", "SavedX", String(nx))
     try cfg.Write("Position", "SavedY", String(ny))
-    if (state.HasOwnProp("MicGui") && IsGuiValid(state.MicGui))
-        UpdateHudLayout(state, nx, ny)
+    try cfg.Write("Position", "XRatio", String(xRatio))
+    try cfg.Write("Position", "YRatio", String(yRatio))
+    if (state.HasOwnProp("MicGui") && IsGuiValid(state.MicGui)) {
+        if (state.HasOwnProp("RecGui"))
+            UpdateHudLayout(state, nx, ny)
+        else
+            try state.MicGui.Move(nx, ny, w, h)
+        ApplyMicAppearance(cfg, state)
+    }
     return { x: nx, y: ny, w: w, h: h }
 }
 
@@ -175,6 +197,12 @@ _RenderMicPillSurface(hwnd, x, y, w, h, cfg, state, alpha, overrideMuted := "", 
         }
     }
     contentArgb := Gdip.HexToArgb(icHex)
+    tallyDot := (overrideMuted == "" && Float(holdProgress) <= 0.001 && !isRemoteOffline && !mutedState && IsCornerTallyDotActive(cfg, state))
+    if (tallyDot) {
+        dotSz := Max(16, Round(20 * cfg.IndicatorScale))
+        dotAlpha := Min(255, Max(alpha, 210))
+        return Gdip.RenderPill(hwnd, x, y, dotSz, dotSz, Gdip.HexToArgb(bgRgb), Gdip.BgrToArgb(brdBgr), dotAlpha, dotSz / 2.0, "", "", 0.0, 0, 0.0, 0)
+    }
 
     if (cfg.ShowText) {
         offsetX := Round((w - state.baseWidth) / 2)
@@ -221,6 +249,12 @@ ApplyMicAppearance(cfg, state, customX := "", customY := "", customW := "", cust
     h := (customH != "") ? customH : pos.micH
     alpha := (customAlpha != "") ? customAlpha : state.currentAlpha
     micHold := state.HasOwnProp("micHoldProgress") ? Float(state.micHoldProgress) : 0.0
+    isOff := (overrideMuted == "" && state.HasOwnProp("activeHost") && state.HasOwnProp("obsConnected") && !state.obsConnected)
+    if (customW = "" && overrideMuted == "" && micHold <= 0.001 && !isOff && !state.isMuted && IsCornerTallyDotActive(cfg, state)) {
+        dotSz := Max(16, Round(20 * cfg.IndicatorScale))
+        w := dotSz
+        h := dotSz
+    }
     ok := _RenderMicPillSurface(state.MicGui.Hwnd, x, y, w, h, cfg, state, alpha, overrideMuted, micHold)
 
     if (customX = "" && customW = "" && !IsSecondaryHudSuppressed(cfg) && state.HasOwnProp("SecondaryMicGui") && IsGuiValid(state.SecondaryMicGui)) {
@@ -587,7 +621,8 @@ ApplySceneAppearance(cfg, state, fromMarqueeTick := false) {
             ]
         }
     }
-    return Gdip.RenderPill(state.SceneGui.Hwnd, pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH, Gdip.HexToArgb(state.colors.scene), Gdip.BgrToArgb(state.colors.sceneBorder), state.baseAlpha, GetCornerRadius(cfg, pos.sceneH), "", labelCfg)
+    sceneHold := state.HasOwnProp("sceneHoldProgress") ? Float(state.sceneHoldProgress) : 0.0
+    return Gdip.RenderPill(state.SceneGui.Hwnd, pos.sceneX, pos.sceneY, pos.sceneW, pos.sceneH, Gdip.HexToArgb(state.colors.scene), Gdip.BgrToArgb(state.colors.sceneBorder), state.baseAlpha, GetCornerRadius(cfg, pos.sceneH), "", labelCfg, 0.0, 0, sceneHold, 0xFF06B6D4)
 }
 
 SceneMarqueeTick(cfg, state) {
@@ -702,13 +737,15 @@ GetRecBreakdownText(state) {
 SyncRecState(cfg, state, newState, initialDurationMs := -1, source := "obs") {
     ; source: "obs" (OBS WebSocket recording) or "conf" (Zoom/Teams UIA recording).
     ; state.recState is the unified state: Recording if any source records, else Paused if any paused.
+    if (!IsObject(state))
+        return false
     isConf := (source = "conf")
-    prevState := state.recState
-    prevTag := state.recSourceTag
-    prevSrcState := isConf ? state.confRecState : state.obsRecState
+    prevState := state.HasOwnProp("recState") ? state.recState : 0
+    prevTag := state.HasOwnProp("recSourceTag") ? state.recSourceTag : ""
+    prevSrcState := isConf ? (state.HasOwnProp("confRecState") ? state.confRecState : 0) : (state.HasOwnProp("obsRecState") ? state.obsRecState : 0)
     durProvided := (initialDurationMs >= 0)
 
-    srcElapsed := isConf ? state.confRecElapsedSec : state.obsRecElapsedSec
+    srcElapsed := isConf ? (state.HasOwnProp("confRecElapsedSec") ? state.confRecElapsedSec : 0) : (state.HasOwnProp("obsRecElapsedSec") ? state.obsRecElapsedSec : 0)
     if (durProvided)
         srcElapsed := Max(0, Integer(initialDurationMs // 1000))
     else if (newState == 0)
@@ -718,6 +755,10 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1, source := "obs") {
     if (isConf) {
         state.confRecState := newState
         state.confRecElapsedSec := srcElapsed
+        if (!state.HasOwnProp("obsRecState"))
+            state.obsRecState := 0
+        if (!state.HasOwnProp("obsRecElapsedSec"))
+            state.obsRecElapsedSec := 0
     } else {
         if (durProvided) {
             state.obsRecAnchorMs := Integer(initialDurationMs)
@@ -735,6 +776,10 @@ SyncRecState(cfg, state, newState, initialDurationMs := -1, source := "obs") {
         }
         state.obsRecState := newState
         state.obsRecElapsedSec := srcElapsed
+        if (!state.HasOwnProp("confRecState"))
+            state.confRecState := 0
+        if (!state.HasOwnProp("confRecElapsedSec"))
+            state.confRecElapsedSec := 0
     }
 
     obsSt := state.obsRecState, confSt := state.confRecState
@@ -1960,6 +2005,8 @@ SyncUIState(cfg, state, obsIsMuted, isOptimistic := false) {
             PlayMuteAnimation(cfg, state)
             UpdateVoiceMeterTimer(cfg, state)
             UpdateMutedVoiceMonitorTimer(cfg, state)
+            if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot"))
+                UpdateHudVisibility(cfg, state)
         }
         ArmHostOptimisticReconcile(cfg, state, 300)
         return
@@ -1992,6 +2039,8 @@ SyncUIState(cfg, state, obsIsMuted, isOptimistic := false) {
             PlayMuteAnimation(cfg, state)
             UpdateVoiceMeterTimer(cfg, state)
             UpdateMutedVoiceMonitorTimer(cfg, state)
+            if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot"))
+                UpdateHudVisibility(cfg, state)
         }
         if (cfg.HasOwnProp("EnableAudioCue") && cfg.EnableAudioCue)
             PlayMuteAudioCue(obsIsMuted)
@@ -2523,15 +2572,21 @@ UpdateHudVisibility(cfg, state) {
 
     state.currentAlpha := (state.HasOwnProp("isAutoDodged") && state.isAutoDodged) ? Min(state.baseAlpha, UIConstants.DODGE_ALPHA) : state.baseAlpha
     pos := ComputeHudLayout(state, state.savedX, state.savedY)
+    tallyDotMode := IsCornerTallyDotActive(cfg, state)
     if IsObject(state.MicGui) {
         ApplyMicAppearance(cfg, state)
-        state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
+        if (tallyDotMode) {
+            dotSz := Max(16, Round(20 * cfg.IndicatorScale))
+            state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, dotSz, dotSz))
+        } else {
+            state.MicGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.micX, pos.micY, pos.micW, pos.micH))
+        }
     }
     _SyncSecondaryHudVisibility(cfg, state)
     UpdateVoiceMeterTimer(cfg, state)
 
     tiers := GetHudTierFlags(cfg)
-    if (tiers.row2) {
+    if (tiers.row2 && !tallyDotMode) {
         ApplyRecAppearance(cfg, state)
         state.RecGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.recX, pos.recY, pos.recW, pos.recH))
         ApplyChatAppearance(cfg, state)
@@ -2541,7 +2596,7 @@ UpdateHudVisibility(cfg, state) {
         state.ChatGui.Hide()
     }
 
-    if (tiers.row3) {
+    if (tiers.row3 && !tallyDotMode) {
         ApplyStudioAppearance(cfg, state)
         state.StudioGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.studioX, pos.studioY, pos.studioW, pos.studioH))
         ApplySceneAppearance(cfg, state)
@@ -2553,7 +2608,7 @@ UpdateHudVisibility(cfg, state) {
         state.SceneGui.Hide()
     }
 
-    if (tiers.row4) {
+    if (tiers.row4 && !tallyDotMode) {
         ApplyStreamAppearance(cfg, state)
         if IsObject(state.StreamGui)
             state.StreamGui.Show(Format("NoActivate x{} y{} w{} h{}", pos.streamX, pos.streamY, pos.streamW, pos.streamH))
@@ -3134,18 +3189,27 @@ WM_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     }
 
     if (clickActionsEnabled && IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd) {
-        sceneMoved := false
-        while (GetKeyState("LButton", "P")) {
-            MouseGetPos(&mx, &my)
-            if (Abs(mx - startMX) > 4 || Abs(my - startMY) > 4) {
-                sceneMoved := true
-                break
+        UpdateSceneHold(p) {
+            curHold := state.HasOwnProp("sceneHoldProgress") ? Float(state.sceneHoldProgress) : 0.0
+            if (p != curHold) {
+                state.sceneHoldProgress := p
+                ApplySceneAppearance(cfg, state, true)
             }
-            Sleep(8)
         }
-        if (!sceneMoved) {
+        scRes := WaitPillLongPressWithProgress(startMX, startMY, downTick, 700, 90, 700, UpdateSceneHold, (*) => ExecuteHostResetActiveScene(cfg, state))
+        if (scRes.verdict = "hold_handled" || scRes.verdict = "hold") {
+            CoordMode("Mouse", prevMouseMode)
+            if (scRes.verdict = "hold")
+                ExecuteHostResetActiveScene(cfg, state)
+            return
+        }
+        if (scRes.verdict = "tap") {
             CoordMode("Mouse", prevMouseMode)
             HandleHudPillClick(cfg, state, hwnd)
+            return
+        }
+        if (scRes.verdict = "cancel") {
+            CoordMode("Mouse", prevMouseMode)
             return
         }
         dragInitiated := true

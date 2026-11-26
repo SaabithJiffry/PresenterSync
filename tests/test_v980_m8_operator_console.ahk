@@ -92,12 +92,22 @@ try {
     AssertTrue(ExecuteHostSessionTurnover(cfg, st, true), "M8.3: ExecuteHostSessionTurnover succeeds")
     AssertTrue(st.isMuted && !st.isStandby && !st.isPanic && st.unreadChatCount == 0, "M8.3: Turnover resets state & safely mutes")
 
-    ; ---- P0-2 Regression: g_HostCompanionBridge Roster, Guest Revoke & SessionReset ----
+    ; ---- P0-2 & P0-3 Regression: OperatorConsole Roster matching, Selection Preservation, Scene Dropdown Diff & SessionReset ----
     global g_HostCompanionBridge := hb
-    hb.pairedDevices["guest-1"] := { deviceId: "guest-1", deviceName: "GuestBoard", role: "Presenter", trustTier: "Ephemeral Guest", allowDirectObsFallback: false, paused: false }
-    hb.pairedDevices["pin-1"] := { deviceId: "pin-1", deviceName: "PinnedRoom", role: "Director", trustTier: "Pinned Room", allowDirectObsFallback: true, paused: false }
+    hb.pairedDevices["guest-1"] := { deviceId: "guest-1", deviceName: "BoardDup", platform: "Web", token: "tok-g", pairedAt: "1700000", ip: "127.0.0.1", transport: "WS", role: "Presenter", trustTier: "Ephemeral Guest", allowDirectObsFallback: false, paused: false }
+    hb.pairedDevices["pin-1"] := { deviceId: "pin-1", deviceName: "BoardDup", platform: "Android", token: "tok-p", pairedAt: "1700000", ip: "127.0.0.2", transport: "WS", role: "Director", trustTier: "Pinned Room", allowDirectObsFallback: true, paused: false }
     OperatorConsole.Show(cfg, st)
     AssertTrue(OperatorConsole._ctrls["roster"].GetCount() >= 2, "P0-2: OperatorConsole Roster populates via g_HostCompanionBridge")
+    ; P0-3: Select second row (pin-1 with duplicate deviceName), verify Refresh() preserves selection & _RosterAction mutates pin-1 specifically
+    OperatorConsole._ctrls["roster"].Modify(2, "Select Focus")
+    OperatorConsole._lastRosterFp := "force-rebuild"
+    OperatorConsole.Refresh()
+    AssertTrue(OperatorConsole._ctrls["roster"].GetNext(0, "Focused") = 2, "P0-3: Refresh() preserves selected ListView row by deviceId")
+    OperatorConsole._RosterAction("pause")
+    AssertTrue(hb.pairedDevices["pin-1"].paused && !hb.pairedDevices["guest-1"].paused, "P0-3: _RosterAction targets exact deviceId even with duplicate display names")
+    prevFp := OperatorConsole._lastSceneFp.Get("prog", "")
+    OperatorConsole._SyncSceneDrop(OperatorConsole._ctrls["progDrop"], st.sceneList, "Main", "prog")
+    AssertTrue(prevFp != "" && OperatorConsole._lastSceneFp["prog"] = prevFp, "P0-3: _SyncSceneDrop caches fingerprint and skips redundant rebuilds")
     OperatorConsole.Close()
     ExecuteHostSessionTurnover(cfg, st, true)
     AssertTrue(!hb.pairedDevices.Has("guest-1") && hb.pairedDevices.Has("pin-1"), "P0-2: SessionTurnover revokes Ephemeral Guest while keeping Pinned Room")
