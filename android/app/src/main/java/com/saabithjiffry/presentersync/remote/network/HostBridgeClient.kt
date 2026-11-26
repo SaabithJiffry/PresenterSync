@@ -350,6 +350,36 @@ class HostBridgeClient(
 
     fun sendToggleStandby(source: String = "quick_menu"): Boolean = sendDeviceAction("toggle_standby", source)
 
+    fun sendSetPreviewScene(sceneName: String, source: String = "director"): Boolean {
+        if (!authenticated) return false
+        val ws = webSocket ?: return false
+        val clean = sceneName.trim()
+        if (clean.isEmpty()) return false
+        val payload = JSONObject().apply {
+            put("type", "set_preview_scene")
+            put("cmdId", nextCmdId())
+            put("sceneName", clean)
+            put("deviceId", deviceId)
+            put("source", source)
+        }.toString()
+        return ws.send(payload)
+    }
+
+    fun sendAudioHandoff(mode: String, source: String = "director"): Boolean {
+        if (!authenticated) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "audio_handoff")
+            put("cmdId", nextCmdId())
+            put("mode", mode)
+            put("deviceId", deviceId)
+            put("source", source)
+        }.toString()
+        return ws.send(payload)
+    }
+
+    fun sendSaveReplayBuffer(source: String = "director"): Boolean = sendDeviceAction("save_replay_buffer", source)
+
     fun sendEmergencyPanic(active: Boolean? = null, source: String = "quick_menu"): Boolean {
         if (!authenticated) return false
         val ws = webSocket ?: return false

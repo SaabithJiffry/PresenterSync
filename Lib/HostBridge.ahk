@@ -2314,6 +2314,28 @@ class HostCompanionBridge {
                 ok := ExecuteHostSwitchScene(this.cfg, this.state, sName)
                 this._QueueCmdResult(c, "switch_scene", ok, cmdId, ok ? "" : ((sName = "") ? "invalid_args" : "obs_offline"))
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "set_preview_scene":
+                sName := JsonCodec.GetStr(msgObj, "sceneName")
+                ok := ExecuteHostSetPreviewScene(this.cfg, this.state, sName)
+                this._QueueCmdResult(c, "set_preview_scene", ok, cmdId, ok ? "" : ((sName = "") ? "invalid_args" : "obs_offline"))
+            case "set_scene_item_enabled":
+                sName := JsonCodec.GetStr(msgObj, "sceneName")
+                itemId := JsonCodec.GetInt(msgObj, "sceneItemId", 0)
+                en := JsonCodec.GetBool(msgObj, "enabled", true)
+                ok := ExecuteHostSetSceneItemEnabled(this.cfg, this.state, sName, itemId, en)
+                this._QueueCmdResult(c, "set_scene_item_enabled", ok, cmdId, ok ? "" : "obs_offline")
+            case "set_input_volume":
+                inName := JsonCodec.GetStr(msgObj, "inputName")
+                volMul := JsonCodec.GetFloat(msgObj, "volumeMul", 1.0)
+                ok := ExecuteHostSetInputVolume(this.cfg, this.state, inName, volMul)
+                this._QueueCmdResult(c, "set_input_volume", ok, cmdId, ok ? "" : "obs_offline")
+            case "audio_handoff":
+                hMode := JsonCodec.GetStr(msgObj, "mode")
+                ok := ExecuteHostAudioHandoff(this.cfg, this.state, hMode)
+                this._QueueCmdResult(c, "audio_handoff", ok, cmdId, ok ? "" : "obs_offline")
+            case "save_replay_buffer":
+                ok := ExecuteHostSaveReplayBuffer(this.cfg, this.state)
+                this._QueueCmdResult(c, "save_replay_buffer", ok, cmdId, ok ? "" : "obs_offline")
             case "transition_scene":
                 ok := false
                 if (IsObject(this.state) && this.state.HasOwnProp("triggerTransitionFn") && IsObject(this.state.triggerTransitionFn))

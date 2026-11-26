@@ -1490,6 +1490,8 @@ class Config {
     BreakCountdownObsTextSource := ""
     CaptureDeviceId := ""
     RunOfShowMacros := ""
+    ObsWsHost := "127.0.0.1"
+    ObsWsPort := 4455
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -1777,6 +1779,9 @@ class Config {
         this.BreakCountdownObsTextSource := Trim(this.Read("Settings", "BreakCountdownObsTextSource", ""))
         this.CaptureDeviceId := Trim(this.Read("Settings", "CaptureDeviceId", ""))
         this.RunOfShowMacros := Trim(this.Read("Settings", "RunOfShowMacros", ""))
+        rawHost := Trim(this.Read("Settings", "ObsWsHost", "127.0.0.1"))
+        this.ObsWsHost := (rawHost != "") ? rawHost : "127.0.0.1"
+        this.ObsWsPort := Max(1, Min(65535, this.ReadInt("Settings", "ObsWsPort", 4455)))
         this.AutoMuteOnLock := this.ReadBool("Settings", "AutoMuteOnLock", true)
         this.AutoMuteOnMeetingEnd := this.ReadBool("Settings", "AutoMuteOnMeetingEnd", false)
         this.AutoMuteOnFirstObsConnect := this.ReadBool("Settings", "AutoMuteOnFirstObsConnect", false)
@@ -1997,6 +2002,8 @@ class Config {
             { sec: "Settings", key: "BreakCountdownObsTextSource", prop: "BreakCountdownObsTextSource", kind: "str" },
             { sec: "Settings", key: "CaptureDeviceId", prop: "CaptureDeviceId", kind: "str" },
             { sec: "Settings", key: "RunOfShowMacros", prop: "RunOfShowMacros", kind: "str" },
+            { sec: "Settings", key: "ObsWsHost", prop: "ObsWsHost", kind: "str" },
+            { sec: "Settings", key: "ObsWsPort", prop: "ObsWsPort", kind: "int" },
             { sec: "Settings", key: "ShowText", prop: "ShowText", kind: "bool" },
             { sec: "Settings", key: "MonoIcon", prop: "MonoIcon", kind: "bool" },
             { sec: "Settings", key: "SleekCorners", prop: "SleekCorners", kind: "bool" },

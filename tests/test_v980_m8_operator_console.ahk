@@ -58,6 +58,25 @@ try {
     AssertTrue(WindowFit._states.Has(OperatorConsole._gui.Hwnd), "M8.1: OperatorConsole uses WindowFit")
     OperatorConsole.Close()
     AssertTrue(!OperatorConsole.IsOpen(), "M8.1: OperatorConsole closes cleanly")
+
+    ; ---- M8.2: Preview, SceneItemEnabled, InputVolume, AudioHandoff, ReplayBuffer, Custom Host/Port ----
+    mWs := { sent: [] }
+    mWs.DefineProp("sendText", { Call: (this, t) => (this.sent.Push(t), true) })
+    st.obsWs := mWs
+    cfg.EnableWS := true
+    cfg.targetMicName := "MicA"
+    cfg.SecondaryAudioSources := "MicB"
+    cfg.ObsWsHost := "192.168.1.50"
+    cfg.ObsWsPort := 4466
+    AssertTrue(ExecuteHostSetPreviewScene(cfg, st, "SlidesPreview"), "M8.2: SetPreviewScene succeeds")
+    AssertTrue(ExecuteHostSetSceneItemEnabled(cfg, st, "Main", 7, false), "M8.2: SetSceneItemEnabled succeeds")
+    AssertTrue(ExecuteHostSetInputVolume(cfg, st, "MicA", 0.85), "M8.2: SetInputVolume succeeds")
+    AssertTrue(ExecuteHostAudioHandoff(cfg, st, "solo_b"), "M8.2: AudioHandoff solo_b succeeds")
+    AssertTrue(ExecuteHostSaveReplayBuffer(cfg, st), "M8.2: SaveReplayBuffer succeeds")
+    all82 := ""
+    for _, s in mWs.sent
+        all82 .= s "`n"
+    AssertTrue(InStr(all82, "SetCurrentPreviewScene") && InStr(all82, "SetSceneItemEnabled") && InStr(all82, "SetInputVolume") && InStr(all82, "SaveReplayBuffer"), "M8.2: All OBS requests dispatched")
     try FileDelete(pIni)
 } catch as err {
     g_Failed++

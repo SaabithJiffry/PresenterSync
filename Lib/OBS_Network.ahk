@@ -2409,14 +2409,16 @@ ConnectToOBS(cfg, state) {
         state.obsWs := ""
     }
 
-    if (!IsLocalTcpPortListening(4455)) {
+    obsHost := (IsObject(cfg) && cfg.HasOwnProp("ObsWsHost") && Trim(cfg.ObsWsHost) != "") ? Trim(cfg.ObsWsHost) : "127.0.0.1"
+    obsPort := (IsObject(cfg) && cfg.HasOwnProp("ObsWsPort") && Integer(cfg.ObsWsPort) > 0) ? Integer(cfg.ObsWsPort) : 4455
+    if ((obsHost = "127.0.0.1" || obsHost = "localhost") && !IsLocalTcpPortListening(obsPort)) {
         if (cfg.EnableWS)
             SetTimer state.obsTimerFn, -UIConstants.OBS_RECONNECT_MS
         return
     }
 
     try {
-        state.obsWs := WebSocket("ws://127.0.0.1:4455", {
+        state.obsWs := WebSocket("ws://" obsHost ":" obsPort, {
             message: HandleObsMessage.Bind(cfg, state),
             close: HandleObsClose.Bind(cfg, state)
         }, true, "", 2000)
@@ -2934,6 +2936,81 @@ ExecuteHostMacro(cfg, state, macroName) {
     if (IsSet(SessionTimeline))
         SessionTimeline.Record("Macro", "Executed Macro: " macroName, state)
     return true
+}
+
+ExecuteHostSetPreviewScene(cfg, state, sceneName) {
+    sc := Trim(String(sceneName))
+    if (!IsObject(cfg) || !IsObject(state) || sc = "")
+        return false
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+        state.previewSceneName := sc
+        ok := SendObsRequest(state.obsWs, "SetCurrentPreviewScene", "HostSetPreviewScene", '{"sceneName":"' EscapeJsonStr(sc) '"}')
+        HostBridgeBroadcastMuteState(cfg, state)
+        return ok
+    }
+    return false
+}
+
+ExecuteHostSetSceneItemEnabled(cfg, state, sceneName, sceneItemId, enabled) {
+    sc := Trim(String(sceneName))
+    if (!IsObject(cfg) || !IsObject(state) || sc = "" || Integer(sceneItemId) <= 0)
+        return false
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+        return SendObsRequest(state.obsWs, "SetSceneItemEnabled", "HostSetSceneItem", '{"sceneName":"' EscapeJsonStr(sc) '","sceneItemId":' Integer(sceneItemId) ',"sceneItemEnabled":' (enabled ? "true" : "false") '}')
+    }
+    return false
+}
+
+ExecuteHostSetInputVolume(cfg, state, inputName, volumeMul) {
+    inName := Trim(String(inputName))
+    if (!IsObject(cfg) || !IsObject(state) || inName = "")
+        return false
+    mul := Max(0.0, Min(2.0, Float(volumeMul)))
+    if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) {
+        return SendObsRequest(state.obsWs, "SetInputVolume", "HostSetInputVol", '{"inputName":"' EscapeJsonStr(inName) '","inputVolumeMul":' Round(mul, 3) '}')
+    }
+    return false
+}
+
+ExecuteHostAudioHandoff(cfg, state, mode := "both") {
+    if (!IsObject(cfg) || !IsObject(state) || !cfg.EnableWS || !state.obsConnected || !IsObject(state.obsWs))
+        return false
+    m := StrLower(Trim(String(mode)))
+    primary := cfg.HasOwnProp("targetMicName") ? Trim(cfg.targetMicName) : "Mic/Aux"
+    secList := []
+    if (cfg.HasOwnProp("SecondaryAudioSources") && Trim(String(cfg.SecondaryAudioSources)) != "") {
+        for _, rawItem in StrSplit(String(cfg.SecondaryAudioSources), [",", ";"]) {
+            it := Trim(rawItem)
+            if (it != "" && StrLower(it) != StrLower(primary))
+                secList.Push(it)
+        }
+    }
+    if (m = "solo_a") {
+        SendObsSetInputMute(state.obsWs, primary, false, "HandoffPrimary")
+        for _, s in secList
+            SendObsSetInputMute(state.obsWs, s, true, "HandoffSec")
+        SyncUIState(cfg, state, false, true)
+        return true
+    } else if (m = "solo_b" && secList.Length > 0) {
+        SendObsSetInputMute(state.obsWs, primary, true, "HandoffPrimary")
+        for idx, s in secList
+            SendObsSetInputMute(state.obsWs, s, (idx != 1), "HandoffSec")
+        SyncUIState(cfg, state, true, true)
+        return true
+    } else if (m = "both") {
+        SendObsSetInputMute(state.obsWs, primary, false, "HandoffPrimary")
+        for _, s in secList
+            SendObsSetInputMute(state.obsWs, s, false, "HandoffSec")
+        SyncUIState(cfg, state, false, true)
+        return true
+    }
+    return false
+}
+
+ExecuteHostSaveReplayBuffer(cfg, state) {
+    if (!IsObject(cfg) || !IsObject(state) || !cfg.EnableWS || !state.obsConnected || !IsObject(state.obsWs))
+        return false
+    return SendObsRequest(state.obsWs, "SaveReplayBuffer", "HostSaveReplay")
 }
 
 PushObsMuteToZoom(cfg, state, obsIsMuted, mockZoomState := "", sendFn := "") {

@@ -1714,6 +1714,30 @@ class ConnectionManager(
             relayAction = { it.sendSwitchScene(sceneName) }
         )
 
+    fun sendSetPreviewScene(sceneName: String, source: String = "director"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendSetPreviewScene(sceneName, source) },
+            obsAction = { obs ->
+                val clean = sceneName.trim()
+                if (clean.isNotEmpty()) obs.sendSetCurrentPreviewScene(clean) else false
+            },
+            relayAction = { false }
+        )
+
+    fun sendAudioHandoff(mode: String, source: String = "director"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendAudioHandoff(mode, source) },
+            obsAction = { false },
+            relayAction = { false }
+        )
+
+    fun sendSaveReplayBuffer(source: String = "director"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendSaveReplayBuffer(source) },
+            obsAction = { false },
+            relayAction = { false }
+        )
+
     fun sendTransitionScene(source: String = "director"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendTransitionScene(source) },
