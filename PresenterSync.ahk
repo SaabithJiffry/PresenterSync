@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; Script: PresenterSync
 ; Description: OBS WebSocket and PowerPoint synchronization tool with system tray UI
-; Version: 9.7.0
+; Version: 9.8.0
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -13,7 +13,7 @@
 ;@Ahk2Exe-AddResource *10 assets\PresenterSync.ico, FAVICON_ICO
 ;@Ahk2Exe-SetProductName PresenterSync
 ;@Ahk2Exe-SetDescription PresenterSync - OBS WebSocket & Zoom + PowerPoint Controller
-;@Ahk2Exe-SetVersion 9.7.0.0
+;@Ahk2Exe-SetVersion 9.8.0.0
 ProcessSetPriority "High"
 SendMode "Input"
 SetKeyDelay -1, -1

@@ -1717,10 +1717,7 @@ class ConnectionManager(
     fun sendSetPreviewScene(sceneName: String, source: String = "director"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendSetPreviewScene(sceneName, source) },
-            obsAction = { obs ->
-                val clean = sceneName.trim()
-                if (clean.isNotEmpty()) obs.sendSetCurrentPreviewScene(clean) else false
-            },
+            obsAction = { false },
             relayAction = { false }
         )
 
@@ -1739,10 +1736,7 @@ class ConnectionManager(
         )
 
     fun sendAddBookmark(label: String, source: String = "quick_menu"): Boolean =
-        sendPresenterAction(
-            bridgeAction = { it.sendAddBookmark(label, source) },
-            relayAction = { false }
-        )
+        bridgeClient?.sendAddBookmark(label, source) ?: false
 
     fun sendSessionReset(revokeGuests: Boolean = true, source: String = "director"): Boolean =
         sendDirectorAction(
