@@ -100,6 +100,14 @@ jobs:
             "tests\test_v870_block_drop.ahk",
             "tests\test_v880_pinball_physics.ahk",
             "tests\test_v901_runtime_audit.ahk",
+            "tests\test_v910_hotpath_responsiveness.ahk",
+            "tests\test_v920_m24_soak_optimistic.ahk",
+            "tests\test_v920_protocol_v2.ahk",
+            "tests\test_v930_capture_safety.ahk",
+            "tests\test_v940_rbac.ahk",
+            "tests\test_v950_intercom_web2.ahk",
+            "tests\test_v970_m7_audit_fixes.ahk",
+            "tests\test_v980_m8_operator_console.ahk",
             "tests\test_qr_code.ahk",
             "tests\test_host_bridge.ahk",
             "tests\test_multi_remote.ahk",
@@ -160,7 +168,9 @@ jobs:
             "tests\test_e2e_04_standalone_cutoff_recovery.py",
             "tests\test_e2e_05_ptt_doubletap_mutual_exclusion.py",
             "tests\test_e2e_06_diagnostics_watchdogs_cli_relay_render.py",
-            "tests\test_v901_web_remote_js_e2e.py"
+            "tests\test_v901_web_remote_js_e2e.py",
+            "tests\test_udp_discovery_e2e.py",
+            "tests\test_windows_self_updater_e2e.py"
           )
           foreach ($suite in $pySuites) {
             Write-Host "Running $suite ..."

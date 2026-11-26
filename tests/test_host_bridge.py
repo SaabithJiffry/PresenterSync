@@ -226,8 +226,13 @@ def main() -> int:
         print("[PASS] WS receives CloseRemote signal from SendCloseRemoteSignal")
 
         ws_send_text(s_ok, json.dumps({"type": "ping"}))
-        m5 = ws_recv_json(s_ok, buf_ok)
-        assert m5["type"] == "pong" and m5["isMuted"] is True
+        m5 = None
+        for _ in range(6):
+            pkt = ws_recv_json(s_ok, buf_ok)
+            if pkt.get("type") == "pong":
+                m5 = pkt
+                break
+        assert m5 is not None and m5["type"] == "pong" and m5["isMuted"] is True
         print("[PASS] WS ping -> pong")
 
         # 6. Host Deck actions (ppt_next, ppt_prev, toggle_record) & Telemetry broadcast

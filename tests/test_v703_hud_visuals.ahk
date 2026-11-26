@@ -33,8 +33,8 @@ AssertTrue(cond, label) {
     }
 }
 
-; 1. VOICE_METER_INTERVAL_MS == 25 (40 FPS)
-AssertTrue(UIConstants.VOICE_METER_INTERVAL_MS == 25, "VOICE_METER_INTERVAL_MS is 25ms (40 FPS)")
+; 1. VOICE_METER_INTERVAL_MS == 50 (20 FPS)
+AssertTrue(UIConstants.VOICE_METER_INTERVAL_MS == 50, "VOICE_METER_INTERVAL_MS is 50ms (20 FPS)")
 
 ; 2. ShowRow2RecChatHud & ShowRow3StudioSceneHud Config load/save & GetProfileFieldSpecs()
 tmpIni := A_Temp "\PresenterSync_v703_test_" A_TickCount ".ini"

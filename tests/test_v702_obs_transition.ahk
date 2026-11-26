@@ -137,7 +137,7 @@ bridge.cfg := cfg
 bridge.state := st
 transitionBox := { count: 0 }
 st.triggerTransitionFn := (*) => (transitionBox.count += 1, true)
-fakeClient := { kind: "ws", authenticated: true, writeBuf: [], sendBlocked: false, sock: 0, lastRxTick: 0, closeAfterSend: false, deviceId: "test-dev", sendBuf: Buffer(0), sendLen: 0, key: "fake-1" }
+fakeClient := { kind: "ws", authenticated: true, role: "Director", writeBuf: [], sendBlocked: false, sock: 0, lastRxTick: 0, closeAfterSend: false, deviceId: "test-dev", sendBuf: Buffer(0), sendLen: 0, key: "fake-1" }
 bridge._HandleBridgeMessage(fakeClient, '{"type":"transition_scene"}')
 AssertTrue(transitionBox.count == 1, "HostBridge transition_scene invokes state.triggerTransitionFn")
 

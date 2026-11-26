@@ -2018,6 +2018,11 @@ class HostCompanionBridge {
 
         prevDev := this.pairedDevices.Has(finalDevId) ? this.pairedDevices[finalDevId] : ""
         pairedAtVal := (IsObject(prevDev) && prevDev.pairedAt != "") ? prevDev.pairedAt : FormatTime(, "HH:mm:ss")
+        prevRole := (IsObject(prevDev) && prevDev.HasOwnProp("role")) ? HostCompanionBridge.NormalizeRole(prevDev.role) : "Presenter"
+        prevTrust := (IsObject(prevDev) && prevDev.HasOwnProp("trustTier")) ? HostCompanionBridge.NormalizeTrustTier(prevDev.trustTier) : "Ephemeral Guest"
+        prevAllowFb := (IsObject(prevDev) && prevDev.HasOwnProp("allowDirectObsFallback")) ? !!prevDev.allowDirectObsFallback : false
+        prevPaused := (IsObject(prevDev) && prevDev.HasOwnProp("paused")) ? !!prevDev.paused : false
+        prevExp := (IsObject(prevDev) && prevDev.HasOwnProp("expiresAt")) ? Integer(prevDev.expiresAt) : 0
         unchanged := IsObject(prevDev)
             && prevDev.deviceName == finalName
             && prevDev.platform == finalPlat
@@ -2026,6 +2031,12 @@ class HostCompanionBridge {
             && prevDev.token == tokToKeep
             && ((prevDev.HasOwnProp("customName") && prevDev.customName) == hadCustom)
             && prevDev.pairedAt == pairedAtVal
+
+        c.role := prevRole
+        c.trustTier := prevTrust
+        c.allowDirectObsFallback := prevAllowFb
+        c.inputPaused := prevPaused
+        c.expiresAt := prevExp
 
         this.pairedDevices[finalDevId] := {
             deviceId: finalDevId,
@@ -2037,7 +2048,12 @@ class HostCompanionBridge {
             pairedAt: pairedAtVal,
             lastSeenTick: A_TickCount,
             connected: true,
-            customName: hadCustom
+            customName: hadCustom,
+            role: prevRole,
+            trustTier: prevTrust,
+            allowDirectObsFallback: prevAllowFb,
+            paused: prevPaused,
+            expiresAt: prevExp
         }
         if (tokToKeep != "")
             this.validTokens[tokToKeep] := finalDevId

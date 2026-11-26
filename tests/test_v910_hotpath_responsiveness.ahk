@@ -156,7 +156,7 @@ bridge.state := st
 st.obsConnected := true
 st.obsWs := wsObs
 st.triggerTransitionFn := (*) => true
-fakeCli := { kind: "ws", authenticated: true, writeBuf: [], sendBlocked: false, sock: 0, lastRxTick: 0, closeAfterSend: false, deviceId: "hp-test-1", sendBuf: Buffer(0), sendLen: 0, key: "fake-hp-1" }
+fakeCli := { kind: "ws", authenticated: true, role: "Director", writeBuf: [], sendBlocked: false, sock: 0, lastRxTick: 0, closeAfterSend: false, deviceId: "hp-test-1", sendBuf: Buffer(0), sendLen: 0, key: "fake-hp-1" }
 
 queuedFrames := []
 origQueue := bridge._QueueWsFrame
@@ -167,7 +167,7 @@ AssertTrue(queuedFrames.Length == 1 && InStr(queuedFrames[1], '"type":"ack"') &&
 
 queuedFrames := []
 bridge._HandleWsTextMessage(fakeCli, '{"type":"set_mute","isMuted":true}')
-AssertTrue(queuedFrames.Length == 0, "HostBridge set_mute omits redundant pre-OBS mute_state frame")
+AssertTrue(queuedFrames.Length == 1 && InStr(queuedFrames[1], '"type":"ack"') && !InStr(queuedFrames[1], '"type":"mute_state"'), "HostBridge set_mute omits redundant pre-OBS mute_state frame")
 
 queuedFrames := []
 bridge._HandleWsTextMessage(fakeCli, '{"type":"toggle_record"}')

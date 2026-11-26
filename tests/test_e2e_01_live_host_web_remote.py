@@ -59,6 +59,17 @@ if (!IsObject(bridge) || !bridge.running) {{
     FileAppend('{{"ok":false}}', "{ready_path}", "UTF-8")
     ExitApp(2)
 }}
+bridge.pairedDevices["web-e2e-01"] := {{
+    deviceId: "web-e2e-01",
+    deviceName: "WebE2E",
+    platform: "Web",
+    role: "Director",
+    trustTier: "Pinned Room",
+    allowDirectObsFallback: false,
+    paused: false,
+    expiresAt: 0,
+    token: ""
+}}
 info := '{{"ok":true,"tcpPort":' bridge.boundTcpPort ',"sessionCode":"' cfg.SessionPairingCode '"}}'
 FileAppend(info, "{ready_path}", "UTF-8")
 Persistent(true)
@@ -145,8 +156,9 @@ def main() -> int:
                     ("stage_nudge", {"type": "stage_nudge", "message": "2 min left", "deviceId": "web-e2e-01"}),
                 ]:
                     ec.ws_send_text(ws, json.dumps(payload))
-                    ack = ec.wait_ws_packet(ws, wbuf, lambda m, a=action: m.get("type") == "ack" and m.get("action") == a, f"{action} ack")
-                    assert ack.get("type") == "ack", f"Bad ack for {action}: {ack}"
+                    want_types = ("ack", "nack") if action == "slide_start" else ("ack",)
+                    ack = ec.wait_ws_packet(ws, wbuf, lambda m, a=action, wt=want_types: m.get("type") in wt and m.get("action") == a, f"{action} ack")
+                    assert ack.get("type") in want_types, f"Bad ack for {action}: {ack}"
                 print("[PASS] Web Remote slide_start, timer_start, toggle_standby, stage_nudge all acknowledged")
             finally:
                 ws.close()

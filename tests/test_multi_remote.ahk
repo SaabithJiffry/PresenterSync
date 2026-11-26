@@ -164,7 +164,7 @@ Assert("Simultaneous pairing of 2 Windows Remotes + 1 Android Remote succeeds wi
     pWin1.ok && pWin2.ok && pAnd1.ok
     && pWin1.sessionToken != "" && pWin2.sessionToken != "" && pAnd1.sessionToken != ""
     && pWin1.sessionToken != pWin2.sessionToken && pWin2.sessionToken != pAnd1.sessionToken
-    && pWin1.targetMicName == "Conference Mic" && pWin1.obsPassword == "multiPass")
+    && pWin1.targetMicName == "Conference Mic" && pWin1.obsPassword == "")
 
 devListText := _FormatHostBridgeDeviceText()
 Assert("HostBridge device registry tracks all 3 paired devices across Windows and Android",
