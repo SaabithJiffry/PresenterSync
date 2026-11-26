@@ -496,7 +496,7 @@ DispatchCliCommandString(cmdStr, cfg, state) {
         case "unmute":
             ExecuteHostRemoteSetMute(cfg, state, false)
             return true
-        case "toggle-mute":
+        case "toggle", "toggle-mute":
             ExecuteHostRemoteToggleMute(cfg, state)
             return true
         case "transition":
@@ -511,12 +511,50 @@ DispatchCliCommandString(cmdStr, cfg, state) {
         case "split":
             ExecuteHostSplitRecord(cfg, state)
             return true
+        case "status":
+            if (IsSet(DiagnosticLogger))
+                try DiagnosticLogger.RecordBreadcrumb("CLI", "Status", "muted=" (state.isMuted ? 1 : 0) " scene=" (state.HasOwnProp("currentSceneName") ? state.currentSceneName : ""))
+            return true
         case "__exit__":
             if (IsObject(state) && state.HasOwnProp("cliExitFn") && IsObject(state.cliExitFn))
                 state.cliExitFn.Call()
             else
                 SetTimer(() => ExitApp(0), -10)
             return true
+    }
+    if (SubStr(cmdLow, 1, 6) = "timer:") {
+        tArg := StrLower(Trim(SubStr(cmd, 7)))
+        if (tArg = "pause")
+            return PauseHostPresenterTimer(cfg, state)
+        if (tArg = "reset")
+            return ResetHostPresenterTimer(cfg, state)
+        if (IsInteger(tArg))
+            return StartHostPresenterTimer(cfg, state, Integer(tArg))
+        return false
+    }
+    if (SubStr(cmdLow, 1, 5) = "mark:") {
+        lbl := Trim(SubStr(cmd, 6))
+        if (lbl != "" && IsSet(SessionTimeline)) {
+            SessionTimeline.Record("Bookmark", lbl, state, (state.HasOwnProp("recElapsedSec") ? String(state.recElapsedSec) "s" : ""))
+            return true
+        }
+        return false
+    }
+    if (SubStr(cmdLow, 1, 6) = "macro:") {
+        mName := Trim(SubStr(cmd, 7))
+        return (mName != "") ? ExecuteHostMacro(cfg, state, mName) : false
+    }
+    if (SubStr(cmdLow, 1, 7) = "source:") {
+        srcName := Trim(SubStr(cmd, 8))
+        if (srcName != "") {
+            cfg.targetMicName := srcName
+            if (cfg.HasMethod("Write"))
+                cfg.Write("Settings", "TargetMicName", srcName)
+            if (state.obsConnected && IsObject(state.obsWs))
+                SendObsRequest(state.obsWs, "GetInputMute", "InitState", '{"inputName":"' EscapeJsonStr(srcName) '"}')
+            return true
+        }
+        return false
     }
     if (SubStr(cmdLow, 1, 6) = "nudge:") {
         txt := Trim(SubStr(cmd, 7))
@@ -564,7 +602,7 @@ ParseHostCliArgs(args) {
                 return "mute"
             case "--unmute":
                 return "unmute"
-            case "--toggle-mute":
+            case "--toggle", "--toggle-mute":
                 return "toggle-mute"
             case "--transition":
                 return "transition"
@@ -574,22 +612,16 @@ ParseHostCliArgs(args) {
                 return "panic"
             case "--split":
                 return "split"
+            case "--status":
+                return "status"
         }
-        if (SubStr(aLow, 1, 8) = "--nudge=") {
-            val := Trim(SubStr(a, 9), '"')
-            return (val != "") ? ("nudge:" val) : ""
+        if (RegExMatch(aLow, "^--(nudge|scene|timer|mark|macro|source)=(.*)$", &mEq)) {
+            val := Trim(SubStr(a, StrLen(mEq[1]) + 4), '"')
+            return (val != "") ? (StrLower(mEq[1]) ":" val) : ""
         }
-        if (aLow = "--nudge" && i < args.Length) {
+        if ((aLow = "--nudge" || aLow = "--scene" || aLow = "--timer" || aLow = "--mark" || aLow = "--macro" || aLow = "--source") && i < args.Length) {
             val := Trim(String(args[i + 1]), '"')
-            return (val != "") ? ("nudge:" val) : ""
-        }
-        if (SubStr(aLow, 1, 8) = "--scene=") {
-            val := Trim(SubStr(a, 9), '"')
-            return (val != "") ? ("scene:" val) : ""
-        }
-        if (aLow = "--scene" && i < args.Length) {
-            val := Trim(String(args[i + 1]), '"')
-            return (val != "") ? ("scene:" val) : ""
+            return (val != "") ? (SubStr(aLow, 3) ":" val) : ""
         }
         i += 1
     }
@@ -603,14 +635,14 @@ HasUnknownHostCliFlag(args) {
     while (i <= args.Length) {
         a := Trim(String(args[i]))
         aLow := StrLower(a)
-        if (aLow = "--nudge" || aLow = "--scene" || aLow = "--cleanup-old-exe" || aLow = "-cleanup-old-exe"
-            || aLow = "--config" || aLow = "-config" || aLow = "--instance" || aLow = "-instance") {
+        if (aLow = "--nudge" || aLow = "--scene" || aLow = "--timer" || aLow = "--mark" || aLow = "--macro" || aLow = "--source"
+            || aLow = "--cleanup-old-exe" || aLow = "-cleanup-old-exe" || aLow = "--config" || aLow = "-config" || aLow = "--instance" || aLow = "-instance") {
             i += 2
             continue
         }
-        if (aLow = "--mute" || aLow = "--unmute" || aLow = "--toggle-mute" || aLow = "--transition"
-            || aLow = "--standby" || aLow = "--brb" || aLow = "--panic" || aLow = "--split"
-            || SubStr(aLow, 1, 8) = "--nudge=" || SubStr(aLow, 1, 8) = "--scene="
+        if (aLow = "--mute" || aLow = "--unmute" || aLow = "--toggle" || aLow = "--toggle-mute" || aLow = "--transition"
+            || aLow = "--standby" || aLow = "--brb" || aLow = "--panic" || aLow = "--split" || aLow = "--status"
+            || RegExMatch(aLow, "^--(nudge|scene|timer|mark|macro|source)=")
             || RegExMatch(aLow, "^--?(cleanup-old-exe|config|instance)=")) {
             i += 1
             continue
@@ -2833,6 +2865,77 @@ ReleaseSyncLock(state) {
         state.syncSource := ""
 }
 
+IsProcessElevatedMismatch(hwnd) {
+    if (!hwnd)
+        return false
+    pid := 0
+    try pid := WinGetPID("ahk_id " hwnd)
+    if (!pid)
+        return false
+    ; If current process is elevated, no UIPI block
+    if (A_IsAdmin)
+        return false
+    hProc := DllCall("OpenProcess", "UInt", 0x1000, "Int", false, "UInt", pid, "Ptr") ; PROCESS_QUERY_LIMITED_INFORMATION
+    if (!hProc)
+        return true ; Access denied strongly implies target is elevated / protected
+    hTok := 0
+    elevated := false
+    try {
+        if (DllCall("Advapi32\OpenProcessToken", "Ptr", hProc, "UInt", 0x0008, "Ptr*", &hTok)) {
+            buf := Buffer(4, 0)
+            retLen := 0
+            if (DllCall("Advapi32\GetTokenInformation", "Ptr", hTok, "Int", 20, "Ptr", buf, "UInt", 4, "UInt*", &retLen))
+                elevated := (NumGet(buf, 0, "UInt") != 0)
+            DllCall("CloseHandle", "Ptr", hTok)
+        }
+    } finally {
+        DllCall("CloseHandle", "Ptr", hProc)
+    }
+    return elevated
+}
+
+FocusConferencingWindow(cfg) {
+    appType := (IsObject(cfg) && cfg.HasOwnProp("ConferencingApp")) ? cfg.ConferencingApp : "Zoom"
+    confSpec := GetConferencingWindowSpec(appType)
+    hwnd := WinExist(confSpec)
+    if (!hwnd)
+        return false
+    try {
+        if (WinGetMinMax("ahk_id " hwnd) == -1)
+            WinRestore("ahk_id " hwnd)
+        WinActivate("ahk_id " hwnd)
+        return true
+    }
+    return false
+}
+
+ExecuteHostMacro(cfg, state, macroName) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    raw := cfg.HasOwnProp("RunOfShowMacros") ? Trim(String(cfg.RunOfShowMacros)) : ""
+    if (raw = "")
+        return false
+    want := StrLower(Trim(String(macroName)))
+    stepsStr := ""
+    for _, entry in StrSplit(raw, "|") {
+        eq := InStr(entry, "=")
+        if (eq > 1 && StrLower(Trim(SubStr(entry, 1, eq - 1))) = want) {
+            stepsStr := Trim(SubStr(entry, eq + 1))
+            break
+        }
+    }
+    if (stepsStr = "")
+        return false
+    for _, step in StrSplit(stepsStr, ";") {
+        s := Trim(step)
+        if (s != "")
+            DispatchCliCommandString(s, cfg, state)
+    }
+    if (IsSet(SessionTimeline))
+        SessionTimeline.Record("Macro", "Executed Macro: " macroName, state)
+    return true
+}
+
 PushObsMuteToZoom(cfg, state, obsIsMuted, mockZoomState := "", sendFn := "") {
     confHk := GetActiveConferencingMuteHotkey(cfg)
     curSrc := state.HasOwnProp("syncSource") ? state.syncSource : ""
@@ -2849,6 +2952,13 @@ PushObsMuteToZoom(cfg, state, obsIsMuted, mockZoomState := "", sendFn := "") {
 
     _EngageSyncLock(state, "obs")
     targetWin := zoomState.micHwnd ? ("ahk_id " zoomState.micHwnd) : confSpec
+    if (zoomState.micHwnd && !IsObject(sendFn) && IsProcessElevatedMismatch(zoomState.micHwnd)) {
+        if (!state.HasOwnProp("_uipiWarned") || !state._uipiWarned) {
+            state._uipiWarned := true
+            if (IsSet(ShowCaptureSafeMicroToast))
+                try ShowCaptureSafeMicroToast("PresenterSync: " appType " is running as Admin — relaunch PresenterSync as Admin for Mode 3 sync", 4000)
+        }
+    }
     if (IsObject(sendFn)) {
         sendFn.Call(FormatSendKey(confHk), targetWin)
     } else {
@@ -2858,7 +2968,13 @@ PushObsMuteToZoom(cfg, state, obsIsMuted, mockZoomState := "", sendFn := "") {
 
 ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "", cfg := "") {
     if (!IsObject(result))
-        result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
+        result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0, cameraActive: false, raisedHandCount: 0, screenShareActive: false}
+    if (!result.HasOwnProp("cameraActive"))
+        result.cameraActive := false
+    if (!result.HasOwnProp("raisedHandCount"))
+        result.raisedHandCount := 0
+    if (!result.HasOwnProp("screenShareActive"))
+        result.screenShareActive := false
     normApp := NormalizeConferencingApp(appType)
     kwCfg := GetConfiguredUiaKeywords(cfg)
     hasCustomMute := (IsObject(cfg) && cfg.HasOwnProp("UiaMuteKeywords") && Trim(String(cfg.UiaMuteKeywords)) != "")
@@ -2901,10 +3017,20 @@ ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "",
                         result.hasMic := true, result.muted := true, result.micHwnd := hwnd
                     } else if RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute(\b|,|$)") {
                         result.hasMic := true, result.muted := false, result.micHwnd := hwnd
+                    } else if RegExMatch(n, "i)activar (el )?audio|reactivar (el )?mic|réactiver le micro|mikrofon aktivieren|ativar (o )?som|إلغاء كتم|ミュート解除|取消静音") {
+                        result.hasMic := true, result.muted := true, result.micHwnd := hwnd
+                    } else if RegExMatch(n, "i)silenciar|couper le micro|stummschalten|desativar som|كتم الصوت|ミュート|静音") {
+                        result.hasMic := true, result.muted := false, result.micHwnd := hwnd
                     }
                 }
             }
         }
+        if (RegExMatch(n, "i)\b(stop video|turn off camera|desactivar cámara|arrêter la vidéo|kamera ausschalten)\b"))
+            result.cameraActive := true
+        if (RegExMatch(n, "i)(\d+)\s*(raised hands?|hands? raised|manos levantadas|mains levées)", &mHand))
+            result.raisedHandCount := Max(result.raisedHandCount, Integer(mHand[1]))
+        if (RegExMatch(n, "i)\b(stop shar(ing|e)|you are screen sharing|dejar de compartir|arrêter le partage)\b"))
+            result.screenShareActive := true
         if (result.recState == 0) {
             if RegExMatch(n, "i)\bresume\b.*\brecording\b") {
                 result.hasRec := true, result.recState := 2
@@ -2927,7 +3053,7 @@ ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "",
 }
 
 DetectZoomStates(targetSpec := "ahk_exe Zoom.exe", appType := "Zoom", mockElementNames := "", cfg := "") {
-    result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0}
+    result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0, cameraActive: false, raisedHandCount: 0, screenShareActive: false}
     if IsObject(mockElementNames) {
         result.foundWindow := true
         return ParseConferencingElementNames(mockElementNames, appType, 1, result, cfg)
@@ -2945,7 +3071,7 @@ DetectZoomStates(targetSpec := "ahk_exe Zoom.exe", appType := "Zoom", mockElemen
         try WinGetPos(,, &ww, &wh, hwnd)
         if (ww < 50 || wh < 50)
             continue
-        names := UIA.GetWindowElementNames(hwnd, false)
+        names := UIA.GetWindowElementNames(hwnd, true)
         ParseConferencingElementNames(names, appType, hwnd, result, cfg)
         if (result.hasMic && result.hasRec && result.recState > 0 && result.hasChat && result.unreadChat > 0)
             break
@@ -2986,6 +3112,10 @@ ZoomStateMonitor(cfg, state) {
     if (state.zoomConnected != wasConn && state.HasOwnProp("refreshHelpFn") && state.refreshHelpFn)
         try state.refreshHelpFn.Call()
 
+    state.cameraActive := zoomInfo.HasOwnProp("cameraActive") ? !!zoomInfo.cameraActive : false
+    state.raisedHandCount := zoomInfo.HasOwnProp("raisedHandCount") ? Integer(zoomInfo.raisedHandCount) : 0
+    state.screenShareActive := zoomInfo.HasOwnProp("screenShareActive") ? !!zoomInfo.screenShareActive : false
+
     if (cfg.AudioRoutingMode == 3 && !state.IsSyncing) {
         if (state.zoomLastMuted != -1 && zoomInfo.muted != state.zoomLastMuted && zoomInfo.muted != state.isMuted) {
             sentObs := false
@@ -2995,6 +3125,9 @@ ZoomStateMonitor(cfg, state) {
                 sentObs := ControlSendFast(cfg.ObsMuteHotkey, "ahk_exe obs64.exe")
             if (sentObs)
                 _EngageSyncLock(state, "zoom")
+        } else if (state.zoomLastMuted == zoomInfo.muted && zoomInfo.muted != state.isMuted && cfg.EnableWS && state.obsConnected) {
+            ; Mode 3 target-state reconciler: OBS is authoritative when Zoom settled out-of-sync
+            PushObsMuteToZoom(cfg, state, state.isMuted, zoomInfo)
         }
     }
 

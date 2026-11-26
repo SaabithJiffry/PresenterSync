@@ -363,6 +363,8 @@ class AudioMeter {
     static _nextRetryTick := 0
     static _epVol := ""
     static _nextEpRetryTick := 0
+    static _activeDeviceId := ""
+    static _lastHotSwapCheckTick := 0
     static _mockOsMute := ""
     static _mockSetOsMuteFn := ""
 
@@ -377,6 +379,48 @@ class AudioMeter {
         this._enum := ""
         this._nextRetryTick := 0
         this._nextEpRetryTick := 0
+        this._activeDeviceId := ""
+    }
+
+    static GetDefaultCaptureDeviceId() {
+        try {
+            if (!IsObject(this._enum))
+                this._enum := ComObject("{BCDE0395-E52F-467C-8E3D-C4579291692E}", "{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+            pDev := 0
+            try ComCall(4, this._enum, "Int", 1, "Int", 2, "Ptr*", &pDev)
+            if (!pDev)
+                try ComCall(4, this._enum, "Int", 1, "Int", 0, "Ptr*", &pDev)
+            if (!pDev)
+                return ""
+            dev := ComValue(13, pDev)
+            pId := 0
+            try ComCall(5, dev, "Ptr*", &pId) ; IMMDevice::GetId
+            if (pId) {
+                idStr := StrGet(pId, "UTF-16")
+                DllCall("ole32\CoTaskMemFree", "Ptr", pId)
+                return idStr
+            }
+        }
+        return ""
+    }
+
+    static CheckHotSwapRebind(nowTick := "") {
+        if (nowTick = "")
+            nowTick := A_TickCount
+        if (nowTick - this._lastHotSwapCheckTick < 3000)
+            return false
+        this._lastHotSwapCheckTick := nowTick
+        curId := this.GetDefaultCaptureDeviceId()
+        if (curId != "" && this._activeDeviceId != "" && curId != this._activeDeviceId) {
+            this.Shutdown()
+            this._activeDeviceId := curId
+            if (IsSet(DiagnosticLogger))
+                try DiagnosticLogger.RecordBreadcrumb("Audio", "CoreAudioHotSwapRebind", "newDev=" SubStr(curId, 1, 24))
+            return true
+        }
+        if (curId != "" && this._activeDeviceId = "")
+            this._activeDeviceId := curId
+        return false
     }
 
     static Reset() {
@@ -1444,6 +1488,8 @@ class Config {
     PanicStopVCam := true
     PanicPauseRecord := true
     BreakCountdownObsTextSource := ""
+    CaptureDeviceId := ""
+    RunOfShowMacros := ""
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -1729,6 +1775,8 @@ class Config {
         this.PanicStopVCam := this.ReadBool("Settings", "PanicStopVCam", true)
         this.PanicPauseRecord := this.ReadBool("Settings", "PanicPauseRecord", true)
         this.BreakCountdownObsTextSource := Trim(this.Read("Settings", "BreakCountdownObsTextSource", ""))
+        this.CaptureDeviceId := Trim(this.Read("Settings", "CaptureDeviceId", ""))
+        this.RunOfShowMacros := Trim(this.Read("Settings", "RunOfShowMacros", ""))
         this.AutoMuteOnLock := this.ReadBool("Settings", "AutoMuteOnLock", true)
         this.AutoMuteOnMeetingEnd := this.ReadBool("Settings", "AutoMuteOnMeetingEnd", false)
         this.AutoMuteOnFirstObsConnect := this.ReadBool("Settings", "AutoMuteOnFirstObsConnect", false)
@@ -1947,6 +1995,8 @@ class Config {
             { sec: "Settings", key: "PanicStopVCam", prop: "PanicStopVCam", kind: "bool" },
             { sec: "Settings", key: "PanicPauseRecord", prop: "PanicPauseRecord", kind: "bool" },
             { sec: "Settings", key: "BreakCountdownObsTextSource", prop: "BreakCountdownObsTextSource", kind: "str" },
+            { sec: "Settings", key: "CaptureDeviceId", prop: "CaptureDeviceId", kind: "str" },
+            { sec: "Settings", key: "RunOfShowMacros", prop: "RunOfShowMacros", kind: "str" },
             { sec: "Settings", key: "ShowText", prop: "ShowText", kind: "bool" },
             { sec: "Settings", key: "MonoIcon", prop: "MonoIcon", kind: "bool" },
             { sec: "Settings", key: "SleekCorners", prop: "SleekCorners", kind: "bool" },

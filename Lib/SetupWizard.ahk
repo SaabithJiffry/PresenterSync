@@ -370,8 +370,15 @@ PromptForSetup(cfg, isInitialBoot := false) {
         if dlg.HasOwnProp("_releaseState")
             dlg._releaseState.Call()
         dlg.Destroy()
-        if (!isInitialBoot)
-            Reload()
+        cfg.EnableWS := (sel == 1 || sel == 3)
+        cfg.EnableZoom := (sel == 2 || sel == 3)
+        cfg.WriteBool("Settings", "EnableWS", cfg.EnableWS)
+        cfg.WriteBool("Settings", "EnableZoom", cfg.EnableZoom)
+        if (!isInitialBoot && IsSet(UpdateZoomMonitorTimer)) {
+            global AppState
+            if (IsSet(AppState) && IsObject(AppState))
+                try UpdateZoomMonitorTimer(cfg, AppState)
+        }
     }
 
     elements := [

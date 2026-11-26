@@ -207,6 +207,27 @@ try {
     pState.obsCrashedRecWarn := true
     j72 := hb72._BuildMuteStateJson()
     AssertTrue(InStr(j72, '"obsCrashedRecWarn":true') && InStr(j72, '"obsStats":{"activeFps":'), "M7.2: HostBridge JSON includes obsCrashedRecWarn and obsStats")
+
+    ; ---- M7.3: Full CLI, RunOfShowMacros, Multilingual UIA, Camera/Hands/Share ----
+    AssertEq(ParseHostCliArgs(["--toggle"]), "toggle-mute", "M7.3: --toggle alias")
+    AssertEq(ParseHostCliArgs(["--timer", "300"]), "timer:300", "M7.3: --timer 300")
+    AssertEq(ParseHostCliArgs(["--mark=Intro"]), "mark:Intro", "M7.3: --mark=Intro")
+    AssertEq(ParseHostCliArgs(["--macro", "StartClass"]), "macro:StartClass", "M7.3: --macro StartClass")
+    AssertEq(ParseHostCliArgs(["--source=USB Mic"]), "source:USB Mic", "M7.3: --source=USB Mic")
+    AssertEq(ParseHostCliArgs(["--status"]), "status", "M7.3: --status")
+    AssertTrue(!HasUnknownHostCliFlag(["--toggle", "--timer", "300", "--mark=Q&A", "--macro", "M1", "--source", "Mic2", "--status"]), "M7.3: HasUnknownHostCliFlag accepts all new flags")
+
+    pCfg.RunOfShowMacros := "StartClass=mute;scene:Main;timer:900"
+    pState.isMuted := false
+    mockObs.sent := []
+    AssertTrue(ExecuteHostMacro(pCfg, pState, "StartClass"), "M7.3: ExecuteHostMacro runs StartClass")
+    AssertEq(pState.timerPresetSec, 900, "M7.3: Macro set timer preset to 900s")
+
+    uiaRes := DetectZoomStates("ahk_exe Zoom.exe", "Zoom", ["Silenciar", "Stop Video", "3 raised hands", "You are screen sharing"], pCfg)
+    AssertTrue(uiaRes.hasMic && !uiaRes.muted, "M7.3: Multilingual UIA detects Spanish Silenciar -> unmuted")
+    AssertTrue(uiaRes.cameraActive, "M7.3: UIA detects cameraActive")
+    AssertEq(uiaRes.raisedHandCount, 3, "M7.3: UIA detects raisedHandCount=3")
+    AssertTrue(uiaRes.screenShareActive, "M7.3: UIA detects screenShareActive")
 } catch as err {
     g_Failed++
     g_FailMessages.Push("UNCAUGHT EXCEPTION: " err.Message " (" err.File ":" err.Line ")")

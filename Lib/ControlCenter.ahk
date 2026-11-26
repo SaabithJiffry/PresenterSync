@@ -768,15 +768,31 @@ ChangeZoomShortcutsUI(cfg, state := "", *) {
     })
 }
 
-SetRoutingMode(cfg, mode, *) {
+SetRoutingMode(cfg, mode, state := "", *) {
+    cfg.AudioRoutingMode := mode
     cfg.Write("Settings", "AudioRoutingMode", mode)
-    if ((mode == 2 || mode == 3) && cfg.ZoomMuteHotkey = "")
+    if ((mode == 2 || mode == 3) && cfg.ZoomMuteHotkey = "") {
+        cfg.ZoomMuteHotkey := "!a"
         cfg.Write("Settings", "ZoomMuteHotkey", "!a")
+    }
     if (mode == 2 && (!cfg.HasOwnProp("InternetPairingCode") || cfg.InternetPairingCode = "")) {
         cfg.InternetPairingCode := GenerateInternetPairingCode()
         cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode)
     }
-    Reload()
+    cfg.EnableWS := (mode == 1 || mode == 3)
+    cfg.EnableZoom := (mode == 2 || mode == 3)
+    cfg.WriteBool("Settings", "EnableWS", cfg.EnableWS)
+    cfg.WriteBool("Settings", "EnableZoom", cfg.EnableZoom)
+    if (IsObject(state)) {
+        if (IsSet(UpdateZoomMonitorTimer))
+            try UpdateZoomMonitorTimer(cfg, state)
+        if (IsSet(HostBridgeBroadcastMuteState))
+            try HostBridgeBroadcastMuteState(cfg, state)
+        if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
+        if (IsSet(RefreshHudAppearance))
+            try RefreshHudAppearance(cfg, state)
+    }
 }
 
 ChangeObsSettingsUI(cfg, state := "", *) {
