@@ -753,6 +753,16 @@ class HostCompanionBridge {
         return ["read_state", "ping", "sync_req", "mute", "ppt", "timer", "stage_nudge"]
     }
 
+    static CheckVersionSkew(clientVer, clientProto := 2) {
+        if (Integer(clientProto) != HostBridgeConstants.PROTOCOL_VERSION)
+            return { skewed: true, reason: "Protocol mismatch (client v" clientProto " vs host v" HostBridgeConstants.PROTOCOL_VERSION ")" }
+        cParts := StrSplit(LTrim(Trim(String(clientVer)), "vV"), ".")
+        hParts := StrSplit(LTrim(Trim(String(UIConstants.APP_VERSION)), "vV"), ".")
+        if (cParts.Length >= 2 && hParts.Length >= 2 && (cParts[1] != hParts[1] || cParts[2] != hParts[2]))
+            return { skewed: true, reason: "App version skew (client " clientVer " vs host " UIConstants.APP_VERSION ")" }
+        return { skewed: false, reason: "" }
+    }
+
     static HasPermissionForCmd(role, msgType) {
         norm := HostCompanionBridge.NormalizeRole(role)
         if (norm = "Director")
@@ -1732,6 +1742,25 @@ class HostCompanionBridge {
                 c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
                 manJson := '{"name":"PresenterSync Web Remote","short_name":"PresenterSync","start_url":"/","display":"standalone","background_color":"#090b10","theme_color":"#0f172a"}'
                 this._SendHttpResponse(c, "200 OK", manJson)
+                return
+            }
+            if (method = "GET" && (cleanPath = "/update/sha256" || cleanPath = "/update/android")) {
+                c.recvLen := _HB_ConsumeBytes(c.recvBuf, c.recvLen, hdrEnd)
+                if (!IsObject(this.cfg) || !this.cfg.HasOwnProp("EnableLanSelfUpdate") || !this.cfg.EnableLanSelfUpdate) {
+                    this._SendHttpResponse(c, "403 Forbidden", '{"ok":false,"error":"LAN self-update is disabled"}')
+                    return
+                }
+                targetFile := (cleanPath = "/update/sha256") ? (A_ScriptDir "\dist\SHA256SUMS.txt") : (A_ScriptDir "\dist\PresenterSync_Remote.apk")
+                if (!FileExist(targetFile)) {
+                    this._SendHttpResponse(c, "404 Not Found", '{"ok":false,"error":"Artifact not found on host"}')
+                    return
+                }
+                if (cleanPath = "/update/sha256") {
+                    this._SendHttpResponse(c, "200 OK", FileRead(targetFile, "UTF-8"), "text/plain; charset=utf-8")
+                } else {
+                    bin := FileRead(targetFile, "RAW")
+                    this._SendBinaryResponse(c, "200 OK", "application/vnd.android.package-archive", bin, bin.Size)
+                }
                 return
             }
             if (method = "GET" && cleanPath = "/slide-preview.jpg") {

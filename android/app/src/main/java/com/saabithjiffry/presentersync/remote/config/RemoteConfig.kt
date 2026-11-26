@@ -187,6 +187,7 @@ data class RemoteConfig(
     val autoCheckUpdates: Boolean = true,
     val lastUpdateCheckMs: Long = 0L,
     val skippedUpdateVersion: String = "",
+    val customUpdateUrl: String = "",
     val deviceProfileMode: DeviceProfileMode = DeviceProfileMode.AUTO,
     val keepScreenOn: Boolean = false,
     val idleDimAfterSec: Int = 0,
@@ -354,6 +355,7 @@ class RemoteConfigStore private constructor(
             autoCheckUpdates = prefs.getBoolean("autoCheckUpdates", true),
             lastUpdateCheckMs = prefs.getLong("lastUpdateCheckMs", 0L).coerceAtLeast(0L),
             skippedUpdateVersion = prefs.getString("skippedUpdateVersion", "").orEmpty().trim(),
+            customUpdateUrl = prefs.getString("customUpdateUrl", "").orEmpty().trim(),
             deviceProfileMode = DeviceProfileMode.fromRaw(prefs.getString("deviceProfileMode", "Auto")),
             keepScreenOn = prefs.getBoolean("keepScreenOn", false),
             idleDimAfterSec = prefs.getInt("idleDimAfterSec", 0).coerceIn(0, 600),
@@ -637,6 +639,7 @@ class RemoteConfigStore private constructor(
             .putBoolean("autoCheckUpdates", c.autoCheckUpdates)
             .putLong("lastUpdateCheckMs", c.lastUpdateCheckMs)
             .putString("skippedUpdateVersion", c.skippedUpdateVersion)
+            .putString("customUpdateUrl", c.customUpdateUrl)
             .putString("deviceProfileMode", c.deviceProfileMode.rawValue)
             .putBoolean("keepScreenOn", c.keepScreenOn)
             .putInt("idleDimAfterSec", c.idleDimAfterSec)

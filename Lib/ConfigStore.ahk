@@ -407,4 +407,43 @@ class ConfigStore {
             return false
         }
     }
+
+    static ExportDeploymentBundle(cfg, includeSecrets := false) {
+        if (!IsObject(cfg))
+            return "{}"
+        keys := ["AudioRoutingMode", "BridgePort", "ObsWsHost", "ObsWsPort", "StandbySceneName", "PanicSceneName", "QuickNudgePresets", "RunOfShowMacros", "HwMuteHotkey", "ObsMuteHotkey", "ZoomMuteHotkey", "AutoProfileRules"]
+        if (includeSecrets)
+            keys.Push("obsPassword", "InternetPairingCode")
+        out := '{"bundleVersion":1,'
+        first := true
+        for _, k in keys {
+            if (cfg.HasOwnProp(k)) {
+                v := String(cfg.%k%)
+                v := StrReplace(StrReplace(StrReplace(v, "\", "\\"), '"', '\"'), "`n", "\n")
+                out .= (first ? "" : ",") '"' k '":"' v '"'
+                first := false
+            }
+        }
+        return out . "}"
+    }
+
+    static ImportDeploymentBundle(cfg, jsonStr) {
+        if (!IsObject(cfg) || Trim(String(jsonStr)) = "")
+            return false
+        keys := ["AudioRoutingMode", "BridgePort", "ObsWsHost", "ObsWsPort", "StandbySceneName", "PanicSceneName", "QuickNudgePresets", "RunOfShowMacros", "HwMuteHotkey", "ObsMuteHotkey", "ZoomMuteHotkey", "AutoProfileRules"]
+        applied := 0
+        for _, k in keys {
+            if (RegExMatch(jsonStr, '"' k '"\s*:\s*"((?:[^"\\]|\\.)*)"', &m)) {
+                val := StrReplace(StrReplace(StrReplace(m[1], "\n", "`n"), '\"', '"'), "\\", "\")
+                if (k = "AudioRoutingMode" || k = "BridgePort" || k = "ObsWsPort") {
+                    if (IsInteger(val))
+                        cfg.%k% := Integer(val)
+                } else {
+                    cfg.%k% := val
+                }
+                applied++
+            }
+        }
+        return applied > 0
+    }
 }
