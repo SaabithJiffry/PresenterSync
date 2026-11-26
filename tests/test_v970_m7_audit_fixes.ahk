@@ -122,6 +122,61 @@ try {
     AssertEq(stt.isMuted, false, "OBS-confirmed unmute stays LIVE")
     RollbackHostOptimisticMute(cfgObj, stt, "late timer")
     AssertEq(stt.isMuted, false, "Late rollback after confirmation is a no-op")
+
+    ; ---- M7.1: Emergency Panic Curtain, panicUnmuteLocked & CLI --panic ----
+    AssertEq(ParseHostCliArgs(["--panic"]), "panic", "ParseHostCliArgs --panic")
+    AssertEq(ParseHostCliArgs(["--brb"]), "standby", "ParseHostCliArgs --brb")
+    AssertTrue(!HasUnknownHostCliFlag(["--panic", "--brb"]), "HasUnknownHostCliFlag allows --panic and --brb")
+
+    mockObs := { sent: [] }
+    mockObs.DefineProp("sendText", { Call: (this, txt) => (this.sent.Push(txt), true) })
+    pIni := A_Temp "\ps_m71_cfg_" A_TickCount ".ini"
+    try FileDelete(pIni)
+    pCfg := Config(pIni)
+    pCfg.EnableWS := true
+    pCfg.AudioRoutingMode := 1
+    pCfg.targetMicName := "Mic/Aux"
+    pCfg.SecondaryAudioSources := "GuestMic"
+    pCfg.StandbySceneName := "BRB"
+    pCfg.PanicSceneName := "SafeCurtain"
+    pCfg.PanicStopVCam := true
+    pCfg.PanicPauseRecord := true
+    pCfg.BreakCountdownObsTextSource := "BreakClock"
+    pCfg.ExitBrbSafelyMuted := true
+    pCfg.BrbUnmuteCountdownSec := 0
+    pCfg.ShowIndicator := false
+    pState := OverlayState(pCfg)
+    pState.isMuted := false
+    pState.obsConnected := true
+    pState.obsWs := mockObs
+    pState.sceneList := ["Main", "BRB", "SafeCurtain"]
+    pState.currentSceneName := "Main"
+    pState.vcamActive := true
+    pState.recState := 1
+    pState.obsRecState := 1
+    pState.suppressNudgeBanners := true
+    ExecuteHostEmergencyPanic(pCfg, pState, true)
+    AssertTrue(pState.isPanic, "M7.1: Panic sets isPanic=true")
+    AssertTrue(pState.panicUnmuteLocked, "M7.1: Panic sets panicUnmuteLocked=true")
+    AssertTrue(pState.isMuted, "M7.1: Panic mutes mic")
+    AssertEq(pState.vcamActive, false, "M7.1: Panic stops VirtualCam when PanicStopVCam=true")
+    allSent := ""
+    for _, s in mockObs.sent
+        allSent .= s "`n"
+    AssertTrue(InStr(allSent, "SafeCurtain"), "M7.1: Panic switches to verified SafeCurtain scene")
+    AssertTrue(InStr(allSent, "StopVirtualCam"), "M7.1: Panic sends StopVirtualCam")
+    ; Remote unmute must be blocked while panicUnmuteLocked is true
+    okUnmute := ExecuteHostRemoteSetMute(pCfg, pState, false)
+    AssertEq(okUnmute, false, "M7.1: Remote unmute blocked during Panic Lock")
+    AssertTrue(pState.isMuted, "M7.1: Mic stays muted while Panic Lock active")
+    ; Clear panic unlocks unmute
+    ExecuteHostEmergencyPanic(pCfg, pState, false)
+    AssertEq(pState.isPanic, false, "M7.1: Clear panic sets isPanic=false")
+    AssertEq(pState.panicUnmuteLocked, false, "M7.1: Clear panic unlocks unmute")
+    ; UpdateObsBreakTextSource sends SetInputSettings
+    mockObs.sent := []
+    UpdateObsBreakTextSource(pCfg, pState, "05:00")
+    AssertTrue(mockObs.sent.Length == 1 && InStr(mockObs.sent[1], "SetInputSettings") && InStr(mockObs.sent[1], "BreakClock"), "M7.1: UpdateObsBreakTextSource updates OBS Text source")
 } catch as err {
     g_Failed++
     g_FailMessages.Push("UNCAUGHT EXCEPTION: " err.Message " (" err.File ":" err.Line ")")

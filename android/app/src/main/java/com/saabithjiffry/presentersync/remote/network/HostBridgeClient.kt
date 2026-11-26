@@ -25,6 +25,8 @@ data class BridgeTelemetryState(
     val scenes: List<String> = emptyList(),
     val quickNudges: List<String> = emptyList(),
     val isStandby: Boolean = false,
+    val isPanic: Boolean = false,
+    val panicUnmuteLocked: Boolean = false,
     val standbyScene: String = "BRB",
     val timerState: String = "stopped",
     val timerRemainingSec: Int = 600,
@@ -219,6 +221,8 @@ class HostBridgeClient(
                             scenes = scenesList,
                             quickNudges = quickNudgesList,
                             isStandby = obj.optBoolean("isStandby", false),
+            isPanic = obj.optBoolean("isPanic", false),
+            panicUnmuteLocked = obj.optBoolean("panicUnmuteLocked", false),
                             standbyScene = obj.optString("standbyScene", "BRB").ifBlank { "BRB" },
                             timerState = obj.optString("timerState", "stopped").ifBlank { "stopped" },
                             timerRemainingSec = obj.optInt("timerRemainingSec", 600),
@@ -329,6 +333,19 @@ class HostBridgeClient(
     fun sendSplitRecord(source: String = "quick_menu"): Boolean = sendDeviceAction("split_record", source)
 
     fun sendToggleStandby(source: String = "quick_menu"): Boolean = sendDeviceAction("toggle_standby", source)
+
+    fun sendEmergencyPanic(active: Boolean? = null, source: String = "quick_menu"): Boolean {
+        if (!authenticated) return false
+        val ws = webSocket ?: return false
+        val payload = JSONObject().apply {
+            put("type", "emergency_panic")
+            put("cmdId", nextCmdId())
+            if (active != null) put("active", active)
+            put("deviceId", deviceId)
+            put("source", source)
+        }.toString()
+        return ws.send(payload)
+    }
 
     fun sendSetStandby(isStandby: Boolean, source: String = "quick_menu"): Boolean {
         if (!authenticated) return false

@@ -12,6 +12,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\HelpCenter.ahk"
 #Include "%A_LineFile%\..\DiagnosticLogger.ahk"
 #Include "%A_LineFile%\..\ConfigStore.ahk"
+#Include "%A_LineFile%\..\WindowFit.ahk"
 
 class UIConstants {
     static APP_VERSION := "9.6.0"
@@ -1438,6 +1439,11 @@ class Config {
     CustomMutedHex := "C42B1C"
     StandbySceneName := "BRB"
     ExitBrbSafelyMuted := true
+    BrbUnmuteCountdownSec := 0
+    PanicSceneName := ""
+    PanicStopVCam := true
+    PanicPauseRecord := true
+    BreakCountdownObsTextSource := ""
     ShowText := false
     MonoIcon := false
     SleekCorners := false
@@ -1718,6 +1724,11 @@ class Config {
         this.AutoRecordOnStreamDrop := this.ReadBool("Settings", "AutoRecordOnStreamDrop", true)
         this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", true)
         this.ExitBrbSafelyMuted := this.ReadBool("Settings", "ExitBrbSafelyMuted", true)
+        this.BrbUnmuteCountdownSec := Max(0, Min(15, this.ReadInt("Settings", "BrbUnmuteCountdownSec", 0)))
+        this.PanicSceneName := Trim(this.Read("Settings", "PanicSceneName", ""))
+        this.PanicStopVCam := this.ReadBool("Settings", "PanicStopVCam", true)
+        this.PanicPauseRecord := this.ReadBool("Settings", "PanicPauseRecord", true)
+        this.BreakCountdownObsTextSource := Trim(this.Read("Settings", "BreakCountdownObsTextSource", ""))
         this.AutoMuteOnLock := this.ReadBool("Settings", "AutoMuteOnLock", true)
         this.AutoMuteOnMeetingEnd := this.ReadBool("Settings", "AutoMuteOnMeetingEnd", false)
         this.AutoMuteOnFirstObsConnect := this.ReadBool("Settings", "AutoMuteOnFirstObsConnect", false)
@@ -1931,6 +1942,11 @@ class Config {
             { sec: "Settings", key: "CustomMutedHex", prop: "CustomMutedHex", kind: "str" },
             { sec: "Settings", key: "StandbySceneName", prop: "StandbySceneName", kind: "str" },
             { sec: "Settings", key: "ExitBrbSafelyMuted", prop: "ExitBrbSafelyMuted", kind: "bool" },
+            { sec: "Settings", key: "BrbUnmuteCountdownSec", prop: "BrbUnmuteCountdownSec", kind: "int" },
+            { sec: "Settings", key: "PanicSceneName", prop: "PanicSceneName", kind: "str" },
+            { sec: "Settings", key: "PanicStopVCam", prop: "PanicStopVCam", kind: "bool" },
+            { sec: "Settings", key: "PanicPauseRecord", prop: "PanicPauseRecord", kind: "bool" },
+            { sec: "Settings", key: "BreakCountdownObsTextSource", prop: "BreakCountdownObsTextSource", kind: "str" },
             { sec: "Settings", key: "ShowText", prop: "ShowText", kind: "bool" },
             { sec: "Settings", key: "MonoIcon", prop: "MonoIcon", kind: "bool" },
             { sec: "Settings", key: "SleekCorners", prop: "SleekCorners", kind: "bool" },

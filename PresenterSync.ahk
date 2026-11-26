@@ -232,6 +232,8 @@ BuildTrayMenu(cfg, state) {
     ; 3. OBS DIRECTOR & STAGE
     DirectorMenu := Menu()
     isStandby := (IsObject(state) && state.HasOwnProp("isStandby") && state.isStandby)
+    isPanic := (IsObject(state) && state.HasOwnProp("isPanic") && state.isPanic)
+    _AddCheckedMenuItem(DirectorMenu, "Emergency Panic Curtain (Safe State)", (*) => ExecuteHostEmergencyPanic(cfg, state), isPanic)
     _AddCheckedMenuItem(DirectorMenu, "Toggle Standby / `"BRB`" Curtain", (*) => ExecuteHostToggleStandby(cfg, state), isStandby)
     SceneSwitchMenu := Menu()
     if (IsObject(state) && state.HasOwnProp("sceneList") && IsObject(state.sceneList) && state.sceneList.Length > 0) {

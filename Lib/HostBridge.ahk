@@ -2254,14 +2254,24 @@ class HostCompanionBridge {
         actorName := (c.HasOwnProp("deviceName") && c.deviceName != "") ? c.deviceName : ((c.HasOwnProp("deviceId") && c.deviceId != "") ? c.deviceId : "Remote")
         switch (msgType) {
             case "toggle_mute":
+                if (IsObject(this.state) && this.state.HasOwnProp("panicUnmuteLocked") && this.state.panicUnmuteLocked && this.state.HasOwnProp("isMuted") && this.state.isMuted) {
+                    this._QueueCmdResult(c, "toggle_mute", false, cmdId, "panic_locked", "Emergency Panic Lock active")
+                    this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+                    return
+                }
                 if (IsObject(this.state))
                     this.state.lastActionActor := actorName
                 ok := ExecuteHostRemoteToggleMute(this.cfg, this.state)
                 this._QueueCmdResult(c, "toggle_mute", ok, cmdId, ok ? "" : "obs_offline")
             case "set_mute":
+                targetMuted := JsonCodec.GetBool(msgObj, "isMuted", this.state.isMuted)
+                if (!targetMuted && IsObject(this.state) && this.state.HasOwnProp("panicUnmuteLocked") && this.state.panicUnmuteLocked) {
+                    this._QueueCmdResult(c, "set_mute", false, cmdId, "panic_locked", "Emergency Panic Lock active")
+                    this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+                    return
+                }
                 if (IsObject(this.state))
                     this.state.lastActionActor := actorName
-                targetMuted := JsonCodec.GetBool(msgObj, "isMuted", this.state.isMuted)
                 ok := ExecuteHostRemoteSetMute(this.cfg, this.state, targetMuted)
                 this._QueueCmdResult(c, "set_mute", ok, cmdId, ok ? "" : "obs_offline")
             case "ppt_next":
@@ -2319,6 +2329,15 @@ class HostCompanionBridge {
                 wantBrb := JsonCodec.HasKey(msgObj, "isStandby") ? JsonCodec.GetBool(msgObj, "isStandby", false) : JsonCodec.GetBool(msgObj, "enabled", false)
                 ok := ExecuteHostToggleStandby(this.cfg, this.state, wantBrb)
                 this._QueueCmdResult(c, "set_standby", ok, cmdId)
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "emergency_panic":
+                wantPanic := JsonCodec.HasKey(msgObj, "active") ? JsonCodec.GetBool(msgObj, "active", true) : ""
+                ok := ExecuteHostEmergencyPanic(this.cfg, this.state, wantPanic)
+                this._QueueCmdResult(c, "emergency_panic", ok, cmdId)
+                this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
+            case "clear_panic":
+                ok := ExecuteHostEmergencyPanic(this.cfg, this.state, false)
+                this._QueueCmdResult(c, "clear_panic", ok, cmdId)
                 this._QueueWsFrame(c, 0x1, this._BuildMuteStateJson())
             case "timer_start":
                 dur := JsonCodec.GetInt(msgObj, "durationSec", 0)
@@ -2466,6 +2485,8 @@ class HostCompanionBridge {
         }
         scenesJson .= "]"
         standbyStr := (this.state.HasOwnProp("isStandby") && this.state.isStandby) ? "true" : "false"
+        panicStr := (this.state.HasOwnProp("isPanic") && this.state.isPanic) ? "true" : "false"
+        panicLockStr := (this.state.HasOwnProp("panicUnmuteLocked") && this.state.panicUnmuteLocked) ? "true" : "false"
         standbyScene := (this.cfg.HasOwnProp("StandbySceneName") && this.cfg.StandbySceneName != "") ? String(this.cfg.StandbySceneName) : "BRB"
         tState := this.state.HasOwnProp("timerState") ? String(this.state.timerState) : "stopped"
         tRem := this.state.HasOwnProp("timerRemainingSec") ? Integer(this.state.timerRemainingSec) : 600
@@ -2474,7 +2495,7 @@ class HostCompanionBridge {
         hostUuid := EnsureHostUuid(this.cfg)
         bootId := _HB_JsonEscape(this._EnsureBootId())
         ver := _HB_JsonEscape(UIConstants.APP_VERSION)
-        return '"protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"lastActionActor":"' _HB_JsonEscape(lastActor) '","routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"quickNudges":' qnJson ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' ver '","timestamp":' A_TickCount
+        return '"protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"appVersion":"' ver '","hostBootId":"' bootId '","stateSeq":' this.stateSeq ',"hostUuid":"' _HB_JsonEscape(hostUuid) '","isMuted":' isMutedStr ',"lastActionActor":"' _HB_JsonEscape(lastActor) '","routingMode":' mode ',"targetMicName":"' _HB_JsonEscape(micName) '","conferencingApp":"' _HB_JsonEscape(confApp) '","detectedConfApp":"' _HB_JsonEscape(detConfApp) '","meetBgTabWarn":' meetBgWarnStr ',"slideIndex":' sIdx ',"slideTotal":' sTot ',"slideTitle":"' _HB_JsonEscape(sTitle) '","slideNotes":"' _HB_JsonEscape(sNotes) '","recState":' recSt ',"obsRecState":' obsRecSt ',"confRecState":' confRecSt ',"recSourceTag":"' _HB_JsonEscape(recSrcTag) '","recSeconds":' recSec ',"obsConnected":' obsConnStr ',"streamDropWarn":' streamWarnStr ',"voiceWhileMuted":' voiceMutedStr ',"osMicMutedDrift":' osDriftStr ',"lowDiskWarnLevel":' lowDiskLvl ',"lowDiskMb":' lowDiskMbVal ',"deadMicWarn":' deadMicStr ',"quickNudges":' qnJson ',"activeScene":"' _HB_JsonEscape(activeScene) '","scenes":' scenesJson ',"isStandby":' standbyStr ',"isPanic":' panicStr ',"panicUnmuteLocked":' panicLockStr ',"standbyScene":"' _HB_JsonEscape(standbyScene) '","timerState":"' _HB_JsonEscape(tState) '","timerRemainingSec":' tRem ',"timerPresetSec":' tPre ',"version":"' ver '","timestamp":' A_TickCount
     }
 
     _BuildMuteStateJson() {

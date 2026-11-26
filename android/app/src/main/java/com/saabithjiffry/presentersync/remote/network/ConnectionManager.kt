@@ -86,6 +86,8 @@ data class ConnectionUiState(
     val scenes: List<String> = emptyList(),
     val quickNudges: List<String> = emptyList(),
     val isStandby: Boolean = false,
+    val isPanic: Boolean = false,
+    val panicUnmuteLocked: Boolean = false,
     val standbyScene: String = "BRB",
     val timerState: String = "stopped",
     val timerRemainingSec: Int = 600,
@@ -1526,6 +1528,9 @@ class ConnectionManager(
                 obs?.sendSetInputMute(true)
                 applyNewMuteState(true)
             }
+            if (cur.recState == 1) {
+                obs?.sendToggleRecordPause()
+            }
             obs?.sendSetCurrentProgramScene(brbScene)
             val prevProg = if (cur.activeScene.isNotBlank() && cur.activeScene != brbScene) cur.activeScene else cur.previousProgramScene
             _uiState.value = _uiState.value.copy(
@@ -1549,6 +1554,9 @@ class ConnectionManager(
                 }
                 obs?.sendSetInputMute(snap.wasMuted)
                 applyNewMuteState(snap.wasMuted)
+                if (snap.recWasActive && _uiState.value.recState == 2) {
+                    obs?.sendToggleRecordPause()
+                }
             }
             _uiState.value = _uiState.value.copy(
                 isStandby = false,
@@ -1656,6 +1664,24 @@ class ConnectionManager(
         sendDirectorAction(
             bridgeAction = { it.sendToggleStandby(source) },
             obsAction = { executeLocalObsStandbyToggle() },
+            relayAction = { it.sendToggleStandby() }
+        )
+
+    fun sendEmergencyPanic(active: Boolean? = null, source: String = "quick_menu"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendEmergencyPanic(active, source) },
+            obsAction = { obs ->
+                val want = active ?: !_uiState.value.isPanic
+                if (want) {
+                    obs.sendSetInputMute(true)
+                    applyNewMuteState(true)
+                    val brb = _uiState.value.standbyScene.trim().ifBlank { "BRB" }
+                    obs.sendSetCurrentProgramScene(brb)
+                    if (_uiState.value.recState == 1) obs.sendToggleRecordPause()
+                }
+                _uiState.value = _uiState.value.copy(isPanic = want, panicUnmuteLocked = want)
+                true
+            },
             relayAction = { it.sendToggleStandby() }
         )
 

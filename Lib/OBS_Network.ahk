@@ -505,6 +505,9 @@ DispatchCliCommandString(cmdStr, cfg, state) {
         case "standby":
             ExecuteHostToggleStandby(cfg, state)
             return true
+        case "panic":
+            ExecuteHostEmergencyPanic(cfg, state)
+            return true
         case "split":
             ExecuteHostSplitRecord(cfg, state)
             return true
@@ -565,8 +568,10 @@ ParseHostCliArgs(args) {
                 return "toggle-mute"
             case "--transition":
                 return "transition"
-            case "--standby":
+            case "--standby", "--brb":
                 return "standby"
+            case "--panic":
+                return "panic"
             case "--split":
                 return "split"
         }
@@ -604,7 +609,7 @@ HasUnknownHostCliFlag(args) {
             continue
         }
         if (aLow = "--mute" || aLow = "--unmute" || aLow = "--toggle-mute" || aLow = "--transition"
-            || aLow = "--standby" || aLow = "--split"
+            || aLow = "--standby" || aLow = "--brb" || aLow = "--panic" || aLow = "--split"
             || SubStr(aLow, 1, 8) = "--nudge=" || SubStr(aLow, 1, 8) = "--scene="
             || RegExMatch(aLow, "^--?(cleanup-old-exe|config|instance)=")) {
             i += 1
@@ -1709,6 +1714,12 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
 ExecuteHostRemoteToggleMute(cfg, state) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
+    if (state.HasOwnProp("panicUnmuteLocked") && state.panicUnmuteLocked && state.HasOwnProp("isMuted") && state.isMuted) {
+        if (IsSet(ShowCaptureSafeMicroToast))
+            try ShowCaptureSafeMicroToast("Emergency Panic Lock active — clear Panic to unmute", 2500)
+        HostBridgeBroadcastMuteState(cfg, state)
+        return false
+    }
     if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsToggleInputMuteGroup(cfg, state, state.obsWs, "HostClickerMute")) {
         if (IsSet(SyncUIState))
             SyncUIState(cfg, state, !state.isMuted, true)
@@ -1721,6 +1732,12 @@ ExecuteHostRemoteSetMute(cfg, state, targetMuted) {
     if (!IsObject(cfg) || !IsObject(state))
         return false
     wantMuted := !!targetMuted
+    if (!wantMuted && state.HasOwnProp("panicUnmuteLocked") && state.panicUnmuteLocked) {
+        if (IsSet(ShowCaptureSafeMicroToast))
+            try ShowCaptureSafeMicroToast("Emergency Panic Lock active — clear Panic to unmute", 2500)
+        HostBridgeBroadcastMuteState(cfg, state)
+        return false
+    }
     if (cfg.AudioRoutingMode != 2 && state.obsConnected && IsObject(state.obsWs) && SendObsSetInputMuteGroup(cfg, state.obsWs, wantMuted, "HostRemoteSetMute")) {
         if (IsSet(SyncUIState))
             SyncUIState(cfg, state, wantMuted, true)
@@ -1897,6 +1914,106 @@ ExecuteHostSplitRecord(cfg, state) {
     return false
 }
 
+_HasObsSceneName(state, sceneName) {
+    if (!IsObject(state) || !state.HasOwnProp("sceneList") || !IsObject(state.sceneList) || state.sceneList.Length == 0)
+        return true ; Cannot verify when scene list not yet loaded
+    want := Trim(String(sceneName))
+    for _, sc in state.sceneList {
+        if (Trim(String(sc)) = want)
+            return true
+    }
+    return false
+}
+
+UpdateObsBreakTextSource(cfg, state, textVal) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    src := cfg.HasOwnProp("BreakCountdownObsTextSource") ? Trim(String(cfg.BreakCountdownObsTextSource)) : ""
+    if (src = "" || !cfg.EnableWS || !state.obsConnected || !IsObject(state.obsWs))
+        return false
+    escSrc := EscapeJsonStr(src)
+    escTxt := EscapeJsonStr(String(textVal))
+    return SendObsRequest(state.obsWs, "SetInputSettings", "BreakTextUpdate", '{"inputName":"' escSrc '","inputSettings":{"text":"' escTxt '"},"overlay":true}')
+}
+
+_CancelBrbUnmuteCountdown(state) {
+    if (!IsObject(state))
+        return
+    if (state.HasOwnProp("_brbCountdownTimerFn") && IsObject(state._brbCountdownTimerFn))
+        try SetTimer(state._brbCountdownTimerFn, 0)
+    state._brbCountdownRem := 0
+}
+
+_StepBrbUnmuteCountdown(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("_brbCountdownRem")) {
+        _CancelBrbUnmuteCountdown(state)
+        return
+    }
+    rem := Integer(state._brbCountdownRem) - 1
+    state._brbCountdownRem := rem
+    if (rem > 0) {
+        if (IsSet(ShowCaptureSafeMicroToast))
+            try ShowCaptureSafeMicroToast("BRB Exit — Unmuting in " rem "s...", 950)
+        return
+    }
+    _CancelBrbUnmuteCountdown(state)
+    if (!state.HasOwnProp("panicUnmuteLocked") || !state.panicUnmuteLocked)
+        ExecuteHostRemoteSetMute(cfg, state, false)
+}
+
+ExecuteHostEmergencyPanic(cfg, state, activate := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    curPanic := state.HasOwnProp("isPanic") ? !!state.isPanic : false
+    wantPanic := (activate == "") ? !curPanic : !!activate
+    if (wantPanic == curPanic)
+        return true
+
+    _CancelBrbUnmuteCountdown(state)
+    brbScene := (cfg.HasOwnProp("StandbySceneName") && Trim(cfg.StandbySceneName) != "") ? Trim(cfg.StandbySceneName) : "BRB"
+    panicScene := (cfg.HasOwnProp("PanicSceneName") && Trim(cfg.PanicSceneName) != "") ? Trim(cfg.PanicSceneName) : brbScene
+
+    if (wantPanic) {
+        state.isPanic := true
+        state.panicUnmuteLocked := true
+        ; Mute Primary + all Secondary inputs
+        ExecuteHostRemoteSetMute(cfg, state, true)
+        if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+            SendObsSetInputMuteGroup(cfg, state.obsWs, true, "PanicMuteAll")
+        ; Verify & switch to Safe Curtain scene
+        if ((cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) || (state.HasOwnProp("obsSceneSwitchFn") && IsObject(state.obsSceneSwitchFn))) {
+            if (_HasObsSceneName(state, panicScene))
+                ExecuteHostSwitchScene(cfg, state, panicScene)
+            else if (IsSet(ShowCaptureSafeMicroToast))
+                try ShowCaptureSafeMicroToast("Panic Curtain: scene '" panicScene "' not found in OBS (mic muted)", 3000)
+        }
+        ; Optionally stop Virtual Camera & pause recording
+        if ((!cfg.HasOwnProp("PanicStopVCam") || cfg.PanicStopVCam) && state.HasOwnProp("vcamActive") && state.vcamActive) {
+            if (cfg.EnableWS && state.obsConnected && IsObject(state.obsWs))
+                SendObsRequest(state.obsWs, "StopVirtualCam", "PanicStopVCam")
+            state.vcamActive := false
+        }
+        if ((!cfg.HasOwnProp("PanicPauseRecord") || cfg.PanicPauseRecord) && state.HasOwnProp("recState") && state.recState == 1)
+            ExecuteHostPauseRecord(cfg, state)
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("EMERGENCY PANIC CURTAIN ACTIVE (" panicScene ") — Inputs Muted & Unmute Locked", "EF4444", 4500, "Director")
+    } else {
+        state.isPanic := false
+        state.panicUnmuteLocked := false
+        if (!state.isMuted)
+            ExecuteHostRemoteSetMute(cfg, state, true)
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("Emergency Panic Cleared — Mic Kept Safely Muted", "10B981", 3200, "Director")
+    }
+    HostBridgeBroadcastMuteState(cfg, state)
+    BroadcastHostRelayDirectorState(cfg, state)
+    if (IsSet(SessionTimeline))
+        SessionTimeline.Record("Panic", wantPanic ? ("Emergency Panic ON (" panicScene ")") : "Emergency Panic Cleared", state)
+    if (state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+        try state.rebuildTrayFn.Call()
+    return true
+}
+
 ExecuteHostToggleStandby(cfg, state, enterStandby := "") {
     if (!IsObject(cfg) || !IsObject(state))
         return false
@@ -1907,6 +2024,7 @@ ExecuteHostToggleStandby(cfg, state, enterStandby := "") {
 
     brbScene := (cfg.HasOwnProp("StandbySceneName") && Trim(cfg.StandbySceneName) != "") ? Trim(cfg.StandbySceneName) : "BRB"
     if (wantStandby) {
+        _CancelBrbUnmuteCountdown(state)
         prevScene := state.HasOwnProp("currentSceneName") ? String(state.currentSceneName) : "Scene"
         state.standbySnapshot := {
             muted: (state.HasOwnProp("isMuted") ? !!state.isMuted : false),
@@ -1915,8 +2033,12 @@ ExecuteHostToggleStandby(cfg, state, enterStandby := "") {
         }
         if (!state.isMuted)
             ExecuteHostRemoteSetMute(cfg, state, true)
-        if ((cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) || (state.HasOwnProp("obsSceneSwitchFn") && IsObject(state.obsSceneSwitchFn)))
-            ExecuteHostSwitchScene(cfg, state, brbScene)
+        if ((cfg.EnableWS && state.obsConnected && IsObject(state.obsWs)) || (state.HasOwnProp("obsSceneSwitchFn") && IsObject(state.obsSceneSwitchFn))) {
+            if (_HasObsSceneName(state, brbScene))
+                ExecuteHostSwitchScene(cfg, state, brbScene)
+            else if (IsSet(ShowCaptureSafeMicroToast))
+                try ShowCaptureSafeMicroToast("BRB scene '" brbScene "' not found in OBS — mic muted only", 2800)
+        }
         if (state.HasOwnProp("recState") && state.recState == 1)
             ExecuteHostPauseRecord(cfg, state)
         state.isStandby := true
@@ -1925,6 +2047,7 @@ ExecuteHostToggleStandby(cfg, state, enterStandby := "") {
     } else {
         snap := state.HasOwnProp("standbySnapshot") ? state.standbySnapshot : ""
         safeExitMuted := (!cfg.HasOwnProp("ExitBrbSafelyMuted") || cfg.ExitBrbSafelyMuted)
+        unmuteCdSec := cfg.HasOwnProp("BrbUnmuteCountdownSec") ? Integer(cfg.BrbUnmuteCountdownSec) : 0
         state.isStandby := false
         state.standbySnapshot := ""
         if (IsObject(snap)) {
@@ -1933,11 +2056,20 @@ ExecuteHostToggleStandby(cfg, state, enterStandby := "") {
             if (snap.HasOwnProp("recWasActive") && snap.recWasActive && state.HasOwnProp("recState") && state.recState == 2)
                 ExecuteHostPauseRecord(cfg, state)
         }
-        if (safeExitMuted) {
+        if (safeExitMuted || (state.HasOwnProp("panicUnmuteLocked") && state.panicUnmuteLocked)) {
             if (!state.isMuted)
                 ExecuteHostRemoteSetMute(cfg, state, true)
         } else if (IsObject(snap) && snap.HasOwnProp("muted")) {
-            ExecuteHostRemoteSetMute(cfg, state, snap.muted)
+            if (!snap.muted && unmuteCdSec > 0) {
+                state._brbCountdownRem := unmuteCdSec
+                if (!state.HasOwnProp("_brbCountdownTimerFn") || !IsObject(state._brbCountdownTimerFn))
+                    state._brbCountdownTimerFn := _StepBrbUnmuteCountdown.Bind(cfg, state)
+                if (IsSet(ShowCaptureSafeMicroToast))
+                    try ShowCaptureSafeMicroToast("BRB Exit — Unmuting in " unmuteCdSec "s...", 950)
+                try SetTimer(state._brbCountdownTimerFn, 1000)
+            } else {
+                ExecuteHostRemoteSetMute(cfg, state, snap.muted)
+            }
         }
         if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
             ShowStageNudgeBanner(safeExitMuted ? "Standby Mode OFF — Session Restored (Mic Kept Safely Muted)" : "Standby Mode OFF — Session Restored", "10B981", 3200, "Director")
@@ -2009,6 +2141,7 @@ ResetHostPresenterTimer(cfg, state, durationSec := 0) {
     state.timerPresetSec := preset
     state.timerRemainingSec := preset
     state.timerState := "stopped"
+    UpdateObsBreakTextSource(cfg, state, FormatCountdownClock(preset))
     HostBridgeBroadcastMuteState(cfg, state)
     BroadcastHostRelayDirectorState(cfg, state)
     if (IsSet(SessionTimeline))
@@ -2026,6 +2159,7 @@ StepHostPresenterTimerTick(cfg, state) {
         return false
     prevRem := Integer(state.timerRemainingSec)
     state.timerRemainingSec := prevRem - 1
+    UpdateObsBreakTextSource(cfg, state, FormatCountdownClock(state.timerRemainingSec))
     if (state.timerRemainingSec <= 0 && cur = "running") {
         state.timerState := "overtime"
         BroadcastHostStageNudge(cfg, state, "Time Up — Overtime (" FormatCountdownClock(state.timerRemainingSec) ")", "Timer", "EF4444")
