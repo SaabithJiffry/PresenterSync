@@ -2467,6 +2467,13 @@ HandleObsClose(cfg, state, ws, status, reason) {
     state.obsConnected := false
     state.recordDirectory := ""
     state.streamDropWarn := false
+    if (state.HasOwnProp("obsRecState") && state.obsRecState == 1) {
+        state.obsCrashedRecWarn := true
+        if (IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
+            ShowStageNudgeBanner("OBS Disconnected unexpectedly while Recording was active!", "EF4444", 5500, "OBS Guard")
+        if (IsSet(DiagnosticLogger))
+            try DiagnosticLogger.RecordBreadcrumb("Safety", "ObsCrashedDuringRec", "OBS WS closed during obsRecState=1")
+    }
     state._forgotRecSinceTick := 0
     state._streamDropSinceTick := 0
     state._streamDropBackupTriggered := false
@@ -2603,6 +2610,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         if (IsObject(state) && state.HasOwnProp("obsTimerFn") && IsObject(state.obsTimerFn))
             SetTimer state.obsTimerFn, 0
         state.obsConnected := true
+        state.obsCrashedRecWarn := false
         escMic := EscapeJsonStr(cfg.targetMicName)
         SendObsRequest(ws, "GetInputMute", "InitState", '{"inputName":"' escMic '"}')
         SendObsRequest(ws, "GetRecordStatus", "InitRecState")
@@ -2740,6 +2748,18 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
                 if (RegExMatch(msg, '"outputDuration"\s*:\s*(\d+)', &matchDur))
                     durMs := Integer(matchDur[1])
                 SyncRecState(cfg, state, active ? (paused ? 2 : 1) : 0, durMs)
+                if (RegExMatch(msg, '"outputBytes"\s*:\s*(\d+)', &matchBytes) && IsSet(EvaluateRecStallWatchdog))
+                    EvaluateRecStallWatchdog(cfg, state, Integer(matchBytes[1]), active && !paused)
+            }
+        }
+        else if (InStr(msg, '"requestId":"PollObsStats"') || InStr(msg, '"requestId": "PollObsStats"')) {
+            if (!RegExMatch(msg, '"result"\s*:\s*false')) {
+                fps := RegExMatch(msg, '"activeFps"\s*:\s*([\d.]+)', &mFps) ? Float(mFps[1]) : 0.0
+                rSkip := RegExMatch(msg, '"renderSkippedFrames"\s*:\s*(\d+)', &mRs) ? Integer(mRs[1]) : 0
+                oSkip := RegExMatch(msg, '"outputSkippedFrames"\s*:\s*(\d+)', &mOs) ? Integer(mOs[1]) : 0
+                avgMs := RegExMatch(msg, '"averageFrameRenderTime"\s*:\s*([\d.]+)', &mAvg) ? Float(mAvg[1]) : 0.0
+                if (IsSet(EvaluateEncoderOverloadWatchdog))
+                    EvaluateEncoderOverloadWatchdog(cfg, state, fps, rSkip, oSkip, avgMs)
             }
         }
         else if (InStr(msg, '"requestId":"InitRecordDir"') || InStr(msg, '"requestId": "InitRecordDir"')) {

@@ -652,9 +652,10 @@ RecTimerTick(cfg, state) {
     state.recElapsedSec := activeMax
 
     state._recPollCounter := (state.HasOwnProp("_recPollCounter") ? state._recPollCounter : 0) + 1
-    if (Mod(state._recPollCounter, 15) == 0 && state.HasOwnProp("obsRecState") && state.obsRecState == 1
-        && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
-        SendObsRequest(state.obsWs, "GetRecordStatus", "PollRecStatus")
+    if (Mod(state._recPollCounter, 15) == 0 && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+        if (state.HasOwnProp("obsRecState") && state.obsRecState == 1)
+            SendObsRequest(state.obsWs, "GetRecordStatus", "PollRecStatus")
+        SendObsRequest(state.obsWs, "GetStats", "PollObsStats")
     }
 
     if (Mod(state.recElapsedSec, 5) == 0)
@@ -1648,9 +1649,20 @@ EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick := "") {
     state.lowDiskWarnLevel := newLevel
 
     if (newLevel == 0) {
+        state._lowDiskRecoveryTriggered := false
         if (prevLevel != 0)
             _NotifyHostTelemetryChanged(cfg, state)
         return 0
+    }
+    if (mb < 100 && (!state.HasOwnProp("_lowDiskRecoveryTriggered") || !state._lowDiskRecoveryTriggered)) {
+        state._lowDiskRecoveryTriggered := true
+        if (state.HasOwnProp("obsRecState") && state.obsRecState == 1 && state.HasOwnProp("obsConnected") && state.obsConnected) {
+            if (IsSet(ExecuteHostSplitRecord))
+                try ExecuteHostSplitRecord(cfg, state)
+            if (IsSet(ExecuteHostPauseRecord))
+                try ExecuteHostPauseRecord(cfg, state)
+            _EmitWatchdogAlert(cfg, state, "Safety", "LowDiskEmergencyPause", "freeMb=" mb, "CRITICAL <100 MB free (" mb " MB) — SplitRecordFile + PauseRecord triggered!", "CRITICAL <100 MB free — Recording paused", "EF4444", 6500, "Disk Guard")
+        }
     }
 
     escalated := (newLevel > prevLevel)
@@ -1791,6 +1803,72 @@ UpdateSafetyWatchdogTimer(cfg, state) {
     if (state.HasOwnProp("lowDiskWarnLevel") && state.lowDiskWarnLevel != 0)
         EvaluateLowDiskWatchdog(cfg, state, -1)
     return false
+}
+
+EvaluateRecStallWatchdog(cfg, state, outputBytes, recActive, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (nowTick = "")
+        nowTick := A_TickCount
+    if (!state.HasOwnProp("recStallWarn"))
+        state.recStallWarn := false
+    if (!state.HasOwnProp("_lastRecOutputBytes"))
+        state._lastRecOutputBytes := -1
+    if (!state.HasOwnProp("_lastRecBytesAdvanceTick"))
+        state._lastRecBytesAdvanceTick := 0
+    if (!recActive || !IsNumber(outputBytes) || Float(outputBytes) < 0) {
+        was := !!state.recStallWarn
+        state.recStallWarn := false
+        state._lastRecOutputBytes := -1
+        state._lastRecBytesAdvanceTick := 0
+        if (was)
+            _NotifyHostTelemetryChanged(cfg, state)
+        return false
+    }
+    bytesVal := Integer(Float(outputBytes))
+    if (state._lastRecOutputBytes < 0 || bytesVal > state._lastRecOutputBytes) {
+        was := !!state.recStallWarn
+        state.recStallWarn := false
+        state._lastRecOutputBytes := bytesVal
+        state._lastRecBytesAdvanceTick := nowTick
+        if (was)
+            _NotifyHostTelemetryChanged(cfg, state)
+        return false
+    }
+    if (state._lastRecBytesAdvanceTick > 0 && (nowTick - state._lastRecBytesAdvanceTick) >= 15000) {
+        if (!state.recStallWarn) {
+            state.recStallWarn := true
+            _EmitWatchdogAlert(cfg, state, "Safety", "RecStallWarn", "bytes=" bytesVal, "OBS Recording Stall: outputBytes frozen at " bytesVal " bytes", "OBS Recording Stall — outputBytes frozen", "EF4444", 5500, "Rec Guard")
+            _NotifyHostTelemetryChanged(cfg, state, true)
+        }
+        return true
+    }
+    return false
+}
+
+EvaluateEncoderOverloadWatchdog(cfg, state, activeFps, renderSkipped, outputSkipped, avgRenderMs, nowTick := "") {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (!state.HasOwnProp("encoderOverloadWarn"))
+        state.encoderOverloadWarn := false
+    prevR := state.HasOwnProp("obsRenderSkipped") ? Integer(state.obsRenderSkipped) : -1
+    prevO := state.HasOwnProp("obsOutputSkipped") ? Integer(state.obsOutputSkipped) : -1
+    state.obsActiveFps := Round(Float(activeFps), 1)
+    state.obsRenderSkipped := Integer(renderSkipped)
+    state.obsOutputSkipped := Integer(outputSkipped)
+    state.obsAvgRenderMs := Round(Float(avgRenderMs), 1)
+    dR := (prevR >= 0 && state.obsRenderSkipped >= prevR) ? (state.obsRenderSkipped - prevR) : 0
+    dO := (prevO >= 0 && state.obsOutputSkipped >= prevO) ? (state.obsOutputSkipped - prevO) : 0
+    over := (dR >= 15 || dO >= 15 || Float(avgRenderMs) >= 33.0)
+    was := !!state.encoderOverloadWarn
+    state.encoderOverloadWarn := over
+    if (over && !was) {
+        _EmitWatchdogAlert(cfg, state, "Safety", "EncoderOverloadWarn", "dR=" dR " dO=" dO " avgMs=" state.obsAvgRenderMs, "OBS Encoder Overload (skipped=" (dR + dO) ", render=" state.obsAvgRenderMs "ms)", "OBS Encoder Overload — dropped frames", "F59E0B", 4500, "OBS Health")
+        _NotifyHostTelemetryChanged(cfg, state, true)
+    } else if (!over && was) {
+        _NotifyHostTelemetryChanged(cfg, state)
+    }
+    return over
 }
 
 ArmHostOptimisticReconcile(cfg, state, delayMs := 300) {

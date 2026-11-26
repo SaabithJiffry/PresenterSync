@@ -177,6 +177,36 @@ try {
     mockObs.sent := []
     UpdateObsBreakTextSource(pCfg, pState, "05:00")
     AssertTrue(mockObs.sent.Length == 1 && InStr(mockObs.sent[1], "SetInputSettings") && InStr(mockObs.sent[1], "BreakClock"), "M7.1: UpdateObsBreakTextSource updates OBS Text source")
+
+    ; ---- M7.2: RecStall, EncoderOverload, OBS crash rec warn, <100MB auto-recovery ----
+    AssertEq(EvaluateRecStallWatchdog(pCfg, pState, 1024, true, 1000), false, "M7.2: Initial outputBytes does not trigger stall")
+    AssertEq(EvaluateRecStallWatchdog(pCfg, pState, 1024, true, 16500), true, "M7.2: Frozen outputBytes >=15s triggers recStallWarn")
+    AssertTrue(pState.recStallWarn, "M7.2: recStallWarn flag set")
+    AssertEq(EvaluateRecStallWatchdog(pCfg, pState, 2048, true, 17000), false, "M7.2: Advancing outputBytes clears recStallWarn")
+    AssertTrue(!pState.recStallWarn, "M7.2: recStallWarn cleared")
+
+    EvaluateEncoderOverloadWatchdog(pCfg, pState, 60.0, 0, 0, 4.0)
+    AssertEq(EvaluateEncoderOverloadWatchdog(pCfg, pState, 55.0, 20, 0, 35.0), true, "M7.2: Skipped frames + high render time triggers encoderOverloadWarn")
+    AssertTrue(pState.encoderOverloadWarn, "M7.2: encoderOverloadWarn flag set")
+    AssertEq(EvaluateEncoderOverloadWatchdog(pCfg, pState, 60.0, 20, 0, 5.0), false, "M7.2: Healthy stats clear encoderOverloadWarn")
+
+    mockObs.sent := []
+    pState.recState := 1
+    pState.obsRecState := 1
+    pState.obsConnected := true
+    pState._lowDiskRecoveryTriggered := false
+    EvaluateLowDiskWatchdog(pCfg, pState, 80, 200000)
+    recAll := ""
+    for _, s in mockObs.sent
+        recAll .= s "`n"
+    AssertTrue(InStr(recAll, "SplitRecordFile") && InStr(recAll, "PauseRecord"), "M7.2: <100MB triggers SplitRecordFile + PauseRecord")
+
+    hb72 := HostCompanionBridge()
+    hb72.cfg := pCfg
+    hb72.state := pState
+    pState.obsCrashedRecWarn := true
+    j72 := hb72._BuildMuteStateJson()
+    AssertTrue(InStr(j72, '"obsCrashedRecWarn":true') && InStr(j72, '"obsStats":{"activeFps":'), "M7.2: HostBridge JSON includes obsCrashedRecWarn and obsStats")
 } catch as err {
     g_Failed++
     g_FailMessages.Push("UNCAUGHT EXCEPTION: " err.Message " (" err.File ":" err.Line ")")
