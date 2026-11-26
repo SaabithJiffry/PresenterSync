@@ -355,6 +355,32 @@ def main() -> int:
                     )
                     print("[PASS] Browser Web Remote paired and entered Connected state")
 
+                    # V2-M5 Parity Checks: Scene pill, Reconnect, Guarded Reset Scene & RBAC .role-dir gating
+                    v2_m5_dom = cdp.eval_js(
+                        "({"
+                        "roleBadge: document.getElementById('roleBadge').textContent,"
+                        "scPillTxt: document.getElementById('scPillTxt').textContent,"
+                        "reconnVisible: !document.getElementById('reconnBtn').classList.contains('hide'),"
+                        "recHiddenForPresenter: document.getElementById('recBtn').classList.contains('hide'),"
+                        "panicHiddenForPresenter: document.getElementById('panicBtn').classList.contains('hide'),"
+                        "previewHiddenForPresenter: document.getElementById('previewScBtn').classList.contains('hide'),"
+                        "hasResetBtn: Boolean(document.getElementById('resetSceneBtn'))"
+                        "})"
+                    )
+                    assert v2_m5_dom["roleBadge"] == "Presenter", f"Expected Presenter roleBadge: {v2_m5_dom}"
+                    assert v2_m5_dom["scPillTxt"] == "Main", f"Expected Main in scenePill: {v2_m5_dom}"
+                    assert v2_m5_dom["reconnVisible"] is True and v2_m5_dom["hasResetBtn"] is True, f"Missing Reconnect/Reset buttons: {v2_m5_dom}"
+                    assert v2_m5_dom["recHiddenForPresenter"] and v2_m5_dom["panicHiddenForPresenter"] and v2_m5_dom["previewHiddenForPresenter"], (
+                        f".role-dir controls were not hidden for Presenter role: {v2_m5_dom}"
+                    )
+                    # Guarded 2-tap Reset Scene first tap arms confirmation
+                    cdp.eval_js("document.getElementById('resetSceneBtn').click()")
+                    assert cdp.eval_js("document.getElementById('resetSceneBtn').textContent") == "Confirm Reset?"
+                    # Wait briefly or test 2nd tap completes reset flow cleanly
+                    cdp.eval_js("document.getElementById('resetSceneBtn').click()")
+                    assert "Resetting" in (cdp.eval_js("document.getElementById('toastBanner').textContent") or "")
+                    print("[PASS] V2-M5 Scene pill, Reconnect, 2-tap Reset Scene, and Presenter RBAC gating verified")
+
                     # Tap-to-mute round-trip + keyed scene DOM identity check
                     cdp.eval_js("window.__refSceneBtn = document.querySelector('#scenes button');")
                     before_lbl = cdp.eval_js("document.getElementById('micLbl').textContent")
