@@ -1745,6 +1745,17 @@ class ConnectionManager(
             relayAction = { false }
         )
 
+    fun traceConnectionSteps(): List<String> {
+        val st = _uiState.value
+        return listOf(
+            "1. Host/mDNS: ${st.activeHost.ifBlank { "not set" }}",
+            "2. UDP :4457: Discovery ${if (st.activeHost.isNotBlank()) "OK" else "waiting"}",
+            "3. Bridge TCP: ${if (st.usingBridge) "CONNECTED" else if (st.usingRelayFallback) "RELAY" else "OFFLINE"}",
+            "4. Auth/Role: ${if (st.connected) st.remoteRole else "unauthenticated"}",
+            "5. OBS/Mic: ${if (st.connected || st.usingDirectObsFallback) "READY" else "OFFLINE"}"
+        )
+    }
+
     fun sendTransitionScene(source: String = "director"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendTransitionScene(source) },

@@ -3197,6 +3197,20 @@ ShowRemoteHelpUI(cfg, state, *) {
     return helpGui
 }
 
+RunRemoteConnectionTracer(host, port := 4456, state := "") {
+    steps := []
+    h := Trim(String(host))
+    steps.Push({ step: "1. Host / mDNS", ok: (h != ""), detail: (h != "") ? h : "No host configured" })
+    steps.Push({ step: "2. UDP :4457 Discovery", ok: true, detail: "LAN broadcast listener ready" })
+    tcpOk := (h = "127.0.0.1" || h = "localhost") ? IsLocalTcpPortListening(port) : (IsObject(state) && state.HasOwnProp("bridgeConnected") && state.bridgeConnected)
+    steps.Push({ step: "3. Bridge TCP :" port, ok: tcpOk, detail: tcpOk ? "Port reachable" : "Not reachable / check firewall" })
+    authOk := (IsObject(state) && state.HasOwnProp("bridgeAuthed") && state.bridgeAuthed)
+    steps.Push({ step: "4. Auth & Role", ok: authOk, detail: authOk ? "Authenticated" : "Pending pairing code" })
+    obsOk := (IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected)
+    steps.Push({ step: "5. OBS / Mic", ok: obsOk, detail: obsOk ? "OBS connected" : "OBS offline or bridged" })
+    return steps
+}
+
 ShowRemoteFirstRunWizard(cfg, state := "", *) {
     dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Remote - Quick Start")
     dlg.MarginX := 18

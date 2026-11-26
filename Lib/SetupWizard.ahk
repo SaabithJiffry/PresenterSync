@@ -1315,6 +1315,17 @@ RunPreFlightRehearsalChecks(cfg, state := "", overrides := "") {
     }
 }
 
+CreateHostBridgeFirewallRule(port := 4456) {
+    p := Integer(port) > 0 ? Integer(port) : 4456
+    try {
+        RunWait('*RunAs netsh advfirewall firewall add rule name="PresenterSync HostBridge TCP ' p '" dir=in action=allow protocol=TCP localport=' p, , "Hide")
+        RunWait('*RunAs netsh advfirewall firewall add rule name="PresenterSync Discovery UDP 4457" dir=in action=allow protocol=UDP localport=4457', , "Hide")
+        return true
+    } catch {
+        return false
+    }
+}
+
 ShowPreFlightRehearsalDialog(cfg, state := "", overrides := "") {
     res := RunPreFlightRehearsalChecks(cfg, state, overrides)
     if (IsSet(g_IsTestMode) && g_IsTestMode)
@@ -1362,10 +1373,16 @@ ShowPreFlightRehearsalDialog(cfg, state := "", overrides := "") {
     }
     RenderPreFlight(res)
 
-    btnRerun := pfGui.Add("Button", "xm y+14 w170 h32", "Re-Run 10s Check")
-    btnClose := pfGui.Add("Button", "x+10 yp w120 h32 Default", "Close")
+    btnRerun := pfGui.Add("Button", "xm y+14 w140 h32", "Re-Run 10s Check")
+    btnFixFw := pfGui.Add("Button", "x+8 yp w125 h32", "Fix Firewall")
+    btnFixObs := pfGui.Add("Button", "x+8 yp w125 h32", "Enable OBS Sync")
+    btnClose := pfGui.Add("Button", "x+8 yp w80 h32 Default", "Close")
     Theme.RegisterControl(pfGui, btnRerun, "Button", "accent")
+    Theme.RegisterControl(pfGui, btnFixFw, "Button")
+    Theme.RegisterControl(pfGui, btnFixObs, "Button")
     Theme.RegisterControl(pfGui, btnClose, "Button")
+    btnFixFw.OnEvent("Click", (*) => (CreateHostBridgeFirewallRule(cfg.HasOwnProp("BridgePort") ? cfg.BridgePort : 4456), RenderPreFlight(RunPreFlightRehearsalChecks(cfg, state, overrides))))
+    btnFixObs.OnEvent("Click", (*) => (cfg.EnableWS := true, cfg.WriteBool("Settings", "EnableWS", true), RenderPreFlight(RunPreFlightRehearsalChecks(cfg, state, overrides))))
 
     ClosePf(*) {
         if (pfGui._closed)

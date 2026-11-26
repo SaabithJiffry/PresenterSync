@@ -349,7 +349,7 @@ class DiagnosticLogger {
     static _FormatSettingsSnapshot(cfg) {
         if (!IsObject(cfg))
             return "  CfgRef          : (uninitialized)`r`n"
-        fields := ["ActiveProfile", "AudioRoutingMode", "EnablePPT", "EnableMicOnly", "EnablePointerTransition", "HwMuteHotkey", "ObsMuteHotkey", "HwTransitionHotkey", "ObsTransitionHotkey", "EnableWS", "EnableZoom", "CatchArrows", "CatchPg", "CatchPgUpDn", "CatchSpace", "CatchEnter", "CatchTab", "CatchB", "CatchEsc", "RemoteNetworkMode", "BridgePort"]
+        fields := ["ActiveProfile", "AudioRoutingMode", "EnablePPT", "EnableMicOnly", "EnablePointerTransition", "HwMuteHotkey", "ObsMuteHotkey", "HwTransitionHotkey", "ObsTransitionHotkey", "EnableWS", "EnableZoom", "CatchArrows", "CatchPgUpDn", "CatchSpace", "CatchEnter", "CatchTab", "CatchB", "CatchEsc", "RemoteNetworkMode", "BridgePort"]
         secretFields := ["obsPassword", "ObsPassword", "InternetPairingCode", "SessionPairingCode", "SessionToken"]
         out := ""
         for _, f in fields {
