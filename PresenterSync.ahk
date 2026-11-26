@@ -25,6 +25,7 @@ SetKeyDelay -1, -1
 #Include <OBS_Network>
 #Include <GUI_Config>
 #Include <WindowFit>
+#Include <OperatorConsole>
 #Include <HudSnakeGame>
 #Include <HudArcadeBase>
 #Include <ArcadeVault>
@@ -189,6 +190,7 @@ BuildTrayMenu(cfg, state) {
 
     ; 1. ESSENTIALS (TOP-LEVEL)
     A_TrayMenu.Add("Control Center...", ShowControlCenterWindow.Bind(cfg, state))
+    A_TrayMenu.Add("Live Operator Console...", (*) => OperatorConsole.Toggle(cfg, state))
     try A_TrayMenu.Default := "Control Center..."
     _AddCheckedMenuItem(A_TrayMenu, "Show Mute Indicator", ToggleIndicator.Bind(cfg, state), cfg.ShowIndicator)
     A_TrayMenu.Add()

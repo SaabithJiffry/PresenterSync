@@ -249,8 +249,16 @@ internal fun StatusAndActionsCard(
                     2 -> Color(0xFFD97706)
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
-                val streamText = if (conn.streamDropWarn) "⚠ STREAM DROP WARN" else "Stream OK"
-                val streamTint = if (conn.streamDropWarn) Color(0xFFDC2626) else Color(0xFF10B981)
+                val streamText = when {
+                    conn.streamDropWarn || conn.streamState == 2 -> "⚠ STREAM DROP WARN"
+                    conn.streamState == 1 -> "Stream LIVE"
+                    else -> "Stream OFF"
+                }
+                val streamTint = when {
+                    conn.streamDropWarn || conn.streamState == 2 -> Color(0xFFDC2626)
+                    conn.streamState == 1 -> Color(0xFF10B981)
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
 
                 Surface(
                     shape = RoundedCornerShape(8.dp),

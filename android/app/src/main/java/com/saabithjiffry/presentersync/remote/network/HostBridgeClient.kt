@@ -15,6 +15,11 @@ import java.util.concurrent.atomic.AtomicLong
 data class BridgeTelemetryState(
     val recState: Int = 0,
     val recSeconds: Int = 0,
+    val streamState: Int = 0,
+    val vcamActive: Boolean = false,
+    val studioModeActive: Boolean = false,
+    val previewSceneName: String = "",
+    val unreadChatCount: Int = 0,
     val streamDropWarn: Boolean = false,
     val voiceWhileMuted: Boolean = false,
     val osMicMutedDrift: Boolean = false,
@@ -214,6 +219,11 @@ class HostBridgeClient(
                         val telemetry = BridgeTelemetryState(
                             recState = obj.optInt("recState", 0),
                             recSeconds = obj.optInt("recSeconds", 0).coerceAtLeast(0),
+                            streamState = obj.optInt("streamState", 0),
+                            vcamActive = obj.optBoolean("vcamActive", false),
+                            studioModeActive = obj.optBoolean("studioModeActive", false),
+                            previewSceneName = obj.optString("previewSceneName", ""),
+                            unreadChatCount = obj.optInt("unreadChatCount", 0),
                             streamDropWarn = obj.optBoolean("streamDropWarn", false),
                             voiceWhileMuted = obj.optBoolean("voiceWhileMuted", false),
                             osMicMutedDrift = obj.optBoolean("osMicMutedDrift", false),
