@@ -58,7 +58,8 @@ class PresenterSyncRemoteApp : Application() {
                     cfg.obsPassword,
                     cfg.sessionPairingCode,
                     cfg.sessionToken,
-                    cfg.internetPairingCode
+                    cfg.internetPairingCode,
+                    cfg.kioskPin
                 ).filter { it.isNotBlank() }
             }
         )

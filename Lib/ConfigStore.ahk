@@ -396,6 +396,15 @@ class ConfigStore {
                         IniWrite(prot, tmpPath, secretSection, k)
                 }
             }
+            if (secretSection != "Settings") {
+                rawPin := ""
+                try rawPin := IniRead(tmpPath, "Settings", "KioskPin", "__MISSING__")
+                if (rawPin != "__MISSING__" && rawPin != "" && !this.IsSecretValueEncrypted(rawPin)) {
+                    protPin := this.ProtectSecret(rawPin)
+                    if (protPin != "")
+                        IniWrite(protPin, tmpPath, "Settings", "KioskPin")
+                }
+            }
             IniWrite(this.CURRENT_SCHEMA_VERSION, tmpPath, "ConfigMeta", "SchemaVersion")
             FileMove(tmpPath, iniPath, 1)
             this._RecordDiag("SchemaMigrated", iniPath " -> v" this.CURRENT_SCHEMA_VERSION)

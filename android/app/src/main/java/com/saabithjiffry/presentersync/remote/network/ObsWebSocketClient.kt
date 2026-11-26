@@ -39,6 +39,7 @@ class ObsWebSocketClient(
     private var webSocket: WebSocket? = null
     private val closed = AtomicBoolean(false)
     private val identified = AtomicBoolean(false)
+    private val resetInFlight = AtomicBoolean(false)
     private val resetScheduler = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "ObsResetSceneWorker").apply { isDaemon = true }
     }
@@ -290,30 +291,34 @@ class ObsWebSocketClient(
                         }
                     }
                     else -> if (reqId.startsWith("ResetSceneList:")) {
-                        if (resultOk && respData != null) {
-                            val sceneName = reqId.removePrefix("ResetSceneList:").trim()
-                            val items = respData.optJSONArray("sceneItems") ?: JSONArray()
-                            val enabledIds = ArrayList<Int>(items.length())
-                            for (i in 0 until items.length()) {
-                                val obj = items.optJSONObject(i) ?: continue
-                                val id = obj.optInt("sceneItemId", -1)
-                                if (id >= 0 && obj.optBoolean("sceneItemEnabled", true)) {
-                                    enabledIds.add(id)
-                                }
+                        if (!resultOk || respData == null) {
+                            resetInFlight.set(false)
+                            return
+                        }
+                        val sceneName = reqId.removePrefix("ResetSceneList:").trim()
+                        val items = respData.optJSONArray("sceneItems") ?: JSONArray()
+                        val enabledIds = ArrayList<Int>(items.length())
+                        for (i in 0 until items.length()) {
+                            val obj = items.optJSONObject(i) ?: continue
+                            val id = obj.optInt("sceneItemId", -1)
+                            if (id >= 0 && obj.optBoolean("sceneItemEnabled", true)) {
+                                enabledIds.add(id)
                             }
-                            if (sceneName.isNotEmpty() && enabledIds.isNotEmpty()) {
-                                for (id in enabledIds) {
-                                    sendRequest(
-                                        "SetSceneItemEnabled",
-                                        "ResetOff_$id",
-                                        JSONObject().apply {
-                                            put("sceneName", sceneName)
-                                            put("sceneItemId", id)
-                                            put("sceneItemEnabled", false)
-                                        }
-                                    )
-                                }
-                                resetScheduler.schedule({
+                        }
+                        if (sceneName.isNotEmpty() && enabledIds.isNotEmpty()) {
+                            for (id in enabledIds) {
+                                sendRequest(
+                                    "SetSceneItemEnabled",
+                                    "ResetOff_$id",
+                                    JSONObject().apply {
+                                        put("sceneName", sceneName)
+                                        put("sceneItemId", id)
+                                        put("sceneItemEnabled", false)
+                                    }
+                                )
+                            }
+                            resetScheduler.schedule({
+                                try {
                                     if (!closed.get()) {
                                         for (id in enabledIds) {
                                             sendRequest(
@@ -327,8 +332,12 @@ class ObsWebSocketClient(
                                             )
                                         }
                                     }
-                                }, 250L, TimeUnit.MILLISECONDS)
-                            }
+                                } finally {
+                                    resetInFlight.set(false)
+                                }
+                            }, 250L, TimeUnit.MILLISECONDS)
+                        } else {
+                            resetInFlight.set(false)
                         }
                     }
                 }
@@ -423,10 +432,13 @@ class ObsWebSocketClient(
 
     fun sendResetSceneSources(sceneName: String): Boolean {
         val clean = sceneName.trim()
-        if (clean.isEmpty()) return false
-        return sendRequest("GetSceneItemList", "ResetSceneList:$clean", JSONObject().apply {
+        if (clean.isEmpty() || !resetInFlight.compareAndSet(false, true)) return false
+        resetScheduler.schedule({ resetInFlight.set(false) }, 3000L, TimeUnit.MILLISECONDS)
+        val ok = sendRequest("GetSceneItemList", "ResetSceneList:$clean", JSONObject().apply {
             put("sceneName", clean)
         })
+        if (!ok) resetInFlight.set(false)
+        return ok
     }
 
     fun sendHeartbeat(): Boolean {

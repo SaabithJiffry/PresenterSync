@@ -411,8 +411,11 @@ SyncStreamState(cfg, state, newState, congestion := 0.0, skippedFrames := -1, re
     prevWarn := (prevState == 2)
     currWarn := (effectiveState == 2)
     state.streamDropWarn := currWarn
-    if (prevWarn != currWarn)
+    if (prevWarn != currWarn) {
         _NotifyHostTelemetryChanged(cfg, state, true)
+        if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+            try UpdateHudVisibility(cfg, state)
+    }
 
     if (stateChanged) {
         oldW := state.streamW
@@ -1542,8 +1545,11 @@ EvaluateOsMicDrift(cfg, state, osMuted, nowTick := "") {
 
     if (!watchdogEnabled || appMuted || osMuted != true) {
         state.osMicMutedDrift := false
-        if (wasDrift)
+        if (wasDrift) {
             _NotifyHostTelemetryChanged(cfg, state)
+            if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+                try UpdateHudVisibility(cfg, state)
+        }
         return false
     }
 
@@ -1556,8 +1562,11 @@ EvaluateOsMicDrift(cfg, state, osMuted, nowTick := "") {
             "OS Mic Hardware/Privacy Mute Drift",
             "OS Mic Muted — Windows hardware/privacy switch is muting your mic while LIVE", "F59E0B", 5500, "Mic Guard")
     }
-    if (!wasDrift || nudgeTriggered)
+    if (!wasDrift || nudgeTriggered) {
         _NotifyHostTelemetryChanged(cfg, state)
+        if (!wasDrift && cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+            try UpdateHudVisibility(cfg, state)
+    }
     return true
 }
 
@@ -1648,8 +1657,11 @@ EvaluateStreamDropWatchdog(cfg, state, nowTick := "") {
         state._streamDropBackupTriggered := false
         if (wasWatchdogActive) {
             state.streamDropWarn := false
-            if (wasWarn)
+            if (wasWarn) {
                 _NotifyHostTelemetryChanged(cfg, state)
+                if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+                    try UpdateHudVisibility(cfg, state)
+            }
         }
         return false
     }
@@ -1672,6 +1684,8 @@ EvaluateStreamDropWatchdog(cfg, state, nowTick := "") {
         "Stream-Drop Auto-Backup Recording Triggered",
         "Stream unstable — Auto-started local OBS backup recording", "F59E0B", 5500, "Safety Guard")
     _NotifyHostTelemetryChanged(cfg, state)
+    if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+        try UpdateHudVisibility(cfg, state)
     return true
 }
 
@@ -1693,8 +1707,11 @@ EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick := "") {
     if (!enabled || !IsNumber(freeMb) || Float(freeMb) < 0) {
         state.lowDiskMb := -1
         state.lowDiskWarnLevel := 0
-        if (prevLevel != 0)
+        if (prevLevel != 0) {
             _NotifyHostTelemetryChanged(cfg, state)
+            if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+                try UpdateHudVisibility(cfg, state)
+        }
         return 0
     }
 
@@ -1705,8 +1722,11 @@ EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick := "") {
 
     if (newLevel == 0) {
         state._lowDiskRecoveryTriggered := false
-        if (prevLevel != 0)
+        if (prevLevel != 0) {
             _NotifyHostTelemetryChanged(cfg, state)
+            if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+                try UpdateHudVisibility(cfg, state)
+        }
         return 0
     }
     if (mb < 100 && (!state.HasOwnProp("_lowDiskRecoveryTriggered") || !state._lowDiskRecoveryTriggered)) {
@@ -1733,6 +1753,8 @@ EvaluateLowDiskWatchdog(cfg, state, freeMb, nowTick := "") {
     } else if (newLevel != prevLevel) {
         _NotifyHostTelemetryChanged(cfg, state)
     }
+    if (newLevel != prevLevel && cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+        try UpdateHudVisibility(cfg, state)
     return newLevel
 }
 
@@ -1777,6 +1799,8 @@ EvaluateDeadMicWatchdog(cfg, state, peak, isPresenting, nowTick := "") {
     }
     if (!wasWarn || nudgeFired)
         _NotifyHostTelemetryChanged(cfg, state)
+    if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+        try UpdateHudVisibility(cfg, state)
     return true
 }
 

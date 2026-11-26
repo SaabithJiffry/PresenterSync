@@ -100,6 +100,8 @@ class ScenePillCanvasView(context: Context) : View(context) {
             if (marqueeEnabled && isAttachedToWindow && visibility == VISIBLE) {
                 invalidate()
                 animHandler.postDelayed(this, 33L)
+            } else {
+                marqueeEnabled = false
             }
         }
     }

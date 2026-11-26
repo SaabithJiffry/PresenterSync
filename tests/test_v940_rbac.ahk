@@ -272,6 +272,18 @@ try {
     AssertEq(hb.state.presenterSignals.Length, 0, "P1-3: Session turnover clears presenterSignals")
     AssertTrue(!IsObject(hb.cachedSlidePreviewBuf), "P1-3: Session turnover clears cachedSlidePreviewBuf")
 
+    ; P1-C WAN Relay reset_active_scene dispatch
+    hb.cfg.InternetPairingCode := "PS-940-RELAY"
+    hb.cfg.AllowLegacyPlaintextRelay := true
+    hb.state.sceneResetInProgress := false
+    hb.state.currentSceneName := "SceneA"
+    obsLog := []
+    relayAuthTok := GetInternetRelayAuthToken(hb.cfg.InternetPairingCode, _GetRelayPassword(hb.cfg))
+    relayPkt := FormatRelayPacket("remote", "reset_active_scene", "1", relayAuthTok)
+    HandleHostRelayMessage(hb.cfg, hb.state, "", relayPkt)
+    AssertTrue(hb.state.sceneResetInProgress && obsLog.Length >= 1 && InStr(obsLog[1], '"requestType":"GetSceneItemList"') > 0, "P1-C: HandleHostRelayMessage dispatches reset_active_scene")
+    hb.state.sceneResetInProgress := false
+
 } catch as err {
     g_Failed++
     g_FailMessages.Push("UNCAUGHT EXCEPTION: " err.Message " (" err.File ":" err.Line ")")

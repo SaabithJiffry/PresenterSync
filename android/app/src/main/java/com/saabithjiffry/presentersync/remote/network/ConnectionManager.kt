@@ -851,6 +851,10 @@ class ConnectionManager(
                         panicUnmuteLocked = false,
                         timerState = "stopped",
                         timerRemainingSec = cur.timerPresetSec,
+                        slideIndex = 0,
+                        slideTotal = 0,
+                        slideTitle = "",
+                        slideNotes = "",
                         lastNudgeMessage = "",
                         lastNudgeSender = "",
                         lastNudgeId = "",
@@ -1889,7 +1893,10 @@ class ConnectionManager(
                     obs.sendResetSceneSources(curScene)
                 }
             },
-            relayAction = { false }
+            relayAction = {
+                _events.tryEmit(RemoteEvent.ToastMessage("Reset Scene requires LAN Host Bridge or Direct OBS."))
+                false
+            }
         )
 
     fun sendTimerCommand(action: String, durationSec: Int = 0, source: String = "director"): Boolean {
@@ -2056,6 +2063,7 @@ class ConnectionManager(
                         targetMicName = b.targetMicName,
                         internetPairingCode = b.internetPairingCode.ifBlank { prev.internetPairingCode },
                         isMuted = b.isMuted,
+                        directObsFallbackAllowed = b.allowDirectObsFallback,
                         firstRun = false
                     )
                 }

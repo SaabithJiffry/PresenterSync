@@ -12,6 +12,8 @@ import com.saabithjiffry.presentersync.remote.input.BubbleGestureConfig
 import com.saabithjiffry.presentersync.remote.network.ApkSelfInstaller
 import com.saabithjiffry.presentersync.remote.network.HostBridgeCallbacks
 import com.saabithjiffry.presentersync.remote.network.HostBridgeClient
+import com.saabithjiffry.presentersync.remote.network.PairingResult
+import com.saabithjiffry.presentersync.remote.network.SessionPairingClient
 import com.saabithjiffry.presentersync.remote.ui.overlay.ScreenBoundsCalculator
 import com.saabithjiffry.presentersync.remote.util.DiagnosticLogger
 import okhttp3.OkHttpClient
@@ -121,6 +123,24 @@ class PhoneOverlayTouchAndM3Test {
             "https://example.com/SHA256SUMS.txt",
             ApkSelfInstaller.requireSha256SumsUrl("https://example.com/SHA256SUMS.txt")
         )
+    }
+
+    @Test
+    fun sessionPairingClientParsesAllowDirectObsFallbackForC3Gate() {
+        val deny = SessionPairingClient.parsePairResponse(
+            "192.168.1.5",
+            200,
+            """{"ok":true,"hostName":"H","allowDirectObsFallback":false,"sessionToken":"t1"}"""
+        )
+        assertTrue(deny is PairingResult.Success)
+        assertFalse((deny as PairingResult.Success).bundle.allowDirectObsFallback)
+
+        val allow = SessionPairingClient.parsePairResponse(
+            "192.168.1.5",
+            200,
+            """{"ok":true,"hostName":"H","allowDirectObsFallback":true,"sessionToken":"t2"}"""
+        )
+        assertTrue((allow as PairingResult.Success).bundle.allowDirectObsFallback)
     }
 
     @Test

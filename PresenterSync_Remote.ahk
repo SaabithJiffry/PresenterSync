@@ -306,6 +306,7 @@ class RemoteConfig {
         cliInst := IsObject(g_RemoteCli) ? Trim(g_RemoteCli.instanceName) : ""
         this.InstanceName := (cliInst != "") ? cliInst : Trim(this.Read("Connection", "InstanceName", ""))
         this.ObsPassword := this.Read("Connection", "ObsPassword", "")
+        this.DirectObsFallbackAllowed := this.ReadBool("Connection", "DirectObsFallbackAllowed", 1)
         this.TargetMicName := Trim(this.Read("Connection", "TargetMicName", "Mic/Aux"))
         if (this.TargetMicName = "")
             this.TargetMicName := "Mic/Aux"
@@ -1137,7 +1138,8 @@ TryPromoteRemoteWanToLan(cfg, state) {
 }
 
 FailoverToNextCandidate(cfg, state, failedCandidate := "") {
-    if (IsObject(failedCandidate) && failedCandidate.HasOwnProp("isBridge") && failedCandidate.isBridge) {
+    allowDirect := !cfg.HasOwnProp("DirectObsFallbackAllowed") || cfg.DirectObsFallbackAllowed
+    if (IsObject(failedCandidate) && failedCandidate.HasOwnProp("isBridge") && failedCandidate.isBridge && allowDirect) {
         if (IsSet(DiagnosticLogger))
             try DiagnosticLogger.RecordBreadcrumb("Failover", "BridgeToDirectObsFallback", "Bridge " failedCandidate.raw " failed -> seeking Direct OBS :4455")
         ; If a matching Direct OBS :4455 candidate exists for the same host, jump directly to it on live Bridge crash
@@ -1274,37 +1276,6 @@ HandleRemoteObsClose(cfg, state, candidate, ws, status, reason) {
     state.NotifyTrayStatus()
 
     FailoverToNextCandidate(cfg, state, candidate)
-}
-
-_ApplyRemoteObsFallbackCreds(cfg, ev) {
-    if (!IsObject(cfg) || !IsObject(ev) || !ev.HasOwnProp("hasObsFallback") || !ev.hasObsFallback)
-        return false
-    changed := false
-    if (ev.HasOwnProp("obsFallbackPort") && Integer(ev.obsFallbackPort) >= 1 && Integer(ev.obsFallbackPort) <= 65535) {
-        newPort := String(Integer(ev.obsFallbackPort))
-        if (cfg.HostPort != newPort) {
-            cfg.HostPort := newPort
-            if (cfg.HasMethod("Write"))
-                try cfg.Write("Connection", "HostPort", newPort)
-            changed := true
-        }
-    }
-    if (ev.HasOwnProp("obsFallbackMic") && Trim(ev.obsFallbackMic) != "") {
-        newMic := Trim(ev.obsFallbackMic)
-        if (cfg.TargetMicName != newMic) {
-            cfg.TargetMicName := newMic
-            if (cfg.HasMethod("Write"))
-                try cfg.Write("Connection", "TargetMicName", newMic)
-            changed := true
-        }
-    }
-    if (ev.HasOwnProp("obsFallbackPassword") && cfg.ObsPassword != ev.obsFallbackPassword) {
-        cfg.ObsPassword := ev.obsFallbackPassword
-        if (cfg.HasMethod("Write"))
-            try cfg.Write("Connection", "ObsPassword", ev.obsFallbackPassword)
-        changed := true
-    }
-    return changed
 }
 
 HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
@@ -1614,6 +1585,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 state.studioModeActive := (mStudio[1] == "true")
                 if (state.studioModeActive && IsObject(ws))
                     SendObsRequest(ws, "GetCurrentPreviewScene", "InitRemotePreviewScene")
+                if (cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator && IsSet(ApplyRemoteSceneAppearance))
+                    try ApplyRemoteSceneAppearance(cfg, state)
             }
         } else if (InStr(msg, '"eventType":"CurrentProgramSceneChanged"') || InStr(msg, '"eventType": "CurrentProgramSceneChanged"')) {
             if (RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mScene) || RegExMatch(msg, '"currentProgramSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mScene)) {
@@ -1622,12 +1595,16 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                     if (state.activeScene != "" && state.activeScene != "Scene")
                         state.previousProgramScene := state.activeScene
                     state.activeScene := newSc
+                    if (cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator && IsSet(ApplyRemoteSceneAppearance))
+                        try ApplyRemoteSceneAppearance(cfg, state)
                     state.NotifyTrayStatus()
                 }
             }
         } else if (InStr(msg, '"eventType":"CurrentPreviewSceneChanged"') || InStr(msg, '"eventType": "CurrentPreviewSceneChanged"')) {
             if (RegExMatch(msg, '"currentPreviewSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mPrev) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mPrev)) {
                 state.previewScene := UnescapeJsonStr(mPrev[1])
+                if (cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator && IsSet(ApplyRemoteSceneAppearance))
+                    try ApplyRemoteSceneAppearance(cfg, state)
             }
         } else if (InStr(msg, '"eventType":"SceneListChanged"') || InStr(msg, '"eventType": "SceneListChanged"')) {
             parsedScenes := ParseObsSceneList(msg)
@@ -1730,6 +1707,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         else if (InStr(msg, '"requestId":"InitRemotePreviewScene"') || InStr(msg, '"requestId": "InitRemotePreviewScene"')) {
             if (RegExMatch(msg, '"currentPreviewSceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mPrev) || RegExMatch(msg, '"sceneName"\s*:\s*"((?:[^"\\]|\\.)*)"', &mPrev)) {
                 state.previewScene := UnescapeJsonStr(mPrev[1])
+                if (cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator && IsSet(ApplyRemoteSceneAppearance))
+                    try ApplyRemoteSceneAppearance(cfg, state)
             }
         }
         else if (InStr(msg, '"requestId":"InitRemoteSceneList"') || InStr(msg, '"requestId": "InitRemoteSceneList"')) {
@@ -1885,6 +1864,28 @@ OnRemoteDisplayChange(cfg, state, wParam, lParam, msg, hwnd) {
             cfg.savedY := clamped.y
             try cfg.Write("Position", "X", clamped.x)
             try cfg.Write("Position", "Y", clamped.y)
+        }
+    }
+    if (state.HasOwnProp("SceneGui") && IsGuiValid(state.SceneGui)) {
+        prevScX := state.sceneSavedX
+        prevScY := state.sceneSavedY
+        if (IsSet(CaptureSafety)) {
+            clSc := CaptureSafety.ClampRectToMonitors(state.sceneSavedX, state.sceneSavedY, state.sceneW, state.sceneH)
+        } else {
+            vLeft := SysGet(76), vTop := SysGet(77)
+            vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+            clSc := ClampRemotePositionToBounds(state.sceneSavedX, state.sceneSavedY, state.sceneW, state.sceneH, vLeft, vTop, vRight, vBottom)
+        }
+        state.sceneSavedX := clSc.x
+        state.sceneSavedY := clSc.y
+        if (clSc.x != prevScX || clSc.y != prevScY) {
+            try state.SceneGui.Move(clSc.x, clSc.y, state.sceneW, state.sceneH)
+            if (IsObject(cfg) && cfg.HasMethod("Write")) {
+                cfg.sceneSavedX := clSc.x
+                cfg.sceneSavedY := clSc.y
+                try cfg.Write("ScenePosition", "X", clSc.x)
+                try cfg.Write("ScenePosition", "Y", clSc.y)
+            }
         }
     }
 }
@@ -2696,9 +2697,10 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         CoordMode("Mouse", prevMouseMode)
         isShortClick := (Abs(endMX - startMX) <= 6 && Abs(endMY - startMY) <= 6 && (A_TickCount - downTick) < 400)
         if (isShortClick) {
-            if (isScene)
-                SendRemoteTransitionScene(cfg, state)
-            else
+            if (isScene) {
+                if (!cfg.HasOwnProp("EnableHudClickActions") || cfg.EnableHudClickActions)
+                    SendRemoteTransitionScene(cfg, state)
+            } else
                 HandleRemoteHudClick(cfg, state)
         }
         return
@@ -2777,9 +2779,10 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         SetTimer state.breathTimerFn, (cfg.AggressivePulse ? UIConstants.PULSE_INTERVAL_AGGRESSIVE : UIConstants.PULSE_INTERVAL_NORMAL)
 
     if (isShortClick && !dragInitiated) {
-        if (isScene)
-            SendRemoteTransitionScene(cfg, state)
-        else
+        if (isScene) {
+            if (!cfg.HasOwnProp("EnableHudClickActions") || cfg.EnableHudClickActions)
+                SendRemoteTransitionScene(cfg, state)
+        } else
             HandleRemoteHudClick(cfg, state)
     }
 }

@@ -828,6 +828,7 @@ HttpPostBridgePair(host, bridgePort, sessionCode, deviceId, deviceName) {
                 internetPairingCode: _RBC_JsonGetStr(body, "internetPairingCode"),
                 sessionToken: _RBC_JsonGetStr(body, "sessionToken"),
                 isMuted: _RBC_JsonGetBool(body, "isMuted", false),
+                allowDirectObsFallback: _RBC_JsonGetBool(body, "allowDirectObsFallback", false),
                 ips: ips,
                 error: ""
             }
@@ -955,16 +956,19 @@ BuildRemoteLanCandidateQueue(cfg) {
         }
     }
 
-    for _, ep in endpoints {
-        queue.Push({
-            host: ep.host,
-            port: ep.port,
-            scheme: ep.HasOwnProp("scheme") ? ep.scheme : "ws",
-            path: "",
-            url: "ws://" ep.host ":" ep.port,
-            raw: ep.raw,
-            isBridge: false
-        })
+    allowDirectObs := !cfg.HasOwnProp("DirectObsFallbackAllowed") || cfg.DirectObsFallbackAllowed
+    if (!hasBridgePairing || allowDirectObs) {
+        for _, ep in endpoints {
+            queue.Push({
+                host: ep.host,
+                port: ep.port,
+                scheme: ep.HasOwnProp("scheme") ? ep.scheme : "ws",
+                path: "",
+                url: "ws://" ep.host ":" ep.port,
+                raw: ep.raw,
+                isBridge: false
+            })
+        }
     }
     return queue
 }
@@ -1256,6 +1260,7 @@ ParseHostBridgeWsEvent(rawText) {
         obsFallbackPort: IsObject(obsFbMap) ? JsonCodec.GetInt(obsFbMap, "port", 4455) : 0,
         obsFallbackMic: IsObject(obsFbMap) ? JsonCodec.GetStr(obsFbMap, "targetMic") : "",
         obsFallbackPassword: IsObject(obsFbMap) ? JsonCodec.GetStr(obsFbMap, "password") : "",
+        obsFallbackDirectObsAllowed: IsObject(obsFbMap) ? JsonCodec.GetBool(obsFbMap, "directObsAllowed", true) : true,
         hasMuted: JsonCodec.HasKey(obj, "isMuted"),
         isMuted: JsonCodec.GetBool(obj, "isMuted", false),
         routingMode: JsonCodec.GetInt(obj, "routingMode", 1),
@@ -1312,8 +1317,8 @@ ApplyBridgePairResultToConfig(cfg, pairRes) {
         cfg.SessionPairingCode := pairRes.sessionCode
     if (pairRes.HasOwnProp("sessionToken") && pairRes.sessionToken != "")
         cfg.SessionToken := pairRes.sessionToken
-    if (pairRes.HasOwnProp("obsPassword") && pairRes.obsPassword != "")
-        cfg.ObsPassword := pairRes.obsPassword
+    cfg.ObsPassword := pairRes.HasOwnProp("obsPassword") ? pairRes.obsPassword : ""
+    cfg.DirectObsFallbackAllowed := pairRes.HasOwnProp("allowDirectObsFallback") ? !!pairRes.allowDirectObsFallback : false
     if (pairRes.HasOwnProp("targetMicName") && pairRes.targetMicName != "")
         cfg.TargetMicName := pairRes.targetMicName
     if (pairRes.HasOwnProp("internetPairingCode") && pairRes.internetPairingCode != "")
@@ -1321,6 +1326,46 @@ ApplyBridgePairResultToConfig(cfg, pairRes) {
     if (pairRes.HasOwnProp("hostUuid") && pairRes.hostUuid != "")
         cfg.PairedHostUuid := pairRes.hostUuid
     return true
+}
+
+_ApplyRemoteObsFallbackCreds(cfg, ev) {
+    if (!IsObject(cfg) || !IsObject(ev) || !ev.HasOwnProp("hasObsFallback") || !ev.hasObsFallback)
+        return false
+    changed := false
+    if (ev.HasOwnProp("obsFallbackPort") && Integer(ev.obsFallbackPort) >= 1 && Integer(ev.obsFallbackPort) <= 65535) {
+        newPort := String(Integer(ev.obsFallbackPort))
+        if (cfg.HostPort != newPort) {
+            cfg.HostPort := newPort
+            if (cfg.HasMethod("Write"))
+                try cfg.Write("Connection", "HostPort", newPort)
+            changed := true
+        }
+    }
+    if (ev.HasOwnProp("obsFallbackMic") && Trim(ev.obsFallbackMic) != "") {
+        newMic := Trim(ev.obsFallbackMic)
+        if (cfg.TargetMicName != newMic) {
+            cfg.TargetMicName := newMic
+            if (cfg.HasMethod("Write"))
+                try cfg.Write("Connection", "TargetMicName", newMic)
+            changed := true
+        }
+    }
+    if (ev.HasOwnProp("obsFallbackPassword") && cfg.ObsPassword != ev.obsFallbackPassword) {
+        cfg.ObsPassword := ev.obsFallbackPassword
+        if (cfg.HasMethod("Write"))
+            try cfg.Write("Connection", "ObsPassword", ev.obsFallbackPassword)
+        changed := true
+    }
+    if (ev.HasOwnProp("obsFallbackDirectObsAllowed")) {
+        nextAllowed := !!ev.obsFallbackDirectObsAllowed
+        if (!cfg.HasOwnProp("DirectObsFallbackAllowed") || cfg.DirectObsFallbackAllowed != nextAllowed) {
+            cfg.DirectObsFallbackAllowed := nextAllowed
+            if (cfg.HasMethod("WriteBool"))
+                try cfg.WriteBool("Connection", "DirectObsFallbackAllowed", nextAllowed)
+            changed := true
+        }
+    }
+    return changed
 }
 
 SaveRemoteConnectionSettingsToIni(cfg) {
@@ -1340,6 +1385,8 @@ SaveRemoteConnectionSettingsToIni(cfg) {
     if (cfg.HasOwnProp("PairedHostUuid"))
         cfg.Write("Connection", "PairedHostUuid", cfg.PairedHostUuid)
     cfg.Write("Connection", "ObsPassword", cfg.ObsPassword)
+    if (cfg.HasOwnProp("DirectObsFallbackAllowed"))
+        cfg.WriteBool("Connection", "DirectObsFallbackAllowed", !!cfg.DirectObsFallbackAllowed)
     cfg.Write("Connection", "TargetMicName", cfg.TargetMicName)
     cfg.Write("Connection", "DeviceId", cfg.DeviceId)
     if (cfg.HasOwnProp("InstanceName") && cfg.InstanceName != "")

@@ -181,6 +181,38 @@ Assert("Remote 1-tier HUD Snake morphs live canvas, hides Mic pill, enters playi
     && remMicRestored == 1 && remSnkSpy.refreshed >= 1 && (gdiRemAfter - gdiRemBefore) == 0,
     Format("start={} vis={} hid={} play={} rest={} gdiDelta={}", okRemLiveStart, remSnkVis, remMicHidden, remPhasePlay, remMicRestored, gdiRemAfter - gdiRemBefore))
 
+; --- ROUND 1 AUDIT FIXES: P1-A (C3 Direct OBS Policy Gate) & P2-D (KioskPin [Settings] Migration) ---
+c3Cfg := {
+    HostAddress: "192.168.1.50",
+    HostPort: 4455,
+    BridgePort: 4456,
+    SessionPairingCode: "AAA-111",
+    SessionToken: "tok-1",
+    ObsPassword: "StaleOldPassword!",
+    TargetMicName: "Mic/Aux",
+    DirectObsFallbackAllowed: false
+}
+qBlocked := BuildRemoteLanCandidateQueue(c3Cfg)
+Assert("P1-A: BuildRemoteLanCandidateQueue excludes Direct OBS :4455 when DirectObsFallbackAllowed=false",
+    qBlocked.Length == 1 && qBlocked[1].isBridge == true, "len=" qBlocked.Length)
+wsEvDeny := ParseHostBridgeWsEvent('{"type":"auth_ok","obsFallback":{"port":4455,"targetMic":"Mic/Aux","password":"","directObsAllowed":false}}')
+Assert("P1-A: ParseHostBridgeWsEvent parses obsFallbackDirectObsAllowed=false", wsEvDeny.obsFallbackDirectObsAllowed == false)
+_ApplyRemoteObsFallbackCreds(c3Cfg, wsEvDeny)
+Assert("P1-A: _ApplyRemoteObsFallbackCreds clears stale ObsPassword & preserves DirectObsFallbackAllowed=false",
+    c3Cfg.ObsPassword == "" && c3Cfg.DirectObsFallbackAllowed == false)
+c3Cfg.DirectObsFallbackAllowed := true
+qAllowed := BuildRemoteLanCandidateQueue(c3Cfg)
+Assert("P1-A: BuildRemoteLanCandidateQueue includes Direct OBS :4455 when DirectObsFallbackAllowed=true",
+    qAllowed.Length == 2 && qAllowed[2].isBridge == false, "len=" qAllowed.Length)
+
+pinMigIni := A_Temp "\ps_v101_pin_mig.ini"
+try FileDelete(pinMigIni)
+IniWrite("1234", pinMigIni, "Settings", "KioskPin")
+ConfigStore.MigrateIniSchema(pinMigIni, "Connection")
+Assert("P2-D: ConfigStore.MigrateIniSchema encrypts KioskPin in [Settings] even when secretSection='Connection'",
+    ConfigStore.IsSecretValueEncrypted(IniRead(pinMigIni, "Settings", "KioskPin", "")))
+try FileDelete(pinMigIni)
+
 ; --- CLEANUP & REPORT ---
 if FileExist(testIni)
     FileDelete(testIni)

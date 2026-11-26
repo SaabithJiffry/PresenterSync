@@ -43,7 +43,8 @@ data class PairedHostBundle(
     val internetPairingCode: String,
     val sessionToken: String,
     val ips: List<String>,
-    val mdns: String
+    val mdns: String,
+    val allowDirectObsFallback: Boolean = false
 )
 
 sealed interface PairingResult {
@@ -132,7 +133,8 @@ object SessionPairingClient {
                     internetPairingCode = obj.optString("internetPairingCode", ""),
                     sessionToken = obj.optString("sessionToken", ""),
                     ips = ips,
-                    mdns = obj.optString("mdns", "")
+                    mdns = obj.optString("mdns", ""),
+                    allowDirectObsFallback = obj.optBoolean("allowDirectObsFallback", false)
                 )
             )
         }

@@ -1765,6 +1765,8 @@ HandleHostRelayMessage(cfg, state, ws, rawMsg) {
             state.triggerTransitionFn.Call()
         else
             TriggerObsSceneTransition(cfg, state, true)
+    } else if (pkt.cmd = "reset_active_scene") {
+        ExecuteHostResetActiveScene(cfg, state)
     } else if (pkt.cmd = "timer_start") {
         dur := IsInteger(Trim(String(pkt.data))) ? Integer(Trim(String(pkt.data))) : 0
         StartHostPresenterTimer(cfg, state, dur)
