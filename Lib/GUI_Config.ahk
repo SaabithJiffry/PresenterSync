@@ -15,7 +15,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\WindowFit.ahk"
 
 class UIConstants {
-    static APP_VERSION := "9.9.0"
+    static APP_VERSION := "10.0.0"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168

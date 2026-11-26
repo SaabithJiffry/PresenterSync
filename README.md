@@ -8,7 +8,12 @@
 
 ---
 
-## Core Capabilities (v9.0.1)
+## Core Capabilities (v10.0.0)
+
+### 0. What's New in v10.0.0
+* **Zero-Latency Hot Paths & 4–8h Soak Hardening:** `< 16ms` optimistic toggles with `stateSeq` reconciliation, single-instance wall-clock HUD timers, non-blocking `WebSocket.ahk` inbox drain, and async `PlaySoundW` audio cues (zero animation backlog under rapid presses).
+* **Protocol v2, Secret Vaulting & RBAC:** Structural `JsonCodec.ahk`, RFC 6455 WebSocket hardening, `cmdId` deduplication, Windows DPAPI secret storage (`ConfigStore.ahk`), Android Keystore vault + `allowBackup="false"`, `PSGCM2` PBKDF2-HMAC-SHA256 WAN Crypto v2, and 3-tier Role-Based Access Control (`Tally-Only`, `Presenter`, `Director`) with credential withholding.
+* **Emergency Panic Curtain, Operator Console & Back-to-Back Turnover:** 1-action Panic Curtain, non-suspending Live Operator Console (`OperatorConsole.ahk`), Preview Scene & Scene-Item/Mixer control, Kiosk PIN Lock, 1-click Classroom Session Reset, Two-Way Stage Intercom (`Got It ✓` / `Signal Host`), Slide Preview thumbnails, and 5-step Connection Tracer.
 
 ### 1. Adaptive Floating Mic, 4-Tier HUD & Privacy Capture Exclusion
 * **Adaptive 4-Tier Host Stack (`PresenterSync.exe`):**
@@ -131,8 +136,8 @@ PresenterSync/
 │       ├── service/                # FloatingHudForegroundService, HapticAlertPlayer, BackgroundMediaClickerController,
 │       │                           # QuickToggleTileService
 │       └── widget/                 # PresenterSyncWidgetProvider (2x1 Home Screen App Widget)
-├── tests/                          # 42 AutoHotkey v2 suites (incl. 353-check master suite) +
-│                                   # 13 Python live multi-process E2E & cross-language AES-GCM suites
+├── tests/                          # 50 AutoHotkey v2 suites (incl. 354-check master suite) +
+│                                   # 12 Python live multi-process E2E & cross-language AES-GCM suites
 └── dist/                           # Portable PresenterSync.exe, PresenterSync_Remote.exe, PresenterSync_Remote.apk
 ```
 
@@ -140,9 +145,9 @@ PresenterSync/
 
 ## Automated Verification Coverage
 
-* **Windows (AutoHotkey v2):** `42` automated suites including `tests\test_master_suite.ahk` (`353` checks covering HUD rendering, OBS WS v5, UIA, Bridge, Watchdogs, Timeline, and Diagnostics) plus dedicated `v7.0.1`–`v9.0.1` feature, real-object render, & static audit suites.
-* **Cross-Process & Cross-Language E2E (Python):** `13` live multi-process suites (`test_host_bridge.py`, `test_multi_remote_e2e.py`, `test_real_handlers_e2e.py`, `test_udp_discovery_e2e.py`, `test_windows_self_updater_e2e.py`, `test_v762_cross_lang_crypto.py`, `test_v901_web_remote_js_e2e.py`, and `test_e2e_01`..`06`) verifying Web Remote live browser UI, Crash Failover & Re-Promotion, Sleep/Wake & Rapid Transition Stress, Standalone Cutoff, PTT Mutual Exclusion, CLI `WM_COPYDATA`, Watchdogs, and AES-256-GCM parity.
-* **Android (JVM & Lint):** `148` JVM unit tests (`testDebugUnitTest`) + `lintDebug` (`0` errors).
+* **Windows (AutoHotkey v2):** `50` automated suites including `tests\test_master_suite.ahk` (`354` checks covering HUD rendering, OBS WS v5, UIA, Bridge, Watchdogs, Timeline, and Diagnostics) plus dedicated `v7.0.1`–`v9.8.0` feature, Protocol v2, RBAC, capture safety, operator console, & static audit suites.
+* **Cross-Process & Cross-Language E2E (Python):** `12` live multi-process suites (`test_host_bridge.py`, `test_multi_remote_e2e.py`, `test_udp_discovery_e2e.py`, `test_windows_self_updater_e2e.py`, `test_v762_cross_lang_crypto.py`, `test_v901_web_remote_js_e2e.py`, and `test_e2e_01`..`06`) verifying Web Remote live browser UI, Crash Failover & Re-Promotion, Sleep/Wake & Rapid Transition Stress, Standalone Cutoff, PTT Mutual Exclusion, CLI `WM_COPYDATA`, Watchdogs, and AES-256-GCM parity.
+* **Android (JVM & Lint):** Full JVM unit test suite (`testDebugUnitTest`), `lintDebug`, and signed release APK verification (`-PrequireReleaseSigning=true`).
 
 ---
 
