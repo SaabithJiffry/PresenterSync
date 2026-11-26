@@ -139,6 +139,7 @@ fun ConnectionSettingsForm(
     var hostPortStr by remember(initialConfig) { mutableStateOf(initialConfig.hostPort.toString()) }
     var bridgePortStr by remember(initialConfig) { mutableStateOf(initialConfig.bridgePort.toString()) }
     var obsPassword by remember(initialConfig) { mutableStateOf(initialConfig.obsPassword) }
+    var currentKioskPin by remember(initialConfig) { mutableStateOf(initialConfig.kioskPin) }
     var showPassword by remember { mutableStateOf(false) }
     var targetMicName by remember(initialConfig) { mutableStateOf(initialConfig.targetMicName) }
     var heartbeatStr by remember(initialConfig) { mutableStateOf(initialConfig.heartbeatSeconds.toString()) }
@@ -384,6 +385,16 @@ fun ConnectionSettingsForm(
                 onTargetMicNameChange = { targetMicName = it },
                 enableRelayFallback = enableRelayFallback,
                 onToggleRelayFallback = { enableRelayFallback = it }
+            )
+
+            KioskPinManagementCard(
+                currentPin = currentKioskPin,
+                onUpdatePin = { newPin ->
+                    val cleanPin = newPin.trim()
+                    currentKioskPin = cleanPin
+                    configStore.update { it.copy(kioskPin = cleanPin) }
+                    statusText = if (cleanPin.isBlank()) "✓ Kiosk PIN cleared." else "✓ Kiosk PIN updated."
+                }
             )
         }
 
@@ -847,6 +858,121 @@ private fun ManualNetworkSettingsSection(
             )
         }
         Switch(checked = enableRelayFallback, onCheckedChange = onToggleRelayFallback)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun KioskPinManagementCard(
+    currentPin: String,
+    onUpdatePin: (String) -> Unit
+) {
+    var showPinDialog by remember { mutableStateOf(false) }
+    var currentPinInput by remember { mutableStateOf("") }
+    var newPinInput by remember { mutableStateOf("") }
+    var confirmPinInput by remember { mutableStateOf("") }
+    var pinError by remember { mutableStateOf<String?>(null) }
+
+    ExplorerCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        text = "Classroom Kiosk PIN Lock",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (currentPin.isBlank()) "Not set (Connection Settings unlocked)" else "Active — PIN required to open Connection Settings",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        currentPinInput = ""
+                        newPinInput = ""
+                        confirmPinInput = ""
+                        pinError = null
+                        showPinDialog = true
+                    },
+                    contentPadding = CompactExplorerButtonPadding
+                ) {
+                    Text(if (currentPin.isBlank()) "Set Kiosk PIN..." else "Set / Clear Kiosk PIN...", maxLines = 1, softWrap = false)
+                }
+            }
+        }
+    }
+
+    if (showPinDialog) {
+        AlertDialog(
+            onDismissRequest = { showPinDialog = false },
+            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
+            title = { Text(if (currentPin.isBlank()) "Set Kiosk PIN" else "Change or Clear Kiosk PIN") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (currentPin.isNotBlank()) {
+                        OutlinedTextField(
+                            value = currentPinInput,
+                            onValueChange = { currentPinInput = it; pinError = null },
+                            label = { Text("Current Kiosk PIN") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    OutlinedTextField(
+                        value = newPinInput,
+                        onValueChange = { newPinInput = it; pinError = null },
+                        label = { Text("New Kiosk PIN (leave blank to clear)") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (newPinInput.isNotBlank()) {
+                        OutlinedTextField(
+                            value = confirmPinInput,
+                            onValueChange = { confirmPinInput = it; pinError = null },
+                            label = { Text("Confirm New PIN") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (!pinError.isNullOrEmpty()) {
+                        Text(pinError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val cleanNew = newPinInput.trim()
+                    if (currentPin.isNotBlank() && currentPinInput.trim() != currentPin.trim()) {
+                        pinError = "Current Kiosk PIN is incorrect."
+                        return@Button
+                    }
+                    if (cleanNew.isNotEmpty() && cleanNew != confirmPinInput.trim()) {
+                        pinError = "New PIN entries do not match."
+                        return@Button
+                    }
+                    onUpdatePin(cleanNew)
+                    showPinDialog = false
+                }) { Text(if (newPinInput.isBlank() && currentPin.isNotBlank()) "Clear PIN" else "Save PIN") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showPinDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 

@@ -306,10 +306,10 @@ object DiagnosticLogger {
         return result.distinct().sortedByDescending { it.length }
     }
 
-    private val gcmEnvelopeRegex = Regex("""PSGCM1\|[A-Za-z0-9+/=]+\|[A-Za-z0-9+/=]+""")
+    private val gcmEnvelopeRegex = Regex("""PSGCM([12])\|[A-Za-z0-9+/=]+\|[A-Za-z0-9+/=]+""")
     private val legacyRelayAuthRegex = Regex("""(PSRELAY\|[^|\r\n"]+\|[^|\r\n"]+\|[^|\r\n"]*\|)[^|\r\n\s"}]+""")
     private val jsonSecretFieldRegex = Regex(
-        """(\\?"?(?:obsPassword|password|sessionToken|token|internetPairingCode|sessionPairingCode|code|auth)\\?"?\s*:\s*\\?")[^"\r\n]+""",
+        """(\\?"?(?:obsPassword|password|sessionToken|token|internetPairingCode|sessionPairingCode|kioskPin|code|auth)\\?"?\s*:\s*\\?")[^"\r\n]+""",
         RegexOption.IGNORE_CASE
     )
     private val tokenHeaderRegex = Regex("""(X-PresenterSync-Token\s*:\s*)[^\r\n\s]+""", RegexOption.IGNORE_CASE)
@@ -321,7 +321,7 @@ object DiagnosticLogger {
         for (sec in secrets) {
             out = out.replace(sec, "[REDACTED]")
         }
-        out = gcmEnvelopeRegex.replace(out, "PSGCM1|[REDACTED]")
+        out = gcmEnvelopeRegex.replace(out, "PSGCM$1|[REDACTED]")
         out = legacyRelayAuthRegex.replace(out, "$1[REDACTED]")
         out = jsonSecretFieldRegex.replace(out, "$1[REDACTED]")
         out = tokenHeaderRegex.replace(out, "$1[REDACTED]")

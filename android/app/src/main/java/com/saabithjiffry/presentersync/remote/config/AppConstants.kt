@@ -31,7 +31,7 @@ object AppConstants {
     const val CLICKER_DEBOUNCE_MS = 150L
     const val PUSH_TO_MUTE_HOLD_MS = 350L
     const val SHORT_TAP_MAX_MS = 400L
-    const val SHORT_TAP_MAX_SLOP_DP = 6f
+    const val SHORT_TAP_MAX_SLOP_DP = 14f
     const val SECRET_SNAKE_HOLD_MS = 5000L
     const val SECRET_SNAKE_HINT_DELAY_MS = 800L
     const val DODGE_ALPHA = 45

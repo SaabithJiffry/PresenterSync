@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
@@ -87,6 +88,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -409,10 +412,10 @@ internal fun RemoteDashboardScreen(
                                     "Selected ${host.deviceName} (${host.hostIp}:${host.bridgePort}).",
                                     Toast.LENGTH_SHORT
                                 ).show()
-                                showConnectionDialog = true
+                                requestOpenConnectionSettings()
                             },
                             onOpenQrScanner = { showQuickQrScanner = true },
-                            onOpenConnectionSetup = { showConnectionDialog = true },
+                            onOpenConnectionSetup = { requestOpenConnectionSettings() },
                             onTestFloatingHud = {
                                 if (!Settings.canDrawOverlays(context)) {
                                     onRequestOverlayPermission()
@@ -476,7 +479,7 @@ internal fun RemoteDashboardScreen(
                                     },
                                     onStopHud = { FloatingHudForegroundService.stopService(context) },
                                     onToggleMute = { app.connectionManager.toggleMuteFromHud() },
-                                    onOpenConnection = { showConnectionDialog = true },
+                                    onOpenConnection = { requestOpenConnectionSettings() },
                                     onReconnect = {
                                         if (conn.serviceRunning) {
                                             FloatingHudForegroundService.startService(
@@ -575,7 +578,7 @@ internal fun RemoteDashboardScreen(
                             },
                             onStopHud = { FloatingHudForegroundService.stopService(context) },
                             onToggleMute = { app.connectionManager.toggleMuteFromHud() },
-                            onOpenConnection = { showConnectionDialog = true },
+                            onOpenConnection = { requestOpenConnectionSettings() },
                             onReconnect = {
                                 if (conn.serviceRunning) {
                                     FloatingHudForegroundService.startService(
@@ -670,7 +673,9 @@ internal fun RemoteDashboardScreen(
                         value = kioskPinInput,
                         onValueChange = { kioskPinInput = it; kioskPinError = false },
                         label = { Text("Enter Kiosk PIN") },
-                        singleLine = true
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
                     )
                     if (kioskPinError) {
                         Text("Incorrect PIN", color = Color(0xFFDC2626))

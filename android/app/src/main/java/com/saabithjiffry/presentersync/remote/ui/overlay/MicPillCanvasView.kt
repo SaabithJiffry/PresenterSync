@@ -95,6 +95,14 @@ class MicPillCanvasView(context: Context) : View(context) {
     private val colorEvaluator = ArgbEvaluator()
 
     private var maxContainerWidthPx: Int = 0
+    @Volatile
+    private var flashHighlightActive: Boolean = false
+
+    fun setFlashHighlight(active: Boolean) {
+        if (flashHighlightActive == active) return
+        flashHighlightActive = active
+        invalidate()
+    }
 
     fun setMuteTransition(fromMuted: Boolean, toMuted: Boolean, fraction: Float) {
         transitionFromMuted = fromMuted
@@ -296,8 +304,16 @@ class MicPillCanvasView(context: Context) : View(context) {
     private fun drawOpticalPillBorder(canvas: Canvas, metrics: MicPillRenderMetrics, state: PillVisualState) {
         val amberAlert = !state.isOffline &&
             MicPillMetricsCalculator.shouldShowAmberAlertBorder(connState, config.showPillMiniBadges)
-        borderPaint.strokeWidth = if (amberAlert) metrics.strokeWidthPx * 1.25f else metrics.strokeWidthPx
-        borderPaint.color = if (amberAlert) MicPillMetricsCalculator.AMBER_ALERT_BORDER_ARGB else state.borderColor
+        borderPaint.strokeWidth = when {
+            flashHighlightActive -> metrics.strokeWidthPx * 2.0f
+            amberAlert -> metrics.strokeWidthPx * 1.25f
+            else -> metrics.strokeWidthPx
+        }
+        borderPaint.color = when {
+            flashHighlightActive -> Color.parseColor("#38BDF8")
+            amberAlert -> MicPillMetricsCalculator.AMBER_ALERT_BORDER_ARGB
+            else -> state.borderColor
+        }
         borderPaint.alpha = state.effectiveAlpha
         canvas.drawRoundRect(pillRect, metrics.cornerRadiusPx, metrics.cornerRadiusPx, borderPaint)
     }

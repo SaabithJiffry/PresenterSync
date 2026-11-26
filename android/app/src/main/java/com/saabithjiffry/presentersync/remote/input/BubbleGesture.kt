@@ -42,7 +42,7 @@ data class BubbleGestureConfig(
     val veryLongPressAction: BubbleGestureAction = BubbleGestureAction.NONE,
     val longPressDurationMs: Long = 600L,
     val veryLongPressDurationMs: Long = 1400L,
-    val doubleTapTimeoutMs: Long = 260L,
+    val doubleTapTimeoutMs: Long = 320L,
     val fastSingleTapBypass: Boolean = false
 ) {
     fun clampedLongMs(): Long = longPressDurationMs.coerceIn(300L, 2000L)

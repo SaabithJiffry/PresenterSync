@@ -20,6 +20,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -65,8 +66,11 @@ class FloatingMicOverlayManager(
     private var hiddenForEasterEgg = false
     private var easterHoldRunnable: Runnable? = null
     private var easterProgressRunnable: Runnable? = null
+    @Volatile
+    private var isTouchActive = false
     private var isDragging = false
     private var isAutoDodged = false
+    private var flashSeq = 0
     private var isIdleDimmed = false
     private var lastIdleWakeKey = ""
     private var pendingStopRecordUntilMs: Long = 0L
@@ -328,6 +332,9 @@ class FloatingMicOverlayManager(
         isIdleDimmed = false
         lastIdleWakeKey = ""
         animSeq++
+        flashSeq++
+        isTouchActive = false
+        pillView?.setFlashHighlight(false)
         dismissQuickMenu()
         if (attached && pillView != null) {
             try {
@@ -392,6 +399,16 @@ class FloatingMicOverlayManager(
             x = pos.x
             y = pos.y
             alpha = computeWindowAlpha(wantPassThrough)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                } else {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                fitInsetsTypes = 0
+            }
         }
 
         setupTouchHandling(view, params)
@@ -517,7 +534,7 @@ class FloatingMicOverlayManager(
             savedYRatio = currentConfig.savedYRatio
         )
 
-        if (!isDragging && (params.x != target.x || params.y != target.y)) {
+        if (!isTouchActive && !isDragging && (params.x != target.x || params.y != target.y)) {
             params.x = target.x
             params.y = target.y
             changed = true
@@ -536,7 +553,7 @@ class FloatingMicOverlayManager(
     private fun setupTouchHandling(view: MicPillCanvasView, params: WindowManager.LayoutParams) {
         val density = context.resources.displayMetrics.density
         val slopPx = (AppConstants.SHORT_TAP_MAX_SLOP_DP * density).coerceAtLeast(
-            ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+            ViewConfiguration.get(context).scaledTouchSlop * 1.5f
         )
         val lockCancelSlopPx = (56f * density).coerceAtLeast(slopPx * 2.5f)
         var downRawX = 0f
@@ -637,9 +654,11 @@ class FloatingMicOverlayManager(
         view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    if (ScreenBoundsCalculator.isPalmTouch(event.getToolType(0), event.touchMajor)) {
+                    val formFactor = ScreenBoundsCalculator.resolveFormFactor(context, currentConfig.deviceProfileMode).deviceClass
+                    if (ScreenBoundsCalculator.isPalmTouchForDevice(event.getToolType(0), event.touchMajor, density, formFactor)) {
                         return@setOnTouchListener false
                     }
+                    isTouchActive = true
                     dismissQuickMenu()
                     resetIdleDimTimer(wakeNow = true)
                     downRawX = event.rawX
@@ -684,21 +703,8 @@ class FloatingMicOverlayManager(
                         val maxY = (bounds.bottom - params.height).coerceAtLeast(minY)
                         val rawX = (startParamX + dx.roundToInt()).coerceIn(minX, maxX)
                         val rawY = (startParamY + dy.roundToInt()).coerceIn(minY, maxY)
-                        if (currentConfig.enableMagneticSnap) {
-                            val snapped = ScreenBoundsCalculator.computeMagneticSnap(
-                                rawX = rawX,
-                                rawY = rawY,
-                                viewWidthPx = params.width,
-                                viewHeightPx = params.height,
-                                bounds = bounds,
-                                thresholdPx = (AppConstants.SNAP_THRESHOLD_DP * density).roundToInt()
-                            )
-                            params.x = snapped.x
-                            params.y = snapped.y
-                        } else {
-                            params.x = rawX
-                            params.y = rawY
-                        }
+                        params.x = rawX
+                        params.y = rawY
                         try {
                             windowManager.updateViewLayout(view, params)
                         } catch (_: Exception) {
@@ -707,11 +713,28 @@ class FloatingMicOverlayManager(
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    isTouchActive = false
                     stopHoldVisualTick()
                     resetIdleDimTimer(wakeNow = true)
                     if (isDragging) {
                         isDragging = false
                         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+                        if (currentConfig.enableMagneticSnap) {
+                            val snapped = ScreenBoundsCalculator.computeMagneticSnap(
+                                rawX = params.x,
+                                rawY = params.y,
+                                viewWidthPx = params.width,
+                                viewHeightPx = params.height,
+                                bounds = bounds,
+                                thresholdPx = (AppConstants.SNAP_THRESHOLD_DP * density).roundToInt()
+                            )
+                            params.x = snapped.x
+                            params.y = snapped.y
+                            try {
+                                windowManager.updateViewLayout(view, params)
+                            } catch (_: Exception) {
+                            }
+                        }
                         val (rx, ry) = ScreenBoundsCalculator.computePositionRatios(
                             x = params.x,
                             y = params.y,
@@ -737,6 +760,7 @@ class FloatingMicOverlayManager(
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    isTouchActive = false
                     stopHoldVisualTick()
                     touchController.onCancel()
                     isDragging = false
@@ -1093,6 +1117,10 @@ class FloatingMicOverlayManager(
         addMenuRow(if (currentConn.isMuted) "Unmute Mic (Currently MUTED)" else "Mute Mic (Currently LIVE)") {
             connectionManager.toggleMuteFromHud()
         }
+        addMenuRow("Reconnect Host") {
+            connectionManager.reconnectNow()
+            Toast.makeText(context, "Reconnecting PresenterSync...", Toast.LENGTH_SHORT).show()
+        }
         addMenuRow("Lock Pill Position: ${if (currentConfig.lockHudPosition) "LOCKED" else "UNLOCKED"}") {
             configStore.update { it.copy(lockHudPosition = !it.lockHudPosition) }
         }
@@ -1325,6 +1353,21 @@ class FloatingMicOverlayManager(
         quickMenuView = null
         quickMenuParams = null
         runCatching { windowManager.removeViewImmediate(mv) }
+    }
+
+    fun flashPill(durationMs: Long = 1200L) {
+        handler.post {
+            val view = pillView ?: return@post
+            if (!attached || !currentConfig.showIndicator) return@post
+            resetIdleDimTimer(wakeNow = true)
+            val seq = ++flashSeq
+            val safeDur = durationMs.coerceIn(300L, 5000L)
+            val step = (safeDur / 4L).coerceAtLeast(75L)
+            view.setFlashHighlight(true)
+            handler.postDelayed({ if (flashSeq == seq) pillView?.setFlashHighlight(false) }, step)
+            handler.postDelayed({ if (flashSeq == seq) pillView?.setFlashHighlight(true) }, step * 2)
+            handler.postDelayed({ if (flashSeq == seq) pillView?.setFlashHighlight(false) }, step * 4)
+        }
     }
 
     private fun openSettingsActivity() {

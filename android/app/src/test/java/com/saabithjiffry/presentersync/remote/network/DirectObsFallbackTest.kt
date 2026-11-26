@@ -49,14 +49,14 @@ class DirectObsFallbackTest {
     }
 
     @Test
-    fun localStandbyToggleSnapshotsAndRestoresSceneAndMuteState() {
+    fun localStandbyToggleKeepsMicMutedOnBrbExitForSafeReturn() {
         assertTrue(manager.executeLocalObsStandbyToggle())
         assertTrue(manager.uiState.value.isStandby)
         assertTrue(manager.uiState.value.isMuted)
 
         assertTrue(manager.executeLocalObsStandbyToggle())
         assertFalse(manager.uiState.value.isStandby)
-        assertFalse(manager.uiState.value.isMuted)
+        assertTrue(manager.uiState.value.isMuted)
     }
 
     @Test

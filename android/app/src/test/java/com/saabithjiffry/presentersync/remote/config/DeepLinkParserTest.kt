@@ -85,7 +85,7 @@ class DeepLinkParserTest {
         assertEquals(4458, parsed.bridgePort)
         assertEquals("K7M-9P2", parsed.sessionCode)
         assertEquals(4455, parsed.obsPort)
-        assertEquals("My Pass!&1", parsed.obsPassword)
+        assertEquals("", parsed.obsPassword)
         assertEquals("WAN-123", parsed.internetPairingCode)
     }
 }

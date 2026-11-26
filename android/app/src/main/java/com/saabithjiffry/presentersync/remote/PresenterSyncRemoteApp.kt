@@ -80,7 +80,8 @@ class PresenterSyncRemoteApp : Application() {
                     cur.copy(
                         hostAddress = mdmHost.ifEmpty { cur.hostAddress },
                         bridgePort = if (mdmPort in 1..65535) mdmPort else cur.bridgePort,
-                        kioskPin = mdmPin.ifEmpty { cur.kioskPin }
+                        kioskPin = mdmPin.ifEmpty { cur.kioskPin },
+                        defaultRole = mdmRole.ifEmpty { cur.defaultRole }
                     )
                 }
             }

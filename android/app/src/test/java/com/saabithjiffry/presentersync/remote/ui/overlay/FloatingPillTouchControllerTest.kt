@@ -83,12 +83,12 @@ class FloatingPillTouchControllerTest {
         assertEquals(0, pttActivated)
         assertEquals(0, pttReleased)
 
-        // Single tap (<300ms) -> waits out double tap window and triggers Single Tap
+        // Single tap (<300ms) -> waits out double tap window (320ms) and triggers Single Tap
         actions.clear()
         ctrl.onDown(cfg, isMuted = true)
         scheduler.advanceBy(80L)
         ctrl.onUp()
-        scheduler.advanceBy(300L)
+        scheduler.advanceBy(330L)
 
         assertEquals(listOf("Single Tap" to BubbleGestureAction.TOGGLE_MUTE), actions)
         assertEquals(0, pttActivated)

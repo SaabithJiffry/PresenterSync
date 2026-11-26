@@ -6,6 +6,10 @@ import android.os.Build
 import android.view.WindowInsets
 import android.view.WindowManager
 import com.saabithjiffry.presentersync.remote.config.AppConstants
+import com.saabithjiffry.presentersync.remote.config.DeviceProfileMode
+import com.saabithjiffry.presentersync.remote.config.FormFactorClass
+import com.saabithjiffry.presentersync.remote.config.FormFactorResolver
+import com.saabithjiffry.presentersync.remote.config.ResolvedFormFactor
 import kotlin.math.roundToInt
 
 data class SafeRectPx(
@@ -236,6 +240,27 @@ object ScreenBoundsCalculator {
     fun isPalmTouch(toolType: Int, touchMajorPx: Float, thresholdPx: Float = 85f): Boolean {
         if (toolType == 5) return true // MotionEvent.TOOL_TYPE_PALM
         return touchMajorPx > thresholdPx
+    }
+
+    fun isPalmTouchForDevice(
+        toolType: Int,
+        touchMajorPx: Float,
+        density: Float,
+        formFactor: FormFactorClass
+    ): Boolean {
+        if (toolType == 5) return true // MotionEvent.TOOL_TYPE_PALM
+        if (formFactor == FormFactorClass.COMPACT_PHONE) return false
+        val thresholdPx = maxOf(160f * density, 240f)
+        return touchMajorPx > thresholdPx
+    }
+
+    fun resolveFormFactor(context: Context, mode: DeviceProfileMode): ResolvedFormFactor {
+        val dm = context.resources.displayMetrics
+        val density = dm.density.coerceAtLeast(0.75f)
+        val widthDp = (dm.widthPixels / density).roundToInt()
+        val heightDp = (dm.heightPixels / density).roundToInt()
+        val swDp = minOf(widthDp, heightDp)
+        return FormFactorResolver.resolve(mode = mode, widthDp = widthDp, heightDp = heightDp, smallestWidthDp = swDp)
     }
 
     fun getDisplayCount(context: Context): Int {

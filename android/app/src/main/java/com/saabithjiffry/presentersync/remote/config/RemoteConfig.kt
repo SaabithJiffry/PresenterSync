@@ -189,6 +189,8 @@ data class RemoteConfig(
     val skippedUpdateVersion: String = "",
     val customUpdateUrl: String = "",
     val kioskPin: String = "",
+    val defaultRole: String = "",
+    val directObsFallbackAllowed: Boolean = true,
     val deviceProfileMode: DeviceProfileMode = DeviceProfileMode.AUTO,
     val keepScreenOn: Boolean = false,
     val idleDimAfterSec: Int = 0,
@@ -306,6 +308,8 @@ class RemoteConfigStore private constructor(
             bridgePort = validBridgePort,
             obsPassword = secretVault.getSecret("obsPassword"),
             kioskPin = secretVault.getSecret("kioskPin").trim(),
+            defaultRole = prefs.getString("defaultRole", "").orEmpty().trim(),
+            directObsFallbackAllowed = prefs.getBoolean("directObsFallbackAllowed", true),
             targetMicName = mic,
             heartbeatSeconds = validHb,
             hwMuteHotkey = prefs.getString("hwMuteHotkey", "KEYCODE_B").orEmpty().ifBlank { "KEYCODE_B" },
@@ -643,6 +647,8 @@ class RemoteConfigStore private constructor(
             .putLong("lastUpdateCheckMs", c.lastUpdateCheckMs)
             .putString("skippedUpdateVersion", c.skippedUpdateVersion)
             .putString("customUpdateUrl", c.customUpdateUrl)
+            .putString("defaultRole", c.defaultRole.trim())
+            .putBoolean("directObsFallbackAllowed", c.directObsFallbackAllowed)
             .putString("deviceProfileMode", c.deviceProfileMode.rawValue)
             .putBoolean("keepScreenOn", c.keepScreenOn)
             .putInt("idleDimAfterSec", c.idleDimAfterSec)

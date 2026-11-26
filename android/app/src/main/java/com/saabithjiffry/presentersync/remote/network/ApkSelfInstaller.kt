@@ -170,15 +170,10 @@ class ApkSelfInstaller(
                     .callTimeout(240, TimeUnit.SECONDS)
                     .build()
 
-                val expectedSha = if (!result.sha256SumsUrl.isNullOrBlank()) {
-                    _installState.value = UpdateInstallState.Downloading(ver, 0L, result.apkSizeBytes, 0)
-                    fetchExpectedSha256(dlClient, result.sha256SumsUrl, result.apkAssetName ?: "PresenterSync_Remote.apk")
-                } else {
-                    null
-                }
-                if (!result.sha256SumsUrl.isNullOrBlank() && expectedSha == null) {
-                    throw IOException("SHA256SUMS.txt does not list ${result.apkAssetName ?: "PresenterSync_Remote.apk"}")
-                }
+                val shaSumsUrl = requireSha256SumsUrl(result.sha256SumsUrl)
+                _installState.value = UpdateInstallState.Downloading(ver, 0L, result.apkSizeBytes, 0)
+                val expectedSha = fetchExpectedSha256(dlClient, shaSumsUrl, result.apkAssetName ?: "PresenterSync_Remote.apk")
+                    ?: throw IOException("SHA256SUMS.txt does not list ${result.apkAssetName ?: "PresenterSync_Remote.apk"}")
 
                 val shaVerified = downloadAndVerifyPayloadToFile(
                     client = dlClient,
@@ -416,6 +411,10 @@ class ApkSelfInstaller(
                 throw t
             }
         }
+
+        internal fun requireSha256SumsUrl(sha256SumsUrl: String?): String =
+            sha256SumsUrl?.takeIf { it.isNotBlank() }
+                ?: throw IOException("SHA256SUMS.txt URL is missing; refusing unverified APK install")
 
         fun validateApkArchiveMetadata(
             archivePackageName: String?,

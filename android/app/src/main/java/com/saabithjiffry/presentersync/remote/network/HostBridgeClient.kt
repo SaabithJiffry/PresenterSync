@@ -49,6 +49,7 @@ interface HostBridgeCallbacks {
     fun onBridgeConnected(hostName: String)
     fun onBridgeRoleAssigned(role: String) {}
     fun onBridgeFlashPill(durationMs: Long) {}
+    fun onBridgeSessionReset() {}
     fun onBridgeHostUuidReceived(hostUuid: String) {}
     fun onBridgeSessionTokenRefreshed(sessionToken: String) {}
     fun onBridgeFrameReceived() {}
@@ -56,8 +57,21 @@ interface HostBridgeCallbacks {
     fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String)
     fun onTelemetryChanged(telemetry: BridgeTelemetryState) {}
     fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {}
+    fun onStageNudgeReceived(
+        message: String,
+        sender: String,
+        accentHex: String,
+        nudgeId: String,
+        urgency: String,
+        requiresAck: Boolean
+    ) {
+        onStageNudgeReceived(message, sender, accentHex)
+    }
     fun onSyncResync(reason: String, hostUuid: String) {}
     fun onObsFallbackUpdated(port: Int, targetMic: String, password: String) {}
+    fun onObsFallbackUpdated(port: Int, targetMic: String, password: String, directObsAllowed: Boolean) {
+        onObsFallbackUpdated(port, targetMic, password)
+    }
     fun onCommandNack(action: String, code: String, reason: String, cmdId: String) {}
     fun onCloseRemoteSignal()
     fun onBridgeDisconnected(reason: String)
@@ -71,7 +85,8 @@ class HostBridgeClient(
     private val deviceId: String,
     private val deviceName: String,
     private val callbacks: HostBridgeCallbacks,
-    private val clientFallbackState: JSONObject? = null
+    private val clientFallbackState: JSONObject? = null,
+    private val requestedRole: String = ""
 ) {
     @Volatile
     private var webSocket: WebSocket? = null
@@ -163,7 +178,8 @@ class HostBridgeClient(
                             callbacks.onObsFallbackUpdated(
                                 port = obsFb.optInt("port", AppConstants.DEFAULT_OBS_PORT),
                                 targetMic = obsFb.optString("targetMic", ""),
-                                password = obsFb.optString("password", "")
+                                password = obsFb.optString("password", ""),
+                                directObsAllowed = obsFb.optBoolean("directObsAllowed", true)
                             )
                         }
                         callbacks.onBridgeConnected(hostName)
@@ -174,7 +190,8 @@ class HostBridgeClient(
                             callbacks.onObsFallbackUpdated(
                                 port = obsFb.optInt("port", AppConstants.DEFAULT_OBS_PORT),
                                 targetMic = obsFb.optString("targetMic", ""),
-                                password = obsFb.optString("password", "")
+                                password = obsFb.optString("password", ""),
+                                directObsAllowed = obsFb.optBoolean("directObsAllowed", true)
                             )
                         }
                     }
@@ -265,9 +282,18 @@ class HostBridgeClient(
                         val nMsg = obj.optString("message", "").trim()
                         val nSender = obj.optString("sender", "Stage").ifBlank { "Stage" }
                         val nAccent = obj.optString("accentHex", "F59E0B").ifBlank { "F59E0B" }
+                        val nUrgency = obj.optString("urgency", "whisper").ifBlank { "whisper" }
+                        val nRequiresAck = obj.optBoolean("requiresAck", false)
                         if (nMsg.isNotEmpty()) {
-                            callbacks.onStageNudgeReceived(nMsg, nSender, nAccent)
+                            callbacks.onStageNudgeReceived(nMsg, nSender, nAccent, nId, nUrgency, nRequiresAck)
                         }
+                    }
+                    "flash_pill" -> {
+                        val dur = obj.optLong("durationMs", 1200L).coerceIn(300L, 5000L)
+                        callbacks.onBridgeFlashPill(dur)
+                    }
+                    "session_reset" -> {
+                        callbacks.onBridgeSessionReset()
                     }
                     "close_remote" -> {
                         callbacks.onCloseRemoteSignal()
@@ -313,6 +339,9 @@ class HostBridgeClient(
             put("deviceId", deviceId)
             put("deviceName", deviceName)
             put("platform", "Android")
+            if (requestedRole.isNotBlank()) {
+                put("requestedRole", requestedRole.trim())
+            }
             if (clientFallbackState != null) {
                 put("clientFallbackState", clientFallbackState)
             }
@@ -433,6 +462,8 @@ class HostBridgeClient(
     }
 
     fun sendTransitionScene(source: String = "director"): Boolean = sendDeviceAction("transition_scene", source)
+
+    fun sendResetActiveScene(source: String = "hud"): Boolean = sendDeviceAction("reset_active_scene", source)
 
     fun sendSwitchScene(sceneName: String, source: String = "director"): Boolean {
         val clean = sceneName.trim()

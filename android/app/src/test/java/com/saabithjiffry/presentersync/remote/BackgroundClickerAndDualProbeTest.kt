@@ -67,7 +67,7 @@ class BackgroundClickerAndDualProbeTest {
         assertTrue(uri.contains("bp=4458"))
         assertTrue(uri.contains("code=K7M-9P2"))
         assertTrue(uri.contains("obsPort=4455"))
-        assertTrue(uri.contains("obsPass=My%20Pass%21%261"))
+        assertFalse(uri.contains("obsPass="))
         assertTrue(uri.contains("wan=WAN-123"))
     }
 

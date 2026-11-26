@@ -284,6 +284,9 @@ class FloatingHudForegroundService : LifecycleService() {
                     is RemoteEvent.ToastMessage -> {
                         Toast.makeText(applicationContext, ev.message, Toast.LENGTH_SHORT).show()
                     }
+                    is RemoteEvent.FlashPill -> {
+                        overlayManager.flashPill(ev.durationMs)
+                    }
                     is RemoteEvent.StageNudge -> {
                         hapticAlertPlayer.play(HapticAlertType.STAGE_NUDGE, cfg)
                         val (anchor, pillH) = overlayManager.currentAnchorForToast()

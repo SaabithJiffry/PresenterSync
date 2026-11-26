@@ -7,6 +7,8 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 interface ObsSessionCallbacks {
@@ -37,6 +39,9 @@ class ObsWebSocketClient(
     private var webSocket: WebSocket? = null
     private val closed = AtomicBoolean(false)
     private val identified = AtomicBoolean(false)
+    private val resetScheduler = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "ObsResetSceneWorker").apply { isDaemon = true }
+    }
 
     fun connect() {
         val request = Request.Builder().url(wsUrl).build()
@@ -284,6 +289,48 @@ class ObsWebSocketClient(
                             callbacks.onSceneTransitionError(reqId, errCode, errComment)
                         }
                     }
+                    else -> if (reqId.startsWith("ResetSceneList:")) {
+                        if (resultOk && respData != null) {
+                            val sceneName = reqId.removePrefix("ResetSceneList:").trim()
+                            val items = respData.optJSONArray("sceneItems") ?: JSONArray()
+                            val enabledIds = ArrayList<Int>(items.length())
+                            for (i in 0 until items.length()) {
+                                val obj = items.optJSONObject(i) ?: continue
+                                val id = obj.optInt("sceneItemId", -1)
+                                if (id >= 0 && obj.optBoolean("sceneItemEnabled", true)) {
+                                    enabledIds.add(id)
+                                }
+                            }
+                            if (sceneName.isNotEmpty() && enabledIds.isNotEmpty()) {
+                                for (id in enabledIds) {
+                                    sendRequest(
+                                        "SetSceneItemEnabled",
+                                        "ResetOff_$id",
+                                        JSONObject().apply {
+                                            put("sceneName", sceneName)
+                                            put("sceneItemId", id)
+                                            put("sceneItemEnabled", false)
+                                        }
+                                    )
+                                }
+                                resetScheduler.schedule({
+                                    if (!closed.get()) {
+                                        for (id in enabledIds) {
+                                            sendRequest(
+                                                "SetSceneItemEnabled",
+                                                "ResetOn_$id",
+                                                JSONObject().apply {
+                                                    put("sceneName", sceneName)
+                                                    put("sceneItemId", id)
+                                                    put("sceneItemEnabled", true)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }, 250L, TimeUnit.MILLISECONDS)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -374,6 +421,14 @@ class ObsWebSocketClient(
     fun sendGetSceneList(): Boolean =
         sendRequest("GetSceneList", "InitRemoteSceneList", null)
 
+    fun sendResetSceneSources(sceneName: String): Boolean {
+        val clean = sceneName.trim()
+        if (clean.isEmpty()) return false
+        return sendRequest("GetSceneItemList", "ResetSceneList:$clean", JSONObject().apply {
+            put("sceneName", clean)
+        })
+    }
+
     fun sendHeartbeat(): Boolean {
         return sendRequest("GetVersion", "KeepAlive", null)
     }
@@ -406,6 +461,7 @@ class ObsWebSocketClient(
         } catch (_: Exception) {
         }
         webSocket = null
+        runCatching { resetScheduler.shutdownNow() }
     }
 
     fun close() {
@@ -415,5 +471,6 @@ class ObsWebSocketClient(
         } catch (_: Exception) {
         }
         webSocket = null
+        runCatching { resetScheduler.shutdownNow() }
     }
 }

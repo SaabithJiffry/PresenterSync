@@ -103,7 +103,13 @@ data class ConnectionUiState(
     val slideTitle: String = "",
     val slideNotes: String = "",
     val remoteRole: String = "Presenter",
-    val lastActionActor: String = ""
+    val lastActionActor: String = "",
+    val directObsAllowed: Boolean = true,
+    val lastNudgeMessage: String = "",
+    val lastNudgeSender: String = "",
+    val lastNudgeId: String = "",
+    val lastNudgeUrgency: String = "whisper",
+    val lastNudgeRequiresAck: Boolean = false
 ) {
     val currentSceneName: String
         get() = activeScene
@@ -154,7 +160,15 @@ data class ConnectionUiState(
 sealed interface RemoteEvent {
     data class MuteChanged(val isMuted: Boolean) : RemoteEvent
     data class ToastMessage(val message: String) : RemoteEvent
-    data class StageNudge(val message: String, val sender: String, val accentHex: String = "F59E0B") : RemoteEvent
+    data class StageNudge(
+        val message: String,
+        val sender: String,
+        val accentHex: String = "F59E0B",
+        val nudgeId: String = "",
+        val urgency: String = "whisper",
+        val requiresAck: Boolean = false
+    ) : RemoteEvent
+    data class FlashPill(val durationMs: Long = 1200L) : RemoteEvent
     data object VoiceWhileMutedAlert : RemoteEvent
     data object CloseRemoteRequested : RemoteEvent
 }
@@ -177,7 +191,10 @@ class ConnectionManager(
         get() = httpClient
 
     private val _uiState = MutableStateFlow(
-        ConnectionUiState(isMuted = configStore.current.isMuted)
+        ConnectionUiState(
+            isMuted = configStore.current.isMuted,
+            directObsAllowed = configStore.current.directObsFallbackAllowed
+        )
     )
     val uiState: StateFlow<ConnectionUiState> = _uiState.asStateFlow()
 
@@ -443,7 +460,13 @@ class ConnectionManager(
             slideIndex = 0,
             slideTotal = 0,
             slideTitle = "",
-            slideNotes = ""
+            slideNotes = "",
+            directObsAllowed = configStore.current.directObsFallbackAllowed,
+            lastNudgeMessage = if (clearSessionTelemetry) "" else cur.lastNudgeMessage,
+            lastNudgeSender = if (clearSessionTelemetry) "" else cur.lastNudgeSender,
+            lastNudgeId = if (clearSessionTelemetry) "" else cur.lastNudgeId,
+            lastNudgeUrgency = if (clearSessionTelemetry) "whisper" else cur.lastNudgeUrgency,
+            lastNudgeRequiresAck = if (clearSessionTelemetry) false else cur.lastNudgeRequiresAck
         )
     }
 
@@ -722,6 +745,14 @@ class ConnectionManager(
         }
 
         // Direct OBS :4455 WebSocket fallback
+        if (FailoverPolicy.hasBridgeCredentials(effectiveCfg) && !effectiveCfg.directObsFallbackAllowed) {
+            DiagnosticLogger.recordBreadcrumb(
+                "Failover",
+                "DirectObsFallbackBlocked",
+                "Host Bridge policy forbids Direct OBS fallback on ${cand.host}:${cand.port}"
+            )
+            return LanCandidateStep(LanCandidateOutcome.NEXT_CANDIDATE, effectiveCfg)
+        }
         val effectiveUrl = "${cand.scheme}://$resolvedHost:${cand.port}${cand.path}"
         return when (attemptObsSession(gen, effectiveCfg, cand.raw, effectiveUrl, isBridgeFallback = true)) {
             SessionOutcome.AUTH_FAILED,
@@ -772,6 +803,7 @@ class ConnectionManager(
             sessionCode = cfg.sessionPairingCode,
             deviceId = devId,
             deviceName = devName,
+            requestedRole = cfg.defaultRole,
             clientFallbackState = fallbackToSend,
             callbacks = object : HostBridgeCallbacks {
                 override fun onBridgeConnected(hostName: String) {
@@ -791,8 +823,41 @@ class ConnectionManager(
                 }
 
                 override fun onObsFallbackUpdated(port: Int, targetMic: String, password: String) {
+                    onObsFallbackUpdated(port, targetMic, password, true)
+                }
+
+                override fun onObsFallbackUpdated(port: Int, targetMic: String, password: String, directObsAllowed: Boolean) {
                     if (gen != generation.get()) return
-                    applyObsFallbackConfigUpdate(port, targetMic, password)
+                    applyObsFallbackConfigUpdate(port, targetMic, password, directObsAllowed)
+                }
+
+                override fun onBridgeFlashPill(durationMs: Long) {
+                    if (gen != generation.get()) return
+                    _events.tryEmit(RemoteEvent.FlashPill(durationMs))
+                }
+
+                override fun onBridgeSessionReset() {
+                    if (gen != generation.get()) return
+                    val cur = _uiState.value
+                    anchorRecClock(0, 0)
+                    anchorPresenterClock(cur.timerPresetSec, "stopped")
+                    updateLocalRecTicker(gen, 0)
+                    updateLocalPresenterTimerTicker(gen, "stopped")
+                    _uiState.value = cur.copy(
+                        recState = 0,
+                        recSeconds = 0,
+                        isStandby = false,
+                        isPanic = false,
+                        panicUnmuteLocked = false,
+                        timerState = "stopped",
+                        timerRemainingSec = cur.timerPresetSec,
+                        lastNudgeMessage = "",
+                        lastNudgeSender = "",
+                        lastNudgeId = "",
+                        lastNudgeUrgency = "whisper",
+                        lastNudgeRequiresAck = false
+                    )
+                    _events.tryEmit(RemoteEvent.ToastMessage("Host reset session state"))
                 }
 
                 override fun onBridgeFrameReceived() {
@@ -842,8 +907,26 @@ class ConnectionManager(
                 }
 
                 override fun onStageNudgeReceived(message: String, sender: String, accentHex: String) {
+                    onStageNudgeReceived(message, sender, accentHex, "", "whisper", false)
+                }
+
+                override fun onStageNudgeReceived(
+                    message: String,
+                    sender: String,
+                    accentHex: String,
+                    nudgeId: String,
+                    urgency: String,
+                    requiresAck: Boolean
+                ) {
                     if (gen != generation.get()) return
-                    _events.tryEmit(RemoteEvent.StageNudge(message, sender, accentHex))
+                    _uiState.value = _uiState.value.copy(
+                        lastNudgeMessage = message,
+                        lastNudgeSender = sender,
+                        lastNudgeId = nudgeId,
+                        lastNudgeUrgency = urgency,
+                        lastNudgeRequiresAck = requiresAck
+                    )
+                    _events.tryEmit(RemoteEvent.StageNudge(message, sender, accentHex, nudgeId, urgency, requiresAck))
                 }
 
                 override fun onCommandNack(action: String, code: String, reason: String, cmdId: String) {
@@ -855,7 +938,17 @@ class ConnectionManager(
                         bridgeClient?.sendSyncRequest()
                     }
                     DiagnosticLogger.recordBreadcrumb("Bridge", "CommandNack", "$action | $code | $reason")
-                    if (code == "obs_offline" || code == "role_denied" || code == "input_paused" || code == "confirm_required") {
+                    if (code in setOf(
+                            "obs_offline",
+                            "role_denied",
+                            "forbidden",
+                            "panic_locked",
+                            "no_target_scene",
+                            "invalid_scene",
+                            "input_paused",
+                            "confirm_required"
+                        )
+                    ) {
                         _events.tryEmit(
                             RemoteEvent.ToastMessage("Host declined $action: ${reason.ifBlank { code }}")
                         )
@@ -1261,16 +1354,23 @@ class ConnectionManager(
         return true
     }
 
-    private fun applyObsFallbackConfigUpdate(port: Int, targetMic: String, password: String) {
+    private fun applyObsFallbackConfigUpdate(
+        port: Int,
+        targetMic: String,
+        password: String,
+        directObsAllowed: Boolean = true
+    ) {
         configStore.update { prev ->
             val nextPort = if (port in 1..65535) port else prev.hostPort
             val nextMic = targetMic.trim().ifBlank { prev.targetMicName }
             prev.copy(
                 hostPort = nextPort,
                 targetMicName = nextMic,
-                obsPassword = password
+                obsPassword = password,
+                directObsFallbackAllowed = directObsAllowed
             )
         }
+        _uiState.value = _uiState.value.copy(directObsAllowed = directObsAllowed)
     }
 
     private fun buildFallbackStateSnapshot(): JSONObject? {
@@ -1571,8 +1671,9 @@ class ConnectionManager(
                     obs?.sendSetCurrentProgramScene(snap.previousScene)
                     restoredScene = snap.previousScene
                 }
-                obs?.sendSetInputMute(snap.wasMuted)
-                applyNewMuteState(snap.wasMuted)
+                // M1.4 Safe BRB exit: keep mic muted rather than auto-unmuting on return
+                obs?.sendSetInputMute(true)
+                applyNewMuteState(true)
                 if (snap.recWasActive && _uiState.value.recState == 2) {
                     obs?.sendToggleRecordPause()
                 }
@@ -1768,11 +1869,27 @@ class ConnectionManager(
                     if (target.isNotBlank()) {
                         obs.sendSetCurrentProgramScene(target)
                     } else {
+                        _events.tryEmit(RemoteEvent.ToastMessage("Need at least 2 OBS scenes (or Studio Mode) to transition."))
                         false
                     }
                 }
             },
             relayAction = { it.sendTransitionScene() }
+        )
+
+    fun sendResetActiveScene(source: String = "hud"): Boolean =
+        sendDirectorAction(
+            bridgeAction = { it.sendResetActiveScene(source) },
+            obsAction = { obs ->
+                val curScene = _uiState.value.activeScene.trim()
+                if (curScene.isBlank() || curScene == "Scene") {
+                    _events.tryEmit(RemoteEvent.ToastMessage("No active OBS scene selected to reset."))
+                    false
+                } else {
+                    obs.sendResetSceneSources(curScene)
+                }
+            },
+            relayAction = { false }
         )
 
     fun sendTimerCommand(action: String, durationSec: Int = 0, source: String = "director"): Boolean {
@@ -1826,12 +1943,8 @@ class ConnectionManager(
             return bridgeAction(bridge)
         }
         val obs = obsClient
-        if (obsAction != null && (st.usingDirectObsFallback || (st.connected && obs != null))) {
-            if (obs != null) {
-                return obsAction(obs)
-            } else if (st.usingDirectObsFallback) {
-                return executeLocalObsStandbyToggle()
-            }
+        if (obsAction != null && obs != null && (st.usingDirectObsFallback || st.connected)) {
+            return obsAction(obs)
         }
         val relay = relayClient
         if (st.connected && relay != null) {

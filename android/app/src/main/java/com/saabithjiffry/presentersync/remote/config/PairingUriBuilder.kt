@@ -15,9 +15,6 @@ object PairingUriBuilder {
             sb.append("&code=").append(encode(cfg.sessionPairingCode.trim()))
         }
         sb.append("&obsPort=").append(cfg.hostPort.coerceIn(1, 65535))
-        if (cfg.obsPassword.isNotEmpty()) {
-            sb.append("&obsPass=").append(encode(cfg.obsPassword))
-        }
         if (cfg.internetPairingCode.isNotBlank()) {
             sb.append("&wan=").append(encode(cfg.internetPairingCode.trim()))
         }
