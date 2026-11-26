@@ -161,7 +161,9 @@ fun OnboardingWizardCard(
     onOpenConnectionSetup: () -> Unit,
     onTestFloatingHud: () -> Unit,
     onCompleteWizard: () -> Unit,
-    onDismissWizard: () -> Unit
+    onDismissWizard: () -> Unit,
+    batteryOptimizationExempt: Boolean = true,
+    onRequestBatteryUnrestricted: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     var scanningLan by remember { mutableStateOf(false) }

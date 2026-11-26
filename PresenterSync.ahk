@@ -188,6 +188,13 @@ BuildTrayMenu(cfg, state) {
     Theme.ApplyMenuTheme()
     A_TrayMenu.Delete()
 
+    micHdr := (IsObject(state) && state.HasOwnProp("isMuted") && state.isMuted) ? "MUTED" : "LIVE"
+    obsHdr := (IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected) ? "OBS: CONN" : "OBS: OFF"
+    hdrLabel := "PresenterSync — " micHdr " | " obsHdr
+    A_TrayMenu.Add(hdrLabel, (*) => 0)
+    try A_TrayMenu.Disable(hdrLabel)
+    A_TrayMenu.Add()
+
     ; 1. ESSENTIALS (TOP-LEVEL)
     A_TrayMenu.Add("Control Center...", ShowControlCenterWindow.Bind(cfg, state))
     A_TrayMenu.Add("Live Operator Console...", (*) => OperatorConsole.Toggle(cfg, state))

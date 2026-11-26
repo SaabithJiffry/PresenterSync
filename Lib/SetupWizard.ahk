@@ -679,9 +679,11 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     Theme.NamedWindows["Remote Companion Connection Info"] := dlg
 
     dlg.SetFont("s10 w600", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "x20 y14 w700", "Host Details for PresenterSync Remote"), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "x20 y14 w700", "Host Details for PresenterSync Remote (Android / Smart Board | Web QR | Windows)"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    subLbl := dlg.Add("Text", "x20 y+2 w700", "Configure how your secondary device (Smart Board / Laptop / Android) connects:")
+    activePort := (IsSet(g_HostBridge) && IsObject(g_HostBridge) && g_HostBridge.HasOwnProp("activeTcpPort") && g_HostBridge.activeTcpPort > 0) ? g_HostBridge.activeTcpPort : 4456
+    subTxt := (activePort >= 4458) ? ("NOTICE: Bridge fell back to port :" activePort " (4456-4457 busy). Remotes must use :" activePort " or scan QR.") : "Configure how your secondary device (Smart Board / Laptop / Android / Web) connects:"
+    subLbl := dlg.Add("Text", "x20 y+2 w700", subTxt)
     Theme.RegisterControl(dlg, subLbl, "Text", "muted")
     subLbl.GetPos(, &subY, , &subH)
     colTop := subY + subH + 10
@@ -1114,9 +1116,22 @@ ShowGuidedSetupWizard(cfg, state := "", *) {
     Theme.NamedWindows["PresenterSync - Guided Setup Wizard"] := wGui
 
     wGui.SetFont("s11 w700", Theme.UiFont)
-    Theme.RegisterControl(wGui, wGui.Add("Text", "xm w480", "PresenterSync 4-Step Live Setup Checklist"), "Text")
+    Theme.RegisterControl(wGui, wGui.Add("Text", "xm w480", "PresenterSync Role-First Live Setup"), "Text")
     wGui.SetFont("s9 w400", Theme.UiFont)
-    Theme.RegisterControl(wGui, wGui.Add("Text", "xm y+4 w480", "Verify OBS WebSocket, CoreAudio routing, floating HUD visibility, and Classroom QR discovery."), "Text", "muted")
+    Theme.RegisterControl(wGui, wGui.Add("Text", "xm y+4 w480", "Choose your role first, then verify OBS, CoreAudio, HUD visibility & Classroom QR."), "Text", "muted")
+
+    ddlRoleSetup := wGui.Add("DropDownList", "xm y+8 w480 Choose1", [
+        "Broadcast Controller + Remotes (OBS + Android/Web/Win Remotes)",
+        "Solo Presenter (OBS / Local Mic + Clicker)",
+        "Conferencing Only (Zoom / Teams / Meet)"
+    ])
+    Theme.RegisterControl(wGui, ddlRoleSetup, "DropDownList")
+    ddlRoleSetup.OnEvent("Change", (ctrl, *) => (
+        (ctrl.Value == 1) ? (cfg.AudioRoutingMode := 1, cfg.EnableWS := true, cfg.EnableRemoteConnections := true)
+        : ((ctrl.Value == 2) ? (cfg.AudioRoutingMode := 1, cfg.EnableWS := true, cfg.EnableRemoteConnections := false)
+        : (cfg.AudioRoutingMode := 2, cfg.EnableWS := false, cfg.EnableZoom := true)),
+        RefreshProbes()
+    ))
 
     rowCtrls := []
     Loop 6 {

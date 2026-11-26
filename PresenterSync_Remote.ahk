@@ -3197,6 +3197,28 @@ ShowRemoteHelpUI(cfg, state, *) {
     return helpGui
 }
 
+ShowRemoteFirstRunWizard(cfg, state := "", *) {
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Remote - Quick Start")
+    dlg.MarginX := 18
+    dlg.MarginY := 14
+    Theme.ApplyToWindow(dlg)
+    dlg.SetFont("s11 w700", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm w420", "3-Step Remote Setup"), "Text")
+    dlg.SetFont("s9 w400", Theme.UiFont)
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm y+10 w420", "1. Connect to Primary Host (LAN IP or WAN Code) or Direct OBS."), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm y+6 w420", "2. Drag the floating Mic Pill anywhere — even onto Monitor 2."), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "xm y+6 w420", "3. Right-click or middle-click the Pill for Quick Deck & Slide controls."), "Text")
+    btnConn := dlg.Add("Button", "xm y+14 w190 h30 Default", "Open Connection Setup")
+    btnOk := dlg.Add("Button", "x+12 yp w110 h30", "Done")
+    Theme.RegisterControl(dlg, btnConn, "Button", "accent")
+    Theme.RegisterControl(dlg, btnOk, "Button")
+    btnConn.OnEvent("Click", (*) => (dlg.Destroy(), ShowRemoteConnectionUI(cfg, state, false)))
+    btnOk.OnEvent("Click", (*) => dlg.Destroy())
+    dlg.OnEvent("Escape", (*) => dlg.Destroy())
+    WindowFit.Show(dlg, "AutoSize Center")
+    return dlg
+}
+
 ShowRemoteAboutUI(cfg := "", state := "", *) {
     dlgRes := CreateThemedRemoteDialog("AboutRemoteWindow", "About PresenterSync Remote", 18, 16, false)
     if IsObject(dlgRes.existing)
