@@ -1056,7 +1056,8 @@ StopAllRemoteTimers(state) {
         "dragTimerFn", "breathTimerFn", "_muteAnimTimerFn", "autoDodgeTimerFn", "idleDimTimerFn",
         "reconnectTimerFn", "heartbeatTimerFn", "lanRepromoteTimerFn",
         "presenterTickFn", "recTickFn", "rebuildTrayFn",
-        "sceneMarqueeTimerFn", "_optimisticTimerFn", "sceneResetWatchdogFn"
+        "sceneMarqueeTimerFn", "_optimisticTimerFn", "sceneResetWatchdogFn",
+        "sceneResetRestoreTimerFn", "sceneResetVerifyTimerFn"
     ]
     stopped := 0
     for _, prop in timerProps {

@@ -72,12 +72,14 @@ class OperatorConsole {
 
         ; 2. Scene & Transition Row
         gbScenes := g.AddGroupBox("xm y+10 w640 h78", "Scenes & Studio Transition")
-        g.AddText("xp+12 yp+24 w65", "Program:")
-        c["progDrop"] := g.AddDropDownList("x+6 yp-3 w175")
-        g.AddText("x+12 yp+3 w55", "Preview:")
-        c["prevDrop"] := g.AddDropDownList("x+6 yp-3 w175")
-        c["btnTrans"] := g.AddButton("x+10 yp-1 w110 h26", "Transition")
+        g.AddText("xp+12 yp+24 w55", "Program:")
+        c["progDrop"] := g.AddDropDownList("x+6 yp-3 w140")
+        g.AddText("x+8 yp+3 w52", "Preview:")
+        c["prevDrop"] := g.AddDropDownList("x+6 yp-3 w140")
+        c["btnTrans"] := g.AddButton("x+10 yp-1 w92 h26", "Transition")
+        c["btnResetScene"] := g.AddButton("x+6 yp w102 h26", "Reset Scene")
         c["btnTrans"].OnEvent("Click", (*) => (IsSet(TriggerObsSceneTransition) ? TriggerObsSceneTransition(this._cfg, this._state, true) : 0, this.Refresh()))
+        c["btnResetScene"].OnEvent("Click", (*) => (IsSet(ExecuteHostResetActiveScene) ? ExecuteHostResetActiveScene(this._cfg, this._state) : 0, this.Refresh()))
         c["progDrop"].OnEvent("Change", (ctrl, *) => (ctrl.Text != "" && IsSet(ExecuteHostSwitchScene) ? ExecuteHostSwitchScene(this._cfg, this._state, ctrl.Text) : 0, this.Refresh()))
         c["prevDrop"].OnEvent("Change", (ctrl, *) => (ctrl.Text != "" && IsSet(ExecuteHostSetPreviewScene) ? ExecuteHostSetPreviewScene(this._cfg, this._state, ctrl.Text) : 0, this.Refresh()))
 
@@ -132,7 +134,7 @@ class OperatorConsole {
             Theme.RegisterControl(g, c["nudgeIn"], "Edit")
             Theme.RegisterControl(g, c["inbox"], "Edit")
             Theme.RegisterControl(g, c["roster"], "ListView")
-            for _, bk in ["btnTrans", "btnMic", "btnRec", "btnBrb", "btnPanic", "btnTmr", "btnNudge", "btnFlash", "btnPauseDev", "btnRole", "btnObsFb", "btnBookmark", "btnFocusConf", "btnTurnover", "btnClose"]
+            for _, bk in ["btnTrans", "btnResetScene", "btnMic", "btnRec", "btnBrb", "btnPanic", "btnTmr", "btnNudge", "btnFlash", "btnPauseDev", "btnRole", "btnObsFb", "btnBookmark", "btnFocusConf", "btnTurnover", "btnClose"]
                 Theme.RegisterControl(g, c[bk], "Button")
         }
 
@@ -141,6 +143,7 @@ class OperatorConsole {
             WindowFit.RegisterAnchor(g, c["obsStats"], {W: 1})
             WindowFit.RegisterAnchor(g, gbScenes, {W: 1})
             WindowFit.RegisterAnchor(g, c["btnTrans"], {R: 1})
+            WindowFit.RegisterAnchor(g, c["btnResetScene"], {R: 1})
             WindowFit.RegisterAnchor(g, gbLive, {W: 1})
             WindowFit.RegisterAnchor(g, gbNudge, {W: 1})
             WindowFit.RegisterAnchor(g, c["nudgeIn"], {W: 1})

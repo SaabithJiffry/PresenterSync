@@ -2468,7 +2468,8 @@ class OverlayState {
             "coreAudioWatchdogFn", "safetyWatchdogFn", "recTimerFn", "presenterTimerFn",
             "streamTimerFn", "autoDodgeTimerFn", "obsTimerFn", "relayTimerFn",
             "sceneMarqueeTimerFn", "zoomTimerFn", "releaseSyncTimerFn", "autoProfileTimerFn",
-            "_optimisticTimerFn", "_brbCountdownTimerFn", "sceneResetWatchdogFn"
+            "_optimisticTimerFn", "_brbCountdownTimerFn", "sceneResetWatchdogFn",
+            "sceneResetRestoreTimerFn", "sceneResetVerifyTimerFn"
         ]
         stopped := 0
         for _, prop in timerProps {

@@ -1544,6 +1544,8 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         }
 
         ; Restore base alpha & query initial mic mute + full Director state directly from OBS :4455
+        if (IsSet(_RecoverOrphanSceneResetItems))
+            _RecoverOrphanSceneResetItems(cfg, state)
         RefreshRemoteMicHudAlpha(cfg, state)
         escMic := EscapeJsonStr(cfg.TargetMicName)
         SendObsRequest(ws, "GetInputMute", "InitRemoteMute", '{"inputName":"' escMic '"}')
@@ -1737,6 +1739,10 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         else if (InStr(msg, '"requestId":"RemoteResetSceneList"') || InStr(msg, '"requestId": "RemoteResetSceneList"')) {
             if (IsSet(_HandleRemoteResetSceneItemList))
                 _HandleRemoteResetSceneItemList(cfg, state, msg)
+        }
+        else if (RegExMatch(msg, '"requestId"\s*:\s*"(Reset(?:SceneCrawl|CheckDshow|VerifyDshow):[^"]+)"', &mRemRstId)) {
+            if (IsSet(_HandleObsSceneResetMessage))
+                _HandleObsSceneResetMessage(cfg, state, mRemRstId[1], msg)
         }
     }
 }
@@ -2247,19 +2253,7 @@ SendRemoteResetActiveScene(cfg, state) {
         targetScene := state.HasOwnProp("activeScene") ? Trim(String(state.activeScene)) : ""
         if (targetScene = "" || targetScene = "Scene")
             return false
-        state.sceneResetInProgress := true
-        state.pendingSceneResetTarget := targetScene
-        _ClearRemoteSceneResetWatchdog(state)
-        wdFn := _OnRemoteSceneResetWatchdog.Bind(state)
-        state.sceneResetWatchdogFn := wdFn
-        try SetTimer(wdFn, -3000)
-        ok := SendObsRequest(state.obsWs, "GetSceneItemList", "RemoteResetSceneList", '{"sceneName":"' EscapeJsonStr(targetScene) '"}')
-        if (!ok) {
-            _ClearRemoteSceneResetWatchdog(state)
-            state.sceneResetInProgress := false
-            state.pendingSceneResetTarget := ""
-        }
-        return ok
+        return _StartRecursiveObsSceneReset(cfg, state, targetScene, true)
     }
     ShowCaptureSafeMicroToast("Reset Scene requires an active Bridge or Direct OBS connection.", 2200)
     return false
@@ -2971,7 +2965,7 @@ UpdateRemoteTouchDeckUI(cfg, state) {
     ctrls.btnMute.Enabled := !isTallyOnly
     ctrls.btnTimerPause.Enabled := !isTallyOnly
     ctrls.btnStandby.Enabled := (!isTallyOnly && canDirector)
-    for _, cname in ["btnTrans", "btnPrevSlide", "btnNextSlide", "btnStartSlide", "btnT5", "btnT10", "btnT15", "btnTimerReset", "edNudge", "btnSendNudge"] {
+    for _, cname in ["btnTrans", "btnResetScene", "btnPrevSlide", "btnNextSlide", "btnStartSlide", "btnT5", "btnT10", "btnT15", "btnTimerReset", "edNudge", "btnSendNudge"] {
         if (ctrls.HasOwnProp(cname) && IsObject(ctrls.%cname%))
             ctrls.%cname%.Enabled := !isTallyOnly
     }
@@ -3114,6 +3108,8 @@ ShowRemoteTouchDeckGUI(cfg, state, *) {
         (Trim(edNudge.Value) != "") ? (SendRemoteStageNudge(cfg, state, Trim(edNudge.Value)), edNudge.Value := "") : 0
     ))
 
+    btnResetScene := AddThemedCtrl(deckGui, "Button", "x14 y466 w190 h40", "Reset Scene")
+    btnResetScene.OnEvent("Click", (*) => SendRemoteResetActiveScene(cfg, state))
     btnCloseDeck := AddThemedCtrl(deckGui, "Button", "x486 y466 w120 h40", "Close")
     BindRemoteDialogClose(deckGui, winKey, false, (*) => (
         IsObject(state) ? (state.quickDeckGui := "", state.quickDeckCtrls := "") : 0
@@ -3125,6 +3121,7 @@ ShowRemoteTouchDeckGUI(cfg, state, *) {
             lblHeader: lblHeader,
             btnMute: btnMute,
             btnTrans: btnTrans,
+            btnResetScene: btnResetScene,
             lblSlide: lblSlide,
             btnPrevSlide: btnPrevSlide,
             btnNextSlide: btnNextSlide,
@@ -3163,6 +3160,7 @@ ShowRemoteTouchDeckGUI(cfg, state, *) {
         WindowFit.RegisterAnchor(deckGui, nb, {FX: (idx - 1) / 3.0, FW: 1.0 / 3.0})
     WindowFit.RegisterAnchor(deckGui, edNudge, {W: 1})
     WindowFit.RegisterAnchor(deckGui, btnSendNudge, {R: 1})
+    WindowFit.RegisterAnchor(deckGui, btnResetScene, {B: 1})
     WindowFit.RegisterAnchor(deckGui, btnCloseDeck, {R: 1, B: 1})
     if (!IsSet(g_IsTestMode) || !g_IsTestMode)
         WindowFit.Show(deckGui, "w620 h520")

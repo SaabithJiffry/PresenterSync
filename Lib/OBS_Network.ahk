@@ -2704,6 +2704,7 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
             SetTimer state.obsTimerFn, 0
         state.obsConnected := true
         state.obsCrashedRecWarn := false
+        _RecoverOrphanSceneResetItems(cfg, state)
         escMic := EscapeJsonStr(cfg.targetMicName)
         SendObsRequest(ws, "GetInputMute", "InitState", '{"inputName":"' escMic '"}')
         SendObsRequest(ws, "GetRecordStatus", "InitRecState")
@@ -2911,6 +2912,9 @@ HandleObsMessage(cfg, state, ws, rawMsg) {
         else if (InStr(msg, '"requestId":"ResetActiveSceneList"') || InStr(msg, '"requestId": "ResetActiveSceneList"')) {
             _HandleResetActiveSceneItemList(cfg, state, msg)
         }
+        else if (RegExMatch(msg, '"requestId"\s*:\s*"(Reset(?:SceneCrawl|CheckDshow|VerifyDshow):[^"]+)"', &mRstId)) {
+            _HandleObsSceneResetMessage(cfg, state, mRstId[1], msg)
+        }
         else if (InStr(msg, '"requestId":"InitInputList"') || InStr(msg, '"requestId": "InitInputList"')) {
             parsedInputs := ParseObsInputList(msg)
             state.obsInputs := parsedInputs.all
@@ -3036,6 +3040,17 @@ ExecuteHostSetInputVolume(cfg, state, inputName, volumeMul) {
     return false
 }
 
+_ClearSceneResetTimers(state) {
+    if (!IsObject(state))
+        return
+    for _, prop in ["sceneResetWatchdogFn", "sceneResetRestoreTimerFn", "sceneResetVerifyTimerFn"] {
+        if (state.HasOwnProp(prop) && IsObject(state.%prop%)) {
+            try SetTimer(state.%prop%, 0)
+            state.%prop% := ""
+        }
+    }
+}
+
 _ClearSceneResetWatchdog(state) {
     if (IsObject(state) && state.HasOwnProp("sceneResetWatchdogFn") && IsObject(state.sceneResetWatchdogFn)) {
         try SetTimer(state.sceneResetWatchdogFn, 0)
@@ -3049,29 +3064,336 @@ _OnSceneResetWatchdog(state) {
     state.sceneResetWatchdogFn := ""
     state.sceneResetInProgress := false
     state.pendingSceneResetTarget := ""
+    state._sceneResetCtx := ""
 }
 
 _ScheduleSceneResetWatchdog(state, targetScene) {
     _ClearSceneResetWatchdog(state)
     wdFn := _OnSceneResetWatchdog.Bind(state)
     state.sceneResetWatchdogFn := wdFn
-    try SetTimer(wdFn, -3000)
+    try SetTimer(wdFn, -5000)
 }
 
-_CompleteResetActiveSceneItems(cfg, state, targetScene, itemIds) {
+IsProtectedObsAudioSource(cfg, inputName, inputKind := "") {
+    nm := StrLower(Trim(String(inputName)))
+    kd := StrLower(Trim(String(inputKind)))
+    static audioKinds := Map(
+        "wasapi_input_capture", true,
+        "wasapi_output_capture", true,
+        "coreaudio_input_capture", true,
+        "coreaudio_output_capture", true,
+        "pulse_input_capture", true,
+        "pulse_output_capture", true,
+        "alsa_input_capture", true,
+        "oss_input_capture", true,
+        "jack_output_capture", true,
+        "sndio_output_capture", true
+    )
+    if (kd != "" && (audioKinds.Has(kd) || InStr(kd, "_input_capture")))
+        return true
+    if (nm = "" || !IsObject(cfg))
+        return false
+    prim := ""
+    if (cfg.HasOwnProp("ObsTargetMicName") && Trim(String(cfg.ObsTargetMicName)) != "")
+        prim := Trim(String(cfg.ObsTargetMicName))
+    else if (cfg.HasOwnProp("TargetMicName") && Trim(String(cfg.TargetMicName)) != "")
+        prim := Trim(String(cfg.TargetMicName))
+    if (prim != "" && nm = StrLower(prim))
+        return true
+    if (cfg.HasOwnProp("SecondaryAudioSources") && Trim(String(cfg.SecondaryAudioSources)) != "") {
+        for _, rawSec in StrSplit(String(cfg.SecondaryAudioSources), [",", ";"]) {
+            secClean := StrLower(Trim(rawSec))
+            if (secClean != "" && nm = secClean)
+                return true
+        }
+    }
+    return false
+}
+
+ClassifyObsSourceResetKind(inputKind) {
+    kd := StrLower(Trim(String(inputKind)))
+    if (kd = "dshow_input" || kd = "v4l2_input" || kd = "av_capture_input_v2" || kd = "av_capture_input")
+        return "dshow"
+    if (kd = "browser_source")
+        return "browser"
+    if (kd = "ffmpeg_source" || kd = "vlc_source")
+        return "media"
+    return "toggle"
+}
+
+_SendResetSceneItemEnabled(cfg, state, sceneName, sceneItemId, enabled) {
+    sc := Trim(String(sceneName))
+    if (!IsObject(state) || !state.HasOwnProp("obsConnected") || !state.obsConnected || !state.HasOwnProp("obsWs") || !IsObject(state.obsWs) || sc = "" || Integer(sceneItemId) <= 0)
+        return false
+    reqId := (state.HasOwnProp("_sceneResetCtx") && IsObject(state._sceneResetCtx) && state._sceneResetCtx.isRemote) ? "RemoteResetSetItem" : "HostSetSceneItem"
+    return SendObsRequest(state.obsWs, "SetSceneItemEnabled", reqId, '{"sceneName":"' EscapeJsonStr(sc) '","sceneItemId":' Integer(sceneItemId) ',"sceneItemEnabled":' (enabled ? "true" : "false") '}')
+}
+
+_RecoverOrphanSceneResetItems(cfg, state) {
+    if (!IsObject(state) || !state.HasOwnProp("_pendingSceneReenableItems") || !IsObject(state._pendingSceneReenableItems) || state._pendingSceneReenableItems.Length == 0)
+        return false
+    if (!state.HasOwnProp("obsConnected") || !state.obsConnected || !state.HasOwnProp("obsWs") || !IsObject(state.obsWs))
+        return false
+    orphans := state._pendingSceneReenableItems
+    state._pendingSceneReenableItems := []
+    for _, item in orphans {
+        _SendResetSceneItemEnabled(cfg, state, item.scene, item.id, true)
+        if (item.HasOwnProp("kind") && item.kind = "dshow" && item.HasOwnProp("name") && item.name != "")
+            SendObsRequest(state.obsWs, "PressInputPropertiesButton", "ResetRecoverActivate", '{"inputName":"' EscapeJsonStr(item.name) '","propertyName":"activate"}')
+    }
+    return true
+}
+
+_FinishObsSceneResetUi(cfg, state, targetScene, isRemote := false) {
+    if (!isRemote && IsSet(SessionTimeline))
+        try SessionTimeline.Record("OBS", "Scene Sources Reset: " targetScene, state, "Reset")
+    if (IsObject(state) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)) {
+        if (isRemote && IsSet(ShowCaptureSafeMicroToast)) {
+            try ShowCaptureSafeMicroToast("Scene Sources Reset: " targetScene, 2200)
+        } else if (!isRemote && IsSet(ShowStageNudgeBanner)) {
+            try ShowStageNudgeBanner("Scene Sources Reset: " targetScene, "10B981", 2200, "OBS")
+        }
+    }
+}
+
+_VerifyDshowResetPhase(cfg, state, token, dshowItems) {
+    if (IsObject(state))
+        state.sceneResetVerifyTimerFn := ""
+    if (!IsObject(state) || !state.HasOwnProp("obsConnected") || !state.obsConnected || !state.HasOwnProp("obsWs") || !IsObject(state.obsWs))
+        return
+    for _, ds in dshowItems {
+        if (ds.HasOwnProp("name") && ds.name != "")
+            SendObsRequest(state.obsWs, "GetInputSettings", "ResetVerifyDshow:" token ":" ds.name, '{"inputName":"' EscapeJsonStr(ds.name) '"}')
+    }
+}
+
+_CompleteResetActiveSceneCtx(cfg, state, ctx) {
     _ClearSceneResetWatchdog(state)
-    if (IsObject(cfg) && IsObject(state) && cfg.EnableWS && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
-        for _, itemId in itemIds
-            ExecuteHostSetSceneItemEnabled(cfg, state, targetScene, itemId, true)
+    if (IsObject(state))
+        state.sceneResetRestoreTimerFn := ""
+    if (IsObject(cfg) && IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected && state.HasOwnProp("obsWs") && IsObject(state.obsWs)) {
+        for _, it in ctx.toggleItems
+            _SendResetSceneItemEnabled(cfg, state, it.scene, it.id, true)
+        for _, ds in ctx.dshowItems {
+            _SendResetSceneItemEnabled(cfg, state, ds.scene, ds.id, true)
+            SendObsRequest(state.obsWs, "PressInputPropertiesButton", "ResetDshowOn", '{"inputName":"' EscapeJsonStr(ds.name) '","propertyName":"activate"}')
+        }
+        state._pendingSceneReenableItems := []
+        if (ctx.dshowItems.Length > 0) {
+            vFn := _VerifyDshowResetPhase.Bind(cfg, state, ctx.token, ctx.dshowItems)
+            state.sceneResetVerifyTimerFn := vFn
+            try SetTimer(vFn, -1500)
+        }
     }
     if (IsObject(state)) {
         state.sceneResetInProgress := false
         state.pendingSceneResetTarget := ""
+        state._sceneResetCtx := ""
     }
-    if (IsSet(SessionTimeline))
-        try SessionTimeline.Record("OBS", "Scene Sources Reset: " targetScene, state, "Reset")
-    if (IsSet(ShowStageNudgeBanner) && (!IsObject(state) || !state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
-        ShowStageNudgeBanner("Scene Sources Reset: " targetScene, "10B981", 2200, "OBS")
+    _FinishObsSceneResetUi(cfg, state, ctx.targetScene, ctx.isRemote)
+}
+
+_CompleteResetActiveSceneItems(cfg, state, targetScene, itemIds) {
+    items := []
+    for _, id in itemIds
+        items.Push({scene: targetScene, id: id, kind: "toggle", name: ""})
+    _CompleteResetActiveSceneCtx(cfg, state, {token: "legacy", targetScene: targetScene, isRemote: false, toggleItems: items, dshowItems: []})
+}
+
+_ExecuteObsSceneResetPhase1(cfg, state, ctx) {
+    totalReset := ctx.toggleItems.Length + ctx.dshowItems.Length + ctx.browserInputs.Length + ctx.mediaInputs.Length
+    if (totalReset == 0) {
+        _ClearSceneResetWatchdog(state)
+        state.sceneResetInProgress := false
+        state.pendingSceneResetTarget := ""
+        state._sceneResetCtx := ""
+        if (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners) {
+            if (ctx.isRemote && IsSet(ShowCaptureSafeMicroToast)) {
+                try ShowCaptureSafeMicroToast("No active scene sources to reset", 2000)
+            } else if (!ctx.isRemote && IsSet(ShowStageNudgeBanner)) {
+                try ShowStageNudgeBanner("No active scene sources to reset", "F59E0B", 2000, "OBS")
+            }
+        }
+        return false
+    }
+    for _, bName in ctx.browserInputs
+        SendObsRequest(state.obsWs, "PressInputPropertiesButton", "ResetBrowser", '{"inputName":"' EscapeJsonStr(bName) '","propertyName":"refreshnocache"}')
+    for _, mName in ctx.mediaInputs
+        SendObsRequest(state.obsWs, "TriggerMediaInputAction", "ResetMedia", '{"inputName":"' EscapeJsonStr(mName) '","mediaAction":"OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"}')
+
+    reEnable := []
+    for _, ds in ctx.dshowItems {
+        SendObsRequest(state.obsWs, "PressInputPropertiesButton", "ResetDshowOff", '{"inputName":"' EscapeJsonStr(ds.name) '","propertyName":"activate"}')
+        _SendResetSceneItemEnabled(cfg, state, ds.scene, ds.id, false)
+        reEnable.Push({scene: ds.scene, id: ds.id, kind: "dshow", name: ds.name})
+    }
+    for _, it in ctx.toggleItems {
+        _SendResetSceneItemEnabled(cfg, state, it.scene, it.id, false)
+        reEnable.Push({scene: it.scene, id: it.id, kind: "toggle", name: ""})
+    }
+    state._pendingSceneReenableItems := reEnable
+
+    if (reEnable.Length == 0) {
+        _ClearSceneResetWatchdog(state)
+        state.sceneResetInProgress := false
+        state.pendingSceneResetTarget := ""
+        state._sceneResetCtx := ""
+        _FinishObsSceneResetUi(cfg, state, ctx.targetScene, ctx.isRemote)
+        return true
+    }
+
+    doneFn := _CompleteResetActiveSceneCtx.Bind(cfg, state, ctx)
+    state.sceneResetRestoreTimerFn := doneFn
+    try SetTimer(doneFn, -600)
+    return true
+}
+
+_HandleObsSceneResetMessage(cfg, state, reqId, rawMsg) {
+    if (!IsObject(state))
+        return false
+    if (SubStr(reqId, 1, 17) = "ResetVerifyDshow:") {
+        ; Phase 3 (+1500ms) self-heal verify for dshow_input cameras
+        parsedV := JsonCodec.Parse(rawMsg, &errV)
+        if (!IsObject(parsedV) || !(parsedV is Map) || !parsedV.Has("d"))
+            return false
+        dV := parsedV["d"]
+        rdV := (dV is Map && dV.Has("responseData") && (dV["responseData"] is Map)) ? dV["responseData"] : ""
+        inSet := (IsObject(rdV) && rdV.Has("inputSettings") && (rdV["inputSettings"] is Map)) ? rdV["inputSettings"] : ""
+        if (IsObject(inSet) && inSet.Has("active") && !inSet["active"]) {
+            restV := SubStr(reqId, 18)
+            colonPos := InStr(restV, ":")
+            inName := (colonPos > 0) ? SubStr(restV, colonPos + 1) : ""
+            if (inName != "" && state.HasOwnProp("obsConnected") && state.obsConnected && IsObject(state.obsWs)) {
+                SendObsRequest(state.obsWs, "PressInputPropertiesButton", "ResetSelfHeal", '{"inputName":"' EscapeJsonStr(inName) '","propertyName":"activate"}')
+                if (IsSet(DiagnosticLogger))
+                    try DiagnosticLogger.RecordBreadcrumb("OBS", "DshowSelfHeal", "Re-activated camera input: " inName, "WARN")
+            }
+        }
+        return true
+    }
+
+    if (!state.HasOwnProp("sceneResetInProgress") || !state.sceneResetInProgress || !state.HasOwnProp("_sceneResetCtx") || !IsObject(state._sceneResetCtx))
+        return false
+    ctx := state._sceneResetCtx
+    parsed := JsonCodec.Parse(rawMsg, &parseErr)
+    dObj := (IsObject(parsed) && (parsed is Map) && parsed.Has("d") && (parsed["d"] is Map)) ? parsed["d"] : ""
+    statusOk := (IsObject(dObj) && dObj.Has("requestStatus") && (dObj["requestStatus"] is Map) && dObj["requestStatus"].Has("result")) ? !!dObj["requestStatus"]["result"] : true
+    rd := (IsObject(dObj) && dObj.Has("responseData") && (dObj["responseData"] is Map)) ? dObj["responseData"] : ""
+
+    if (SubStr(reqId, 1, 16) = "ResetSceneCrawl:") {
+        ctx.pending -= 1
+        rest := SubStr(reqId, 17)
+        parts := StrSplit(rest, ":",, 3)
+        if (parts.Length >= 3 && parts[1] = ctx.token && statusOk && IsObject(rd) && rd.Has("sceneItems") && (rd["sceneItems"] is Array)) {
+            depth := IsInteger(parts[2]) ? Integer(parts[2]) : 0
+            containerName := parts[3]
+            for _, item in rd["sceneItems"] {
+                if (!IsObject(item) || !(item is Map))
+                    continue
+                if (!item.Has("sceneItemEnabled") || !item["sceneItemEnabled"])
+                    continue
+                itemId := item.Has("sceneItemId") ? Integer(item["sceneItemId"]) : -1
+                srcName := item.Has("sourceName") ? Trim(String(item["sourceName"])) : ""
+                srcType := item.Has("sourceType") ? Trim(String(item["sourceType"])) : ""
+                inKind := item.Has("inputKind") ? Trim(String(item["inputKind"])) : ""
+                isGrp := (item.Has("isGroup") && !!item["isGroup"])
+                if (isGrp && srcName != "") {
+                    vKey := "grp:" StrLower(srcName)
+                    if (depth < 6 && !ctx.visited.Has(vKey)) {
+                        ctx.visited[vKey] := true
+                        ctx.pending += 1
+                        SendObsRequest(state.obsWs, "GetGroupSceneItemList", "ResetSceneCrawl:" ctx.token ":" (depth + 1) ":" srcName, '{"sceneName":"' EscapeJsonStr(srcName) '"}')
+                    }
+                } else if (srcType = "OBS_SOURCE_TYPE_SCENE" && srcName != "") {
+                    vKey := "scn:" StrLower(srcName)
+                    if (depth < 6 && !ctx.visited.Has(vKey)) {
+                        ctx.visited[vKey] := true
+                        ctx.pending += 1
+                        SendObsRequest(state.obsWs, "GetSceneItemList", "ResetSceneCrawl:" ctx.token ":" (depth + 1) ":" srcName, '{"sceneName":"' EscapeJsonStr(srcName) '"}')
+                    }
+                } else if (itemId > 0) {
+                    if (IsProtectedObsAudioSource(cfg, srcName, inKind))
+                        continue
+                    resetKind := ClassifyObsSourceResetKind(inKind)
+                    if (resetKind = "dshow" && srcName != "") {
+                        ctx.pending += 1
+                        idx := ctx.dshowCandidates.Length + 1
+                        ctx.dshowCandidates.Push({scene: containerName, id: itemId, name: srcName})
+                        SendObsRequest(state.obsWs, "GetInputSettings", "ResetCheckDshow:" ctx.token ":" idx, '{"inputName":"' EscapeJsonStr(srcName) '"}')
+                    } else if (resetKind = "browser" && srcName != "") {
+                        if (!ctx.browserSet.Has(srcName)) {
+                            ctx.browserSet[srcName] := true
+                            ctx.browserInputs.Push(srcName)
+                        }
+                    } else if (resetKind = "media" && srcName != "") {
+                        if (!ctx.mediaSet.Has(srcName)) {
+                            ctx.mediaSet[srcName] := true
+                            ctx.mediaInputs.Push(srcName)
+                        }
+                    } else {
+                        ctx.toggleItems.Push({scene: containerName, id: itemId, kind: "toggle", name: srcName})
+                    }
+                }
+            }
+        }
+    } else if (SubStr(reqId, 1, 16) = "ResetCheckDshow:") {
+        ctx.pending -= 1
+        rest := SubStr(reqId, 17)
+        parts := StrSplit(rest, ":",, 2)
+        if (parts.Length >= 2 && parts[1] = ctx.token && IsInteger(parts[2])) {
+            idx := Integer(parts[2])
+            if (idx >= 1 && idx <= ctx.dshowCandidates.Length) {
+                cand := ctx.dshowCandidates[idx]
+                isActive := true
+                if (statusOk && IsObject(rd) && rd.Has("inputSettings") && (rd["inputSettings"] is Map) && rd["inputSettings"].Has("active"))
+                    isActive := !!rd["inputSettings"]["active"]
+                if (isActive)
+                    ctx.dshowItems.Push({scene: cand.scene, id: cand.id, name: cand.name, kind: "dshow"})
+            }
+        }
+    }
+    if (ctx.pending <= 0)
+        return _ExecuteObsSceneResetPhase1(cfg, state, ctx)
+    return true
+}
+
+_StartRecursiveObsSceneReset(cfg, state, targetScene, isRemote := false) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    if (state.HasOwnProp("sceneResetInProgress") && state.sceneResetInProgress)
+        return false
+    sc := Trim(String(targetScene))
+    if (sc = "" || !state.HasOwnProp("obsConnected") || !state.obsConnected || !state.HasOwnProp("obsWs") || !IsObject(state.obsWs))
+        return false
+    if (!isRemote && (!cfg.HasOwnProp("EnableWS") || !cfg.EnableWS))
+        return false
+    token := String(A_TickCount)
+    ctx := {
+        token: token,
+        targetScene: sc,
+        isRemote: isRemote,
+        pending: 1,
+        visited: Map("scn:" StrLower(sc), true),
+        toggleItems: [],
+        dshowCandidates: [],
+        dshowItems: [],
+        browserSet: Map(),
+        browserInputs: [],
+        mediaSet: Map(),
+        mediaInputs: []
+    }
+    state.sceneResetInProgress := true
+    state.pendingSceneResetTarget := sc
+    state._sceneResetCtx := ctx
+    _ScheduleSceneResetWatchdog(state, sc)
+    ok := SendObsRequest(state.obsWs, "GetSceneItemList", "ResetSceneCrawl:" token ":0:" sc, '{"sceneName":"' EscapeJsonStr(sc) '"}')
+    if (!ok) {
+        _ClearSceneResetWatchdog(state)
+        state.sceneResetInProgress := false
+        state.pendingSceneResetTarget := ""
+        state._sceneResetCtx := ""
+    }
+    return ok
 }
 
 _HandleResetActiveSceneItemList(cfg, state, rawMsg) {
@@ -3091,7 +3413,11 @@ _HandleResetActiveSceneItemList(cfg, state, rawMsg) {
         if (rd.Has("sceneItems") && (rd["sceneItems"] is Array)) {
             for _, item in rd["sceneItems"] {
                 if (IsObject(item) && (item is Map) && item.Has("sceneItemId") && item.Has("sceneItemEnabled") && !!item["sceneItemEnabled"]) {
-                    try enabledIds.Push(Integer(item["sceneItemId"]))
+                    srcName := item.Has("sourceName") ? Trim(String(item["sourceName"])) : ""
+                    inKind := item.Has("inputKind") ? Trim(String(item["inputKind"])) : ""
+                    if (!IsProtectedObsAudioSource(cfg, srcName, inKind)) {
+                        try enabledIds.Push(Integer(item["sceneItemId"]))
+                    }
                 }
             }
         }
@@ -3100,15 +3426,17 @@ _HandleResetActiveSceneItemList(cfg, state, rawMsg) {
         _ClearSceneResetWatchdog(state)
         state.sceneResetInProgress := false
         state.pendingSceneResetTarget := ""
+        state._sceneResetCtx := ""
         if (statusOk && enabledIds.Length = 0 && IsSet(ShowStageNudgeBanner) && (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners))
             ShowStageNudgeBanner("No active scene sources to reset", "F59E0B", 2000, "OBS")
         return false
     }
     for _, itemId in enabledIds
         ExecuteHostSetSceneItemEnabled(cfg, state, targetScene, itemId, false)
-    ; Capture exact targetScene + enabledIds so a scene change within 250ms still re-enables the right items
+    ; Capture exact targetScene + enabledIds so a scene change still re-enables the right items
     doneFn := _CompleteResetActiveSceneItems.Bind(cfg, state, targetScene, enabledIds)
-    try SetTimer(doneFn, -250)
+    state.sceneResetRestoreTimerFn := doneFn
+    try SetTimer(doneFn, -600)
     return true
 }
 
@@ -3122,18 +3450,7 @@ ExecuteHostResetActiveScene(cfg, state) {
         return (res != false)
     }
     targetScene := state.HasOwnProp("currentSceneName") ? Trim(String(state.currentSceneName)) : ""
-    if (targetScene = "" || !cfg.EnableWS || !state.HasOwnProp("obsConnected") || !state.obsConnected || !state.HasOwnProp("obsWs") || !IsObject(state.obsWs))
-        return false
-    state.sceneResetInProgress := true
-    state.pendingSceneResetTarget := targetScene
-    _ScheduleSceneResetWatchdog(state, targetScene)
-    ok := SendObsRequest(state.obsWs, "GetSceneItemList", "ResetActiveSceneList", '{"sceneName":"' EscapeJsonStr(targetScene) '"}')
-    if (!ok) {
-        _ClearSceneResetWatchdog(state)
-        state.sceneResetInProgress := false
-        state.pendingSceneResetTarget := ""
-    }
-    return ok
+    return _StartRecursiveObsSceneReset(cfg, state, targetScene, false)
 }
 
 ExecuteHostAudioHandoff(cfg, state, mode := "both") {

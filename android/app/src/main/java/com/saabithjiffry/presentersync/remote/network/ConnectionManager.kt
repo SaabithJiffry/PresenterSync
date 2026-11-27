@@ -1903,10 +1903,7 @@ class ConnectionManager(
                     obs.sendResetSceneSources(curScene)
                 }
             },
-            relayAction = {
-                _events.tryEmit(RemoteEvent.ToastMessage("Reset Scene requires LAN Host Bridge or Direct OBS."))
-                false
-            }
+            relayAction = { it.sendResetActiveScene() }
         )
 
     fun sendTimerCommand(action: String, durationSec: Int = 0, source: String = "director"): Boolean {

@@ -202,6 +202,8 @@ class RelayClient(
 
     fun sendTransitionScene(): Boolean = publishPacket("transition_scene", "1")
 
+    fun sendResetActiveScene(): Boolean = publishPacket("reset_active_scene", "1")
+
     fun sendSwitchScene(sceneName: String): Boolean {
         val clean = sceneName.trim().replace("|", "/")
         return if (clean.isNotEmpty()) publishPacket("switch_scene", clean) else false

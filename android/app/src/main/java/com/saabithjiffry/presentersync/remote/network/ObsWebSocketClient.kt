@@ -12,6 +12,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 interface ObsSessionCallbacks {
@@ -46,6 +47,31 @@ class ObsWebSocketClient(
     private val resetWatchdogFuture = AtomicReference<ScheduledFuture<*>?>(null)
     private val resetScheduler = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "ObsResetSceneWorker").apply { isDaemon = true }
+    }
+    private val resetSeq = AtomicInteger(0)
+    private val resetLock = Any()
+    private var activeResetCtx: RecursiveSceneResetCtx? = null
+    @Volatile
+    private var pendingReenableItems: List<ReenableSceneItem> = emptyList()
+
+    private data class ReenableSceneItem(
+        val sceneName: String,
+        val sceneItemId: Int,
+        val isDshow: Boolean,
+        val inputName: String
+    )
+
+    private class RecursiveSceneResetCtx(
+        val token: String,
+        val targetScene: String
+    ) {
+        var pending: Int = 1
+        val visited = HashSet<String>().apply { add("scn:${targetScene.lowercase()}") }
+        val toggleItems = ArrayList<ReenableSceneItem>()
+        val dshowCandidates = ArrayList<ReenableSceneItem>()
+        val dshowItems = ArrayList<ReenableSceneItem>()
+        val browserInputs = LinkedHashSet<String>()
+        val mediaInputs = LinkedHashSet<String>()
     }
 
     fun connect() {
@@ -121,6 +147,7 @@ class ObsWebSocketClient(
             }
             2 -> {
                 identified.set(true)
+                recoverOrphanSceneResetItems()
                 callbacks.onIdentified()
                 sendGetInputMute()
                 sendGetRecordStatus()
@@ -297,62 +324,10 @@ class ObsWebSocketClient(
                             callbacks.onSceneTransitionError(reqId, errCode, errComment)
                         }
                     }
-                    else -> if (reqId.startsWith("ResetSceneList:")) {
-                        if (!resultOk || respData == null) {
-                            resetWatchdogFuture.getAndSet(null)?.cancel(false)
-                            resetInFlight.set(false)
-                            return
-                        }
-                        val sceneName = reqId.removePrefix("ResetSceneList:").trim()
-                        val items = respData.optJSONArray("sceneItems") ?: JSONArray()
-                        val enabledIds = ArrayList<Int>(items.length())
-                        for (i in 0 until items.length()) {
-                            val obj = items.optJSONObject(i) ?: continue
-                            val id = obj.optInt("sceneItemId", -1)
-                            if (id >= 0 && obj.optBoolean("sceneItemEnabled", true)) {
-                                enabledIds.add(id)
-                            }
-                        }
-                        if (sceneName.isNotEmpty() && enabledIds.isNotEmpty()) {
-                            for (id in enabledIds) {
-                                sendRequest(
-                                    "SetSceneItemEnabled",
-                                    "ResetOff_$id",
-                                    JSONObject().apply {
-                                        put("sceneName", sceneName)
-                                        put("sceneItemId", id)
-                                        put("sceneItemEnabled", false)
-                                    }
-                                )
-                            }
-                            try {
-                                resetScheduler.schedule({
-                                    try {
-                                        if (!closed.get()) {
-                                            for (id in enabledIds) {
-                                                sendRequest(
-                                                    "SetSceneItemEnabled",
-                                                    "ResetOn_$id",
-                                                    JSONObject().apply {
-                                                        put("sceneName", sceneName)
-                                                        put("sceneItemId", id)
-                                                        put("sceneItemEnabled", true)
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    } finally {
-                                        resetWatchdogFuture.getAndSet(null)?.cancel(false)
-                                        resetInFlight.set(false)
-                                    }
-                                }, 250L, TimeUnit.MILLISECONDS)
-                            } catch (_: RejectedExecutionException) {
-                                resetWatchdogFuture.getAndSet(null)?.cancel(false)
-                                resetInFlight.set(false)
-                            }
-                        } else {
-                            resetWatchdogFuture.getAndSet(null)?.cancel(false)
-                            resetInFlight.set(false)
+                    else -> when {
+                        reqId.startsWith("ResetSceneList:") || reqId.startsWith("ResetSceneCrawl:") ||
+                            reqId.startsWith("ResetCheckDshow:") || reqId.startsWith("ResetVerifyDshow:") -> {
+                            handleRecursiveSceneResetResponse(reqId, resultOk, respData)
                         }
                     }
                 }
@@ -456,21 +431,252 @@ class ObsWebSocketClient(
     fun sendResetSceneSources(sceneName: String): Boolean {
         val clean = sceneName.trim()
         if (clean.isEmpty() || !resetInFlight.compareAndSet(false, true)) return false
+        val tok = resetSeq.incrementAndGet().toString()
+        synchronized(resetLock) {
+            activeResetCtx = RecursiveSceneResetCtx(tok, clean)
+        }
         try {
-            val watchdog = resetScheduler.schedule({ resetInFlight.set(false) }, 3000L, TimeUnit.MILLISECONDS)
+            val watchdog = resetScheduler.schedule({
+                synchronized(resetLock) { activeResetCtx = null }
+                resetInFlight.set(false)
+            }, 5000L, TimeUnit.MILLISECONDS)
             resetWatchdogFuture.getAndSet(watchdog)?.cancel(false)
         } catch (_: RejectedExecutionException) {
+            synchronized(resetLock) { activeResetCtx = null }
             resetInFlight.set(false)
             return false
         }
-        val ok = sendRequest("GetSceneItemList", "ResetSceneList:$clean", JSONObject().apply {
+        val ok = sendRequest("GetSceneItemList", "ResetSceneCrawl:$tok:0:$clean", JSONObject().apply {
             put("sceneName", clean)
         })
         if (!ok) {
             resetWatchdogFuture.getAndSet(null)?.cancel(false)
+            synchronized(resetLock) { activeResetCtx = null }
             resetInFlight.set(false)
         }
         return ok
+    }
+
+    internal fun recoverOrphanSceneResetItems() {
+        val items = pendingReenableItems
+        if (items.isEmpty() || closed.get()) return
+        pendingReenableItems = emptyList()
+        for (it in items) {
+            sendRequest("SetSceneItemEnabled", "ResetRecOn_${it.sceneItemId}", JSONObject().apply {
+                put("sceneName", it.sceneName)
+                put("sceneItemId", it.sceneItemId)
+                put("sceneItemEnabled", true)
+            })
+            if (it.isDshow && it.inputName.isNotEmpty()) {
+                sendRequest("PressInputPropertiesButton", "ResetRecAct", JSONObject().apply {
+                    put("inputName", it.inputName)
+                    put("propertyName", "activate")
+                })
+            }
+        }
+    }
+
+    private fun handleRecursiveSceneResetResponse(reqId: String, resultOk: Boolean, respData: JSONObject?) {
+        if (reqId.startsWith("ResetVerifyDshow:")) {
+            if (resultOk && respData != null && !closed.get()) {
+                val active = respData.optJSONObject("inputSettings")?.optBoolean("active", true) ?: true
+                if (!active) {
+                    val parts = reqId.removePrefix("ResetVerifyDshow:").split(":", limit = 2)
+                    val inputName = parts.getOrNull(1).orEmpty().trim()
+                    if (inputName.isNotEmpty()) {
+                        sendRequest("PressInputPropertiesButton", "ResetDshowSelfHeal", JSONObject().apply {
+                            put("inputName", inputName)
+                            put("propertyName", "activate")
+                        })
+                    }
+                }
+            }
+            return
+        }
+
+        if (reqId.startsWith("ResetSceneList:")) {
+            // Backward-compatible direct list handler
+            val sceneName = reqId.removePrefix("ResetSceneList:").trim()
+            val items = respData?.optJSONArray("sceneItems") ?: JSONArray()
+            val toReset = ArrayList<ReenableSceneItem>(items.length())
+            for (i in 0 until items.length()) {
+                val obj = items.optJSONObject(i) ?: continue
+                if (!obj.optBoolean("sceneItemEnabled", true)) continue
+                val id = obj.optInt("sceneItemId", -1)
+                val name = obj.optString("sourceName", "").trim()
+                val kind = obj.optString("inputKind", "").trim()
+                if (id >= 0 && !isProtectedAudioSource(name, kind, targetMicName)) {
+                    toReset.add(ReenableSceneItem(sceneName, id, classifyResetKind(kind) == "dshow", name))
+                }
+            }
+            val legacyCtx = RecursiveSceneResetCtx("legacy", sceneName).apply {
+                pending = 0
+                toggleItems.addAll(toReset)
+            }
+            executeResetPhase1(legacyCtx)
+            return
+        }
+
+        val readyCtx: RecursiveSceneResetCtx? = synchronized(resetLock) {
+            val ctx = activeResetCtx ?: return@synchronized null
+            if (reqId.startsWith("ResetSceneCrawl:")) {
+                ctx.pending -= 1
+                val parts = reqId.removePrefix("ResetSceneCrawl:").split(":", limit = 3)
+                if (parts.size >= 3 && parts[0] == ctx.token && resultOk && respData != null) {
+                    val depth = parts[1].toIntOrNull() ?: 0
+                    val containerName = parts[2]
+                    val items = respData.optJSONArray("sceneItems") ?: JSONArray()
+                    for (i in 0 until items.length()) {
+                        val obj = items.optJSONObject(i) ?: continue
+                        if (!obj.optBoolean("sceneItemEnabled", true)) continue
+                        val id = obj.optInt("sceneItemId", -1)
+                        val srcName = obj.optString("sourceName", "").trim()
+                        val srcType = obj.optString("sourceType", "").trim()
+                        val inKind = obj.optString("inputKind", "").trim()
+                        val isGrp = obj.optBoolean("isGroup", false)
+                        if (isGrp && srcName.isNotEmpty()) {
+                            val vk = "grp:${srcName.lowercase()}"
+                            if (depth < 6 && ctx.visited.add(vk)) {
+                                ctx.pending += 1
+                                sendRequest("GetGroupSceneItemList", "ResetSceneCrawl:${ctx.token}:${depth + 1}:$srcName", JSONObject().put("sceneName", srcName))
+                            }
+                        } else if (srcType == "OBS_SOURCE_TYPE_SCENE" && srcName.isNotEmpty()) {
+                            val vk = "scn:${srcName.lowercase()}"
+                            if (depth < 6 && ctx.visited.add(vk)) {
+                                ctx.pending += 1
+                                sendRequest("GetSceneItemList", "ResetSceneCrawl:${ctx.token}:${depth + 1}:$srcName", JSONObject().put("sceneName", srcName))
+                            }
+                        } else if (id >= 0) {
+                            if (isProtectedAudioSource(srcName, inKind, targetMicName)) continue
+                            when (classifyResetKind(inKind)) {
+                                "dshow" -> if (srcName.isNotEmpty()) {
+                                    ctx.pending += 1
+                                    val idx = ctx.dshowCandidates.size
+                                    ctx.dshowCandidates.add(ReenableSceneItem(containerName, id, true, srcName))
+                                    sendRequest("GetInputSettings", "ResetCheckDshow:${ctx.token}:$idx", JSONObject().put("inputName", srcName))
+                                }
+                                "browser" -> if (srcName.isNotEmpty()) ctx.browserInputs.add(srcName)
+                                "media" -> if (srcName.isNotEmpty()) ctx.mediaInputs.add(srcName)
+                                else -> ctx.toggleItems.add(ReenableSceneItem(containerName, id, false, srcName))
+                            }
+                        }
+                    }
+                }
+            } else if (reqId.startsWith("ResetCheckDshow:")) {
+                ctx.pending -= 1
+                val parts = reqId.removePrefix("ResetCheckDshow:").split(":", limit = 2)
+                val idx = parts.getOrNull(1)?.toIntOrNull()
+                if (parts.getOrNull(0) == ctx.token && idx != null && idx in ctx.dshowCandidates.indices) {
+                    val cand = ctx.dshowCandidates[idx]
+                    val active = if (resultOk && respData != null) {
+                        respData.optJSONObject("inputSettings")?.optBoolean("active", true) ?: true
+                    } else true
+                    if (active) ctx.dshowItems.add(cand)
+                }
+            }
+            if (ctx.pending <= 0) {
+                activeResetCtx = null
+                ctx
+            } else null
+        }
+
+        if (readyCtx != null) {
+            executeResetPhase1(readyCtx)
+        }
+    }
+
+    private fun executeResetPhase1(ctx: RecursiveSceneResetCtx) {
+        val total = ctx.toggleItems.size + ctx.dshowItems.size + ctx.browserInputs.size + ctx.mediaInputs.size
+        if (total == 0) {
+            resetWatchdogFuture.getAndSet(null)?.cancel(false)
+            resetInFlight.set(false)
+            return
+        }
+        for (bName in ctx.browserInputs) {
+            sendRequest("PressInputPropertiesButton", "ResetBrowser", JSONObject().apply {
+                put("inputName", bName)
+                put("propertyName", "refreshnocache")
+            })
+        }
+        for (mName in ctx.mediaInputs) {
+            sendRequest("TriggerMediaInputAction", "ResetMedia", JSONObject().apply {
+                put("inputName", mName)
+                put("mediaAction", "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")
+            })
+        }
+        val reEnable = ArrayList<ReenableSceneItem>(ctx.dshowItems.size + ctx.toggleItems.size)
+        for (ds in ctx.dshowItems) {
+            sendRequest("PressInputPropertiesButton", "ResetDshowOff", JSONObject().apply {
+                put("inputName", ds.inputName)
+                put("propertyName", "activate")
+            })
+            sendRequest("SetSceneItemEnabled", "ResetOff_${ds.sceneItemId}", JSONObject().apply {
+                put("sceneName", ds.sceneName)
+                put("sceneItemId", ds.sceneItemId)
+                put("sceneItemEnabled", false)
+            })
+            reEnable.add(ds)
+        }
+        for (it in ctx.toggleItems) {
+            sendRequest("SetSceneItemEnabled", "ResetOff_${it.sceneItemId}", JSONObject().apply {
+                put("sceneName", it.sceneName)
+                put("sceneItemId", it.sceneItemId)
+                put("sceneItemEnabled", false)
+            })
+            reEnable.add(it)
+        }
+        if (reEnable.isEmpty()) {
+            resetWatchdogFuture.getAndSet(null)?.cancel(false)
+            resetInFlight.set(false)
+            return
+        }
+        pendingReenableItems = reEnable.toList()
+        try {
+            resetScheduler.schedule({
+                try {
+                    if (!closed.get()) {
+                        for (it in ctx.toggleItems) {
+                            sendRequest("SetSceneItemEnabled", "ResetOn_${it.sceneItemId}", JSONObject().apply {
+                                put("sceneName", it.sceneName)
+                                put("sceneItemId", it.sceneItemId)
+                                put("sceneItemEnabled", true)
+                            })
+                        }
+                        for (ds in ctx.dshowItems) {
+                            sendRequest("SetSceneItemEnabled", "ResetOn_${ds.sceneItemId}", JSONObject().apply {
+                                put("sceneName", ds.sceneName)
+                                put("sceneItemId", ds.sceneItemId)
+                                put("sceneItemEnabled", true)
+                            })
+                            sendRequest("PressInputPropertiesButton", "ResetDshowOn", JSONObject().apply {
+                                put("inputName", ds.inputName)
+                                put("propertyName", "activate")
+                            })
+                        }
+                        pendingReenableItems = emptyList()
+                        if (ctx.dshowItems.isNotEmpty()) {
+                            runCatching {
+                                resetScheduler.schedule({
+                                    if (!closed.get()) {
+                                        for (ds in ctx.dshowItems) {
+                                            sendRequest("GetInputSettings", "ResetVerifyDshow:${ctx.token}:${ds.inputName}", JSONObject().apply {
+                                                put("inputName", ds.inputName)
+                                            })
+                                        }
+                                    }
+                                }, 1500L, TimeUnit.MILLISECONDS)
+                            }
+                        }
+                    }
+                } finally {
+                    resetWatchdogFuture.getAndSet(null)?.cancel(false)
+                    resetInFlight.set(false)
+                }
+            }, 600L, TimeUnit.MILLISECONDS)
+        } catch (_: RejectedExecutionException) {
+            resetWatchdogFuture.getAndSet(null)?.cancel(false)
+            resetInFlight.set(false)
+        }
     }
 
     fun sendHeartbeat(): Boolean {
@@ -522,5 +728,43 @@ class ObsWebSocketClient(
         }
         webSocket = null
         cleanupResetScheduler()
+    }
+
+    companion object {
+        private val PROTECTED_AUDIO_KINDS = setOf(
+            "wasapi_input_capture",
+            "wasapi_output_capture",
+            "coreaudio_input_capture",
+            "coreaudio_output_capture",
+            "pulse_input_capture",
+            "pulse_output_capture",
+            "alsa_input_capture",
+            "oss_input_capture",
+            "jack_output_capture",
+            "sndio_output_capture"
+        )
+
+        internal fun isProtectedAudioSource(
+            inputName: String,
+            inputKind: String,
+            targetMicName: String
+        ): Boolean {
+            val kd = inputKind.trim().lowercase()
+            if (kd.isNotEmpty() && (PROTECTED_AUDIO_KINDS.contains(kd) || kd.contains("_input_capture"))) {
+                return true
+            }
+            val nm = inputName.trim()
+            val tm = targetMicName.trim()
+            return nm.isNotEmpty() && tm.isNotEmpty() && nm.equals(tm, ignoreCase = true)
+        }
+
+        internal fun classifyResetKind(inputKind: String): String {
+            return when (inputKind.trim().lowercase()) {
+                "dshow_input", "v4l2_input", "av_capture_input_v2", "av_capture_input" -> "dshow"
+                "browser_source" -> "browser"
+                "ffmpeg_source", "vlc_source" -> "media"
+                else -> "toggle"
+            }
+        }
     }
 }
