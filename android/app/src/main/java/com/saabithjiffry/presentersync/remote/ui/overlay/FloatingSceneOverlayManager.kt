@@ -153,6 +153,7 @@ class FloatingSceneOverlayManager(
     private var currentConfig: RemoteConfig = configStore.current
     private var currentConn: ConnectionUiState = connectionManager.uiState.value
     private var activeHoldController: ScenePillHoldController? = null
+    private var holdTickRunnable: Runnable? = null
 
     fun setHiddenForEasterEgg(hidden: Boolean) {
         if (hiddenForEasterEgg == hidden) return
@@ -173,7 +174,7 @@ class FloatingSceneOverlayManager(
             sceneView?.visibility = if (suppressedForPodium) View.GONE else View.INVISIBLE
         } else {
             sceneView?.visibility = View.VISIBLE
-            if (attached && currentConfig.showSceneIndicator) {
+            if (attached && currentConfig.showSceneIndicator && !(currentConfig.showIndicator && currentConfig.groupSceneWithMicHud)) {
                 showOrUpdate(currentConfig, currentConn)
             }
         }
@@ -189,7 +190,7 @@ class FloatingSceneOverlayManager(
 
     fun reattachForDisplayRecovery() {
         handler.post {
-            if (attached && currentConfig.showSceneIndicator) {
+            if (attached && currentConfig.showSceneIndicator && !(currentConfig.showIndicator && currentConfig.groupSceneWithMicHud)) {
                 hide()
                 showOrUpdate(currentConfig, currentConn)
             }
@@ -200,7 +201,8 @@ class FloatingSceneOverlayManager(
         currentConfig = cfg
         currentConn = conn
 
-        if (!Settings.canDrawOverlays(context) || !cfg.showSceneIndicator) {
+        val shouldStandalone = cfg.showSceneIndicator && (!cfg.showIndicator || !cfg.groupSceneWithMicHud)
+        if (!Settings.canDrawOverlays(context) || !shouldStandalone) {
             hide()
             return
         }
@@ -223,6 +225,8 @@ class FloatingSceneOverlayManager(
     }
 
     fun hide() {
+        holdTickRunnable?.let { handler.removeCallbacks(it) }
+        holdTickRunnable = null
         activeHoldController?.onCancel()
         activeHoldController = null
         isTouchActive = false
@@ -364,8 +368,6 @@ class FloatingSceneOverlayManager(
         var startParamX = 0
         var startParamY = 0
         var movedPastSlop = false
-        var holdTickRunnable: Runnable? = null
-
         val scheduler = object : GestureScheduler {
             override fun schedule(delayMs: Long, task: () -> Unit): Any {
                 val r = Runnable { task() }
@@ -539,160 +541,35 @@ class FloatingSceneOverlayManager(
     private fun showSceneQuickMenu() {
         dismissQuickMenu()
         if (!attached || !Settings.canDrawOverlays(context)) return
-
-        val density = context.resources.displayMetrics.density
-        val isDark = when (currentConfig.themeMode) {
-            ThemeMode.DARK -> true
-            ThemeMode.LIGHT -> false
-            ThemeMode.SYSTEM -> {
-                val night = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-                night != Configuration.UI_MODE_NIGHT_NO
-            }
-        }
-
-        val surfaceBg = if (isDark) Color.parseColor("#2C2C2C") else Color.parseColor("#FFFFFF")
-        val borderStroke = if (isDark) Color.parseColor("#3D3D3D") else Color.parseColor("#E5E5E5")
-        val dividerColor = if (isDark) Color.parseColor("#383838") else Color.parseColor("#EAEAEA")
-        val textColor = if (isDark) Color.WHITE else Color.parseColor("#1A1A1A")
-        val accentColor = if (isDark) Color.parseColor("#38BDF8") else Color.parseColor("#0067C0")
-
-        val container = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            val pad = (6 * density).roundToInt()
-            setPadding(pad, pad, pad, pad)
-        }
-
-        val header = TextView(context).apply {
-            text = "Scene Quick Menu • ${currentConn.activeScene}"
-            setTextColor(accentColor)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            setPadding((10 * density).roundToInt(), (6 * density).roundToInt(), (10 * density).roundToInt(), (6 * density).roundToInt())
-        }
-        container.addView(header)
-
-        fun addMenuRow(label: String, onClick: () -> Unit) {
-            val div = View(context).apply { setBackgroundColor(dividerColor) }
-            container.addView(div, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
-            val row = TextView(context).apply {
-                text = label
-                setTextColor(textColor)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                setPadding((12 * density).roundToInt(), (10 * density).roundToInt(), (12 * density).roundToInt(), (10 * density).roundToInt())
-                isClickable = true
-                setOnClickListener {
-                    dismissQuickMenu()
-                    onClick()
-                }
-            }
-            container.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        }
-
-        if (!currentConn.isTallyOnly) {
-            addMenuRow("⇄ Transition Scene (Preview ↔ Program)") {
-                connectionManager.sendTransitionScene("scene_quick_menu")
-            }
-            addMenuRow("↺ Reset Active Scene Sources") {
-                connectionManager.sendResetActiveScene("scene_quick_menu")
-            }
-            for (sceneName in currentConn.scenes) {
-                val prefix = if (sceneName == currentConn.activeScene) "● " else ""
-                addMenuRow("${prefix}Switch to: $sceneName") {
-                    connectionManager.sendSwitchScene(sceneName, "scene_quick_menu")
-                }
-            }
-        } else {
-            addMenuRow("Read-Only Tally Mode (Controls Locked)") { }
-        }
-        addMenuRow("Flip Opposite Corner") {
-            val lp = layoutParams ?: return@addMenuRow
-            val sv = sceneView ?: return@addMenuRow
-            val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
-            val flipped = ScreenBoundsCalculator.computeOppositeCornerFlip(lp.x, lp.y, lp.width, lp.height, bounds)
-            lp.x = flipped.x
-            lp.y = flipped.y
-            runCatching { windowManager.updateViewLayout(sv, lp) }
-            val (rx, ry) = ScreenBoundsCalculator.computePositionRatios(lp.x, lp.y, bounds, lp.width, lp.height)
-            configStore.update { it.copy(sceneSavedX = lp.x, sceneSavedY = lp.y, sceneSavedXRatio = rx, sceneSavedYRatio = ry) }
-        }
-        addMenuRow("Hide Scene Pill") {
-            configStore.update { it.copy(showSceneIndicator = false) }
-        }
-        addMenuRow("Open Full Settings...") {
-            val intent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
-            context.startActivity(intent)
-        }
-
-        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
-        val menuW = (248 * density).roundToInt().coerceAtMost((bounds.width - (16 * density).roundToInt()).coerceAtLeast((180 * density).roundToInt()))
-        container.measure(
-            View.MeasureSpec.makeMeasureSpec(menuW, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-        )
-        val maxH = (bounds.height - (16 * density).roundToInt()).coerceAtLeast((160 * density).roundToInt())
-        val menuH = container.measuredHeight.coerceIn((140 * density).roundToInt().coerceAtMost(maxH), maxH)
-
-        val menuRoot = ScrollView(context).apply {
-            isVerticalScrollBarEnabled = true
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 8f * density
-                setColor(surfaceBg)
-                setStroke((1f * density).roundToInt().coerceAtLeast(1), borderStroke)
-            }
-            addView(container, android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-
         val lp = layoutParams
-        val anchorX = lp?.x ?: bounds.left
-        val anchorY = lp?.y ?: bounds.top
-        val anchorH = lp?.height ?: 48
-        val gap = (8 * density).roundToInt()
-        val preferBelow = anchorY + anchorH + gap
-        val targetY = if (preferBelow + menuH <= bounds.bottom) preferBelow else (anchorY - menuH - gap).coerceIn(bounds.top, (bounds.bottom - menuH).coerceAtLeast(bounds.top))
-        val targetX = anchorX.coerceIn(bounds.left, (bounds.right - menuW).coerceAtLeast(bounds.left))
-
-        val menuParams = WindowManager.LayoutParams(
-            menuW,
-            menuH,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                (if (currentConfig.hideFromScreenCapture) WindowManager.LayoutParams.FLAG_SECURE else 0),
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = targetX
-            y = targetY
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                } else {
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+        val created = showSceneQuickMenuWindow(
+            context = context,
+            windowManager = windowManager,
+            configStore = configStore,
+            connectionManager = connectionManager,
+            cfg = currentConfig,
+            conn = currentConn,
+            anchorX = lp?.x ?: bounds.left,
+            anchorY = lp?.y ?: bounds.top,
+            anchorH = lp?.height ?: 48,
+            onDismiss = { dismissQuickMenu() },
+            onFlipCorner = if (sceneView != null && lp != null) {
+                flip@{
+                    val sv = sceneView ?: return@flip
+                    val flipped = ScreenBoundsCalculator.computeOppositeCornerFlip(lp.x, lp.y, lp.width, lp.height, bounds)
+                    lp.x = flipped.x
+                    lp.y = flipped.y
+                    runCatching { windowManager.updateViewLayout(sv, lp) }
+                    val (rx, ry) = ScreenBoundsCalculator.computePositionRatios(lp.x, lp.y, bounds, lp.width, lp.height)
+                    configStore.update { it.copy(sceneSavedX = lp.x, sceneSavedY = lp.y, sceneSavedXRatio = rx, sceneSavedYRatio = ry) }
                 }
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                fitInsetsTypes = 0
-            }
-        }
-
-        menuRoot.setOnTouchListener { _, ev ->
-            if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) {
-                dismissQuickMenu()
-                true
             } else {
-                false
+                null
             }
-        }
-
-        runCatching {
-            windowManager.addView(menuRoot, menuParams)
-            quickMenuView = menuRoot
-            quickMenuParams = menuParams
-        }
+        ) ?: return
+        quickMenuView = created.first
+        quickMenuParams = created.second
     }
 
     private fun dismissQuickMenu() {
@@ -701,4 +578,163 @@ class FloatingSceneOverlayManager(
         quickMenuParams = null
         runCatching { windowManager.removeViewImmediate(mv) }
     }
+}
+
+internal fun showSceneQuickMenuWindow(
+    context: Context,
+    windowManager: WindowManager,
+    configStore: RemoteConfigStore,
+    connectionManager: ConnectionManager,
+    cfg: RemoteConfig,
+    conn: ConnectionUiState,
+    anchorX: Int,
+    anchorY: Int,
+    anchorH: Int,
+    onDismiss: () -> Unit,
+    onFlipCorner: (() -> Unit)? = null
+): Pair<View, WindowManager.LayoutParams>? {
+    if (!Settings.canDrawOverlays(context)) return null
+
+    val density = context.resources.displayMetrics.density
+    val isDark = when (cfg.themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> {
+            val night = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+            night != Configuration.UI_MODE_NIGHT_NO
+        }
+    }
+
+    val surfaceBg = if (isDark) Color.parseColor("#2C2C2C") else Color.parseColor("#FFFFFF")
+    val borderStroke = if (isDark) Color.parseColor("#3D3D3D") else Color.parseColor("#E5E5E5")
+    val dividerColor = if (isDark) Color.parseColor("#383838") else Color.parseColor("#EAEAEA")
+    val textColor = if (isDark) Color.WHITE else Color.parseColor("#1A1A1A")
+    val accentColor = if (isDark) Color.parseColor("#38BDF8") else Color.parseColor("#0067C0")
+
+    val container = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        val pad = (6 * density).roundToInt()
+        setPadding(pad, pad, pad, pad)
+    }
+
+    val header = TextView(context).apply {
+        text = "Scene Quick Menu • ${conn.activeScene}"
+        setTextColor(accentColor)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        setPadding((10 * density).roundToInt(), (6 * density).roundToInt(), (10 * density).roundToInt(), (6 * density).roundToInt())
+    }
+    container.addView(header)
+
+    fun addMenuRow(label: String, onClick: () -> Unit) {
+        val div = View(context).apply { setBackgroundColor(dividerColor) }
+        container.addView(div, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
+        val row = TextView(context).apply {
+            text = label
+            setTextColor(textColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setPadding((12 * density).roundToInt(), (10 * density).roundToInt(), (12 * density).roundToInt(), (10 * density).roundToInt())
+            isClickable = true
+            setOnClickListener {
+                onDismiss()
+                onClick()
+            }
+        }
+        container.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    if (!conn.isTallyOnly) {
+        addMenuRow("⇄ Transition Scene (Preview ↔ Program)") {
+            connectionManager.sendTransitionScene("scene_quick_menu")
+        }
+        addMenuRow("↺ Reset Active Scene Sources") {
+            connectionManager.sendResetActiveScene("scene_quick_menu")
+        }
+        for (sceneName in conn.scenes) {
+            val prefix = if (sceneName == conn.activeScene) "● " else ""
+            addMenuRow("${prefix}Switch to: $sceneName") {
+                connectionManager.sendSwitchScene(sceneName, "scene_quick_menu")
+            }
+        }
+    } else {
+        addMenuRow("Read-Only Tally Mode (Controls Locked)") { }
+    }
+    if (onFlipCorner != null) {
+        addMenuRow("Flip Opposite Corner") {
+            onFlipCorner()
+        }
+    }
+    addMenuRow("Hide Scene Pill") {
+        configStore.update { it.copy(showSceneIndicator = false) }
+    }
+    addMenuRow("Open Full Settings...") {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        context.startActivity(intent)
+    }
+
+    val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+    val menuW = (248 * density).roundToInt().coerceAtMost((bounds.width - (16 * density).roundToInt()).coerceAtLeast((180 * density).roundToInt()))
+    container.measure(
+        View.MeasureSpec.makeMeasureSpec(menuW, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+    )
+    val maxH = (bounds.height - (16 * density).roundToInt()).coerceAtLeast((160 * density).roundToInt())
+    val menuH = container.measuredHeight.coerceIn((140 * density).roundToInt().coerceAtMost(maxH), maxH)
+
+    val menuRoot = ScrollView(context).apply {
+        isVerticalScrollBarEnabled = true
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 8f * density
+            setColor(surfaceBg)
+            setStroke((1f * density).roundToInt().coerceAtLeast(1), borderStroke)
+        }
+        addView(container, android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    val gap = (8 * density).roundToInt()
+    val preferBelow = anchorY + anchorH + gap
+    val targetY = if (preferBelow + menuH <= bounds.bottom) preferBelow else (anchorY - menuH - gap).coerceIn(bounds.top, (bounds.bottom - menuH).coerceAtLeast(bounds.top))
+    val targetX = anchorX.coerceIn(bounds.left, (bounds.right - menuW).coerceAtLeast(bounds.left))
+
+    val menuParams = WindowManager.LayoutParams(
+        menuW,
+        menuH,
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            (if (cfg.hideFromScreenCapture) WindowManager.LayoutParams.FLAG_SECURE else 0),
+        PixelFormat.TRANSLUCENT
+    ).apply {
+        gravity = Gravity.TOP or Gravity.START
+        x = targetX
+        y = targetY
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            fitInsetsTypes = 0
+        }
+    }
+
+    menuRoot.setOnTouchListener { _, ev ->
+        if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+            onDismiss()
+            true
+        } else {
+            false
+        }
+    }
+
+    return runCatching {
+        windowManager.addView(menuRoot, menuParams)
+        menuRoot to menuParams
+    }.getOrNull()
 }

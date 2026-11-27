@@ -151,6 +151,7 @@ data class RemoteConfig(
 
     val showIndicator: Boolean = true,
     val showSceneIndicator: Boolean = false,
+    val groupSceneWithMicHud: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val hudColorPreset: String = "Standard",
     val customLiveHex: String = "#107C10",
@@ -329,6 +330,7 @@ class RemoteConfigStore private constructor(
             hotkeysSuspended = prefs.getBoolean("hotkeysSuspended", false),
             showIndicator = prefs.getBoolean("showIndicator", true),
             showSceneIndicator = prefs.getBoolean("showSceneIndicator", false),
+            groupSceneWithMicHud = prefs.getBoolean("groupSceneWithMicHud", true),
             themeMode = ThemeMode.fromRaw(prefs.getString("themeMode", "System")),
             hudColorPreset = HudColorPalettes.normalize(prefs.getString("hudColorPreset", "Standard").orEmpty()),
             customLiveHex = HudColorPalettes.normalizeColorHex(prefs.getString("customLiveHex", "#107C10").orEmpty(), "#107C10"),
@@ -621,6 +623,7 @@ class RemoteConfigStore private constructor(
             .putBoolean("hotkeysSuspended", c.hotkeysSuspended)
             .putBoolean("showIndicator", c.showIndicator)
             .putBoolean("showSceneIndicator", c.showSceneIndicator)
+            .putBoolean("groupSceneWithMicHud", c.groupSceneWithMicHud)
             .putString("themeMode", c.themeMode.label)
             .putString("hudColorPreset", c.hudColorPreset)
             .putString("customLiveHex", HudColorPalettes.normalizeColorHex(c.customLiveHex, "#107C10"))

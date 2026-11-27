@@ -58,10 +58,15 @@ class FloatingMicOverlayManager(
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val handler = Handler(Looper.getMainLooper())
 
+    private var stackContainer: FloatingHudStackContainer? = null
     private var pillView: MicPillCanvasView? = null
+    private var groupedSceneView: ScenePillCanvasView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
+    private var currentGeom: FloatingHudStackGeometry? = null
     private var quickMenuView: View? = null
     private var quickMenuParams: WindowManager.LayoutParams? = null
+    private var sceneQuickMenuView: View? = null
+    private var sceneQuickMenuParams: WindowManager.LayoutParams? = null
     private var attached = false
     private var hiddenForEasterEgg = false
     private var suppressedForPodium = false
@@ -69,6 +74,8 @@ class FloatingMicOverlayManager(
         get() = hiddenForEasterEgg || suppressedForPodium
     private var easterHoldRunnable: Runnable? = null
     private var easterProgressRunnable: Runnable? = null
+    private var activeSceneHoldController: ScenePillHoldController? = null
+    private var sceneHoldTickRunnable: Runnable? = null
     @Volatile
     private var isTouchActive = false
     private var isDragging = false
@@ -147,7 +154,11 @@ class FloatingMicOverlayManager(
                 currentAlpha = currentConfig.opacityLevel
                 breathDir = -stepMag
             }
-            pillView?.updateRenderState(currentConfig, currentConn, currentAlpha)
+            val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+            pillView?.updateRenderState(currentConfig, currentConn, currentAlpha, maxContainerWidthPx = bounds.width)
+            if (isGroupedSceneVisible()) {
+                groupedSceneView?.updateRenderState(currentConfig, currentConn, currentAlpha, bounds.width)
+            }
             val interval = if (currentConfig.aggressivePulse) {
                 AppConstants.PULSE_INTERVAL_AGGRESSIVE_MS
             } else {
@@ -164,16 +175,21 @@ class FloatingMicOverlayManager(
         val w = view?.computeTargetWidthPx(bounds.width) ?: layoutParams?.width ?: 200
         val h = view?.computeTargetHeightPx(bounds.width) ?: layoutParams?.height ?: 80
         val inset = view?.computeOuterInsetPx(bounds.width) ?: 0
-        val pos = layoutParams?.let { OverlayPointPx(it.x, it.y) }
-            ?: ScreenBoundsCalculator.resolvePosition(
-                savedX = currentConfig.savedX,
-                savedY = currentConfig.savedY,
-                bounds = bounds,
-                viewWidthPx = w,
-                viewHeightPx = h,
-                marginXPx = (AppConstants.SCREEN_MARGIN_X * density).roundToInt(),
-                marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt()
+        val geom = currentGeom
+        val pos = layoutParams?.let {
+            OverlayPointPx(
+                x = it.x + (geom?.micOffsetX ?: 0),
+                y = it.y + (geom?.micOffsetY ?: 0)
             )
+        } ?: ScreenBoundsCalculator.resolvePosition(
+            savedX = currentConfig.savedX,
+            savedY = currentConfig.savedY,
+            bounds = bounds,
+            viewWidthPx = w,
+            viewHeightPx = h,
+            marginXPx = (AppConstants.SCREEN_MARGIN_X * density).roundToInt(),
+            marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt()
+        )
         return OverlayPointPx(pos.x + inset, pos.y + inset) to (h - inset * 2).coerceAtLeast(16)
     }
 
@@ -199,15 +215,23 @@ class FloatingMicOverlayManager(
         applyOverlaySuppressionState()
     }
 
+    private fun isGroupedSceneVisible(): Boolean =
+        currentConfig.groupSceneWithMicHud && currentConfig.showSceneIndicator && !isOverlaySuppressed
+
     private fun applyOverlaySuppressionState() {
+        val visView: View? = stackContainer ?: pillView
         if (isOverlaySuppressed) {
             dismissQuickMenu()
+            dismissSceneQuickMenu()
             stopBreathing()
             muteTransitionAnimator?.cancel()
             activeTouchController?.onCancel()
-            pillView?.visibility = if (suppressedForPodium) View.GONE else View.INVISIBLE
+            sceneHoldTickRunnable?.let { handler.removeCallbacks(it) }
+            sceneHoldTickRunnable = null
+            activeSceneHoldController?.onCancel()
+            visView?.visibility = if (suppressedForPodium) View.GONE else View.INVISIBLE
         } else {
-            pillView?.visibility = View.VISIBLE
+            visView?.visibility = View.VISIBLE
             resetIdleDimTimer(wakeNow = true)
             if (attached && currentConfig.showIndicator) {
                 showOrUpdate(currentConfig, currentConn)
@@ -235,12 +259,13 @@ class FloatingMicOverlayManager(
         } else {
             updateDimensionsAndPosition()
         }
+        val visView: View? = stackContainer ?: pillView
         if (isOverlaySuppressed) {
-            pillView?.visibility = if (suppressedForPodium) View.GONE else View.INVISIBLE
+            visView?.visibility = if (suppressedForPodium) View.GONE else View.INVISIBLE
             stopBreathing()
             return
         }
-        pillView?.visibility = View.VISIBLE
+        visView?.visibility = View.VISIBLE
 
         val wakeKey = "${conn.connected}|${conn.isMuted}|${conn.connStatus}|${conn.streamDropWarn}|${conn.voiceWhileMuted}|${cfg.idleDimAfterSec}|${cfg.showIndicator}"
         if (cfg.idleDimAfterSec <= 0) {
@@ -259,21 +284,28 @@ class FloatingMicOverlayManager(
                 muteTransitionAnimator?.cancel()
                 stopBreathing()
                 currentAlpha = min(cfg.opacityLevel, AppConstants.DODGE_ALPHA)
-                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
+                renderStackViews(cfg, conn, currentAlpha, safeW)
             } else if (isIdleDimmed) {
                 stopBreathing()
-                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
+                renderStackViews(cfg, conn, currentAlpha, safeW)
             } else if (muteTransitionAnimator?.isRunning == true) {
                 currentAlpha = cfg.opacityLevel
-                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
+                renderStackViews(cfg, conn, currentAlpha, safeW)
             } else if (!conn.connected || !conn.isMuted) {
                 stopBreathing()
                 currentAlpha = cfg.opacityLevel
-                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
+                renderStackViews(cfg, conn, currentAlpha, safeW)
             } else {
-                pillView?.updateRenderState(cfg, conn, currentAlpha, maxContainerWidthPx = safeW)
+                renderStackViews(cfg, conn, currentAlpha, safeW)
                 startBreathing()
             }
+        }
+    }
+
+    private fun renderStackViews(cfg: RemoteConfig, conn: ConnectionUiState, alpha: Int, safeW: Int) {
+        pillView?.updateRenderState(cfg, conn, alpha, maxContainerWidthPx = safeW)
+        if (isGroupedSceneVisible()) {
+            groupedSceneView?.updateRenderState(cfg, conn, alpha, safeW)
         }
     }
 
@@ -343,6 +375,10 @@ class FloatingMicOverlayManager(
         muteTransitionAnimator = null
         activeTouchController?.onCancel()
         activeTouchController = null
+        sceneHoldTickRunnable?.let { handler.removeCallbacks(it) }
+        sceneHoldTickRunnable = null
+        activeSceneHoldController?.onCancel()
+        activeSceneHoldController = null
         handler.removeCallbacks(restoreDodgeRunnable)
         handler.removeCallbacks(idleDimRunnable)
         isAutoDodged = false
@@ -353,14 +389,19 @@ class FloatingMicOverlayManager(
         isTouchActive = false
         pillView?.setFlashHighlight(false)
         dismissQuickMenu()
-        if (attached && pillView != null) {
+        dismissSceneQuickMenu()
+        val hostView: View? = stackContainer ?: pillView
+        if (attached && hostView != null) {
             try {
-                windowManager.removeViewImmediate(pillView)
+                windowManager.removeViewImmediate(hostView)
             } catch (_: Exception) {
             }
         }
+        stackContainer = null
+        groupedSceneView = null
         pillView = null
         layoutParams = null
+        currentGeom = null
         attached = false
     }
 
@@ -377,23 +418,55 @@ class FloatingMicOverlayManager(
     }
 
     private fun attachView() {
-        val view = MicPillCanvasView(context)
+        val micView = MicPillCanvasView(context)
+        val sceneView = ScenePillCanvasView(context)
+        val stack = FloatingHudStackContainer(context, micView, sceneView)
         val density = context.resources.displayMetrics.density
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
-        view.updateRenderState(currentConfig, currentConn, currentAlpha, maxContainerWidthPx = bounds.width)
-        val w = view.computeTargetWidthPx(bounds.width)
-        val h = view.computeTargetHeightPx(bounds.width)
+        micView.updateRenderState(currentConfig, currentConn, currentAlpha, maxContainerWidthPx = bounds.width)
+        val micW = micView.computeTargetWidthPx(bounds.width)
+        val micH = micView.computeTargetHeightPx(bounds.width)
 
+        val showGroupedScene = currentConfig.groupSceneWithMicHud && currentConfig.showSceneIndicator
+        if (showGroupedScene) {
+            sceneView.updateRenderState(currentConfig, currentConn, currentAlpha, bounds.width)
+        }
+        val sceneW = sceneView.computeTargetWidthPx(bounds.width)
+        val sceneH = sceneView.computeTargetHeightPx(bounds.width)
+        val gapPx = (FloatingHudStackLayout.DEFAULT_GAP_DP * density).roundToInt()
+
+        val approxW = if (showGroupedScene) maxOf(micW, sceneW) else micW
+        val approxH = if (showGroupedScene) micH + gapPx + sceneH else micH
         val pos = ScreenBoundsCalculator.resolvePosition(
             savedX = currentConfig.savedX,
             savedY = currentConfig.savedY,
             bounds = bounds,
-            viewWidthPx = w,
-            viewHeightPx = h,
+            viewWidthPx = approxW,
+            viewHeightPx = approxH,
             marginXPx = (AppConstants.SCREEN_MARGIN_X * density).roundToInt(),
             marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt(),
             savedXRatio = currentConfig.savedXRatio,
             savedYRatio = currentConfig.savedYRatio
+        )
+        val geom = FloatingHudStackLayout.computeLayout(
+            micW = micW,
+            micH = micH,
+            sceneW = sceneW,
+            sceneH = sceneH,
+            showScene = showGroupedScene,
+            gapPx = gapPx,
+            bounds = bounds,
+            anchorX = pos.x,
+            anchorY = pos.y
+        )
+        stack.applyArrangement(
+            showScene = showGroupedScene,
+            sceneAboveMic = geom.sceneAboveMic,
+            gapPx = geom.gapPx,
+            micW = micW,
+            micH = micH,
+            sceneW = sceneW,
+            sceneH = sceneH
         )
 
         val wantPassThrough = currentConfig.hudClickThrough || isAutoDodged
@@ -406,15 +479,15 @@ class FloatingMicOverlayManager(
         )
 
         val params = WindowManager.LayoutParams(
-            w,
-            h,
+            geom.totalWidthPx,
+            geom.totalHeightPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             baseFlags,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = pos.x
-            y = pos.y
+            x = geom.x
+            y = geom.y
             alpha = computeWindowAlpha(wantPassThrough)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -428,14 +501,18 @@ class FloatingMicOverlayManager(
             }
         }
 
-        setupTouchHandling(view, params)
-        setupHoverDodgeHandling(view)
-        view.updateRenderState(currentConfig, currentConn, currentConfig.opacityLevel, maxContainerWidthPx = bounds.width)
+        setupTouchHandling(micView, stack, params)
+        setupGroupedSceneTouchHandling(sceneView, stack, params)
+        setupHoverDodgeHandling(micView)
+        setupHoverDodgeHandling(sceneView)
 
         try {
-            windowManager.addView(view, params)
-            pillView = view
+            windowManager.addView(stack, params)
+            stackContainer = stack
+            pillView = micView
+            groupedSceneView = sceneView
             layoutParams = params
+            currentGeom = geom
             attached = true
             resetIdleDimTimer(wakeNow = false)
         } catch (_: Exception) {
@@ -443,7 +520,7 @@ class FloatingMicOverlayManager(
     }
 
     private fun syncTouchableFlag() {
-        val view = pillView ?: return
+        val view: View = stackContainer ?: pillView ?: return
         val params = layoutParams ?: return
         if (!attached) return
 
@@ -465,17 +542,19 @@ class FloatingMicOverlayManager(
             params.alpha = desiredWinAlpha
             runCatching { windowManager.updateViewLayout(view, params) }
         }
-        val mv = quickMenuView
-        val mp = quickMenuParams
-        if (mv != null && mp != null) {
-            val menuHasSecure = (mp.flags and WindowManager.LayoutParams.FLAG_SECURE) != 0
-            if (wantSecure != menuHasSecure) {
-                mp.flags = if (wantSecure) {
-                    mp.flags or WindowManager.LayoutParams.FLAG_SECURE
-                } else {
-                    mp.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+        for (pair in listOf(quickMenuView to quickMenuParams, sceneQuickMenuView to sceneQuickMenuParams)) {
+            val mv = pair.first
+            val mp = pair.second
+            if (mv != null && mp != null) {
+                val menuHasSecure = (mp.flags and WindowManager.LayoutParams.FLAG_SECURE) != 0
+                if (wantSecure != menuHasSecure) {
+                    mp.flags = if (wantSecure) {
+                        mp.flags or WindowManager.LayoutParams.FLAG_SECURE
+                    } else {
+                        mp.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+                    }
+                    runCatching { windowManager.updateViewLayout(mv, mp) }
                 }
-                runCatching { windowManager.updateViewLayout(mv, mp) }
             }
         }
     }
@@ -483,10 +562,10 @@ class FloatingMicOverlayManager(
     private fun syncOverlayFlagsAndRender() {
         val safeW = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager).width
         syncTouchableFlag()
-        pillView?.updateRenderState(currentConfig, currentConn, currentAlpha, maxContainerWidthPx = safeW)
+        renderStackViews(currentConfig, currentConn, currentAlpha, safeW)
     }
 
-    private fun setupHoverDodgeHandling(view: MicPillCanvasView) {
+    private fun setupHoverDodgeHandling(view: View) {
         view.setOnHoverListener { _, event ->
             if (!currentConfig.hudAutoDodge || currentConfig.hudClickThrough || isDragging) {
                 return@setOnHoverListener false
@@ -504,6 +583,7 @@ class FloatingMicOverlayManager(
 
     private fun engageAutoDodge() {
         dismissQuickMenu()
+        dismissSceneQuickMenu()
         resetIdleDimTimer(wakeNow = true)
         if (!isAutoDodged) {
             isAutoDodged = true
@@ -533,50 +613,167 @@ class FloatingMicOverlayManager(
     }
 
     private fun updateDimensionsAndPosition() {
-        val view = pillView ?: return
+        val micView = pillView ?: return
+        val sceneView = groupedSceneView ?: return
+        val stack = stackContainer ?: return
         val params = layoutParams ?: return
         val density = context.resources.displayMetrics.density
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
-        view.updateRenderState(currentConfig, currentConn, currentAlpha, maxContainerWidthPx = bounds.width)
-        val newW = view.computeTargetWidthPx(bounds.width)
-        val newH = view.computeTargetHeightPx(bounds.width)
+        micView.updateRenderState(currentConfig, currentConn, currentAlpha, maxContainerWidthPx = bounds.width)
+        val micW = micView.computeTargetWidthPx(bounds.width)
+        val micH = micView.computeTargetHeightPx(bounds.width)
 
-        var changed = false
-        if (params.width != newW || params.height != newH) {
-            params.width = newW
-            params.height = newH
-            changed = true
+        val showGroupedScene = currentConfig.groupSceneWithMicHud && currentConfig.showSceneIndicator
+        if (showGroupedScene) {
+            sceneView.updateRenderState(currentConfig, currentConn, currentAlpha, bounds.width)
         }
+        val sceneW = sceneView.computeTargetWidthPx(bounds.width)
+        val sceneH = sceneView.computeTargetHeightPx(bounds.width)
+        val gapPx = (FloatingHudStackLayout.DEFAULT_GAP_DP * density).roundToInt()
 
+        val approxW = if (showGroupedScene) maxOf(micW, sceneW) else micW
+        val approxH = if (showGroupedScene) micH + gapPx + sceneH else micH
         val target = ScreenBoundsCalculator.resolvePosition(
             savedX = currentConfig.savedX,
             savedY = currentConfig.savedY,
             bounds = bounds,
-            viewWidthPx = newW,
-            viewHeightPx = newH,
+            viewWidthPx = approxW,
+            viewHeightPx = approxH,
             marginXPx = (AppConstants.SCREEN_MARGIN_X * density).roundToInt(),
             marginYPx = (AppConstants.SCREEN_MARGIN_Y * density).roundToInt(),
             savedXRatio = currentConfig.savedXRatio,
             savedYRatio = currentConfig.savedYRatio
         )
+        val anchorX = if (isTouchActive || isDragging) params.x else target.x
+        val anchorY = if (isTouchActive || isDragging) params.y else target.y
+        val geom = FloatingHudStackLayout.computeLayout(
+            micW = micW,
+            micH = micH,
+            sceneW = sceneW,
+            sceneH = sceneH,
+            showScene = showGroupedScene,
+            gapPx = gapPx,
+            bounds = bounds,
+            anchorX = anchorX,
+            anchorY = anchorY
+        )
 
-        if (!isTouchActive && !isDragging && (params.x != target.x || params.y != target.y)) {
-            params.x = target.x
-            params.y = target.y
+        var changed = false
+        if (currentGeom?.sceneAboveMic != geom.sceneAboveMic || currentGeom?.gapPx != geom.gapPx ||
+            currentGeom?.totalWidthPx != geom.totalWidthPx || currentGeom?.totalHeightPx != geom.totalHeightPx
+        ) {
+            stack.applyArrangement(
+                showScene = showGroupedScene,
+                sceneAboveMic = geom.sceneAboveMic,
+                gapPx = geom.gapPx,
+                micW = micW,
+                micH = micH,
+                sceneW = sceneW,
+                sceneH = sceneH
+            )
+            changed = true
+        }
+        currentGeom = geom
+
+        if (params.width != geom.totalWidthPx || params.height != geom.totalHeightPx) {
+            params.width = geom.totalWidthPx
+            params.height = geom.totalHeightPx
+            changed = true
+        }
+
+        if (!isTouchActive && !isDragging && (params.x != geom.x || params.y != geom.y)) {
+            params.x = geom.x
+            params.y = geom.y
             changed = true
         }
 
         if (changed && attached) {
             try {
-                windowManager.updateViewLayout(view, params)
+                windowManager.updateViewLayout(stack, params)
             } catch (_: Exception) {
             }
         }
     }
 
+    private fun applyStackDragStep(
+        stack: FloatingHudStackContainer,
+        params: WindowManager.LayoutParams,
+        rawX: Int,
+        rawY: Int,
+        density: Float
+    ) {
+        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+        val showScene = isGroupedSceneVisible()
+        val micView = pillView
+        val sceneView = groupedSceneView
+        val micW = micView?.computeTargetWidthPx(bounds.width) ?: params.width
+        val micH = micView?.computeTargetHeightPx(bounds.width) ?: params.height
+        val sceneW = sceneView?.computeTargetWidthPx(bounds.width) ?: micW
+        val sceneH = sceneView?.computeTargetHeightPx(bounds.width) ?: 0
+        val gapPx = (FloatingHudStackLayout.DEFAULT_GAP_DP * density).roundToInt()
+        val geom = FloatingHudStackLayout.computeLayout(
+            micW = micW,
+            micH = micH,
+            sceneW = sceneW,
+            sceneH = sceneH,
+            showScene = showScene,
+            gapPx = gapPx,
+            bounds = bounds,
+            anchorX = rawX,
+            anchorY = rawY
+        )
+        if (currentGeom?.sceneAboveMic != geom.sceneAboveMic) {
+            stack.applyArrangement(showScene, geom.sceneAboveMic, geom.gapPx, micW, micH, sceneW, sceneH)
+        }
+        currentGeom = geom
+        params.width = geom.totalWidthPx
+        params.height = geom.totalHeightPx
+        params.x = geom.x
+        params.y = geom.y
+        runCatching { windowManager.updateViewLayout(stack, params) }
+    }
+
+    private fun finishStackDragAndPersist(
+        stack: FloatingHudStackContainer,
+        params: WindowManager.LayoutParams,
+        density: Float
+    ) {
+        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+        if (currentConfig.enableMagneticSnap) {
+            val snapped = ScreenBoundsCalculator.computeMagneticSnap(
+                rawX = params.x,
+                rawY = params.y,
+                viewWidthPx = params.width,
+                viewHeightPx = params.height,
+                bounds = bounds,
+                thresholdPx = (AppConstants.SNAP_THRESHOLD_DP * density).roundToInt()
+            )
+            applyStackDragStep(stack, params, snapped.x, snapped.y, density)
+        }
+        val (rx, ry) = ScreenBoundsCalculator.computePositionRatios(
+            x = params.x,
+            y = params.y,
+            bounds = bounds,
+            viewWidthPx = params.width,
+            viewHeightPx = params.height
+        )
+        configStore.update {
+            it.copy(
+                savedX = params.x,
+                savedY = params.y,
+                savedXRatio = rx,
+                savedYRatio = ry
+            )
+        }
+    }
+
     private var activeTouchController: FloatingPillTouchController? = null
 
-    private fun setupTouchHandling(view: MicPillCanvasView, params: WindowManager.LayoutParams) {
+    private fun setupTouchHandling(
+        view: MicPillCanvasView,
+        stack: FloatingHudStackContainer,
+        params: WindowManager.LayoutParams
+    ) {
         val density = context.resources.displayMetrics.density
         val slopPx = (AppConstants.SHORT_TAP_MAX_SLOP_DP * density).coerceAtLeast(
             ViewConfiguration.get(context).scaledTouchSlop * 1.5f
@@ -722,19 +919,7 @@ class FloatingMicOverlayManager(
                         stopBreathing()
                     }
                     if (movedPastSlop) {
-                        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
-                        val minX = bounds.left
-                        val maxX = (bounds.right - params.width).coerceAtLeast(minX)
-                        val minY = bounds.top
-                        val maxY = (bounds.bottom - params.height).coerceAtLeast(minY)
-                        val rawX = (startParamX + dx.roundToInt()).coerceIn(minX, maxX)
-                        val rawY = (startParamY + dy.roundToInt()).coerceIn(minY, maxY)
-                        params.x = rawX
-                        params.y = rawY
-                        try {
-                            windowManager.updateViewLayout(view, params)
-                        } catch (_: Exception) {
-                        }
+                        applyStackDragStep(stack, params, startParamX + dx.roundToInt(), startParamY + dy.roundToInt(), density)
                     }
                     true
                 }
@@ -744,38 +929,7 @@ class FloatingMicOverlayManager(
                     resetIdleDimTimer(wakeNow = true)
                     if (isDragging) {
                         isDragging = false
-                        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
-                        if (currentConfig.enableMagneticSnap) {
-                            val snapped = ScreenBoundsCalculator.computeMagneticSnap(
-                                rawX = params.x,
-                                rawY = params.y,
-                                viewWidthPx = params.width,
-                                viewHeightPx = params.height,
-                                bounds = bounds,
-                                thresholdPx = (AppConstants.SNAP_THRESHOLD_DP * density).roundToInt()
-                            )
-                            params.x = snapped.x
-                            params.y = snapped.y
-                            try {
-                                windowManager.updateViewLayout(view, params)
-                            } catch (_: Exception) {
-                            }
-                        }
-                        val (rx, ry) = ScreenBoundsCalculator.computePositionRatios(
-                            x = params.x,
-                            y = params.y,
-                            bounds = bounds,
-                            viewWidthPx = params.width,
-                            viewHeightPx = params.height
-                        )
-                        configStore.update {
-                            it.copy(
-                                savedX = params.x,
-                                savedY = params.y,
-                                savedXRatio = rx,
-                                savedYRatio = ry
-                            )
-                        }
+                        finishStackDragAndPersist(stack, params, density)
                         touchController.onUp()
                         if (currentConn.connected && currentConn.isMuted) {
                             startBreathing()
@@ -798,6 +952,200 @@ class FloatingMicOverlayManager(
                 else -> false
             }
         }
+    }
+
+    private fun setupGroupedSceneTouchHandling(
+        sceneView: ScenePillCanvasView,
+        stack: FloatingHudStackContainer,
+        params: WindowManager.LayoutParams
+    ) {
+        val density = context.resources.displayMetrics.density
+        val slopPx = (AppConstants.SHORT_TAP_MAX_SLOP_DP * density).coerceAtLeast(
+            ViewConfiguration.get(context).scaledTouchSlop * 1.5f
+        )
+        val lockCancelSlopPx = (56f * density).coerceAtLeast(slopPx * 2.5f)
+        var downRawX = 0f
+        var downRawY = 0f
+        var startParamX = 0
+        var startParamY = 0
+        var movedPastSlop = false
+
+        val scheduler = object : GestureScheduler {
+            override fun schedule(delayMs: Long, task: () -> Unit): Any {
+                val r = Runnable { task() }
+                handler.postDelayed(r, delayMs)
+                return r
+            }
+
+            override fun cancel(token: Any) {
+                (token as? Runnable)?.let { handler.removeCallbacks(it) }
+            }
+        }
+
+        fun stopSceneHoldTick() {
+            sceneHoldTickRunnable?.let { handler.removeCallbacks(it) }
+            sceneHoldTickRunnable = null
+            sceneView.setHoldVisualState(BubbleHoldStage.IDLE, 0f)
+        }
+
+        val holdCtrl = ScenePillHoldController(
+            scheduler = scheduler,
+            onTapTransition = {
+                runCatching { sceneView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                connectionManager.sendTransitionScene("scene_hud")
+            },
+            onOpenSceneMenu = {
+                runCatching { sceneView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                showGroupedSceneQuickMenu()
+            },
+            onResetActiveScene = {
+                runCatching { sceneView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) }
+                if (connectionManager.sendResetActiveScene("scene_hud")) {
+                    Toast.makeText(context, "Resetting active scene sources...", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onHoldStageUpdate = { st, prog -> sceneView.setHoldVisualState(st, prog) }
+        )
+        activeSceneHoldController = holdCtrl
+
+        fun startSceneHoldTick() {
+            stopSceneHoldTick()
+            val holdStartedMs = SystemClock.uptimeMillis()
+            val ticker = object : Runnable {
+                override fun run() {
+                    if (!isTouchActive || isDragging) {
+                        stopSceneHoldTick()
+                        return
+                    }
+                    val elapsed = (SystemClock.uptimeMillis() - holdStartedMs).coerceAtLeast(0L)
+                    if (elapsed >= ScenePillHoldController.STAGE2_HOLD_MS) {
+                        sceneView.setHoldVisualState(BubbleHoldStage.REACHED_VERY_LONG, 1f)
+                        return
+                    }
+                    val stage = if (elapsed >= ScenePillHoldController.STAGE1_HOLD_MS) {
+                        BubbleHoldStage.PROGRESS_VERY_LONG
+                    } else {
+                        BubbleHoldStage.PROGRESS_LONG
+                    }
+                    val frac = if (elapsed < ScenePillHoldController.STAGE1_HOLD_MS) {
+                        elapsed.toFloat() / ScenePillHoldController.STAGE1_HOLD_MS.toFloat()
+                    } else {
+                        (elapsed - ScenePillHoldController.STAGE1_HOLD_MS).toFloat() /
+                            (ScenePillHoldController.STAGE2_HOLD_MS - ScenePillHoldController.STAGE1_HOLD_MS).toFloat()
+                    }
+                    sceneView.setHoldVisualState(stage, frac.coerceIn(0f, 1f))
+                    handler.postDelayed(this, 40L)
+                }
+            }
+            sceneHoldTickRunnable = ticker
+            handler.postDelayed(ticker, 48L)
+        }
+
+        sceneView.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    val formFactor = ScreenBoundsCalculator.resolveFormFactor(context, currentConfig.deviceProfileMode).deviceClass
+                    if (ScreenBoundsCalculator.isPalmTouchForDevice(event.getToolType(0), event.touchMajor, density, formFactor)) {
+                        return@setOnTouchListener false
+                    }
+                    isTouchActive = true
+                    dismissQuickMenu()
+                    dismissSceneQuickMenu()
+                    resetIdleDimTimer(wakeNow = true)
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    startParamX = params.x
+                    startParamY = params.y
+                    movedPastSlop = false
+                    holdCtrl.onDown()
+                    startSceneHoldTick()
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+                    if (currentConfig.lockHudPosition) {
+                        if (!movedPastSlop && (abs(dx) > lockCancelSlopPx || abs(dy) > lockCancelSlopPx)) {
+                            movedPastSlop = true
+                            stopSceneHoldTick()
+                            holdCtrl.onDragCancelled()
+                        }
+                        return@setOnTouchListener true
+                    }
+                    if (!movedPastSlop && (abs(dx) > slopPx || abs(dy) > slopPx)) {
+                        movedPastSlop = true
+                        isDragging = true
+                        stopSceneHoldTick()
+                        holdCtrl.onDragCancelled()
+                        stopBreathing()
+                    }
+                    if (movedPastSlop) {
+                        applyStackDragStep(stack, params, startParamX + dx.roundToInt(), startParamY + dy.roundToInt(), density)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    isTouchActive = false
+                    stopSceneHoldTick()
+                    resetIdleDimTimer(wakeNow = true)
+                    if (isDragging) {
+                        isDragging = false
+                        finishStackDragAndPersist(stack, params, density)
+                        holdCtrl.onDragCancelled()
+                        if (currentConn.connected && currentConn.isMuted) {
+                            startBreathing()
+                        }
+                    } else {
+                        holdCtrl.onUp()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    isTouchActive = false
+                    stopSceneHoldTick()
+                    holdCtrl.onCancel()
+                    isDragging = false
+                    if (currentConn.connected && currentConn.isMuted) {
+                        startBreathing()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun showGroupedSceneQuickMenu() {
+        dismissSceneQuickMenu()
+        if (!attached || !Settings.canDrawOverlays(context)) return
+        val lp = layoutParams
+        val geom = currentGeom
+        val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
+        val anchorX = (lp?.x ?: bounds.left) + (geom?.sceneOffsetX ?: 0)
+        val anchorY = (lp?.y ?: bounds.top) + (geom?.sceneOffsetY ?: 0)
+        val anchorH = groupedSceneView?.computeTargetHeightPx(bounds.width) ?: 48
+        val created = showSceneQuickMenuWindow(
+            context = context,
+            windowManager = windowManager,
+            configStore = configStore,
+            connectionManager = connectionManager,
+            cfg = currentConfig,
+            conn = currentConn,
+            anchorX = anchorX,
+            anchorY = anchorY,
+            anchorH = anchorH,
+            onDismiss = { dismissSceneQuickMenu() },
+            onFlipCorner = null
+        ) ?: return
+        sceneQuickMenuView = created.first
+        sceneQuickMenuParams = created.second
+    }
+
+    private fun dismissSceneQuickMenu() {
+        val mv = sceneQuickMenuView ?: return
+        sceneQuickMenuView = null
+        sceneQuickMenuParams = null
+        runCatching { windowManager.removeViewImmediate(mv) }
     }
 
     private fun executeBubbleAction(action: BubbleGestureAction) {

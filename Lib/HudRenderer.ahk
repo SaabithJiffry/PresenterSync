@@ -2828,21 +2828,25 @@ IsHudHwnd(state, hwnd) {
 }
 
 AnchorFromHwnd(state, hwnd, X, Y) {
+    tiers := (IsObject(state) && state.HasProp("hudCfg") && IsObject(state.hudCfg)) ? GetHudTierFlags(state.hudCfg) : GetHudTierFlags("")
+    r2Off := tiers.row2 ? (state.recHeight + state.hudGap) : 0
+    r3Off := tiers.row3 ? (state.row3Height + state.hudGap) : 0
+    r4Off := tiers.row4 ? (state.row4Height + state.hudGap) : 0
     if (IsObject(state.RecGui) && hwnd == state.RecGui.Hwnd) {
-        Y := Y + state.recHeight + state.hudGap
+        Y := Y + r2Off
     } else if (IsObject(state.ChatGui) && hwnd == state.ChatGui.Hwnd) {
         X := X - state.recW - state.hudGap
-        Y := Y + state.recHeight + state.hudGap
+        Y := Y + r2Off
     } else if (IsObject(state.StudioGui) && hwnd == state.StudioGui.Hwnd) {
-        Y := Y + state.row3Height + state.hudGap + state.recHeight + state.hudGap
+        Y := Y + r2Off + r3Off
     } else if (IsObject(state.SceneGui) && hwnd == state.SceneGui.Hwnd) {
         X := X - state.studioW - state.hudGap
-        Y := Y + state.row3Height + state.hudGap + state.recHeight + state.hudGap
+        Y := Y + r2Off + r3Off
     } else if (IsObject(state.StreamGui) && hwnd == state.StreamGui.Hwnd) {
-        Y := Y + state.row4Height + state.hudGap + state.row3Height + state.hudGap + state.recHeight + state.hudGap
+        Y := Y + r2Off + r3Off + r4Off
     } else if (IsObject(state.VCamGui) && hwnd == state.VCamGui.Hwnd) {
         X := X - state.streamW - state.hudGap
-        Y := Y + state.row4Height + state.hudGap + state.row3Height + state.hudGap + state.recHeight + state.hudGap
+        Y := Y + r2Off + r3Off + r4Off
     }
     return {x: X, y: Y}
 }

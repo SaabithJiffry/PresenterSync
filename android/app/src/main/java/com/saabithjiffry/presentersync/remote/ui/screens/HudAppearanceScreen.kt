@@ -819,9 +819,15 @@ private fun SmartBoardErgonomicsCard(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             ExplorerSettingToggleRow(
                 title = "Show Active Scene Floating Pill (2nd HUD)",
-                subtitle = "Standalone draggable OBS Scene badge (Tap = Transition • Hold = Quick Menu • Very-Long-Hold = Reset Scene)",
+                subtitle = "OBS Scene pill (Tap = Transition • Hold = Quick Menu • Very-Long-Hold = Reset Scene)",
                 checked = cfg.showSceneIndicator,
                 onCheckedChange = { v -> configStore.update { it.copy(showSceneIndicator = v) } }
+            )
+            ExplorerSettingToggleRow(
+                title = "Dock Scene Pill with Mic Pill",
+                subtitle = "Groups Mic and Scene pills into one lockstep stack with top-edge auto-flip",
+                checked = cfg.groupSceneWithMicHud,
+                onCheckedChange = { v -> configStore.update { it.copy(groupSceneWithMicHud = v) } }
             )
             ExplorerSettingToggleRow(
                 title = "Start HUD Automatically on Boot",

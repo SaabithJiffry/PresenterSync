@@ -127,6 +127,7 @@ class RemoteConfig {
     ExcludeFromCapture := true
     HudVisibilityMode := "Always"
     ShowSceneIndicator := false
+    GroupSceneWithMicHud := true
     SlideTargetMode := "Host"
     KioskPin := ""
     ConfirmBeforeStopRecording := true
@@ -359,6 +360,7 @@ class RemoteConfig {
         this.ExcludeFromCapture := this.ReadBool("Appearance", "ExcludeFromCapture", 1)
         this.HudVisibilityMode := NormalizeHudVisibilityMode(this.Read("Appearance", "HudVisibilityMode", "Always"))
         this.ShowSceneIndicator := this.ReadBool("Appearance", "ShowSceneIndicator", 0)
+        this.GroupSceneWithMicHud := this.ReadBool("Appearance", "GroupSceneWithMicHud", 1)
         this.KioskPin := Trim(this.Read("Settings", "KioskPin", ""))
         this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", 1)
         this.ExitBrbSafelyMuted := this.ReadBool("Settings", "ExitBrbSafelyMuted", 1)
@@ -430,6 +432,7 @@ class RemoteConfig {
         this.EnableIdleAutoDim := false
         this.ShowPillMiniBadges := true
         this.ExcludeFromCapture := true
+        this.GroupSceneWithMicHud := true
         this.OpacityLevel := UIConstants.OPACITY_FROSTED
         this.IndicatorScale := 1.0
         this.ThemeMode := "System"
@@ -453,6 +456,7 @@ class RemoteConfig {
         this.WriteBool("Appearance", "EnableIdleAutoDim", false)
         this.WriteBool("Appearance", "ShowPillMiniBadges", true)
         this.WriteBool("Appearance", "ExcludeFromCapture", true)
+        this.WriteBool("Appearance", "GroupSceneWithMicHud", true)
         this.Write("Appearance", "OpacityLevel", this.OpacityLevel)
         this.Write("Appearance", "IndicatorScale", this.IndicatorScale)
         this.Write("Appearance", "ThemeMode", this.ThemeMode)
@@ -584,6 +588,7 @@ class RemoteState {
     savedY := 0
     sceneSavedX := 0
     sceneSavedY := 0
+    _groupedSceneAbove := true
     sceneHoldProgress := 0.0
     sceneResetInProgress := false
     pendingSceneResetTarget := ""
@@ -689,41 +694,52 @@ class RemoteState {
             }
         }
 
-        sRawX := cfg.HasOwnProp("sceneSavedX") ? cfg.sceneSavedX : "Default"
-        sRawY := cfg.HasOwnProp("sceneSavedY") ? cfg.sceneSavedY : "Default"
-        sHasRatio := (cfg.HasOwnProp("sceneSavedXRatio") && cfg.HasOwnProp("sceneSavedYRatio")
-            && cfg.sceneSavedXRatio != "" && cfg.sceneSavedYRatio != ""
-            && IsNumber(cfg.sceneSavedXRatio) && IsNumber(cfg.sceneSavedYRatio))
-        if (sRawX = "Default" || sRawY = "Default" || (!sHasRatio && (!IsInteger(sRawX) || !IsInteger(sRawY)))) {
-            defX := this.savedX + Round((this.baseWidth - this.sceneW) / 2)
-            defY := this.savedY - this.sceneH - this.hudGap
-            if (defY < SysGet(77) + 4)
-                defY := this.savedY + this.baseHeight + this.hudGap
-            if (IsSet(CaptureSafety)) {
-                clSc := CaptureSafety.ClampRectToMonitors(defX, defY, this.sceneW, this.sceneH)
-                this.sceneSavedX := clSc.x
-                this.sceneSavedY := clSc.y
-            } else {
-                this.sceneSavedX := defX
-                this.sceneSavedY := defY
-            }
-        } else if (sHasRatio) {
-            vLeft := SysGet(76), vTop := SysGet(77)
-            vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
-            sPos := ResolvePositionFromRatio(cfg.sceneSavedXRatio, cfg.sceneSavedYRatio, this.sceneW, this.sceneH, vLeft, vTop, vRight, vBottom)
-            this.sceneSavedX := sPos.x
-            this.sceneSavedY := sPos.y
+        isGrouped := cfg.HasOwnProp("GroupSceneWithMicHud") ? !!cfg.GroupSceneWithMicHud : true
+        if (isGrouped && cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator) {
+            gl := LayoutGroupedRemoteHudGeometry(cfg, this, this.savedX, this.savedY)
+            this.savedX := gl.micX
+            this.savedY := gl.micY
+            this.sceneSavedX := gl.sceneX
+            this.sceneSavedY := gl.sceneY
+            this._groupedSceneAbove := gl.sceneAbove
         } else {
-            scX := Integer(sRawX), scY := Integer(sRawY)
-            if (IsSet(CaptureSafety)) {
-                clSc := CaptureSafety.ClampRectToMonitors(scX, scY, this.sceneW, this.sceneH)
-                this.sceneSavedX := clSc.x
-                this.sceneSavedY := clSc.y
-            } else {
+            sRawX := cfg.HasOwnProp("sceneSavedX") ? cfg.sceneSavedX : "Default"
+            sRawY := cfg.HasOwnProp("sceneSavedY") ? cfg.sceneSavedY : "Default"
+            sHasRatio := (cfg.HasOwnProp("sceneSavedXRatio") && cfg.HasOwnProp("sceneSavedYRatio")
+                && cfg.sceneSavedXRatio != "" && cfg.sceneSavedYRatio != ""
+                && IsNumber(cfg.sceneSavedXRatio) && IsNumber(cfg.sceneSavedYRatio))
+            if (sRawX = "Default" || sRawY = "Default" || (!sHasRatio && (!IsInteger(sRawX) || !IsInteger(sRawY)))) {
+                wa := GetRemoteMonitorWorkArea(this.savedX, this.savedY, this.baseWidth, this.baseHeight)
+                defX := this.savedX + Round((this.baseWidth - this.sceneW) / 2)
+                defY := this.savedY - this.sceneH - this.hudGap
+                if (defY < wa.top + 4)
+                    defY := this.savedY + this.baseHeight + this.hudGap
+                if (IsSet(CaptureSafety)) {
+                    clSc := CaptureSafety.ClampRectToMonitors(defX, defY, this.sceneW, this.sceneH)
+                    this.sceneSavedX := clSc.x
+                    this.sceneSavedY := clSc.y
+                } else {
+                    this.sceneSavedX := Max(wa.left, Min(defX, wa.right - this.sceneW))
+                    this.sceneSavedY := Max(wa.top, Min(defY, wa.bottom - this.sceneH))
+                }
+            } else if (sHasRatio) {
                 vLeft := SysGet(76), vTop := SysGet(77)
                 vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
-                this.sceneSavedX := Max(vLeft, Min(scX, vRight - this.sceneW))
-                this.sceneSavedY := Max(vTop, Min(scY, vBottom - this.sceneH))
+                sPos := ResolvePositionFromRatio(cfg.sceneSavedXRatio, cfg.sceneSavedYRatio, this.sceneW, this.sceneH, vLeft, vTop, vRight, vBottom)
+                this.sceneSavedX := sPos.x
+                this.sceneSavedY := sPos.y
+            } else {
+                scX := Integer(sRawX), scY := Integer(sRawY)
+                if (IsSet(CaptureSafety)) {
+                    clSc := CaptureSafety.ClampRectToMonitors(scX, scY, this.sceneW, this.sceneH)
+                    this.sceneSavedX := clSc.x
+                    this.sceneSavedY := clSc.y
+                } else {
+                    vLeft := SysGet(76), vTop := SysGet(77)
+                    vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+                    this.sceneSavedX := Max(vLeft, Min(scX, vRight - this.sceneW))
+                    this.sceneSavedY := Max(vTop, Min(scY, vBottom - this.sceneH))
+                }
             }
         }
     }
@@ -1884,7 +1900,9 @@ OnRemoteDisplayChange(cfg, state, wParam, lParam, msg, hwnd) {
             try cfg.Write("Position", "Y", clamped.y)
         }
     }
-    if (state.HasOwnProp("SceneGui") && IsGuiValid(state.SceneGui)) {
+    if (IsGroupedSceneMode(cfg, state)) {
+        LayoutGroupedRemoteHud(cfg, state, state.savedX, state.savedY)
+    } else if (state.HasOwnProp("SceneGui") && IsGuiValid(state.SceneGui)) {
         prevScX := state.sceneSavedX
         prevScY := state.sceneSavedY
         if (IsSet(CaptureSafety)) {
@@ -2610,19 +2628,137 @@ UnregisterRemoteAppHotkeys(cfg, state) {
     }
 }
 
-; --- SINGLE-PILL HUD CREATION & DRAGGING ---
+; --- SINGLE-PILL & GROUPED HUD CREATION & DRAGGING ---
+
+GetRemoteMonitorWorkArea(x, y, w := 0, h := 0) {
+    cx := Integer(x) + Round(w / 2)
+    cy := Integer(y) + Round(h / 2)
+    cnt := MonitorGetCount()
+    Loop cnt {
+        try {
+            MonitorGetWorkArea(A_Index, &wl, &wt, &wr, &wb)
+            if (cx >= wl && cx <= wr && cy >= wt && cy <= wb)
+                return {left: wl, top: wt, right: wr, bottom: wb}
+        }
+    }
+    bestIdx := 1
+    bestDist := 0x7FFFFFFF
+    Loop cnt {
+        try {
+            MonitorGetWorkArea(A_Index, &wl, &wt, &wr, &wb)
+            mx := Round((wl + wr) / 2), my := Round((wt + wb) / 2)
+            d := Abs(cx - mx) + Abs(cy - my)
+            if (d < bestDist) {
+                bestDist := d
+                bestIdx := A_Index
+            }
+        }
+    }
+    try {
+        MonitorGetWorkArea(bestIdx, &wl, &wt, &wr, &wb)
+        return {left: wl, top: wt, right: wr, bottom: wb}
+    }
+    return {left: 0, top: 0, right: A_ScreenWidth, bottom: A_ScreenHeight}
+}
+
+IsGroupedSceneMode(cfg, state) {
+    return IsObject(cfg) && IsObject(state)
+        && (!cfg.HasOwnProp("GroupSceneWithMicHud") || cfg.GroupSceneWithMicHud)
+        && _ShouldShowRemoteSceneHud(cfg, state)
+        && cfg.HasOwnProp("ShowIndicator") && cfg.ShowIndicator
+}
+
+LayoutGroupedRemoteHudGeometry(cfg, state, anchorX, anchorY, dragHwnd := 0) {
+    micW := state.baseWidth, micH := state.baseHeight
+    scW := state.sceneW, scH := state.sceneH, gap := state.hudGap
+    mx := Integer(anchorX), my := Integer(anchorY)
+    if (dragHwnd && state.HasOwnProp("SceneGui") && IsObject(state.SceneGui) && dragHwnd == state.SceneGui.Hwnd) {
+        wasAbove := state.HasOwnProp("_groupedSceneAbove") ? !!state._groupedSceneAbove : true
+        mx := mx - Round((micW - scW) / 2)
+        my := wasAbove ? (my + scH + gap) : (my - micH - gap)
+    }
+    wa := GetRemoteMonitorWorkArea(mx, my, micW, micH)
+    stackW := Max(micW, scW)
+    stackH := micH + gap + scH
+    ; Auto-flip Scene Pill below Mic Pill when near top 18% or insufficient headroom above Mic
+    topFlipY := wa.top + Round((wa.bottom - wa.top) * 0.18)
+    micMinY := wa.top
+    micMaxY := Max(wa.top, wa.bottom - micH)
+    my := Max(micMinY, Min(my, micMaxY))
+    sceneAbove := (my > topFlipY) && ((my - scH - gap) >= wa.top)
+    if (sceneAbove) {
+        sceneY := my - scH - gap
+        topBound := sceneY
+        if (topBound < wa.top) {
+            my += (wa.top - topBound)
+            sceneY := my - scH - gap
+        }
+    } else {
+        sceneY := my + micH + gap
+        botBound := sceneY + scH
+        if (botBound > wa.bottom) {
+            shift := botBound - wa.bottom
+            my := Max(wa.top, my - shift)
+            sceneY := my + micH + gap
+        }
+    }
+    micXOff := Round((stackW - micW) / 2)
+    stackX := mx - micXOff
+    stackX := Max(wa.left, Min(stackX, Max(wa.left, wa.right - stackW)))
+    micX := stackX + micXOff
+    sceneX := micX + Round((micW - scW) / 2)
+    return {
+        micX: micX, micY: my, micW: micW, micH: micH,
+        sceneX: sceneX, sceneY: sceneY, sceneW: scW, sceneH: scH,
+        stackX: stackX, stackY: sceneAbove ? sceneY : my,
+        stackW: stackW, stackH: stackH,
+        sceneAbove: sceneAbove, wa: wa
+    }
+}
+
+LayoutGroupedRemoteHud(cfg, state, anchorX := "", anchorY := "", dragHwnd := 0) {
+    if (!IsObject(cfg) || !IsObject(state))
+        return false
+    ax := (anchorX = "") ? state.savedX : anchorX
+    ay := (anchorY = "") ? state.savedY : anchorY
+    gl := LayoutGroupedRemoteHudGeometry(cfg, state, ax, ay, dragHwnd)
+    state.savedX := gl.micX
+    state.savedY := gl.micY
+    state.sceneSavedX := gl.sceneX
+    state.sceneSavedY := gl.sceneY
+    state._groupedSceneAbove := gl.sceneAbove
+    if (IsGuiValid(state.MicGui) && IsGuiValid(state.SceneGui)) {
+        hdwp := DllCall("BeginDeferWindowPos", "Int", 2, "Ptr")
+        if (hdwp) {
+            flags := 0x0015 ; SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+            hdwp := DllCall("DeferWindowPos", "Ptr", hdwp, "Ptr", state.MicGui.Hwnd, "Ptr", 0, "Int", gl.micX, "Int", gl.micY, "Int", 0, "Int", 0, "UInt", flags, "Ptr")
+            if (hdwp)
+                hdwp := DllCall("DeferWindowPos", "Ptr", hdwp, "Ptr", state.SceneGui.Hwnd, "Ptr", 0, "Int", gl.sceneX, "Int", gl.sceneY, "Int", 0, "Int", 0, "UInt", flags, "Ptr")
+            if (hdwp)
+                DllCall("EndDeferWindowPos", "Ptr", hdwp, "Int")
+            else {
+                try state.MicGui.Move(gl.micX, gl.micY, gl.micW, gl.micH)
+                try state.SceneGui.Move(gl.sceneX, gl.sceneY, gl.sceneW, gl.sceneH)
+            }
+        } else {
+            try state.MicGui.Move(gl.micX, gl.micY, gl.micW, gl.micH)
+            try state.SceneGui.Move(gl.sceneX, gl.sceneY, gl.sceneW, gl.sceneH)
+        }
+    }
+    return gl
+}
 
 InitRemoteHUD(cfg, state) {
     state.ComputeDimensions(cfg)
     state.currentAlpha := GetRemoteEffectiveAlpha(state)
 
-    ; Create standalone layered GDI+ windows for Mic HUD and optional Scene HUD (#6)
+    ; Create standalone layered GDI+ windows for Mic HUD and optional Scene HUD (+E0x08000000 WS_EX_NOACTIVATE)
     hudTitle := "PresenterSync Remote HUD" (cfg.HasOwnProp("InstanceName") && cfg.InstanceName != "" ? " [" cfg.InstanceName "]" : "")
     excl := cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true
-    state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale", hudTitle)
+    state.MicGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x08000000 +E0x80000 -DPIScale", hudTitle)
     ApplyWindowCaptureAffinity(state.MicGui.Hwnd, excl)
 
-    state.SceneGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 -DPIScale", hudTitle " [Scene]")
+    state.SceneGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x08000000 +E0x80000 -DPIScale", hudTitle " [Scene]")
     ApplyWindowCaptureAffinity(state.SceneGui.Hwnd, excl)
 
     RefreshRemoteHudAppearance(cfg, state)
@@ -2723,8 +2859,25 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     state.animSeq += 1
     SetTimer state.breathTimerFn, 0
     state.isDraggingHud := true
-    PostMessage(0xA1, 2,,, "ahk_id " hwnd) ; Native Windows drag (HTCAPTION)
-    KeyWait "LButton"
+    groupedDrag := IsGroupedSceneMode(cfg, state) && IsGuiValid(state.MicGui) && IsGuiValid(state.SceneGui)
+    if (groupedDrag) {
+        CoordMode("Mouse", "Screen")
+        prevLX := startMX, prevLY := startMY
+        WinGetPos(&winInitX, &winInitY,,, "ahk_id " hwnd)
+        dragOffX := startMX - winInitX
+        dragOffY := startMY - winInitY
+        while GetKeyState("LButton", "P") {
+            MouseGetPos(&curMX, &curMY)
+            if (curMX != prevLX || curMY != prevLY) {
+                prevLX := curMX, prevLY := curMY
+                LayoutGroupedRemoteHud(cfg, state, curMX - dragOffX, curMY - dragOffY, hwnd)
+            }
+            Sleep(12)
+        }
+    } else {
+        PostMessage(0xA1, 2,,, "ahk_id " hwnd) ; Native Windows drag (HTCAPTION)
+        KeyWait "LButton"
+    }
     state.isDraggingHud := false
 
     MouseGetPos(&endMX, &endMY)
@@ -2732,7 +2885,11 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
     isShortClick := (Abs(endMX - startMX) <= 3 && Abs(endMY - startMY) <= 3 && (A_TickCount - downTick) < 400)
 
     if (isShortClick) {
-        if (isScene) {
+        if (groupedDrag) {
+            state.savedX := isScene ? state.savedX : prevX
+            state.savedY := isScene ? state.savedY : prevY
+            LayoutGroupedRemoteHud(cfg, state, state.savedX, state.savedY)
+        } else if (isScene) {
             state.sceneSavedX := prevX
             state.sceneSavedY := prevY
             state.SceneGui.Move(prevX, prevY, pillW, pillH)
@@ -2741,6 +2898,33 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
             state.savedY := prevY
             state.MicGui.Move(prevX, prevY, pillW, pillH)
         }
+    } else if (groupedDrag) {
+        gl := LayoutGroupedRemoteHudGeometry(cfg, state, state.savedX, state.savedY)
+        if (!cfg.HasOwnProp("EnableMagneticSnap") || cfg.EnableMagneticSnap) {
+            snap := ComputeMagneticSnap(gl.stackX, gl.stackY, gl.stackW, gl.stackH, 0, UIConstants.SNAP_THRESHOLD_PX, GetCandidateSnapWindowRects(state))
+            micOffX := Round((gl.stackW - state.baseWidth) / 2)
+            snappedMicX := snap.x + micOffX
+            snappedMicY := gl.sceneAbove ? (snap.y + state.sceneH + state.hudGap) : snap.y
+            LayoutGroupedRemoteHud(cfg, state, snappedMicX, snappedMicY)
+        } else {
+            LayoutGroupedRemoteHud(cfg, state, gl.micX, gl.micY)
+        }
+        cfg.savedX := state.savedX, cfg.savedY := state.savedY
+        cfg.sceneSavedX := state.sceneSavedX, cfg.sceneSavedY := state.sceneSavedY
+        cfg.Write("Position", "X", state.savedX)
+        cfg.Write("Position", "Y", state.savedY)
+        cfg.Write("ScenePosition", "X", state.sceneSavedX)
+        cfg.Write("ScenePosition", "Y", state.sceneSavedY)
+        vLeft := SysGet(76), vTop := SysGet(77)
+        vRight := vLeft + SysGet(78), vBottom := vTop + SysGet(79)
+        ratio := ComputePositionRatio(state.savedX, state.savedY, vLeft, vTop, vRight, vBottom)
+        cfg.savedXRatio := ratio.xRatio, cfg.savedYRatio := ratio.yRatio
+        cfg.Write("Position", "XRatio", ratio.xRatio)
+        cfg.Write("Position", "YRatio", ratio.yRatio)
+        sRatio := ComputePositionRatio(state.sceneSavedX, state.sceneSavedY, vLeft, vTop, vRight, vBottom)
+        cfg.sceneSavedXRatio := sRatio.xRatio, cfg.sceneSavedYRatio := sRatio.yRatio
+        cfg.Write("ScenePosition", "XRatio", sRatio.xRatio)
+        cfg.Write("ScenePosition", "YRatio", sRatio.yRatio)
     } else {
         WinGetPos(&X, &Y,,, "ahk_id " hwnd)
         if (!cfg.HasOwnProp("EnableMagneticSnap") || cfg.EnableMagneticSnap) {
@@ -2784,7 +2968,10 @@ WM_REMOTE_LBUTTONDOWN(cfg, state, wParam, lParam, msg, hwnd) {
         }
     }
     state.currentAlpha := GetRemoteEffectiveAlpha(state)
-    if (isScene)
+    if (groupedDrag) {
+        ApplyMicAppearance(cfg, state)
+        ApplyRemoteSceneAppearance(cfg, state)
+    } else if (isScene)
         ApplyRemoteSceneAppearance(cfg, state)
     else
         ApplyMicAppearance(cfg, state)
@@ -2821,7 +3008,7 @@ WM_REMOTE_RBUTTONUP(cfg, state, wParam, lParam, msg, hwnd) {
         return
     }
     if (IsObject(state.MicGui) && hwnd == state.MicGui.Hwnd) {
-        NotifyRemoteActivity("", state)
+        NotifyRemoteActivity(cfg, state)
         A_TrayMenu.Show()
     }
 }
@@ -2851,6 +3038,16 @@ WM_REMOTE_DPICHANGED(cfg, state, wParam, lParam, msg, hwnd) {
     newLeft := NumGet(lParam, 0, "Int")
     newTop := NumGet(lParam, 4, "Int")
     excl := cfg.HasOwnProp("ExcludeFromCapture") ? cfg.ExcludeFromCapture : true
+    if (IsGroupedSceneMode(cfg, state)) {
+        LayoutGroupedRemoteHud(cfg, state, newLeft, newTop, hwnd)
+        ApplyMicAppearance(cfg, state)
+        ApplyRemoteSceneAppearance(cfg, state)
+        if (IsGuiValid(state.MicGui))
+            ApplyWindowCaptureAffinity(state.MicGui.Hwnd, excl)
+        if (IsGuiValid(state.SceneGui))
+            ApplyWindowCaptureAffinity(state.SceneGui.Hwnd, excl)
+        return
+    }
     if (isScene) {
         state.sceneSavedX := newLeft
         state.sceneSavedY := newTop
@@ -3323,6 +3520,7 @@ BuildRemoteTrayMenu(cfg, state) {
 
     AppearanceMenu.Add()
     _AddRemoteCheckedMenuItem(AppearanceMenu, "Show Active Scene Indicator", ToggleRemoteSceneIndicator.Bind(cfg, state), cfg.HasOwnProp("ShowSceneIndicator") && cfg.ShowSceneIndicator)
+    _AddRemoteCheckedMenuItem(AppearanceMenu, "Group Scene with Mic HUD", ToggleRemoteGroupSceneHud.Bind(cfg, state), !cfg.HasOwnProp("GroupSceneWithMicHud") || cfg.GroupSceneWithMicHud)
     AppearanceMenu.Add("Reset Indicator Position", ResetRemotePositionAction.Bind(cfg, state))
     AppearanceMenu.Add("Reset Scene Indicator Position", ResetRemoteScenePositionAction.Bind(cfg, state))
     AppearanceMenu.Add("Restore Default Appearance", ResetRemoteAppearanceAction.Bind(cfg, state))
@@ -3382,6 +3580,7 @@ BuildRemoteTrayMenu(cfg, state) {
 
 ToggleRemoteIndicator(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowIndicator", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
 ToggleRemoteSceneIndicator(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowSceneIndicator", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
+ToggleRemoteGroupSceneHud(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "GroupSceneWithMicHud", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
 ToggleRemoteText(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "ShowText", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
 ToggleRemoteMono(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "MonoIcon", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
 ToggleRemoteCorners(cfg, state, *) => ToggleHudOptionAndRebuild(cfg, state, "SleekCorners", "Appearance", RefreshRemoteHudAppearance, BuildRemoteTrayMenu)
