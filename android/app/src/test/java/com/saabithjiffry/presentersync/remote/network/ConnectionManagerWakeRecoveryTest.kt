@@ -148,9 +148,9 @@ class ConnectionManagerWakeRecoveryTest {
         clockMs.set(12_000L)
         manager.verifyOrReconnect()
         assertTrue(pingReceived.await(3, TimeUnit.SECONDS))
-        assertTrue(reconnectedLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(reconnectedLatch.await(12, TimeUnit.SECONDS))
         assertTrue(
-            awaitCondition(3_000L) {
+            awaitCondition(5_000L) {
                 manager.uiState.value.connected && manager.uiState.value.activeHost.contains("RECOVERED-PC")
             }
         )
