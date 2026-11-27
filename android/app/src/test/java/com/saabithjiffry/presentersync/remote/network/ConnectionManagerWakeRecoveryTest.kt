@@ -110,7 +110,7 @@ class ConnectionManagerWakeRecoveryTest {
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 webSocket.send("""{"type":"auth_ok","hostName":"STALE-PC"}""")
-                webSocket.send("""{"type":"mute_state","isMuted":false,"routingMode":2,"targetMicName":"Mic/Aux"}""")
+                webSocket.send("""{"type":"mute_state","isMuted":false,"routingMode":2,"targetMicName":"Mic/Aux","activeScene":"StaleScene"}""")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -143,7 +143,7 @@ class ConnectionManagerWakeRecoveryTest {
         manager.pongTimeoutMs = 180L
         manager.start()
 
-        assertTrue(awaitCondition(4_000L) { manager.uiState.value.activeHost.contains("STALE-PC") })
+        assertTrue(awaitCondition(4_000L) { manager.uiState.value.activeHost.contains("STALE-PC") && manager.uiState.value.activeScene == "StaleScene" })
 
         clockMs.set(12_000L)
         manager.verifyOrReconnect()
