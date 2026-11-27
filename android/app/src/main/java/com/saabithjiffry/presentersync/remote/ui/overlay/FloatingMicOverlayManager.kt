@@ -74,6 +74,7 @@ class FloatingMicOverlayManager(
     private var isIdleDimmed = false
     private var lastIdleWakeKey = ""
     private var pendingStopRecordUntilMs: Long = 0L
+    private var stopRecordResetRunnable: Runnable? = null
 
     private var currentConfig: RemoteConfig = configStore.current
     private var currentConn: ConnectionUiState = connectionManager.uiState.value
@@ -506,6 +507,15 @@ class FloatingMicOverlayManager(
         }
     }
 
+    fun reattachForDisplayRecovery() {
+        handler.post {
+            if (attached && currentConfig.showIndicator) {
+                hide()
+                showOrUpdate(currentConfig, currentConn)
+            }
+        }
+    }
+
     private fun updateDimensionsAndPosition() {
         val view = pillView ?: return
         val params = layoutParams ?: return
@@ -932,12 +942,16 @@ class FloatingMicOverlayManager(
                 ) {
                     if (currentConn.recState == 0 || !currentConfig.confirmBeforeStopRecording) {
                         pendingStopRecordUntilMs = 0L
+                        stopRecordResetRunnable?.let { handler.removeCallbacks(it) }
+                        stopRecordResetRunnable = null
                         connectionManager.sendToggleRecord("quick_menu")
                         dismissQuickMenu()
                     } else {
                         val now = System.currentTimeMillis()
                         if (pendingStopRecordUntilMs > 0L && now < pendingStopRecordUntilMs) {
                             pendingStopRecordUntilMs = 0L
+                            stopRecordResetRunnable?.let { handler.removeCallbacks(it) }
+                            stopRecordResetRunnable = null
                             connectionManager.sendToggleRecord("quick_menu")
                             dismissQuickMenu()
                         } else {
@@ -945,14 +959,18 @@ class FloatingMicOverlayManager(
                             recBtn?.text = "Tap Stop (3s)"
                             (recBtn?.background as? GradientDrawable)?.setColor(Color.parseColor("#D97706"))
                             recBtn?.setTextColor(Color.WHITE)
-                            handler.postDelayed({
+                            stopRecordResetRunnable?.let { handler.removeCallbacks(it) }
+                            val resetTask = Runnable {
+                                stopRecordResetRunnable = null
                                 if (quickMenuView != null && System.currentTimeMillis() >= pendingStopRecordUntilMs) {
                                     pendingStopRecordUntilMs = 0L
                                     recBtn?.text = if (currentConn.recState != 0) "⏹ Stop" else "⏺ Rec"
                                     (recBtn?.background as? GradientDrawable)?.setColor(recSurface)
                                     recBtn?.setTextColor(recTextCol)
                                 }
-                            }, STOP_RECORD_CONFIRM_WINDOW_MS)
+                            }
+                            stopRecordResetRunnable = resetTask
+                            handler.postDelayed(resetTask, STOP_RECORD_CONFIRM_WINDOW_MS)
                         }
                     }
                 }
@@ -1355,6 +1373,8 @@ class FloatingMicOverlayManager(
 
     private fun dismissQuickMenu() {
         pendingStopRecordUntilMs = 0L
+        stopRecordResetRunnable?.let { handler.removeCallbacks(it) }
+        stopRecordResetRunnable = null
         easterHoldRunnable?.let { handler.removeCallbacks(it) }
         easterHoldRunnable = null
         easterProgressRunnable?.let { handler.removeCallbacks(it) }

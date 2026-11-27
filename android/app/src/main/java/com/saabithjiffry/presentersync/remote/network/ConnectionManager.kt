@@ -443,6 +443,11 @@ class ConnectionManager(
             serviceRunning = if (stopService) false else cur.serviceRunning,
             recState = 0,
             recSeconds = 0,
+            streamState = 0,
+            vcamActive = false,
+            unreadChatCount = 0,
+            isPanic = false,
+            panicUnmuteLocked = false,
             streamDropWarn = false,
             voiceWhileMuted = false,
             osMicMutedDrift = false,
@@ -1822,7 +1827,7 @@ class ConnectionManager(
     fun sendSetPreviewScene(sceneName: String, source: String = "director"): Boolean =
         sendDirectorAction(
             bridgeAction = { it.sendSetPreviewScene(sceneName, source) },
-            obsAction = { false },
+            obsAction = { obs -> obs.sendSetCurrentPreviewScene(sceneName.trim()) },
             relayAction = { false }
         )
 

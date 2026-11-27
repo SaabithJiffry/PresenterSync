@@ -70,6 +70,7 @@ object SavedHostProfileCodec {
                 .put("obsPassword", p.obsPassword)
                 .put("internetPairingCode", p.internetPairingCode)
                 .put("relayBaseUrl", RelayCrypto.normalizeRelayBaseUrl(p.relayBaseUrl))
+                .put("quickNudgePresets", p.quickNudgePresets)
                 .put("sessionToken", p.sessionToken)
                 .put("sessionPairingCode", p.sessionPairingCode)
                 .put("pairedHostUuid", p.pairedHostUuid)
@@ -107,6 +108,7 @@ object SavedHostProfileCodec {
                         obsPassword = obj.optString("obsPassword", ""),
                         internetPairingCode = obj.optString("internetPairingCode", "").trim(),
                         relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(obj.optString("relayBaseUrl", AppConstants.NTFY_BASE_URL)),
+                        quickNudgePresets = obj.optString("quickNudgePresets", "").trim(),
                         sessionToken = obj.optString("sessionToken", "").trim(),
                         sessionPairingCode = obj.optString("sessionPairingCode", "").trim(),
                         pairedHostUuid = obj.optString("pairedHostUuid", "").trim(),
@@ -303,6 +305,7 @@ class RemoteConfigStore private constructor(
             enableRelayFallback = prefs.getBoolean("enableRelayFallback", true),
             internetPairingCode = secretVault.getSecret("internetPairingCode").trim(),
             relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(prefs.getString("relayBaseUrl", AppConstants.NTFY_BASE_URL)),
+            quickNudgePresets = prefs.getString("quickNudgePresets", "").orEmpty().trim(),
             enableRelayEncryption = prefs.getBoolean("enableRelayEncryption", true),
             allowLegacyPlaintextRelay = prefs.getBoolean("allowLegacyPlaintextRelay", false),
             sessionPairingCode = secretVault.getSecret("sessionPairingCode").trim(),
@@ -536,6 +539,7 @@ class RemoteConfigStore private constructor(
             obsPassword = prev.obsPassword,
             internetPairingCode = prev.internetPairingCode,
             relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(prev.relayBaseUrl),
+            quickNudgePresets = prev.quickNudgePresets,
             sessionToken = prev.sessionToken,
             sessionPairingCode = prev.sessionPairingCode,
             pairedHostUuid = prev.pairedHostUuid,
@@ -564,6 +568,7 @@ class RemoteConfigStore private constructor(
                 obsPassword = target.obsPassword,
                 internetPairingCode = target.internetPairingCode,
                 relayBaseUrl = RelayCrypto.normalizeRelayBaseUrl(target.relayBaseUrl),
+                quickNudgePresets = target.quickNudgePresets.ifBlank { it.quickNudgePresets },
                 sessionToken = target.sessionToken,
                 sessionPairingCode = target.sessionPairingCode,
                 pairedHostUuid = target.pairedHostUuid,

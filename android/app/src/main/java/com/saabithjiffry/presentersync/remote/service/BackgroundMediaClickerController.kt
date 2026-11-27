@@ -38,7 +38,7 @@ class BackgroundMediaActionDebouncer(
 
 object BackgroundMediaKeyMapper {
     fun resolveKeyAction(keyCode: Int, config: RemoteConfig): BubbleGestureAction? {
-        if (!config.enableBackgroundMediaClicker) return null
+        if (!config.enableBackgroundMediaClicker || config.hotkeysSuspended) return null
         val primary = when (config.backgroundMediaPrimaryAction) {
             BubbleGestureAction.TRANSITION_SCENE -> BubbleGestureAction.TRANSITION_SCENE
             else -> BubbleGestureAction.TOGGLE_MUTE
@@ -55,7 +55,7 @@ object BackgroundMediaKeyMapper {
     }
 
     fun resolveVolumeStepAction(direction: Int, config: RemoteConfig): BubbleGestureAction? {
-        if (!config.enableBackgroundMediaClicker || direction == 0) return null
+        if (!config.enableBackgroundMediaClicker || config.hotkeysSuspended || direction == 0) return null
         return if (direction > 0) BubbleGestureAction.SLIDE_NEXT else BubbleGestureAction.SLIDE_PREV
     }
 }
@@ -79,7 +79,7 @@ class BackgroundMediaClickerController(
 
     fun update(config: RemoteConfig) {
         currentConfig = config
-        if (config.enableBackgroundMediaClicker) {
+        if (config.enableBackgroundMediaClicker && !config.hotkeysSuspended) {
             ensureSessionActive()
         } else {
             release()

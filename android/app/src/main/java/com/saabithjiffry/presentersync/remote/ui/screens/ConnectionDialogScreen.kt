@@ -403,11 +403,13 @@ fun ConnectionSettingsForm(
         ConnectionDialogActionFooter(
             initialConfig = initialConfig,
             formFactor = formFactor,
+            networkMode = networkMode,
             hostAddress = hostAddress,
             bridgePortStr = bridgePortStr,
+            sessionCodeInput = sessionCodeInput,
             pairingCode = pairingCode,
+            relayBaseUrl = relayBaseUrl,
             hostPortStr = hostPortStr,
-            obsPassword = obsPassword,
             validationError = validationError,
             statusText = statusText,
             testing = testing,
@@ -980,11 +982,13 @@ private fun KioskPinManagementCard(
 private fun ConnectionDialogActionFooter(
     initialConfig: RemoteConfig,
     formFactor: ResolvedFormFactor,
+    networkMode: NetworkMode,
     hostAddress: String,
     bridgePortStr: String,
+    sessionCodeInput: String,
     pairingCode: String,
+    relayBaseUrl: String,
     hostPortStr: String,
-    obsPassword: String,
     validationError: String?,
     statusText: String,
     testing: Boolean,
@@ -1024,15 +1028,16 @@ private fun ConnectionDialogActionFooter(
         }
 
         if (showShareQrDialog) {
-            val shareUri = remember(hostAddress, bridgePortStr, pairingCode, hostPortStr, obsPassword) {
-                PairingUriBuilder.build(
-                    initialConfig.copy(
-                        hostAddress = hostAddress,
-                        bridgePort = bridgePortStr.toIntOrNull() ?: 4456,
-                        sessionPairingCode = pairingCode,
-                        hostPort = hostPortStr.toIntOrNull() ?: 4455,
-                        obsPassword = obsPassword
-                    )
+            val shareUri = remember(networkMode, hostAddress, bridgePortStr, sessionCodeInput, pairingCode, relayBaseUrl, hostPortStr) {
+                buildSharePairingQrUri(
+                    initialConfig = initialConfig,
+                    networkMode = networkMode,
+                    hostAddress = hostAddress,
+                    bridgePortStr = bridgePortStr,
+                    sessionCodeInput = sessionCodeInput,
+                    pairingCode = pairingCode,
+                    relayBaseUrl = relayBaseUrl,
+                    hostPortStr = hostPortStr
                 )
             }
             SharePairingQrDialog(shareUri = shareUri, onDismiss = { showShareQrDialog = false })
@@ -1182,5 +1187,29 @@ private fun SharePairingQrDialog(
                 Text("Close")
             }
         }
+    )
+}
+
+internal fun buildSharePairingQrUri(
+    initialConfig: RemoteConfig,
+    networkMode: NetworkMode,
+    hostAddress: String,
+    bridgePortStr: String,
+    sessionCodeInput: String,
+    pairingCode: String,
+    relayBaseUrl: String,
+    hostPortStr: String
+): String {
+    return PairingUriBuilder.build(
+        initialConfig.copy(
+            networkMode = networkMode,
+            hostAddress = hostAddress,
+            bridgePort = bridgePortStr.toIntOrNull() ?: AppConstants.DEFAULT_BRIDGE_PORT,
+            sessionPairingCode = sessionCodeInput,
+            internetPairingCode = pairingCode,
+            relayBaseUrl = relayBaseUrl,
+            hostPort = hostPortStr.toIntOrNull() ?: AppConstants.DEFAULT_OBS_PORT,
+            obsPassword = ""
+        )
     )
 }

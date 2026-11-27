@@ -99,6 +99,7 @@ import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.DeepLinkParser
 import com.saabithjiffry.presentersync.remote.config.DeviceProfileMode
 import com.saabithjiffry.presentersync.remote.config.NetworkMode
+import com.saabithjiffry.presentersync.remote.config.QuickNudgePresetHelper
 import com.saabithjiffry.presentersync.remote.config.RemoteConfig
 import com.saabithjiffry.presentersync.remote.config.ResolvedFormFactor
 import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
@@ -169,7 +170,8 @@ internal fun DirectorDeckAndTimerCard(
     onSessionReset: () -> Unit = {},
     onSendPresenterSignal: (String) -> Unit = {},
     onAckNudge: (String) -> Unit = {},
-    onResetActiveScene: () -> Unit = {}
+    onResetActiveScene: () -> Unit = {},
+    quickNudgePresets: String = ""
 ) {
     val isDirectObsFallback = conn.usingDirectObsFallback ||
         conn.channelType == com.saabithjiffry.presentersync.remote.network.ChannelType.DIRECT_OBS
@@ -540,7 +542,7 @@ internal fun DirectorDeckAndTimerCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf("Slow Down", "Check Chat", "2m Left").forEach { quick ->
+                QuickNudgePresetHelper.resolve(quickNudgePresets, conn.quickNudges, 6).forEach { quick ->
                     OutlinedButton(
                         onClick = { directorRunWithCooldown(deckTapGate) { onSendNudge(quick) } },
                         contentPadding = CompactExplorerButtonPadding

@@ -198,6 +198,7 @@ class SecretVault(
             "sessionToken",
             "sessionPairingCode",
             "internetPairingCode",
+            "kioskPin",
             "savedProfilesJson"
         )
     }

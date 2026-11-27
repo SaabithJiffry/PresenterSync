@@ -5,7 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.RestrictionsManager
+import android.os.Bundle
 import com.saabithjiffry.presentersync.remote.config.AppConstants
+import com.saabithjiffry.presentersync.remote.config.DeviceProfileMode
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
 import com.saabithjiffry.presentersync.remote.network.ApkSelfInstaller
 import com.saabithjiffry.presentersync.remote.network.ConnectionManager
@@ -71,21 +73,23 @@ class PresenterSyncRemoteApp : Application() {
     private fun applyManagedRestrictions() {
         try {
             val rm = getSystemService(Context.RESTRICTIONS_SERVICE) as? RestrictionsManager ?: return
-            val bundle = rm.applicationRestrictions ?: return
-            val mdmHost = bundle.getString("host_address").orEmpty().trim()
-            val mdmPort = bundle.getInt("bridge_port", 0)
-            val mdmPin = bundle.getString("kiosk_pin").orEmpty().trim()
-            val mdmRole = bundle.getString("default_role").orEmpty().trim()
-            if (mdmHost.isNotEmpty() || mdmPort in 1..65535 || mdmPin.isNotEmpty() || mdmRole.isNotEmpty()) {
-                configStore.update { cur ->
-                    cur.copy(
-                        hostAddress = mdmHost.ifEmpty { cur.hostAddress },
-                        bridgePort = if (mdmPort in 1..65535) mdmPort else cur.bridgePort,
-                        kioskPin = mdmPin.ifEmpty { cur.kioskPin },
-                        defaultRole = mdmRole.ifEmpty { cur.defaultRole }
-                    )
-                }
-            }
+            applyManagedRestrictionsBundle(rm.applicationRestrictions)
+        } catch (_: Exception) {
+        }
+    }
+
+    internal fun applyManagedRestrictionsBundle(bundle: Bundle?) {
+        if (bundle == null) return
+        try {
+            applyManagedRestrictionsToStore(
+                store = configStore,
+                hostAddress = bundle.getString("host_address"),
+                bridgePort = bundle.getInt("bridge_port", 0),
+                kioskPin = bundle.getString("kiosk_pin"),
+                defaultRole = bundle.getString("default_role"),
+                sessionPairingCode = bundle.getString("session_pairing_code"),
+                deviceProfileMode = bundle.getString("device_profile_mode")
+            )
         } catch (_: Exception) {
         }
     }
@@ -105,5 +109,36 @@ class PresenterSyncRemoteApp : Application() {
 
     companion object {
         const val HUD_CHANNEL_ID = "presentersync_remote_hud"
+
+        internal fun applyManagedRestrictionsToStore(
+            store: RemoteConfigStore,
+            hostAddress: String?,
+            bridgePort: Int,
+            kioskPin: String?,
+            defaultRole: String?,
+            sessionPairingCode: String?,
+            deviceProfileMode: String?
+        ) {
+            val mdmHost = hostAddress.orEmpty().trim()
+            val mdmPin = kioskPin.orEmpty().trim()
+            val mdmRole = defaultRole.orEmpty().trim()
+            val mdmSessionCode = sessionPairingCode.orEmpty().trim().uppercase()
+            val mdmProfileRaw = deviceProfileMode.orEmpty().trim()
+            val mdmProfile = if (mdmProfileRaw.isNotEmpty()) DeviceProfileMode.fromRaw(mdmProfileRaw) else null
+            if (mdmHost.isNotEmpty() || bridgePort in 1..65535 || mdmPin.isNotEmpty() ||
+                mdmRole.isNotEmpty() || mdmSessionCode.isNotEmpty() || mdmProfile != null
+            ) {
+                store.update { cur ->
+                    cur.copy(
+                        hostAddress = mdmHost.ifEmpty { cur.hostAddress },
+                        bridgePort = if (bridgePort in 1..65535) bridgePort else cur.bridgePort,
+                        kioskPin = mdmPin.ifEmpty { cur.kioskPin },
+                        defaultRole = mdmRole.ifEmpty { cur.defaultRole },
+                        sessionPairingCode = mdmSessionCode.ifEmpty { cur.sessionPairingCode },
+                        deviceProfileMode = mdmProfile ?: cur.deviceProfileMode
+                    )
+                }
+            }
+        }
     }
 }

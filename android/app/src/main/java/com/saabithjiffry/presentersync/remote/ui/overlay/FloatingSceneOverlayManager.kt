@@ -173,6 +173,15 @@ class FloatingSceneOverlayManager(
         }
     }
 
+    fun reattachForDisplayRecovery() {
+        handler.post {
+            if (attached && currentConfig.showSceneIndicator) {
+                hide()
+                showOrUpdate(currentConfig, currentConn)
+            }
+        }
+    }
+
     fun showOrUpdate(cfg: RemoteConfig, conn: ConnectionUiState) {
         currentConfig = cfg
         currentConn = conn

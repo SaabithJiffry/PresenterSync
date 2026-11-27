@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
+import android.hardware.display.DisplayManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
@@ -41,6 +42,19 @@ import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
+internal object HdcpRecoveryPolicy {
+    const val EVENT_SCREEN_ON = "screen_on"
+    const val EVENT_DISPLAY_CHANGED = "display_changed"
+    const val EVENT_DISPLAY_ADDED = "display_added"
+
+    fun shouldRecoverOnEvent(cfg: RemoteConfig, eventKind: String): Boolean {
+        if (!cfg.hdmiHdcpRecoveryEnabled) return false
+        return eventKind == EVENT_SCREEN_ON ||
+            eventKind == EVENT_DISPLAY_CHANGED ||
+            eventKind == EVENT_DISPLAY_ADDED
+    }
+}
+
 class FloatingHudForegroundService : LifecycleService() {
     private lateinit var app: PresenterSyncRemoteApp
     private lateinit var overlayManager: FloatingMicOverlayManager
@@ -68,9 +82,31 @@ class FloatingHudForegroundService : LifecycleService() {
     private var prevVoiceWhileMuted = false
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeReceiverRegistered = false
+    private var displayListenerRegistered = false
+    private val hdcpRecoveryRunnable = Runnable { performHdcpOverlayRecoveryNow() }
+
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {
+            handleDisplayOrScreenRecoveryEvent(HdcpRecoveryPolicy.EVENT_DISPLAY_ADDED)
+        }
+
+        override fun onDisplayRemoved(displayId: Int) {
+            if (::overlayManager.isInitialized) {
+                overlayManager.onDisplayConfigurationChanged()
+            }
+            if (::sceneOverlayManager.isInitialized) {
+                sceneOverlayManager.onDisplayConfigurationChanged()
+            }
+        }
+
+        override fun onDisplayChanged(displayId: Int) {
+            handleDisplayOrScreenRecoveryEvent(HdcpRecoveryPolicy.EVENT_DISPLAY_CHANGED)
+        }
+    }
 
     private val wakeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            val action = intent?.action.orEmpty()
             overlayManager.onDisplayConfigurationChanged()
             if (::sceneOverlayManager.isInitialized) {
                 sceneOverlayManager.onDisplayConfigurationChanged()
@@ -80,6 +116,9 @@ class FloatingHudForegroundService : LifecycleService() {
             }
             if (::arcadeOverlayHost.isInitialized) {
                 arcadeOverlayHost.onDisplayConfigurationChanged()
+            }
+            if (action == Intent.ACTION_SCREEN_ON) {
+                handleDisplayOrScreenRecoveryEvent(HdcpRecoveryPolicy.EVENT_SCREEN_ON)
             }
             app.connectionManager.onScreenWakeOrNetworkChanged()
         }
@@ -204,6 +243,7 @@ class FloatingHudForegroundService : LifecycleService() {
         }
         acquireWifiLock()
         registerWakeReceiver()
+        registerDisplayListener()
         app.configStore.setHudWasActive(true)
         promoteToForeground(buildNotification(app.configStore.current, app.connectionManager.uiState.value))
 
@@ -361,6 +401,7 @@ class FloatingHudForegroundService : LifecycleService() {
 
     private fun stopRemoteCleanly() {
         unregisterWakeReceiver()
+        unregisterDisplayListener()
         app.configStore.setHudWasActive(false)
         ArcadeVaultManager.lock()
         if (::hudSnakeOverlayManager.isInitialized) {
@@ -405,6 +446,7 @@ class FloatingHudForegroundService : LifecycleService() {
     override fun onDestroy() {
         mainHandler.removeCallbacksAndMessages(null)
         unregisterWakeReceiver()
+        unregisterDisplayListener()
         ArcadeVaultManager.unregisterLockListener(vaultLockListener)
         if (::hudSnakeOverlayManager.isInitialized) {
             hudSnakeOverlayManager.stop()
@@ -453,6 +495,53 @@ class FloatingHudForegroundService : LifecycleService() {
         } catch (_: Exception) {
         }
         wakeReceiverRegistered = false
+    }
+
+    private fun registerDisplayListener() {
+        if (displayListenerRegistered) return
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        try {
+            dm.registerDisplayListener(displayListener, mainHandler)
+            displayListenerRegistered = true
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun unregisterDisplayListener() {
+        if (!displayListenerRegistered) return
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        try {
+            dm?.unregisterDisplayListener(displayListener)
+        } catch (_: Exception) {
+        }
+        displayListenerRegistered = false
+    }
+
+    private fun handleDisplayOrScreenRecoveryEvent(eventKind: String) {
+        if (::overlayManager.isInitialized) {
+            overlayManager.onDisplayConfigurationChanged()
+        }
+        if (::sceneOverlayManager.isInitialized) {
+            sceneOverlayManager.onDisplayConfigurationChanged()
+        }
+        if (HdcpRecoveryPolicy.shouldRecoverOnEvent(app.configStore.current, eventKind)) {
+            mainHandler.removeCallbacks(hdcpRecoveryRunnable)
+            mainHandler.postDelayed(hdcpRecoveryRunnable, 150L)
+        }
+    }
+
+    private fun performHdcpOverlayRecoveryNow() {
+        if (!::overlayManager.isInitialized) return
+        overlayManager.reattachForDisplayRecovery()
+        if (::sceneOverlayManager.isInitialized) {
+            sceneOverlayManager.reattachForDisplayRecovery()
+        }
+        if (::hudSnakeOverlayManager.isInitialized) {
+            hudSnakeOverlayManager.onDisplayConfigurationChanged()
+        }
+        if (::arcadeOverlayHost.isInitialized) {
+            arcadeOverlayHost.onDisplayConfigurationChanged()
+        }
     }
 
     override fun onBind(intent: Intent): IBinder? {

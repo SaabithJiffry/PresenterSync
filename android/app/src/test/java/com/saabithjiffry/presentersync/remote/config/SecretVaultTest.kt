@@ -126,6 +126,7 @@ class SecretVaultTest {
                 sessionToken = "tok_live_abc123",
                 sessionPairingCode = "456-789",
                 internetPairingCode = "PS-WAN-9999",
+                kioskPin = "4826",
                 savedProfiles = listOf(profile)
             )
         }
@@ -144,6 +145,7 @@ class SecretVaultTest {
         assertFalse(combinedVaultText.contains("tok_live_abc123"))
         assertFalse(combinedVaultText.contains("456-789"))
         assertFalse(combinedVaultText.contains("PS-WAN-9999"))
+        assertFalse(combinedVaultText.contains("4826"))
         assertFalse(combinedVaultText.contains("SuperObsPassword!99"))
 
         // Reload cleanly into a fresh RemoteConfigStore instance
@@ -152,6 +154,7 @@ class SecretVaultTest {
         assertEquals("tok_live_abc123", reloaded.sessionToken)
         assertEquals("456-789", reloaded.sessionPairingCode)
         assertEquals("PS-WAN-9999", reloaded.internetPairingCode)
+        assertEquals("4826", reloaded.kioskPin)
         assertEquals(1, reloaded.savedProfiles.size)
         assertEquals("SuperObsPassword!99", reloaded.savedProfiles[0].obsPassword)
         assertFalse(reloaded.allowLegacyPlaintextRelay)

@@ -530,7 +530,8 @@ internal fun RemoteDashboardScreen(
                                     onSessionReset = { app.connectionManager.sendSessionReset(true, "dashboard") },
                                     onSendPresenterSignal = { msg -> app.connectionManager.sendPresenterSignal(msg, "sticky") },
                                     onAckNudge = { nid -> app.connectionManager.sendNudgeAck(nid) },
-                                    onResetActiveScene = { app.connectionManager.sendResetActiveScene("dashboard") }
+                                    onResetActiveScene = { app.connectionManager.sendResetActiveScene("dashboard") },
+                                    quickNudgePresets = cfg.quickNudgePresets
                                 )
 
                                 FormFactorOptimizationCard(
@@ -632,7 +633,8 @@ internal fun RemoteDashboardScreen(
                             onSessionReset = { app.connectionManager.sendSessionReset(true, "dashboard") },
                             onSendPresenterSignal = { msg -> app.connectionManager.sendPresenterSignal(msg, "sticky") },
                             onAckNudge = { nid -> app.connectionManager.sendNudgeAck(nid) },
-                            onResetActiveScene = { app.connectionManager.sendResetActiveScene("dashboard") }
+                            onResetActiveScene = { app.connectionManager.sendResetActiveScene("dashboard") },
+                            quickNudgePresets = cfg.quickNudgePresets
                         )
 
                         FormFactorOptimizationCard(

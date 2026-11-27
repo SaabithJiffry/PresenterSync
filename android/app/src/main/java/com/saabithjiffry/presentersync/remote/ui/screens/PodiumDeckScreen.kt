@@ -81,6 +81,7 @@ fun PodiumDeckScreen(
     onExitPodium: () -> Unit
 ) {
     val conn by app.connectionManager.uiState.collectAsStateWithLifecycle()
+    val cfg by app.configStore.config.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val muteTapGate = remember { LongArray(1) }
     val deckTapGate = remember { LongArray(1) }
@@ -169,6 +170,7 @@ fun PodiumDeckScreen(
 
             PodiumQuickNudgeCard(
                 conn = conn,
+                quickNudgePresets = cfg.quickNudgePresets,
                 onSendNudge = { nudge -> podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendStageNudge(nudge) } },
                 onSignalHost = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendPresenterSignal("Need Assistance", "sticky") } },
                 onAckNudge = {
@@ -503,6 +505,7 @@ private fun PodiumTimerAndStandbyCard(
 @Composable
 private fun PodiumQuickNudgeCard(
     conn: ConnectionUiState,
+    quickNudgePresets: String = "",
     onSendNudge: (String) -> Unit,
     onSignalHost: () -> Unit = {},
     onAckNudge: () -> Unit = {}
@@ -567,7 +570,7 @@ private fun PodiumQuickNudgeCard(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                for (nudge in QuickNudgePresetHelper.resolve("", conn.quickNudges, 4)) {
+                for (nudge in QuickNudgePresetHelper.resolve(quickNudgePresets, conn.quickNudges, 4)) {
                     FilledTonalButton(
                         onClick = { onSendNudge(nudge) },
                         enabled = conn.connected && (conn.usingBridge || conn.usingRelayFallback)

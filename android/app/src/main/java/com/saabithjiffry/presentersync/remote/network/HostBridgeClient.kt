@@ -9,6 +9,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -100,6 +101,7 @@ class HostBridgeClient(
     private val connSeq = AtomicInteger(0)
     private val cmdSeq = AtomicLong(0L)
     private val lastStateSeq = AtomicLong(0L)
+    private val disconnectedEmitted = AtomicBoolean(false)
 
     @Volatile
     private var lastHostBootId: String = ""
@@ -109,6 +111,7 @@ class HostBridgeClient(
     fun connect() {
         closedByCaller = false
         authenticated = false
+        disconnectedEmitted.set(false)
         lastHostBootId = ""
         lastStateSeq.set(0L)
         val mySeq = connSeq.incrementAndGet()
@@ -331,17 +334,23 @@ class HostBridgeClient(
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 if (closedByCaller || mySeq != connSeq.get()) return
                 webSocket.close(1000, "ack")
-                callbacks.onBridgeDisconnected(reason.ifBlank { "Closed ($code)" })
+                if (disconnectedEmitted.compareAndSet(false, true)) {
+                    callbacks.onBridgeDisconnected(reason.ifBlank { "Closed ($code)" })
+                }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (closedByCaller || mySeq != connSeq.get()) return
-                callbacks.onBridgeDisconnected(reason.ifBlank { "Closed ($code)" })
+                if (disconnectedEmitted.compareAndSet(false, true)) {
+                    callbacks.onBridgeDisconnected(reason.ifBlank { "Closed ($code)" })
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 if (closedByCaller || mySeq != connSeq.get()) return
-                callbacks.onBridgeDisconnected(t.message ?: "Bridge connection failed")
+                if (disconnectedEmitted.compareAndSet(false, true)) {
+                    callbacks.onBridgeDisconnected(t.message ?: "Bridge connection failed")
+                }
             }
         })
     }

@@ -290,7 +290,7 @@ class ObsWebSocketClient(
                             }
                         }
                     }
-                    "RemoteSceneTransition", "RemoteSwitchScene" -> {
+                    "RemoteSceneTransition", "RemoteSwitchScene", "RemoteSetPreviewScene" -> {
                         if (!resultOk) {
                             val errCode = reqStatus?.optInt("code", -1) ?: -1
                             val errComment = reqStatus?.optString("comment", "").orEmpty()
@@ -438,6 +438,14 @@ class ObsWebSocketClient(
         val clean = sceneName.trim()
         if (clean.isEmpty()) return false
         return sendRequest("SetCurrentProgramScene", "RemoteSwitchScene", JSONObject().apply {
+            put("sceneName", clean)
+        })
+    }
+
+    fun sendSetCurrentPreviewScene(sceneName: String): Boolean {
+        val clean = sceneName.trim()
+        if (clean.isEmpty()) return false
+        return sendRequest("SetCurrentPreviewScene", "RemoteSetPreviewScene", JSONObject().apply {
             put("sceneName", clean)
         })
     }
