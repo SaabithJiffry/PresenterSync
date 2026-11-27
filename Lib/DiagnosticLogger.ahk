@@ -278,7 +278,7 @@ class DiagnosticLogger {
         vGui.OnEvent("Close", CloseViewer)
         vGui.OnEvent("Escape", CloseViewer)
         vGui.OnEvent("Size", (g, minMax, w, h) => (
-            (minMax = 1) ? 0 : (
+            (minMax = -1) ? 0 : (
                 edLog.Move(12, 10, Max(300, w - 24), Max(200, h - 58)),
                 btnRefresh.Move(12, h - 38),
                 btnCopy.Move(115, h - 38),
@@ -353,7 +353,7 @@ class DiagnosticLogger {
         if (!IsObject(cfg))
             return "  CfgRef          : (uninitialized)`r`n"
         fields := ["ActiveProfile", "AudioRoutingMode", "EnablePPT", "EnableMicOnly", "EnablePointerTransition", "HwMuteHotkey", "ObsMuteHotkey", "HwTransitionHotkey", "ObsTransitionHotkey", "EnableWS", "EnableZoom", "CatchArrows", "CatchPgUpDn", "CatchSpace", "CatchEnter", "CatchTab", "CatchB", "CatchEsc", "RemoteNetworkMode", "BridgePort"]
-        secretFields := ["obsPassword", "ObsPassword", "InternetPairingCode", "SessionPairingCode", "SessionToken"]
+        secretFields := ["obsPassword", "ObsPassword", "InternetPairingCode", "SessionPairingCode", "SessionToken", "KioskPin", "kioskPin"]
         out := ""
         for _, f in fields {
             if (cfg.HasOwnProp(f))

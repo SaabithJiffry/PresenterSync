@@ -391,7 +391,7 @@ ToggleRemoteConnectionsCutoff(cfg, state := "", *) {
     }
     BuildTrayMenu(cfg, state)
     NotifyHelpRefresh(state)
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
+    RemoveToolTip()
 }
 
 ToggleSuspend(*) {

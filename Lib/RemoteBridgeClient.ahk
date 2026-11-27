@@ -1055,7 +1055,8 @@ StopAllRemoteTimers(state) {
     static timerProps := [
         "dragTimerFn", "breathTimerFn", "_muteAnimTimerFn", "autoDodgeTimerFn", "idleDimTimerFn",
         "reconnectTimerFn", "heartbeatTimerFn", "lanRepromoteTimerFn",
-        "presenterTickFn", "recTickFn", "rebuildTrayFn"
+        "presenterTickFn", "recTickFn", "rebuildTrayFn",
+        "sceneMarqueeTimerFn", "_optimisticTimerFn", "sceneResetWatchdogFn"
     ]
     stopped := 0
     for _, prop in timerProps {
@@ -1081,7 +1082,11 @@ ResetRemoteConnectionTelemetry(state, resetFallback := false) {
         state.usingRelayFallback := false
     state.activeHost := ""
     state.recState := 0
+    state.obsRecState := 0
+    state.confRecState := 0
+    state.recSourceTag := ""
     state.recSeconds := 0
+    state.unreadChatCount := 0
     state.streamDropWarn := false
     state.voiceWhileMuted := false
     state.osMicMutedDrift := false
@@ -1657,9 +1662,11 @@ ExecuteRemoteLocalStandbyToggle(cfg, state, enterStandby := "") {
                 CommitRemoteSceneChange(state, snap.scene, false)
             }
             if (snap.HasOwnProp("muted")) {
+                safeExitMuted := (!IsObject(cfg) || !cfg.HasOwnProp("ExitBrbSafelyMuted") || cfg.ExitBrbSafelyMuted)
+                targetMuted := safeExitMuted ? true : !!snap.muted
                 if (IsObject(state.obsWs))
-                    SendObsRequest(state.obsWs, "SetInputMute", "RemoteClickerSetMute", '{"inputName":"' EscapeJsonStr(micName) '","inputMuted":' (snap.muted ? "true" : "false") '}')
-                _RBC_PersistRemoteMute(cfg, state, snap.muted)
+                    SendObsRequest(state.obsWs, "SetInputMute", "RemoteClickerSetMute", '{"inputName":"' EscapeJsonStr(micName) '","inputMuted":' (targetMuted ? "true" : "false") '}')
+                _RBC_PersistRemoteMute(cfg, state, targetMuted)
             }
         }
         if (IsSet(DiagnosticLogger))

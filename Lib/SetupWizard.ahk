@@ -976,7 +976,8 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     ))
 
     footerTop := Max(leftBottom, rightBottom) + 12
-    statusLine := "OBS Port: 4455  |  Password: " (cfg.obsPassword != "" ? "Configured" : "None") "  |  Mic: " cfg.targetMicName
+    obsPort := (IsObject(cfg) && cfg.HasOwnProp("ObsWsPort") && Integer(cfg.ObsWsPort) > 0) ? Integer(cfg.ObsWsPort) : 4455
+    statusLine := "OBS Port: " obsPort "  |  Password: " (cfg.obsPassword != "" ? "Configured" : "None") "  |  Mic: " cfg.targetMicName
     Theme.RegisterControl(dlg, dlg.Add("Text", "x20 y" footerTop " w700 Center", statusLine), "Text", "muted")
 
     btnCloseRemote := dlg.Add("Button", "x20 y+8 w340 h30", "Close Remote Companion...")
@@ -1029,15 +1030,16 @@ _DetectWindowsFirewallState() {
 }
 
 RunWindowsSetupProbes(cfg, state := "", overrides := "") {
+    obsPort := (IsObject(cfg) && cfg.HasOwnProp("ObsWsPort") && Integer(cfg.ObsWsPort) > 0) ? Integer(cfg.ObsWsPort) : 4455
     obsListening := (IsObject(overrides) && overrides.HasOwnProp("obsPortListening"))
         ? !!overrides.obsPortListening
-        : IsLocalTcpPortListening(4455)
+        : IsLocalTcpPortListening(obsPort)
     obsConnected := (IsObject(state) && state.HasOwnProp("obsConnected") && state.obsConnected)
     wsEnabled := (IsObject(cfg) && cfg.HasOwnProp("EnableWS") && cfg.EnableWS)
     s1Ok := (obsConnected || (wsEnabled && obsListening))
     s1Detail := obsConnected
-        ? "Connected to OBS Studio (:4455)"
-        : (obsListening ? (wsEnabled ? "OBS WS :4455 listening (connecting...)" : "OBS :4455 reachable — enable OBS WebSocket Sync in Tray") : "OBS Studio WebSocket :4455 not listening yet")
+        ? ("Connected to OBS Studio (:" obsPort ")")
+        : (obsListening ? (wsEnabled ? ("OBS WS :" obsPort " listening (connecting...)") : ("OBS :" obsPort " reachable — enable OBS WebSocket Sync in Tray")) : ("OBS Studio WebSocket :" obsPort " not listening yet"))
 
     rMode := (IsObject(cfg) && cfg.HasOwnProp("AudioRoutingMode")) ? Integer(cfg.AudioRoutingMode) : 0
     micNm := (IsObject(cfg) && cfg.HasOwnProp("targetMicName") && cfg.targetMicName != "") ? cfg.targetMicName : "Mic/Aux"
@@ -1088,7 +1090,7 @@ RunWindowsSetupProbes(cfg, state := "", overrides := "") {
         : "Non-Admin (UIPI active) — Run as Administrator if hotkeys fail on elevated OBS/Zoom/PPT"
 
     steps := [
-        { id: 1, title: "1. OBS WebSocket v5 (:4455)", ok: s1Ok, detail: s1Detail },
+        { id: 1, title: "1. OBS WebSocket v5 (:" obsPort ")", ok: s1Ok, detail: s1Detail },
         { id: 2, title: "2. Audio Routing & Mic Probe", ok: s2Ok, detail: s2Detail },
         { id: 3, title: "3. Floating Mic HUD Overlay", ok: s3Ok, detail: s3Detail },
         { id: 4, title: "4. Classroom UDP Discovery & QR", ok: s4Ok, detail: s4Detail },
@@ -1127,12 +1129,38 @@ ShowGuidedSetupWizard(cfg, state := "", *) {
         "Conferencing Only (Zoom / Teams / Meet)"
     ])
     Theme.RegisterControl(wGui, ddlRoleSetup, "DropDownList")
-    ddlRoleSetup.OnEvent("Change", (ctrl, *) => (
-        (ctrl.Value == 1) ? (cfg.AudioRoutingMode := 1, cfg.EnableWS := true, cfg.EnableRemoteConnections := true)
-        : ((ctrl.Value == 2) ? (cfg.AudioRoutingMode := 1, cfg.EnableWS := true, cfg.EnableRemoteConnections := false)
-        : (cfg.AudioRoutingMode := 2, cfg.EnableWS := false, cfg.EnableZoom := true)),
+    ApplySetupWizardRole(roleChoice) {
+        if (roleChoice == 1) {
+            cfg.AudioRoutingMode := 1
+            cfg.EnableWS := true
+            cfg.EnableRemoteConnections := true
+        } else if (roleChoice == 2) {
+            cfg.AudioRoutingMode := 1
+            cfg.EnableWS := true
+            cfg.EnableRemoteConnections := false
+        } else {
+            cfg.AudioRoutingMode := 2
+            cfg.EnableWS := false
+            cfg.EnableZoom := true
+        }
+        try cfg.Write("Settings", "AudioRoutingMode", cfg.AudioRoutingMode)
+        try cfg.WriteBool("Settings", "EnableWS", cfg.EnableWS)
+        try cfg.WriteBool("Settings", "EnableRemoteConnections", cfg.EnableRemoteConnections)
+        try cfg.WriteBool("Settings", "EnableZoom", cfg.EnableZoom)
+        if (IsSet(SyncTelemetryBackendsFromConfig))
+            SyncTelemetryBackendsFromConfig(cfg, state)
+        if (IsObject(state) && IsSet(StartHostCompanionBridge) && IsSet(StopHostCompanionBridge)) {
+            if (cfg.EnableRemoteConnections) {
+                try StartHostCompanionBridge(cfg, state, cfg.HasOwnProp("BridgePort") ? cfg.BridgePort : 4456)
+            } else {
+                try StopHostCompanionBridge()
+            }
+        }
+        if (IsObject(state) && state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn)
+            try state.rebuildTrayFn.Call()
         RefreshProbes()
-    ))
+    }
+    ddlRoleSetup.OnEvent("Change", (ctrl, *) => ApplySetupWizardRole(ctrl.Value))
 
     rowCtrls := []
     Loop 6 {
@@ -1215,7 +1243,8 @@ _PreFlightOv(overrides, prop, defaultVal) {
 RunPreFlightRehearsalChecks(cfg, state := "", overrides := "") {
     checks := []
 
-    ; 1. OBS :4455, Transition & Audio Input
+    obsPort := (IsObject(cfg) && cfg.HasOwnProp("ObsWsPort") && Integer(cfg.ObsWsPort) > 0) ? Integer(cfg.ObsWsPort) : 4455
+    ; 1. OBS Port, Transition & Audio Input
     obsOk := !!_PreFlightOv(overrides, "obsConnected", IsObject(state) && state.HasOwnProp("obsConnected") ? state.obsConnected : false)
     studioOn := !!_PreFlightOv(overrides, "studioModeActive", IsObject(state) && state.HasOwnProp("studioModeActive") ? state.studioModeActive : false)
     transHk := _PreFlightOv(overrides, "obsTransitionHotkey", IsObject(cfg) && cfg.HasOwnProp("ObsTransitionHotkey") ? cfg.ObsTransitionHotkey : "None")
@@ -1233,13 +1262,13 @@ RunPreFlightRehearsalChecks(cfg, state := "", overrides := "") {
     }
     transReady := studioOn || (transHk != "" && transHk != "None")
     if (!obsOk)
-        checks.Push({ name: "OBS :4455, Transition & Audio Input", status: "FAIL", detail: "OBS WebSocket (:4455) is not connected." })
+        checks.Push({ name: "OBS :" obsPort ", Transition & Audio Input", status: "FAIL", detail: "OBS WebSocket (:" obsPort ") is not connected." })
     else if (!micFound)
-        checks.Push({ name: "OBS :4455, Transition & Audio Input", status: "WARN", detail: "OBS connected, but target mic '" targetMic "' was not found in inputs." })
+        checks.Push({ name: "OBS :" obsPort ", Transition & Audio Input", status: "WARN", detail: "OBS connected, but target mic '" targetMic "' was not found in inputs." })
     else if (!transReady)
-        checks.Push({ name: "OBS :4455, Transition & Audio Input", status: "WARN", detail: "OBS connected, but Studio Mode & ObsTransitionHotkey are not configured." })
+        checks.Push({ name: "OBS :" obsPort ", Transition & Audio Input", status: "WARN", detail: "OBS connected, but Studio Mode & ObsTransitionHotkey are not configured." })
     else
-        checks.Push({ name: "OBS :4455, Transition & Audio Input", status: "PASS", detail: "OBS :4455 connected, transition & audio input ready." })
+        checks.Push({ name: "OBS :" obsPort ", Transition & Audio Input", status: "PASS", detail: "OBS :" obsPort " connected, transition & audio input ready." })
 
     ; 2. Physical Mic Signal (> 5%)
     defaultPeak := (IsObject(state) && state.HasOwnProp("voicePeak")) ? Number(state.voicePeak) : 0.0
@@ -1383,7 +1412,13 @@ ShowPreFlightRehearsalDialog(cfg, state := "", overrides := "") {
     Theme.RegisterControl(pfGui, btnFixObs, "Button")
     Theme.RegisterControl(pfGui, btnClose, "Button")
     btnFixFw.OnEvent("Click", (*) => (CreateHostBridgeFirewallRule(cfg.HasOwnProp("BridgePort") ? cfg.BridgePort : 4456), RenderPreFlight(RunPreFlightRehearsalChecks(cfg, state, overrides))))
-    btnFixObs.OnEvent("Click", (*) => (cfg.EnableWS := true, cfg.WriteBool("Settings", "EnableWS", true), RenderPreFlight(RunPreFlightRehearsalChecks(cfg, state, overrides))))
+    btnFixObs.OnEvent("Click", (*) => (
+        cfg.EnableWS := true,
+        cfg.WriteBool("Settings", "EnableWS", true),
+        (IsSet(SyncTelemetryBackendsFromConfig) ? SyncTelemetryBackendsFromConfig(cfg, state) : 0),
+        (IsObject(state) && state.HasOwnProp("rebuildTrayFn") && state.rebuildTrayFn ? (state.rebuildTrayFn.Call()) : 0),
+        RenderPreFlight(RunPreFlightRehearsalChecks(cfg, state, overrides))
+    ))
 
     ClosePf(*) {
         if (pfGui._closed)

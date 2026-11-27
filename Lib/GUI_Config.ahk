@@ -2455,7 +2455,8 @@ class OverlayState {
             "dragTimerFn", "breathTimerFn", "_muteAnimTimerFn", "voiceMeterTimerFn", "mutedVoiceTimerFn",
             "coreAudioWatchdogFn", "safetyWatchdogFn", "recTimerFn", "presenterTimerFn",
             "streamTimerFn", "autoDodgeTimerFn", "obsTimerFn", "relayTimerFn",
-            "sceneMarqueeTimerFn", "zoomTimerFn", "releaseSyncTimerFn", "autoProfileTimerFn"
+            "sceneMarqueeTimerFn", "zoomTimerFn", "releaseSyncTimerFn", "autoProfileTimerFn",
+            "_optimisticTimerFn", "_brbCountdownTimerFn", "sceneResetWatchdogFn"
         ]
         stopped := 0
         for _, prop in timerProps {
@@ -2580,7 +2581,7 @@ _BundleJsonUnescape(s) {
 
 _IsBundleSecretProp(prop) {
     pLow := StrLower(String(prop))
-    return (pLow = "obspassword" || pLow = "bridgetoken" || pLow = "sessionpairingcode" || pLow = "internetpairingcode")
+    return (pLow = "obspassword" || pLow = "bridgetoken" || pLow = "sessiontoken" || pLow = "sessionpairingcode" || pLow = "internetpairingcode" || pLow = "kioskpin")
 }
 
 ExportPortableSettingsBundle(cfg, targetPath, includeSecrets := false) {

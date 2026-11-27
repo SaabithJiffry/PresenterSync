@@ -130,6 +130,7 @@ class RemoteConfig {
     SlideTargetMode := "Host"
     KioskPin := ""
     ConfirmBeforeStopRecording := true
+    ExitBrbSafelyMuted := true
     OpacityLevel := 220
     IndicatorScale := 1.0
     FirstRun := true
@@ -360,6 +361,7 @@ class RemoteConfig {
         this.ShowSceneIndicator := this.ReadBool("Appearance", "ShowSceneIndicator", 0)
         this.KioskPin := Trim(this.Read("Settings", "KioskPin", ""))
         this.ConfirmBeforeStopRecording := this.ReadBool("Settings", "ConfirmBeforeStopRecording", 1)
+        this.ExitBrbSafelyMuted := this.ReadBool("Settings", "ExitBrbSafelyMuted", 1)
         this.OpacityLevel := this.ReadInt("Appearance", "OpacityLevel", UIConstants.OPACITY_FROSTED)
         if (this.OpacityLevel < 1 || this.OpacityLevel > 255)
             this.OpacityLevel := UIConstants.OPACITY_FROSTED
@@ -3455,7 +3457,7 @@ ToggleRemotePointerMute(cfg, state, *) {
         ShowCaptureSafeMicroToast("Pointer Mute Control: OFF", UIConstants.TOOLTIP_DURATION_MS)
     }
     BuildRemoteTrayMenu(cfg, state)
-    SetTimer RemoveToolTip, -UIConstants.TOOLTIP_DURATION_MS
+    RemoveToolTip()
 }
 
 ToggleRemoteSuspend(*) {
@@ -3539,7 +3541,7 @@ ExportRemoteSanitizedDiagnostics(cfg, state := "", *) {
     outPath := logDir "\PresenterSync_Remote_Diagnostics_" FormatTime(A_Now, "yyyyMMdd_HHmmss") ".txt"
     secrets := IsSet(DiagnosticLogger) ? DiagnosticLogger._CollectSecrets(cfg) : []
     if (IsObject(cfg)) {
-        for _, prop in ["ObsPassword", "BridgeToken", "SessionPairingCode", "InternetPairingCode"] {
+        for _, prop in ["ObsPassword", "BridgeToken", "SessionToken", "SessionPairingCode", "InternetPairingCode", "KioskPin"] {
             if (cfg.HasOwnProp(prop) && cfg.%prop% != "")
                 secrets.Push(String(cfg.%prop%))
         }
@@ -3774,10 +3776,10 @@ ShowRemoteTracerSummary(cfg, state := "", *) {
 }
 
 ShowRemoteFirstRunWizard(cfg, state := "", *) {
-    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Remote - Quick Start")
-    dlg.MarginX := 18
-    dlg.MarginY := 14
-    Theme.ApplyToWindow(dlg)
+    dlgRes := CreateThemedRemoteDialog("RemoteFirstRunWizard", "PresenterSync Remote - Quick Start", 18, 14, false)
+    if IsObject(dlgRes.existing)
+        return dlgRes.existing
+    dlg := dlgRes.gui
     dlg.SetFont("s11 w700", Theme.UiFont)
     Theme.RegisterControl(dlg, dlg.Add("Text", "xm w420", "3-Step Remote Setup"), "Text")
     dlg.SetFont("s9 w400", Theme.UiFont)
@@ -3788,9 +3790,8 @@ ShowRemoteFirstRunWizard(cfg, state := "", *) {
     btnOk := dlg.Add("Button", "x+12 yp w110 h30", "Done")
     Theme.RegisterControl(dlg, btnConn, "Button", "accent")
     Theme.RegisterControl(dlg, btnOk, "Button")
-    btnConn.OnEvent("Click", (*) => (dlg.Destroy(), ShowRemoteConnectionUI(cfg, state, false)))
-    btnOk.OnEvent("Click", (*) => dlg.Destroy())
-    dlg.OnEvent("Escape", (*) => dlg.Destroy())
+    CloseWizard := BindRemoteDialogClose(dlg, "RemoteFirstRunWizard", false, "", btnOk)
+    btnConn.OnEvent("Click", (*) => (CloseWizard(), ShowRemoteConnectionUI(cfg, state, false)))
     WindowFit.Show(dlg, "AutoSize Center")
     return dlg
 }

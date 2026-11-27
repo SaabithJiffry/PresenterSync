@@ -1179,7 +1179,8 @@ class HostCompanionBridge {
             : ""
         devRole := (IsObject(c) && c.HasOwnProp("role") && c.role != "") ? HostCompanionBridge.NormalizeRole(c.role) : "Presenter"
         devTier := (IsObject(c) && c.HasOwnProp("trustTier") && c.trustTier != "") ? HostCompanionBridge.NormalizeTrustTier(c.trustTier) : "Ephemeral Guest"
-        allowObsFb := (devRole = "Director") || (IsObject(c) && c.HasOwnProp("allowDirectObsFallback") && !!c.allowDirectObsFallback)
+        wsAllowed := (IsObject(this.cfg) && (!this.cfg.HasOwnProp("EnableWS") || this.cfg.EnableWS))
+        allowObsFb := wsAllowed && ((devRole = "Director") || (IsObject(c) && c.HasOwnProp("allowDirectObsFallback") && !!c.allowDirectObsFallback))
         obsField := ""
         if (IsObject(this.cfg) && this.cfg.HasOwnProp("EnableWS") && this.cfg.EnableWS) {
             micName := (this.cfg.HasOwnProp("targetMicName") && Trim(String(this.cfg.targetMicName)) != "")
@@ -1808,11 +1809,15 @@ class HostCompanionBridge {
                     this._SendHttpResponse(c, "404 Not Found", '{"ok":false,"error":"Artifact not found on host"}')
                     return
                 }
-                if (cleanPath = "/update/sha256") {
-                    this._SendHttpResponse(c, "200 OK", FileRead(targetFile, "UTF-8"), "", "text/plain; charset=utf-8")
-                } else {
-                    bin := FileRead(targetFile, "RAW")
-                    this._SendBinaryResponse(c, "200 OK", "application/vnd.android.package-archive", bin, bin.Size)
+                try {
+                    if (cleanPath = "/update/sha256") {
+                        this._SendHttpResponse(c, "200 OK", FileRead(targetFile, "UTF-8"), "", "text/plain; charset=utf-8")
+                    } else {
+                        bin := FileRead(targetFile, "RAW")
+                        this._SendBinaryResponse(c, "200 OK", "application/vnd.android.package-archive", bin, bin.Size)
+                    }
+                } catch as readErr {
+                    this._SendHttpResponse(c, "500 Internal Server Error", '{"ok":false,"error":"' _HB_JsonEscape(readErr.Message) '"}')
                 }
                 return
             }
@@ -1942,7 +1947,8 @@ class HostCompanionBridge {
         mode := this.cfg.HasOwnProp("AudioRoutingMode") ? this.cfg.AudioRoutingMode : 0
         confApp := this.cfg.HasOwnProp("ConferencingApp") ? this.cfg.ConferencingApp : "Zoom"
         isMutedStr := (this.state.HasOwnProp("isMuted") && this.state.isMuted) ? "true" : "false"
-        allowObsFb := (prevRole = "Director") || prevAllowFb
+        wsAllowed := (IsObject(this.cfg) && (!this.cfg.HasOwnProp("EnableWS") || this.cfg.EnableWS))
+        allowObsFb := wsAllowed && ((prevRole = "Director") || prevAllowFb)
         obsPw := (allowObsFb && this.cfg.HasOwnProp("obsPassword")) ? this.cfg.obsPassword : ""
         obsPortVal := _HB_GetObsWsPort(this.cfg)
         micName := this.cfg.HasOwnProp("targetMicName") ? this.cfg.targetMicName : "Mic/Aux"

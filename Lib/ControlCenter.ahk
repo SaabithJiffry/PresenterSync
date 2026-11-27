@@ -56,7 +56,8 @@ BuildLiveStatusInfo(cfg, state := "") {
         modeTag := (cfg.RemoteNetworkMode = "Internet") ? "Internet Mode" : "Smart Mode 2 Relay Bridge"
         remoteHost := modeTag " (" cfg.InternetPairingCode " - " relayStat ")"
     } else {
-        remoteHost := A_ComputerName ".local:4455 (LAN)  |  WS Auth: " (cfg.obsPassword != "" ? "Configured" : "None")
+        obsPort := (IsObject(cfg) && cfg.HasOwnProp("ObsWsPort") && Integer(cfg.ObsWsPort) > 0) ? Integer(cfg.ObsWsPort) : 4455
+        remoteHost := A_ComputerName ".local:" obsPort " (LAN)  |  WS Auth: " (cfg.obsPassword != "" ? "Configured" : "None")
     }
     return {
         ptrMode: ptrMode,
@@ -379,7 +380,7 @@ ShowHelpWindow(cfg, state := "", *) {
         . "Conf Mute / Rec / Pause:`n"
         . "Sector Z Subsystem:"
     normApp := NormalizeConferencingApp(cfg.ConferencingApp)
-    activeConfKey := (normApp = "Teams") ? cfg.TeamsMuteHotkey : ((normApp = "Meet") ? cfg.MeetMuteHotkey : cfg.ZoomMuteHotkey)
+    activeConfKey := (normApp = "Microsoft Teams" || normApp = "Teams") ? cfg.TeamsMuteHotkey : ((normApp = "Google Meet" || normApp = "Meet") ? cfg.MeetMuteHotkey : cfg.ZoomMuteHotkey)
     scCol2 := FormatHK(cfg.PptHotkey) "`n"
         . FormatHK(cfg.WsHotkey) "`n"
         . FormatHK(cfg.ZoomHotkey) "`n"
@@ -1461,7 +1462,7 @@ _Diag_ShouldRedactKey(sectionName, keyName) {
     key := Trim(String(keyName))
     if (RegExMatch(sec, "i)^HostBridgePairedDevices$"))
         return true
-    if (RegExMatch(key, "i)(password|token|secret|pairingcode|sessioncode|apikey|bearer|auth)"))
+    if (RegExMatch(key, "i)(password|token|secret|pairingcode|sessioncode|kioskpin|apikey|bearer|auth)"))
         return true
     return false
 }
@@ -1525,7 +1526,7 @@ SanitizeIniTextForDiagnostics(rawIniText, explicitSecrets := "") {
 BuildSanitizedDiagnosticsReport(cfg, state := "", iniTextOverride := "") {
     secrets := []
     if IsObject(cfg) {
-        for _, propName in ["obsPassword", "ObsPassword", "InternetPairingCode", "SessionPairingCode", "SessionToken"] {
+        for _, propName in ["obsPassword", "ObsPassword", "InternetPairingCode", "SessionPairingCode", "SessionToken", "KioskPin", "kioskPin"] {
             if (cfg.HasOwnProp(propName)) {
                 pv := Trim(String(cfg.%propName%))
                 if (pv != "")

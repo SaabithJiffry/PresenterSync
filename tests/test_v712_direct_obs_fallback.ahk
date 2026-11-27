@@ -84,12 +84,25 @@ AssertTrue(InStr(enterJoined, '"SetCurrentProgramScene"') && InStr(enterJoined, 
 
 wsMock.sent := []
 okExit := ExecuteRemoteLocalStandbyToggle(cfg, st)
-AssertTrue(okExit == true && st.isStandby == false && st.isMuted == false && st.activeScene = "Main Cam", "Standby exit restores original scene (Main Cam) and unmuted state")
+AssertTrue(okExit == true && st.isStandby == false && st.isMuted == true && st.activeScene = "Main Cam", "Standby exit keeps mic safely muted by default and restores original scene (Main Cam)")
 exitJoined := ""
 for _, m in wsMock.sent
     exitJoined .= m "`n"
 AssertTrue(InStr(exitJoined, '"SetCurrentProgramScene"') && InStr(exitJoined, '"sceneName":"Main Cam"'), "Standby exit restores Main Cam")
-AssertTrue(InStr(exitJoined, '"SetInputMute"') && InStr(exitJoined, '"inputMuted":false'), "Standby exit restores SetInputMute(false)")
+AssertTrue(InStr(exitJoined, '"SetInputMute"') && InStr(exitJoined, '"inputMuted":true'), "Standby exit sends SetInputMute(true) by default")
+
+; Opt-out ExitBrbSafelyMuted=false restores prior unmuted state
+cfg.ExitBrbSafelyMuted := false
+st.isMuted := false
+st.isStandby := false
+ExecuteRemoteLocalStandbyToggle(cfg, st)
+wsMock.sent := []
+okExitOptOut := ExecuteRemoteLocalStandbyToggle(cfg, st)
+optOutJoined := ""
+for _, m in wsMock.sent
+    optOutJoined .= m "`n"
+AssertTrue(okExitOptOut == true && st.isStandby == false && st.isMuted == false && st.activeScene = "Main Cam", "Standby exit restores unmuted state when ExitBrbSafelyMuted=false")
+AssertTrue(InStr(optOutJoined, '"SetInputMute"') && InStr(optOutJoined, '"inputMuted":false'), "Standby exit sends SetInputMute(false) when ExitBrbSafelyMuted=false")
 
 ; 4. ExecuteRemoteDirectObsTransition (Studio ON -> TriggerStudioModeTransition, Studio OFF -> SetCurrentProgramScene)
 wsMock.sent := []

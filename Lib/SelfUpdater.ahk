@@ -605,7 +605,7 @@ StartWindowsSelfUpdateDownloadUI(updRes, targetExePath := "") {
 }
 
 ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
-    existing := Theme.FocusExistingWindow("PresenterSync Update Available")
+    existing := Theme.FocusExistingWindow("UpdateAvailablePrompt")
     if IsObject(existing)
         return existing
 
