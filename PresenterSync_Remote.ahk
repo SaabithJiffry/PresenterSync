@@ -21,6 +21,7 @@ ProcessSetPriority "High"
 #Include <Crypto>
 #Include <RemoteBridgeClient>
 #Include <Gdip>
+#Include <QrCode>
 #Include <OBS_Network>
 #Include <GUI_Config>
 #Include <WindowFit>
@@ -4030,14 +4031,55 @@ ShowRemoteFirstRunWizard(cfg, state := "", *) {
     Theme.RegisterControl(dlg, dlg.Add("Text", "xm y+10 w420", "1. Connect to Primary Host (LAN IP or WAN Code) or Direct OBS."), "Text")
     Theme.RegisterControl(dlg, dlg.Add("Text", "xm y+6 w420", "2. Drag the floating Mic Pill anywhere — even onto Monitor 2."), "Text")
     Theme.RegisterControl(dlg, dlg.Add("Text", "xm y+6 w420", "3. Right-click or middle-click the Pill for Quick Deck & Slide controls."), "Text")
-    btnConn := dlg.Add("Button", "xm y+14 w190 h30 Default", "Open Connection Setup")
-    btnOk := dlg.Add("Button", "x+12 yp w110 h30", "Done")
+    btnConn := dlg.Add("Button", "xm y+14 w150 h30 Default", "Open Connection Setup")
+    btnImportWizQr := dlg.Add("Button", "x+8 yp w132 h30", "Import QR Image...")
+    btnOk := dlg.Add("Button", "x+8 yp w96 h30", "Done")
     Theme.RegisterControl(dlg, btnConn, "Button", "accent")
+    Theme.RegisterControl(dlg, btnImportWizQr, "Button")
     Theme.RegisterControl(dlg, btnOk, "Button")
     CloseWizard := BindRemoteDialogClose(dlg, "RemoteFirstRunWizard", false, "", btnOk)
     btnConn.OnEvent("Click", (*) => (CloseWizard(), ShowRemoteConnectionUI(cfg, state, false)))
+    btnImportWizQr.OnEvent("Click", (*) => _ImportQrFromWizard(dlg, CloseWizard, cfg, state))
     WindowFit.Show(dlg, "AutoSize Center")
     return dlg
+}
+
+_ImportQrFromWizard(dlg, closeFn, cfg, state) {
+    imgPath := FileSelect(1, "", "Select PresenterSync Pairing QR Image", "Images (*.png; *.jpg; *.jpeg; *.bmp)")
+    if (imgPath = "")
+        return
+    dec := QrCode.DecodeFromFile(imgPath)
+    if (!dec.ok || dec.text = "") {
+        MsgBox("Could not find a readable PresenterSync QR code inside:`n" imgPath "`n`n(" (dec.HasOwnProp("error") ? dec.error : "Decode error") ")", "QR Import Failed", "Icon!")
+        return
+    }
+    parsed := ParsePairingUri(dec.text)
+    if (!parsed.ok) {
+        MsgBox("Decoded QR code is not a recognized PresenterSync pairing link or code:`n`n" SubStr(dec.text, 1, 140), "Unrecognized QR Payload", "Icon!")
+        return
+    }
+    wantInternet := (parsed.HasOwnProp("mode") && parsed.mode = "internet") || (parsed.host = "" && parsed.wanCode != "")
+    cfg.NetworkMode := wantInternet ? "Internet" : "LAN"
+    if (parsed.host != "")
+        cfg.HostAddress := parsed.host
+    if (IsInteger(parsed.bridgePort) && Integer(parsed.bridgePort) > 0)
+        cfg.BridgePort := String(Integer(parsed.bridgePort))
+    if (IsInteger(parsed.obsPort) && Integer(parsed.obsPort) > 0)
+        cfg.HostPort := String(Integer(parsed.obsPort))
+    if (parsed.code != "")
+        cfg.SessionPairingCode := parsed.code
+    if (parsed.wanCode != "")
+        cfg.InternetPairingCode := parsed.wanCode
+    if (parsed.HasOwnProp("relayBaseUrl") && parsed.relayBaseUrl != "")
+        cfg.RelayBaseUrl := NormalizeRelayBaseUrl(parsed.relayBaseUrl)
+    cfg.FirstRun := false
+    SaveRemoteConnectionSettingsToIni(cfg)
+    closeFn()
+    ShowRemoteConnectionUI(cfg, state, false)
+    if (parsed.HasOwnProp("requiresRelayPassword") && parsed.requiresRelayPassword)
+        TrayTip("Cross-network QR imported — enter your Relay Password in Connection Setup and click Save & Connect.", "QR Imported", 1)
+    else
+        TrayTip("Pairing QR imported! Review fields and click Save & Connect.", "QR Imported", 1)
 }
 
 ShowRemoteAboutUI(cfg := "", state := "", *) {
@@ -4279,11 +4321,13 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     }
     btnPairCode.OnEvent("Click", PairByCodeAction)
 
-    btnTest := dlg.Add("Button", "xm w130 h30 y+8", "Test Connection")
-    btnPasteUri := dlg.Add("Button", "x+8 yp w118 h30", "Paste Pairing URI")
-    btnGuide := dlg.Add("Button", "x+8 yp w96 h30", "Setup Guide")
+    btnTest := dlg.Add("Button", "xm w106 h30 y+8", "Test Conn")
+    btnPasteUri := dlg.Add("Button", "x+6 yp w100 h30", "Paste URI")
+    btnImportQr := dlg.Add("Button", "x+6 yp w112 h30", "Import QR Image...")
+    btnGuide := dlg.Add("Button", "x+6 yp w72 h30", "Guide")
     Theme.RegisterControl(dlg, btnTest, "Button")
     Theme.RegisterControl(dlg, btnPasteUri, "Button")
+    Theme.RegisterControl(dlg, btnImportQr, "Button")
     Theme.RegisterControl(dlg, btnGuide, "Button")
 
     OnProfileSelected(*) {
@@ -4339,12 +4383,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     }
     btnDelProf.OnEvent("Click", DeleteProfileAction)
 
-    PastePairingUriAction(*) {
-        parsed := ParsePairingUri(A_Clipboard)
-        if (!parsed.ok) {
-            statusTxt.Value := "✕ " parsed.error
-            return
-        }
+    ApplyParsedQrPayload(parsed, srcLabel := "pairing URI") {
         if (parsed.host != "")
             editHost.Value := parsed.host
         editBridgePort.Value := parsed.bridgePort
@@ -4355,11 +4394,44 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
             editPw.Value := parsed.obsPass
         if (parsed.wanCode != "")
             editPair.Value := parsed.wanCode
-        ddlNetMode.Choose((parsed.host = "" && parsed.wanCode != "") ? 2 : 1)
+        if (parsed.HasOwnProp("relayBaseUrl") && parsed.relayBaseUrl != "")
+            editRelayUrl.Value := parsed.relayBaseUrl
+        wantInternet := (parsed.HasOwnProp("mode") && parsed.mode = "internet") || (parsed.host = "" && parsed.wanCode != "")
+        ddlNetMode.Choose(wantInternet ? 2 : 1)
         UpdateModeFields()
-        statusTxt.Value := "✓ Parsed pairing URI (" (parsed.host != "" ? parsed.host ":" parsed.bridgePort : parsed.wanCode) ")"
+        rpwHint := (parsed.HasOwnProp("requiresRelayPassword") && parsed.requiresRelayPassword && editPw.Value = "")
+            ? " — Enter Host OBS Password for encrypted WAN Relay!"
+            : ""
+        statusTxt.Value := "✓ Imported " srcLabel " (" (wantInternet && parsed.wanCode != "" ? ("WAN " parsed.wanCode) : (parsed.host != "" ? parsed.host ":" parsed.bridgePort : parsed.wanCode)) ")" rpwHint
+    }
+
+    PastePairingUriAction(*) {
+        parsed := ParsePairingUri(A_Clipboard)
+        if (!parsed.ok) {
+            statusTxt.Value := "✕ " parsed.error
+            return
+        }
+        ApplyParsedQrPayload(parsed, "pairing URI")
+    }
+
+    ImportQrImageAction(*) {
+        imgPath := FileSelect(1, "", "Select PresenterSync Pairing QR Image", "Images (*.png; *.jpg; *.jpeg; *.bmp)")
+        if (imgPath = "")
+            return
+        dec := QrCode.DecodeFromFile(imgPath)
+        if (!dec.ok) {
+            statusTxt.Value := "✕ QR decode failed: " dec.error
+            return
+        }
+        parsed := ParsePairingUri(dec.text)
+        if (!parsed.ok) {
+            statusTxt.Value := "✕ " parsed.error
+            return
+        }
+        ApplyParsedQrPayload(parsed, "QR image")
     }
     btnPasteUri.OnEvent("Click", PastePairingUriAction)
+    btnImportQr.OnEvent("Click", ImportQrImageAction)
 
     btnTest.OnEvent("Click", (*) => TestConnectionAction(dlg, btnTest, editHost.Value, editPort.Value, editPw.Value, statusTxt, (ddlNetMode.Value == 2 ? "Internet" : "LAN"), editPair.Value, editRelayUrl.Value, editBridgePort.Value))
     btnGuide.OnEvent("Click", (*) => ShowRemoteHelpUI(cfg, state))

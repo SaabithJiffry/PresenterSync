@@ -726,12 +726,16 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
         cfg.Write("Settings", "InternetPairingCode", cfg.InternetPairingCode),
         editPair.Value := cfg.InternetPairingCode,
         (IsObject(state) ? UpdateHostInternetRelay(cfg, state) : 0),
+        RefreshQrBitmap(),
+        RefreshWanRelayBadge(),
         TrayTip("New Internet Pairing Code generated.", "Pairing Code Updated", 1)
     ))
 
     OnNetModeChanged(*) {
         newMode := (ddlNetMode.Value == 2) ? "Internet" : "LAN"
         SetRemoteNetworkMode(cfg, state, newMode)
+        RefreshQrBitmap()
+        RefreshWanRelayBadge()
     }
     ddlNetMode.OnEvent("Change", OnNetModeChanged)
 
@@ -801,20 +805,25 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     lblQrHdr.GetPos(, &qhY, , &qhH)
     qrTop := qhY + qhH + 4
 
-    qrUri := BuildHostPairingUri(cfg, endpoints.ips, (IsObject(state) && state.HasOwnProp("activeBridgePort") && state.activeBridgePort > 0) ? state.activeBridgePort : 0)
-    qrRes := QrCode.BuildHBitmap(qrUri, 114)
+    qrUri := BuildHostPairingUri(cfg, endpoints.details, (IsObject(state) && state.HasOwnProp("activeBridgePort") && state.activeBridgePort > 0) ? state.activeBridgePort : 0)
+    qrRes := QrCode.BuildHBitmap(qrUri, 180)
     hQrBmp := qrRes.hBitmap
 
     dlg.SetFont("s9 w700", Theme.UiFont)
-    editSession := dlg.Add("Edit", "x380 y" qrTop " w106 h26 ReadOnly Center", cfg.SessionPairingCode)
+    editSession := dlg.Add("Edit", "x380 y" qrTop " w84 h26 ReadOnly Center", cfg.SessionPairingCode)
     Theme.RegisterControl(dlg, editSession, "Edit", "accent")
     dlg.SetFont("s9 w400", Theme.UiFont)
-    btnCopySession := dlg.Add("Button", "x+4 yp w54 h26", "Copy")
-    btnNewSession := dlg.Add("Button", "x+4 yp w48 h26", "New")
+    btnCopySession := dlg.Add("Button", "x+4 yp w40 h26", "Copy")
+    btnNewSession := dlg.Add("Button", "x+4 yp w36 h26", "New")
     Theme.RegisterControl(dlg, btnCopySession, "Button")
     Theme.RegisterControl(dlg, btnNewSession, "Button")
 
     formatBridgeStatus := (*) => _FormatHostBridgeStatusLine(cfg)
+    _FormatWanRelayBadge() {
+        isWan := (cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet")
+        rcNow := cfg.HasOwnProp("InternetPairingCode") ? cfg.InternetPairingCode : ""
+        return isWan ? ("WAN Relay: Active (" rcNow ")") : ("WAN Relay: Standby (" rcNow ")")
+    }
     _BuildPairedSnapshot() {
         st := GetHostBridgeStatusSummary()
         sig := ""
@@ -825,14 +834,18 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
 
     dlg.SetFont("s8.5 w400", Theme.UiFont)
     lastBridgeTxt := formatBridgeStatus.Call()
-    lblBridgeStatus := dlg.Add("Text", "x380 y+6 w216", lastBridgeTxt)
+    lblBridgeStatus := dlg.Add("Text", "x380 y+6 w164", lastBridgeTxt)
     Theme.RegisterControl(dlg, lblBridgeStatus, "Text", "muted")
-    lblHintDev := dlg.Add("Text", "x380 y+4 w216", "Scan QR from Android Remote, or enter Session Code on LAN.")
+    lblWanBadge := dlg.Add("Text", "x380 y+4 w164", _FormatWanRelayBadge())
+    Theme.RegisterControl(dlg, lblWanBadge, "Text", "accent")
+    lblHintDev := dlg.Add("Text", "x380 y+4 w164", "Scan QR from Android, or save/import QR PNG on Windows/Android.")
     Theme.RegisterControl(dlg, lblHintDev, "Text", "muted")
-    lblHintDev.GetPos(, &hintY, , &hintH)
+    btnSaveQrPng := dlg.Add("Button", "x380 y+8 w164 h26", "Save QR PNG...")
+    Theme.RegisterControl(dlg, btnSaveQrPng, "Button", "accent")
+    btnSaveQrPng.GetPos(, &hintY, , &hintH)
 
-    picQr := dlg.Add("Picture", "x606 y" qrTop " w114 h114 +0x800000", hQrBmp ? ("HBITMAP:" hQrBmp) : "")
-    qrBottom := Max(qrTop + 114, hintY + hintH)
+    picQr := dlg.Add("Picture", "x550 y" qrTop " w180 h180 +0x800000", hQrBmp ? ("HBITMAP:" hQrBmp) : "")
+    qrBottom := Max(qrTop + 180, hintY + hintH)
 
     dlg.SetFont("s9 w600", Theme.UiFont)
     Theme.RegisterControl(dlg, dlg.Add("Text", "x380 y" (qrBottom + 10) " w340", "Paired Devices (Online / Offline):"), "Text")
@@ -892,17 +905,37 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     }
     SetTimer(RefreshBridgeDevices, 1000)
 
+    RefreshWanRelayBadge() {
+        if (!dlg._closed && WinExist("ahk_id " dlg.Hwnd))
+            try lblWanBadge.Value := _FormatWanRelayBadge()
+    }
+
     RefreshQrBitmap() {
-        newUri := BuildHostPairingUri(cfg, endpoints.ips, (IsObject(state) && state.HasOwnProp("activeBridgePort") && state.activeBridgePort > 0) ? state.activeBridgePort : 0)
-        nextQr := QrCode.BuildHBitmap(newUri, 114)
+        newUri := BuildHostPairingUri(cfg, endpoints.details, (IsObject(state) && state.HasOwnProp("activeBridgePort") && state.activeBridgePort > 0) ? state.activeBridgePort : 0)
+        nextQr := QrCode.BuildHBitmap(newUri, 180)
         if (nextQr.hBitmap) {
             oldBmp := hQrBmp
             hQrBmp := nextQr.hBitmap
-            try picQr.Value := "*w114 *h114 HBITMAP:" hQrBmp
+            try picQr.Value := "*w180 *h180 HBITMAP:" hQrBmp
             if (oldBmp)
                 DllCall("DeleteObject", "Ptr", oldBmp)
         }
     }
+
+    _OnSaveQrPngClick(*) {
+        savePath := FileSelect("S16", A_MyDocuments "\PresenterSync_QR_" A_ComputerName ".png", "Save PresenterSync Pairing QR Code", "PNG Image (*.png)")
+        if (savePath = "")
+            return
+        if (SubStr(StrLower(savePath), -3) != ".png")
+            savePath .= ".png"
+        liveUri := BuildHostPairingUri(cfg, endpoints.details, (IsObject(state) && state.HasOwnProp("activeBridgePort") && state.activeBridgePort > 0) ? state.activeBridgePort : 0)
+        svRes := QrCode.SavePng(liveUri, savePath, 1024)
+        if (svRes.ok)
+            TrayTip("Saved 1024x1024 QR PNG to " svRes.path, "QR Code Saved", 1)
+        else
+            TrayTip("Failed to save QR PNG: " svRes.error, "QR Save Error", 3)
+    }
+    btnSaveQrPng.OnEvent("Click", _OnSaveQrPngClick)
 
     _SelectedDeviceEntry() {
         row := lvDevs.GetNext()
@@ -1010,12 +1043,14 @@ ShowRemoteCompanionInfo(cfg, state := "", *) {
     WindowFit.RegisterAnchor(dlg, editWebUrl, {FX: 0.0, FW: 0.42})
     WindowFit.RegisterAnchor(dlg, btnCopyWeb, {FX: 0.42, FW: 0.08})
     WindowFit.RegisterAnchor(dlg, lblQrHdr, {FX: 0.5, FW: 0.5})
-    WindowFit.RegisterAnchor(dlg, editSession, {FX: 0.5, FW: 0.18})
-    WindowFit.RegisterAnchor(dlg, btnCopySession, {FX: 0.68, FW: 0.08})
-    WindowFit.RegisterAnchor(dlg, btnNewSession, {FX: 0.76, FW: 0.08})
-    WindowFit.RegisterAnchor(dlg, picQr, {FX: 0.85, FW: 0.0})
-    WindowFit.RegisterAnchor(dlg, lblBridgeStatus, {FX: 0.5, FW: 0.34})
-    WindowFit.RegisterAnchor(dlg, lblHintDev, {FX: 0.5, FW: 0.34})
+    WindowFit.RegisterAnchor(dlg, editSession, {FX: 0.5, FW: 0.13})
+    WindowFit.RegisterAnchor(dlg, btnCopySession, {FX: 0.63, FW: 0.06})
+    WindowFit.RegisterAnchor(dlg, btnNewSession, {FX: 0.69, FW: 0.06})
+    WindowFit.RegisterAnchor(dlg, picQr, {FX: 0.76, FW: 0.0})
+    WindowFit.RegisterAnchor(dlg, lblBridgeStatus, {FX: 0.5, FW: 0.25})
+    WindowFit.RegisterAnchor(dlg, lblWanBadge, {FX: 0.5, FW: 0.25})
+    WindowFit.RegisterAnchor(dlg, lblHintDev, {FX: 0.5, FW: 0.25})
+    WindowFit.RegisterAnchor(dlg, btnSaveQrPng, {FX: 0.5, FW: 0.25})
     WindowFit.RegisterAnchor(dlg, lvDevs, {FX: 0.5, FW: 0.5, H: 1})
     WindowFit.RegisterAnchor(dlg, btnRenameDev, {FX: 0.5, FW: 0.16, B: 1})
     WindowFit.RegisterAnchor(dlg, btnUnpairDev, {FX: 0.66, FW: 0.17, B: 1})

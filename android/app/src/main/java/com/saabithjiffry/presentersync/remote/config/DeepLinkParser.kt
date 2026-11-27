@@ -13,6 +13,8 @@ data class ParsedConnectionPayload(
     val targetMicName: String = AppConstants.DEFAULT_MIC_NAME,
     val networkMode: NetworkMode = NetworkMode.LAN,
     val internetPairingCode: String = "",
+    val relayBaseUrl: String = "",
+    val requiresRelayPassword: Boolean = false,
     val hostUuid: String = "",
     val hudColorPreset: String = "",
     val customLiveHex: String = "",
@@ -20,13 +22,54 @@ data class ParsedConnectionPayload(
 )
 
 object DeepLinkParser {
+    private val bareWanCodeRegex = Regex("^PS-[A-Z0-9]{4}-[A-Z0-9]{4}$", RegexOption.IGNORE_CASE)
 
     fun parse(rawInput: String): ParsedConnectionPayload? {
         val raw = rawInput.trim()
         if (raw.isEmpty()) return null
 
+        if (bareWanCodeRegex.matches(raw)) {
+            return ParsedConnectionPayload(
+                hostsCsv = "",
+                networkMode = NetworkMode.INTERNET,
+                internetPairingCode = raw.uppercase()
+            )
+        }
+
         if (raw.startsWith("{")) {
             return parseJsonPayload(raw)
+        }
+
+        if (raw.startsWith("http://", ignoreCase = true) || raw.startsWith("https://", ignoreCase = true)) {
+            val uri = runCatching { URI(raw) }.getOrNull() ?: return null
+            val host = uri.host.orEmpty().trim()
+            val queryParams = parseQueryString(uri.rawQuery.orEmpty())
+            val sessionCode = SessionPairingCodeNormalizer.normalize(queryParams["code"].orEmpty())
+            val internetCode = queryParams["rc"].orEmpty()
+                .ifBlank { queryParams["wan"].orEmpty() }
+                .trim()
+                .uppercase()
+            if (sessionCode.isEmpty() && internetCode.isEmpty()) {
+                return null
+            }
+            val bridgePort = uri.port.takeIf { it in 1..65535 } ?: AppConstants.DEFAULT_BRIDGE_PORT
+            val obsPort = queryParams["port"]?.toIntOrNull()?.takeIf { it in 1..65535 }
+                ?: AppConstants.DEFAULT_OBS_PORT
+            val mode = if (queryParams["mode"].orEmpty().equals("internet", ignoreCase = true)) {
+                NetworkMode.INTERNET
+            } else {
+                NetworkMode.LAN
+            }
+            return ParsedConnectionPayload(
+                hostsCsv = host,
+                obsPort = obsPort,
+                bridgePort = bridgePort,
+                sessionCode = sessionCode,
+                networkMode = mode,
+                internetPairingCode = internetCode,
+                relayBaseUrl = queryParams["relay"].orEmpty().trim(),
+                requiresRelayPassword = queryParams["rpw"].orEmpty().let { it == "1" || it.equals("true", ignoreCase = true) }
+            )
         }
 
         if (!raw.startsWith("presentersync://", ignoreCase = true)) {
@@ -82,6 +125,8 @@ object DeepLinkParser {
             targetMicName = mic,
             networkMode = mode,
             internetPairingCode = internetCode,
+            relayBaseUrl = queryParams["relay"].orEmpty().trim(),
+            requiresRelayPassword = queryParams["rpw"].orEmpty().let { it == "1" || it.equals("true", ignoreCase = true) },
             hostUuid = queryParams["uuid"].orEmpty().trim(),
             hudColorPreset = queryParams["preset"].orEmpty().trim(),
             customLiveHex = queryParams["clh"].orEmpty().ifBlank { queryParams["liveHex"].orEmpty() }.trim(),
@@ -118,6 +163,8 @@ object DeepLinkParser {
                 targetMicName = mic,
                 networkMode = mode,
                 internetPairingCode = rc,
+                relayBaseUrl = json.optString("relay", "").trim(),
+                requiresRelayPassword = json.optBoolean("rpw", false) || json.optInt("rpw", 0) == 1,
                 hostUuid = json.optString("uuid", json.optString("hostUuid", "")).trim(),
                 hudColorPreset = json.optString("preset", "").trim(),
                 customLiveHex = json.optString("clh", json.optString("liveHex", "")).trim(),

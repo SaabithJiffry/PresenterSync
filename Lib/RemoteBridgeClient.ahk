@@ -258,8 +258,93 @@ _RBC_UrlEncode(str) {
 
 ParsePairingUri(rawUri) {
     s := Trim(String(rawUri))
+    if (s = "")
+        return { ok: false, error: "Empty pairing payload" }
+
+    ; 1. Bare WAN pairing code (PS-XXXX-XXXX)
+    if (RegExMatch(s, "i)^PS-[A-Z0-9]{4}-[A-Z0-9]{4}$")) {
+        return {
+            ok: true,
+            host: "",
+            bridgePort: "4456",
+            code: "",
+            obsPort: "4455",
+            obsPass: "",
+            wanCode: StrUpper(s),
+            mode: "internet",
+            relayBaseUrl: "",
+            requiresRelayPassword: false
+        }
+    }
+
+    ; 2. JSON object payload
+    if (SubStr(s, 1, 1) = "{" && IsSet(JsonCodec)) {
+        try {
+            obj := JsonCodec.Parse(s, &jErr)
+            if (IsObject(obj) && (obj is Map)) {
+                jHost := obj.Has("hosts") ? Trim(String(obj["hosts"])) : (obj.Has("host") ? Trim(String(obj["host"])) : "")
+                jCode := obj.Has("code") ? Trim(String(obj["code"])) : (obj.Has("session") ? Trim(String(obj["session"])) : "")
+                jWan := obj.Has("rc") ? Trim(String(obj["rc"])) : (obj.Has("wan") ? Trim(String(obj["wan"])) : (obj.Has("relayCode") ? Trim(String(obj["relayCode"])) : ""))
+                if (jHost = "" && jWan = "" && jCode = "")
+                    return { ok: false, error: "JSON payload missing host, session code, or WAN code" }
+                jBp := obj.Has("bp") ? String(obj["bp"]) : (obj.Has("bridgePort") ? String(obj["bridgePort"]) : "4456")
+                jOp := obj.Has("port") ? String(obj["port"]) : (obj.Has("obsPort") ? String(obj["obsPort"]) : "4455")
+                jMode := obj.Has("mode") ? StrLower(Trim(String(obj["mode"]))) : ((jHost = "" && jCode = "" && jWan != "") ? "internet" : "lan")
+                jRelay := obj.Has("relay") ? Trim(String(obj["relay"])) : ""
+                jRpw := (obj.Has("rpw") && (obj["rpw"] == 1 || obj["rpw"] == true || obj["rpw"] = "1" || StrLower(String(obj["rpw"])) = "true"))
+                return {
+                    ok: true,
+                    host: jHost,
+                    bridgePort: (IsInteger(jBp) && Integer(jBp) >= 1 && Integer(jBp) <= 65535) ? String(Integer(jBp)) : "4456",
+                    code: StrUpper(jCode),
+                    obsPort: (IsInteger(jOp) && Integer(jOp) >= 1 && Integer(jOp) <= 65535) ? String(Integer(jOp)) : "4455",
+                    obsPass: "",
+                    wanCode: StrUpper(jWan),
+                    mode: (jMode = "internet") ? "internet" : "lan",
+                    relayBaseUrl: jRelay,
+                    requiresRelayPassword: jRpw
+                }
+            }
+        }
+    }
+
+    ; 3. Web Remote URL (http(s)://<host>[:port]/?code=XXX-XXX)
+    if (RegExMatch(s, "i)^https?://([^/:?#]+)(?::(\d{1,5}))?([^?#]*)(?:\?(.*))?$", &hm)) {
+        hHost := Trim(hm[1])
+        hPort := (hm[2] != "" && IsInteger(hm[2]) && Integer(hm[2]) >= 1 && Integer(hm[2]) <= 65535) ? String(Integer(hm[2])) : "4456"
+        hq := (hm.Count >= 4) ? hm[4] : ""
+        hp := Map()
+        for _, pair in StrSplit(hq, "&") {
+            if (pair = "")
+                continue
+            eq := InStr(pair, "=")
+            k := StrLower(Trim(_RBC_UrlDecode(eq > 0 ? SubStr(pair, 1, eq - 1) : pair)))
+            v := (eq > 0) ? Trim(_RBC_UrlDecode(SubStr(pair, eq + 1))) : ""
+            if (k != "")
+                hp[k] := v
+        }
+        hCode := hp.Has("code") ? Trim(hp["code"]) : ""
+        hWan := hp.Has("rc") ? Trim(hp["rc"]) : (hp.Has("wan") ? Trim(hp["wan"]) : "")
+        if (hCode = "" && hWan = "")
+            return { ok: false, error: "HTTP URL missing PresenterSync ?code= or ?rc= pairing parameter" }
+        hMode := hp.Has("mode") && StrLower(Trim(hp["mode"])) = "internet" ? "internet" : "lan"
+        return {
+            ok: true,
+            host: hHost,
+            bridgePort: hPort,
+            code: StrUpper(hCode),
+            obsPort: (hp.Has("port") && IsInteger(hp["port"]) && Integer(hp["port"]) >= 1 && Integer(hp["port"]) <= 65535) ? String(Integer(hp["port"])) : "4455",
+            obsPass: "",
+            wanCode: StrUpper(hWan),
+            mode: hMode,
+            relayBaseUrl: hp.Has("relay") ? Trim(hp["relay"]) : "",
+            requiresRelayPassword: (hp.Has("rpw") && (hp["rpw"] = "1" || StrLower(hp["rpw"]) = "true"))
+        }
+    }
+
+    ; 4. Native presentersync://pair or presentersync://connect URI
     if (!RegExMatch(s, "i)^presentersync://(pair|connect)/?(?:\?(.*))?$", &m))
-        return { ok: false, error: "Invalid pairing URI (expected presentersync://pair or presentersync://connect)" }
+        return { ok: false, error: "Unrecognized QR / pairing URI (expected presentersync://, Web Remote URL, or PS-XXXX-XXXX)" }
 
     params := Map()
     q := (m.Count >= 2) ? m[2] : ""
@@ -286,6 +371,10 @@ ParsePairingUri(rawUri) {
     codeVal := params.Has("code") ? params["code"] : (params.Has("session") ? params["session"] : "")
     obsPassVal := params.Has("obspass") ? params["obspass"] : (params.Has("pw") ? params["pw"] : "")
     wanVal := params.Has("wan") ? params["wan"] : (params.Has("rc") ? params["rc"] : (params.Has("pair") ? params["pair"] : (params.Has("internet") ? params["internet"] : "")))
+    modeRaw := params.Has("mode") ? StrLower(Trim(params["mode"])) : ""
+    modeVal := (modeRaw = "internet" || (modeRaw = "" && hostVal = "" && codeVal = "" && wanVal != "")) ? "internet" : "lan"
+    relayVal := params.Has("relay") ? Trim(params["relay"]) : ""
+    rpwVal := (params.Has("rpw") && (params["rpw"] = "1" || StrLower(params["rpw"]) = "true"))
 
     if (hostVal = "" && wanVal = "" && codeVal = "")
         return { ok: false, error: "Pairing URI missing host, session code, or WAN code" }
@@ -296,10 +385,13 @@ ParsePairingUri(rawUri) {
         ok: true,
         host: hostVal,
         bridgePort: bPort,
-        code: codeVal,
+        code: StrUpper(codeVal),
         obsPort: oPort,
         obsPass: obsPassVal,
-        wanCode: wanVal
+        wanCode: StrUpper(wanVal),
+        mode: modeVal,
+        relayBaseUrl: relayVal,
+        requiresRelayPassword: rpwVal
     }
 }
 

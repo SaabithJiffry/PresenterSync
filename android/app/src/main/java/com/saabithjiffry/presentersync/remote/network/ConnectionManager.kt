@@ -1174,6 +1174,8 @@ class ConnectionManager(
     ): SessionOutcome {
         val done = kotlinx.coroutines.CompletableDeferred<SessionOutcome>()
         var handshakeTimeoutJob: Job? = null
+        var firstSyncWatchdogJob: Job? = null
+        val receivedFirstSync = java.util.concurrent.atomic.AtomicBoolean(false)
         val prefix = if (isFallback) "Relay Bridge" else "Internet"
         val display = "$prefix (${cfg.internetPairingCode})"
         val client = RelayClient(
@@ -1193,9 +1195,23 @@ class ConnectionManager(
                     if (FailoverPolicy.canRepromoteToLan(cfg, isFallback)) {
                         startLanRepromotionMonitor(gen)
                     }
+                    firstSyncWatchdogJob?.cancel()
+                    firstSyncWatchdogJob = scope.launch {
+                        delay(6000L)
+                        if (gen == generation.get() && !receivedFirstSync.get() && _uiState.value.channelType == ChannelType.WAN_RELAY) {
+                            val warnMsg = if (cfg.obsPassword.isBlank()) {
+                                "Relay connected — no host sync after 6s. Enter Host OBS Password if enabled, or verify Host WAN Relay."
+                            } else {
+                                "Relay connected — no host sync after 6s. Verify Host OBS Password and WAN Relay mode match."
+                            }
+                            DiagnosticLogger.recordBreadcrumb("Relay", "FirstSyncWatchdog6s", warnMsg)
+                            _events.tryEmit(RemoteEvent.ToastMessage(warnMsg))
+                        }
+                    }
                 }
 
                 override fun onFrameReceived() {
+                    receivedFirstSync.set(true)
                     if (gen == generation.get()) {
                         markRxActivity()
                     }
@@ -1203,6 +1219,7 @@ class ConnectionManager(
 
                 override fun onRelayAuthFailed() {
                     handshakeTimeoutJob?.cancel()
+                    firstSyncWatchdogJob?.cancel()
                     if (gen == generation.get()) {
                         transitionToAuthFailed("Internet Relay authentication failed. Check password.")
                     }
@@ -1210,6 +1227,7 @@ class ConnectionManager(
                 }
 
                 override fun onRelayMuteState(muted: Boolean) {
+                    receivedFirstSync.set(true)
                     if (gen != generation.get()) return
                     if (!_uiState.value.connected) {
                         transitionToConnected(ChannelType.WAN_RELAY, display, isFallback = isFallback)
@@ -1218,6 +1236,7 @@ class ConnectionManager(
                 }
 
                 override fun onRelayTelemetryState(telemetry: RelayTelemetryState) {
+                    receivedFirstSync.set(true)
                     if (gen != generation.get()) return
                     applyBridgeTelemetry(
                         gen,
@@ -1264,6 +1283,7 @@ class ConnectionManager(
 
                 override fun onRelayDisconnected(reason: String) {
                     handshakeTimeoutJob?.cancel()
+                    firstSyncWatchdogJob?.cancel()
                     cancelSessionJobs(includePresenterTimer = true, includeRecTicker = false, includeRepromote = false)
                     if (gen == generation.get()) {
                         transitionToDisconnected(clearSessionTelemetry = true, preserveAuthFailed = true)
@@ -1289,6 +1309,7 @@ class ConnectionManager(
         return try {
             done.await()
         } finally {
+            firstSyncWatchdogJob?.cancel()
             relayTimeoutJob.cancel()
             cancelSessionJobs(includeRecTicker = false)
             client.close()
@@ -2129,6 +2150,12 @@ class ConnectionManager(
                 targetMicName = payload.targetMicName.ifBlank { prev.targetMicName },
                 sessionPairingCode = payload.sessionCode.ifBlank { prev.sessionPairingCode },
                 internetPairingCode = payload.internetPairingCode.ifBlank { prev.internetPairingCode },
+                relayBaseUrl = if (payload.relayBaseUrl.isNotBlank()) {
+                    RelayCrypto.normalizeRelayBaseUrl(payload.relayBaseUrl)
+                } else {
+                    prev.relayBaseUrl
+                },
+                enableRelayFallback = if (payload.internetPairingCode.isNotBlank()) true else prev.enableRelayFallback,
                 pairedHostUuid = payload.hostUuid.ifBlank { prev.pairedHostUuid },
                 hudColorPreset = if (payload.hudColorPreset.isNotBlank()) {
                     HudColorPalettes.normalize(payload.hudColorPreset)
@@ -2148,6 +2175,8 @@ class ConnectionManager(
                 firstRun = false
             )
         }
+        val effectivePw = payload.obsPassword.ifEmpty { configStore.current.obsPassword }
+        val needsPwPrompt = payload.requiresRelayPassword && effectivePw.isBlank() && payload.internetPairingCode.isNotBlank()
         if (payload.networkMode == NetworkMode.LAN && payload.sessionCode.isNotBlank()) {
             val res = pairByCode(
                 codeInput = payload.sessionCode,
@@ -2159,13 +2188,25 @@ class ConnectionManager(
             if (res.startsWith("✓")) {
                 return res
             }
+            val isExplicitAuthError = res.contains("401") || res.contains("invalid", ignoreCase = true) || res.contains("locked", ignoreCase = true)
             reconnectNow()
+            if (!isExplicitAuthError && payload.internetPairingCode.isNotBlank()) {
+                return if (needsPwPrompt) {
+                    "⚠ Host uses an OBS Password — enter it to unlock encrypted WAN Relay (${payload.internetPairingCode})."
+                } else {
+                    "✓ LAN unreachable — switched to WAN Relay (${payload.internetPairingCode})."
+                }
+            }
             val detail = res.removePrefix("✕ ").trim()
             return "✓ Loaded QR host profile (${payload.hostsCsv}); connecting directly ($detail)."
         }
         reconnectNow()
         return if (payload.networkMode == NetworkMode.INTERNET) {
-            "✓ Loaded Internet Relay profile (${payload.internetPairingCode}). Connecting..."
+            if (needsPwPrompt) {
+                "⚠ Host uses an OBS Password — enter it to unlock encrypted WAN Relay (${payload.internetPairingCode})."
+            } else {
+                "✓ Loaded Internet Relay profile (${payload.internetPairingCode}). Connecting..."
+            }
         } else {
             "✓ Loaded host profile (${payload.hostsCsv}:${payload.obsPort}). Connecting..."
         }

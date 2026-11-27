@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.material3.AlertDialog
@@ -13,8 +15,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import com.saabithjiffry.presentersync.remote.config.PairingUriBuilder
+import com.saabithjiffry.presentersync.remote.config.QrGalleryStorage
 import com.saabithjiffry.presentersync.remote.network.DualEndpointProbe
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -1138,15 +1143,46 @@ private fun SharePairingQrDialog(
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    var saveFeedback by remember { mutableStateOf<String?>(null) }
+    var pendingPngBytes by remember { mutableStateOf<ByteArray?>(null) }
+
+    val saveDocLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("image/png")
+    ) { uri ->
+        val bytes = pendingPngBytes
+        pendingPngBytes = null
+        if (uri != null && bytes != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(bytes)
+                    out.flush()
+                }
+            }.onSuccess {
+                saveFeedback = "Saved high-res QR PNG."
+                Toast.makeText(context, "Saved QR PNG", Toast.LENGTH_SHORT).show()
+            }.onFailure { err ->
+                saveFeedback = "Save failed: ${err.message ?: "unknown error"}"
+            }
+        }
+    }
+
     val qrBitmap = remember(shareUri) {
         runCatching {
-            val matrix = QRCodeWriter().encode(shareUri, BarcodeFormat.QR_CODE, 420, 420)
-            Bitmap.createBitmap(420, 420, Bitmap.Config.ARGB_8888).apply {
+            val hints = mapOf(
+                EncodeHintType.CHARACTER_SET to "UTF-8",
+                EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
+                EncodeHintType.MARGIN to 4
+            )
+            val matrix = QRCodeWriter().encode(shareUri, BarcodeFormat.QR_CODE, 420, 420, hints)
+            val pixels = IntArray(420 * 420)
+            for (y in 0 until 420) {
+                val off = y * 420
                 for (x in 0 until 420) {
-                    for (y in 0 until 420) {
-                        setPixel(x, y, if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
-                    }
+                    pixels[off + x] = if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE
                 }
+            }
+            Bitmap.createBitmap(420, 420, Bitmap.Config.ARGB_8888).apply {
+                setPixels(pixels, 0, 420, 0, 0, 420, 420)
             }
         }.getOrNull()
     }
@@ -1172,14 +1208,41 @@ private fun SharePairingQrDialog(
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (saveFeedback != null) {
+                    Text(
+                        text = saveFeedback.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         },
         confirmButton = {
-            Button(onClick = {
-                clipboard.setText(AnnotatedString(shareUri))
-                Toast.makeText(context, "Pairing URI copied", Toast.LENGTH_SHORT).show()
-            }) {
-                Text("Copy URI")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    when (val res = QrGalleryStorage.saveQrToGallery(context, shareUri)) {
+                        is QrGalleryStorage.SaveResult.SavedToGallery -> {
+                            saveFeedback = "Saved to ${res.displayName}"
+                            Toast.makeText(context, "Saved QR to ${res.displayName}", Toast.LENGTH_SHORT).show()
+                        }
+                        is QrGalleryStorage.SaveResult.RequiresDocumentPicker -> {
+                            pendingPngBytes = res.pngBytes
+                            saveDocLauncher.launch(res.suggestedName)
+                        }
+                        is QrGalleryStorage.SaveResult.Failed -> {
+                            saveFeedback = res.reason
+                            Toast.makeText(context, res.reason, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }) {
+                    Text("Save PNG")
+                }
+                Button(onClick = {
+                    clipboard.setText(AnnotatedString(shareUri))
+                    Toast.makeText(context, "Pairing URI copied", Toast.LENGTH_SHORT).show()
+                }) {
+                    Text("Copy URI")
+                }
             }
         },
         dismissButton = {

@@ -2977,17 +2977,49 @@ BuildHostPairingUri(cfg, candidateIps := "", bridgePortOverride := 0) {
         hosts.Push(clean)
     }
 
+    nonVirt := []
+    virt := []
     if IsObject(candidateIps) {
-        for ep in candidateIps
-            PushHost(ep)
+        for ep in candidateIps {
+            if (IsObject(ep) && ep.HasOwnProp("ip")) {
+                if (ep.HasOwnProp("isVirtual") && ep.isVirtual)
+                    virt.Push(ep.ip)
+                else
+                    nonVirt.Push(ep.ip)
+            } else {
+                nonVirt.Push(ep)
+            }
+        }
     } else if (Type(candidateIps) = "String" && candidateIps != "") {
         for part in StrSplit(candidateIps, ",")
-            PushHost(part)
+            nonVirt.Push(part)
+    } else if (IsSet(GetLocalNetworkEndpoints)) {
+        try {
+            eps := GetLocalNetworkEndpoints(false)
+            if (IsObject(eps) && eps.HasOwnProp("details")) {
+                for ep in eps.details {
+                    if (ep.HasOwnProp("isVirtual") && ep.isVirtual)
+                        virt.Push(ep.ip)
+                    else
+                        nonVirt.Push(ep.ip)
+                }
+            }
+        }
+    }
+    for ep in nonVirt {
+        if (hosts.Length >= 4)
+            break
+        PushHost(ep)
+    }
+    for ep in virt {
+        if (hosts.Length >= 4)
+            break
+        PushHost(ep)
     }
     PushHost(A_ComputerName ".local")
 
     hostStr := ""
-    limit := Min(hosts.Length, 12)
+    limit := Min(hosts.Length, 5)
     Loop limit {
         hostStr .= (A_Index > 1 ? "," : "") hosts[A_Index]
     }
@@ -3001,30 +3033,39 @@ BuildHostPairingUri(cfg, candidateIps := "", bridgePortOverride := 0) {
         bridgePort := Integer(AppState.activeBridgePort)
     if (bridgePort <= 0)
         bridgePort := (IsObject(cfg) && cfg.HasOwnProp("BridgePort")) ? Integer(cfg.BridgePort) : 4456
-    sessCode := (IsObject(cfg) && cfg.HasOwnProp("SessionPairingCode")) ? cfg.SessionPairingCode : ""
-    micName := (IsObject(cfg) && cfg.HasOwnProp("targetMicName")) ? cfg.targetMicName : "Mic/Aux"
-    netMode := (IsObject(cfg) && cfg.HasOwnProp("RemoteNetworkMode") && cfg.RemoteNetworkMode = "Internet") ? "internet" : "lan"
-    rc := (IsObject(cfg) && cfg.HasOwnProp("InternetPairingCode")) ? cfg.InternetPairingCode : ""
+    sessCode := (IsObject(cfg) && cfg.HasOwnProp("SessionPairingCode")) ? Trim(String(cfg.SessionPairingCode)) : ""
+    micName := (IsObject(cfg) && cfg.HasOwnProp("targetMicName")) ? Trim(String(cfg.targetMicName)) : "Mic/Aux"
+    netMode := (IsObject(cfg) && ((cfg.HasOwnProp("RemoteNetworkMode") && StrLower(cfg.RemoteNetworkMode) = "internet") || (cfg.HasOwnProp("NetworkMode") && StrLower(cfg.NetworkMode) = "internet"))) ? "internet" : "lan"
+    rc := (IsObject(cfg) && cfg.HasOwnProp("InternetPairingCode")) ? Trim(String(cfg.InternetPairingCode)) : ""
+    relayBase := IsSet(GetEffectiveRelayBaseUrl) ? GetEffectiveRelayBaseUrl(cfg) : ((IsObject(cfg) && cfg.HasOwnProp("RelayBaseUrl")) ? Trim(String(cfg.RelayBaseUrl)) : "https://ntfy.sh")
+    hasObsPw := (IsObject(cfg) && cfg.HasOwnProp("obsPassword") && cfg.obsPassword != "")
     uuid := EnsureHostUuid(cfg)
     preset := (IsObject(cfg) && cfg.HasOwnProp("HudColorPreset")) ? cfg.HudColorPreset : "Standard"
     cLive := (IsObject(cfg) && cfg.HasOwnProp("CustomLiveHex")) ? cfg.CustomLiveHex : "107C10"
     cMuted := (IsObject(cfg) && cfg.HasOwnProp("CustomMutedHex")) ? cfg.CustomMutedHex : "C42B1C"
 
     uri := "presentersync://connect?hosts=" UriEncodeComponent(hostStr)
-        . "&port=" obsPort
-        . "&bp=" bridgePort
         . "&code=" UriEncodeComponent(sessCode)
-        . "&mic=" UriEncodeComponent(micName)
         . "&mode=" netMode
-    if (uuid != "")
-        uri .= "&uuid=" UriEncodeComponent(uuid)
+    if (obsPort != 4455)
+        uri .= "&port=" obsPort
+    if (bridgePort != 4456)
+        uri .= "&bp=" bridgePort
+    if (micName != "" && micName != "Mic/Aux")
+        uri .= "&mic=" UriEncodeComponent(micName)
     if (rc != "")
         uri .= "&rc=" UriEncodeComponent(rc)
+    if (relayBase != "" && StrLower(RTrim(relayBase, "/")) != "https://ntfy.sh")
+        uri .= "&relay=" UriEncodeComponent(relayBase)
+    if (hasObsPw)
+        uri .= "&rpw=1"
+    if (uuid != "")
+        uri .= "&uuid=" UriEncodeComponent(uuid)
     if (preset != "" && preset != "Standard")
         uri .= "&preset=" UriEncodeComponent(preset)
-    if (cLive != "")
+    if (cLive != "" && StrUpper(cLive) != "107C10")
         uri .= "&clh=" UriEncodeComponent(cLive)
-    if (cMuted != "")
+    if (cMuted != "" && StrUpper(cMuted) != "C42B1C")
         uri .= "&cmh=" UriEncodeComponent(cMuted)
     return uri
 }
