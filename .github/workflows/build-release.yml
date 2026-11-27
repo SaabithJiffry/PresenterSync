@@ -113,6 +113,12 @@ jobs:
             "tests\test_multi_remote.ahk",
             "tests\test_remote_audit.ahk",
             "tests\test_remote_live_ops.ahk",
+            "tests\test_v1020_audit_hardening.ahk",
+            "tests\test_v1020_zoom_uia_telemetry.ahk",
+            "tests\test_v1020_responsive_windowfit.ahk",
+            "tests\test_v1020_source_scene_reset.ahk",
+            "tests\test_v1020_grouped_remote_hud.ahk",
+            "tests\test_v1020_qr_crossnet_codec.ahk",
             "tests\test_master_suite.ahk"
           )
           foreach ($suite in $suites) {
@@ -169,6 +175,8 @@ jobs:
             "tests\test_e2e_05_ptt_doubletap_mutual_exclusion.py",
             "tests\test_e2e_06_diagnostics_watchdogs_cli_relay_render.py",
             "tests\test_v901_web_remote_js_e2e.py",
+            "tests\test_v1020_scene_reset_e2e.py",
+            "tests\test_v1020_web_remote_responsive_pip.py",
             "tests\test_udp_discovery_e2e.py",
             "tests\test_windows_self_updater_e2e.py"
           )
@@ -201,10 +209,19 @@ jobs:
         run: |
           $verMatch = Select-String -Path "PresenterSync.ahk" -Pattern ";\s*Version:\s*([0-9]+\.[0-9]+\.[0-9]+)" | Select-Object -First 1
           $cfgMatch = Select-String -Path "Lib\GUI_Config.ahk" -Pattern 'APP_VERSION\s*:=\s*"([0-9]+\.[0-9]+\.[0-9]+)"' | Select-Object -First 1
-          if (-not $verMatch -or -not $cfgMatch) { Write-Error "Failed to parse APP_VERSION from PresenterSync.ahk or Lib\GUI_Config.ahk"; exit 1 }
+          $remMatch = Select-String -Path "PresenterSync_Remote.ahk" -Pattern ";\s*Version:\s*([0-9]+\.[0-9]+\.[0-9]+)" | Select-Object -First 1
+          $grdMatch = Select-String -Path "android\app\build.gradle.kts" -Pattern 'versionName\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"' | Select-Object -First 1
+          $ktMatch = Select-String -Path "android\app\src\main\java\com\saabithjiffry\presentersync\remote\config\AppConstants.kt" -Pattern 'APP_VERSION\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"' | Select-Object -First 1
+          if (-not $verMatch -or -not $cfgMatch -or -not $remMatch -or -not $grdMatch -or -not $ktMatch) { Write-Error "Failed to parse version across Windows/Android sources"; exit 1 }
           $verA = $verMatch.Matches[0].Groups[1].Value
           $verB = $cfgMatch.Matches[0].Groups[1].Value
-          if ($verA -ne $verB) { Write-Error "Version mismatch: PresenterSync.ahk='$verA' vs Lib\GUI_Config.ahk='$verB'"; exit 1 }
+          $verR = $remMatch.Matches[0].Groups[1].Value
+          $verG = $grdMatch.Matches[0].Groups[1].Value
+          $verK = $ktMatch.Matches[0].Groups[1].Value
+          if ($verA -ne $verB -or $verA -ne $verR -or $verA -ne $verG -or $verA -ne $verK) {
+            Write-Error "Cross-platform version mismatch: Host='$verA' GUI_Config='$verB' Remote='$verR' Gradle='$verG' AppConstants='$verK'"
+            exit 1
+          }
           $expectedPeVer = "$verA.0"
           foreach ($exe in @("dist\PresenterSync.exe", "dist\PresenterSync_Remote.exe")) {
             if (-not (Test-Path $exe)) { Write-Error "Missing $exe"; exit 1 }

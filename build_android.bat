@@ -27,11 +27,19 @@ echo  PresenterSync Android Remote Build Script
 echo ===========================================================================
 echo JAVA_HOME=%JAVA_HOME%
 
+echo.
+echo [0/2] Verifying cross-platform version parity...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$c = (Select-String -Path 'Lib\GUI_Config.ahk' -Pattern 'APP_VERSION\s*:=\s*\"([^\"]+)\"').Matches[0].Groups[1].Value; $g = (Select-String -Path 'android\app\build.gradle.kts' -Pattern 'versionName\s*=\s*\"([^\"]+)\"').Matches[0].Groups[1].Value; $k = (Select-String -Path 'android\app\src\main\java\com\saabithjiffry\presentersync\remote\config\AppConstants.kt' -Pattern 'APP_VERSION\s*=\s*\"([^\"]+)\"').Matches[0].Groups[1].Value; if ($c -ne $g -or $c -ne $k) { Write-Error \"Version mismatch: GUI_Config='$c' build.gradle='$g' AppConstants='$k'\"; exit 1 }; Write-Host \"[OK] Version parity confirmed: $c\""
+if %errorlevel% neq 0 (
+    set "BUILD_EXIT=1"
+    goto :done
+)
+
 pushd "%ANDROID_DIR%" || exit /b 1
 
 echo.
-echo [1/2] Running JVM Unit Tests + Release APK Build...
-call gradlew.bat testDebugUnitTest assembleRelease --no-daemon --stacktrace -PrequireReleaseSigning=true
+echo [1/2] Running JVM Unit Tests, Lint, + Release APK Build...
+call gradlew.bat testDebugUnitTest lintDebug assembleRelease --no-daemon --stacktrace -PrequireReleaseSigning=true
 set "BUILD_EXIT=%errorlevel%"
 if not "%BUILD_EXIT%"=="0" (
     echo [ERROR] Android Gradle build/test failed with exit code %BUILD_EXIT%.

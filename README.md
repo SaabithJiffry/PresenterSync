@@ -8,14 +8,14 @@
 
 ---
 
-## Core Capabilities (v10.1.1)
+## Core Capabilities (v10.2.0)
 
-### 0. What's New in v10.1.1 (Hotfix + v10.1.0 Baseline)
-* **Live Operator Console, Mid-Session Policy Sync & Role-Scoped UI Parity (`v10.1.1`):** Fixed Operator Console `"Toggle OBS Fallback"` (`SetDeviceDirectObsFallback`), added immediate live `obs_fallback_update` / `role` push when Host changes device policy or disables OBS WebSocket (`C3`), respected top-level `allowDirectObsFallback` across Windows Remote, Android, and Web Remote, preserved Web Remote `#brbBtn`/`#micBtn` role classes across state updates, and wired role parsing + Touch Deck scoping + capture-excluded profile modal into Windows Remote (`P0`/`P1`/`P2`).
-* **Active Scene Reset (`700ms` / `1400ms` Hold) & Always-Visible Reconnect:** Long-press the Scene pill (or tap `Reset Scene` in Web/Podium Deck) to safely pulse currently enabled capture/camera sources without exposing hidden sources (`0.25s` non-blocking restore), plus a constant **Reconnect Host** action across Android, Windows Remote, and Web Remote.
-* **Independent Remote Scene HUD & Phone Overlay Precision:** Toggle a standalone scrolling **Active Program Scene** pill (`ShowSceneIndicator` / `[ScenePosition]`) across Windows Remote, Android Smartboards/Phones, and Browser Web Remote, paired with DPI-aware palm rejection, `fitInsetsTypes = 0` cutout-safe coordinates, and `14dp` drag-slop snap-on-release.
-* **Podium Deck & Director Sheet Redesign:** Live Active Scene card with Preview subtitle, 2-row balanced Timer presets, responsive 10-screen phone/Smartboard spacing, real `Got It ✓` nudge ACKs, and accurate `"solo_a"`/`"solo_b"`/`"both"` Audio Handoff.
-* **Security, RBAC & Update Fail-Closed Hardening:** Fail-closed `SHA256SUMS.txt` verification (`SelfUpdater` & `ApkSelfInstaller`), chunked LAN APK serving (`>= 16 MB`), capture-excluded Kiosk PIN lock across Windows Primary/Remote & Android, Presenter scene permissions with strict Direct OBS credential gating, `PSGCM` log scrubbing, and full `v10.0.0` core (`Zero-Latency Hot Paths`, `Protocol v2`, `DPAPI`/`Keystore` vaults, `Operator Console`).
+### 0. What's New in v10.2.0
+* **Modern Zoom Workplace Monitoring & 4-Program Telemetry Parity:** Upgraded Win32 UIA node discovery (sub-`12ms` bounded cache sweep + `ZPContentViewWndClass` / `ZPChatWndClass` / `ZPFloatVideoWndClass` support) for reliable Mute, Recording, and Unread Chat badges across Windows Primary, Windows Remote, Android Remote, and Browser Web Remote.
+* **Unified Cross-Network QR Linking, CameraX Focus & Offline QR Image Import/Export:** Compact QR payloads encode WAN Relay metadata (`mode`, `rc`, custom `relay`, non-secret `rpw=1` flag — strictly zero passwords `C3`) with seamless LAN-to-WAN failover and `6s` sync watchdog, CameraX `1280x720` viewfinder with Tap-to-Focus reticle / `1x`–`2x` pinch zoom / torch toggle / zero-permission Gallery import & `1024x1024` PNG save on Android, plus zero-dependency pure AHK GDI+ offline QR image decoding (`Import QR Image...`) and `1024x1024` `"Save QR PNG..."` on Windows.
+* **True Source-Level OBS Scene Reset & Grouped Mic + Scene HUD:** Recursive active-source reset across Groups, nested scenes, `dshow_input` (`GetInputSettings` pre-check + `+1500ms` self-heal), `browser_source` cache refresh, and `ffmpeg_source`/`vlc_source` restart across all 4 apps, plus unified lockstep-draggable Grouped Mic + Scene HUD stacks (`FloatingHudStackContainer` on Android preserving all 3 Scene Pill gestures; atomic `DeferWindowPos` stacking across monitors on Windows Remote).
+* **Win32 DPI-Safe Responsive Layout Engine:** Proportional multi-column anchoring (`BeginDeferWindowPos`, `WS_CLIPCHILDREN`, `+MinSize`, DPI-normalized `TCM_SETITEMSIZE` tabs, and `1366x768 @ 150% DPI` scrollability) across all 19 Windows Primary and Windows Remote dialogs, plus dark-themed Operator Console with source-level Scene Reset.
+* **Android Podium Auto-Hide & Responsive Browser Web Remote + Desktop Float HUD:** Auto-hiding floating HUD overlay while `PodiumDeckScreen` is active in foreground, inline horizontal OLED Scene Strip + `"All Scenes"` picker across Android & Web Remote, zero-overflow mobile layouts (`360px`–`393px`, `viewport-fit=cover`, `44px+` touch targets), desktop 2-column CSS Grid (`1120px`), and 3-tier Desktop Floating Pop-Out HUD (`Mini HUD` <-> `Studio Podium` + OS-level Always-On-Top LAN Video PiP fallback).
 
 ### 1. Adaptive Floating Mic, 4-Tier HUD & Privacy Capture Exclusion
 * **Adaptive 4-Tier Host Stack (`PresenterSync.exe`):**
@@ -138,8 +138,8 @@ PresenterSync/
 │       ├── service/                # FloatingHudForegroundService, HapticAlertPlayer, BackgroundMediaClickerController,
 │       │                           # QuickToggleTileService
 │       └── widget/                 # PresenterSyncWidgetProvider (2x1 Home Screen App Widget)
-├── tests/                          # 50 AutoHotkey v2 suites (incl. 354-check master suite) +
-│                                   # 12 Python live multi-process E2E & cross-language AES-GCM suites
+├── tests/                          # 56 AutoHotkey v2 suites (incl. master suite) +
+│                                   # 14 Python live multi-process E2E & cross-language AES-GCM suites
 └── dist/                           # Portable PresenterSync.exe, PresenterSync_Remote.exe, PresenterSync_Remote.apk
 ```
 
@@ -147,8 +147,8 @@ PresenterSync/
 
 ## Automated Verification Coverage
 
-* **Windows (AutoHotkey v2):** `50` automated suites including `tests\test_master_suite.ahk` (`354` checks covering HUD rendering, OBS WS v5, UIA, Bridge, Watchdogs, Timeline, and Diagnostics) plus dedicated `v7.0.1`–`v9.8.0` feature, Protocol v2, RBAC, capture safety, operator console, & static audit suites.
-* **Cross-Process & Cross-Language E2E (Python):** `12` live multi-process suites (`test_host_bridge.py`, `test_multi_remote_e2e.py`, `test_udp_discovery_e2e.py`, `test_windows_self_updater_e2e.py`, `test_v762_cross_lang_crypto.py`, `test_v901_web_remote_js_e2e.py`, and `test_e2e_01`..`06`) verifying Web Remote live browser UI, Crash Failover & Re-Promotion, Sleep/Wake & Rapid Transition Stress, Standalone Cutoff, PTT Mutual Exclusion, CLI `WM_COPYDATA`, Watchdogs, and AES-256-GCM parity.
+* **Windows (AutoHotkey v2):** `56` automated suites including `tests\test_master_suite.ahk` (covering HUD rendering, OBS WS v5, UIA, Bridge, Watchdogs, Timeline, and Diagnostics) plus dedicated `v7.0.1`–`v10.2.0` feature, Protocol v2, RBAC, capture safety, operator console, source reset, grouped HUD, cross-network QR, & static audit suites.
+* **Cross-Process & Cross-Language E2E (Python):** `14` live multi-process suites (`test_host_bridge.py`, `test_multi_remote_e2e.py`, `test_udp_discovery_e2e.py`, `test_windows_self_updater_e2e.py`, `test_v762_cross_lang_crypto.py`, `test_v901_web_remote_js_e2e.py`, `test_v1020_scene_reset_e2e.py`, `test_v1020_web_remote_responsive_pip.py`, and `test_e2e_01`..`06`) verifying Web Remote responsive/Float HUD/live browser UI, Source-level Reset, Crash Failover & Re-Promotion, Sleep/Wake & Rapid Transition Stress, Standalone Cutoff, PTT Mutual Exclusion, CLI `WM_COPYDATA`, Watchdogs, and AES-256-GCM parity.
 * **Android (JVM & Lint):** Full JVM unit test suite (`testDebugUnitTest`), `lintDebug`, and signed release APK verification (`-PrequireReleaseSigning=true`).
 
 ---
