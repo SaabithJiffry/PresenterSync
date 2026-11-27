@@ -27,4 +27,10 @@
         android:description="@string/mdm_profile_desc"
         android:restrictionType="string"
         android:defaultValue="AUTO" />
+    <restriction
+        android:key="default_role"
+        android:title="Default Device Role"
+        android:description="@string/mdm_role_desc"
+        android:restrictionType="string"
+        android:defaultValue="Presenter" />
 </restrictions>

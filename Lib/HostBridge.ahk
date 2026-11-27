@@ -799,12 +799,41 @@ class HostCompanionBridge {
         }
     }
 
+    _PushPolicyUpdateToDevice(devId, sendRoleSync := false) {
+        if (!this.running || devId = "")
+            return 0
+        useCfg := this.cfg
+        wsEnabled := IsObject(useCfg) && useCfg.HasOwnProp("EnableWS") && !!useCfg.EnableWS
+        micName := (IsObject(useCfg) && useCfg.HasOwnProp("targetMicName") && Trim(String(useCfg.targetMicName)) != "")
+            ? Trim(String(useCfg.targetMicName))
+            : "Mic/Aux"
+        obsPass := (IsObject(useCfg) && useCfg.HasOwnProp("obsPassword")) ? String(useCfg.obsPassword) : ""
+        obsPort := _HB_GetObsWsPort(useCfg)
+        sent := 0
+        for _, cli in this.clients {
+            if (cli.kind = "ws" && cli.authenticated && cli.deviceId = devId) {
+                cliRole := (cli.HasOwnProp("role") && cli.role != "") ? HostCompanionBridge.NormalizeRole(cli.role) : "Presenter"
+                allowFb := wsEnabled && ((cliRole = "Director") || (cli.HasOwnProp("allowDirectObsFallback") && !!cli.allowDirectObsFallback))
+                cliPass := allowFb ? obsPass : ""
+                payload := '{"type":"obs_fallback_update","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"allowDirectObsFallback":' (allowFb ? "true" : "false") ',"obsFallback":{"port":' obsPort ',"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(cliPass) '","directObsAllowed":' (allowFb ? "true" : "false") '}}'
+                this._QueueWsFrame(cli, 0x1, payload)
+                if (sendRoleSync) {
+                    this.stateSeq += 1
+                    this._QueueWsFrame(cli, 0x1, this._BuildSyncResyncJson("role_change", cliRole))
+                }
+                sent += 1
+            }
+        }
+        return sent
+    }
+
     SetDeviceRole(devId, role) {
         if (!this.pairedDevices.Has(devId))
             return false
         this.pairedDevices[devId].role := HostCompanionBridge.NormalizeRole(role)
         this._SyncClientPolicyFromDevice(devId)
         this.SavePairedDevices()
+        this._PushPolicyUpdateToDevice(devId, true)
         return true
     }
 
@@ -823,6 +852,7 @@ class HostCompanionBridge {
         this.pairedDevices[devId].allowDirectObsFallback := !!allow
         this._SyncClientPolicyFromDevice(devId)
         this.SavePairedDevices()
+        this._PushPolicyUpdateToDevice(devId, false)
         return true
     }
 
@@ -922,20 +952,19 @@ class HostCompanionBridge {
         if (!this.running)
             return 0
         useCfg := IsObject(cfg) ? cfg : this.cfg
-        if (!IsObject(useCfg) || !useCfg.HasOwnProp("EnableWS") || !useCfg.EnableWS)
-            return 0
-        micName := (useCfg.HasOwnProp("targetMicName") && Trim(String(useCfg.targetMicName)) != "")
+        wsEnabled := IsObject(useCfg) && useCfg.HasOwnProp("EnableWS") && !!useCfg.EnableWS
+        micName := (IsObject(useCfg) && useCfg.HasOwnProp("targetMicName") && Trim(String(useCfg.targetMicName)) != "")
             ? Trim(String(useCfg.targetMicName))
             : "Mic/Aux"
-        obsPass := useCfg.HasOwnProp("obsPassword") ? String(useCfg.obsPassword) : ""
+        obsPass := (IsObject(useCfg) && useCfg.HasOwnProp("obsPassword")) ? String(useCfg.obsPassword) : ""
+        obsPort := _HB_GetObsWsPort(useCfg)
         sent := 0
         for _, cli in this.clients {
             if (cli.kind = "ws" && cli.authenticated) {
                 cliRole := (cli.HasOwnProp("role") && cli.role != "") ? HostCompanionBridge.NormalizeRole(cli.role) : "Presenter"
-                allowFb := (cliRole = "Director") || (cli.HasOwnProp("allowDirectObsFallback") && !!cli.allowDirectObsFallback)
+                allowFb := wsEnabled && ((cliRole = "Director") || (cli.HasOwnProp("allowDirectObsFallback") && !!cli.allowDirectObsFallback))
                 cliPass := allowFb ? obsPass : ""
-                obsPort := _HB_GetObsWsPort(useCfg)
-                payload := '{"type":"obs_fallback_update","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"obsFallback":{"port":' obsPort ',"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(cliPass) '","directObsAllowed":' (allowFb ? "true" : "false") '}}'
+                payload := '{"type":"obs_fallback_update","protocolVersion":' HostBridgeConstants.PROTOCOL_VERSION ',"allowDirectObsFallback":' (allowFb ? "true" : "false") ',"obsFallback":{"port":' obsPort ',"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(cliPass) '","directObsAllowed":' (allowFb ? "true" : "false") '}}'
                 this._QueueWsFrame(cli, 0x1, payload)
                 sent += 1
             }
@@ -1157,7 +1186,7 @@ class HostCompanionBridge {
                 ? Trim(String(this.cfg.targetMicName))
                 : "Mic/Aux"
             obsPass := (allowObsFb && this.cfg.HasOwnProp("obsPassword")) ? String(this.cfg.obsPassword) : ""
-            obsPort := (this.cfg.HasOwnProp("ObsWsPort") && IsInteger(this.cfg.ObsWsPort)) ? Integer(this.cfg.ObsWsPort) : 4455
+            obsPort := _HB_GetObsWsPort(this.cfg)
             obsField := ',"obsFallback":{"port":' obsPort ',"targetMic":"' _HB_JsonEscape(micName) '","password":"' _HB_JsonEscape(obsPass) '","directObsAllowed":' (allowObsFb ? "true" : "false") '}'
         }
         perms := HostCompanionBridge.GetPermissionsForRole(devRole)
@@ -1915,7 +1944,7 @@ class HostCompanionBridge {
         isMutedStr := (this.state.HasOwnProp("isMuted") && this.state.isMuted) ? "true" : "false"
         allowObsFb := (prevRole = "Director") || prevAllowFb
         obsPw := (allowObsFb && this.cfg.HasOwnProp("obsPassword")) ? this.cfg.obsPassword : ""
-        obsPortVal := (this.cfg.HasOwnProp("ObsWsPort") && Integer(this.cfg.ObsWsPort) > 0) ? Integer(this.cfg.ObsWsPort) : 4455
+        obsPortVal := _HB_GetObsWsPort(this.cfg)
         micName := this.cfg.HasOwnProp("targetMicName") ? this.cfg.targetMicName : "Mic/Aux"
         relayCode := this.cfg.HasOwnProp("InternetPairingCode") ? this.cfg.InternetPairingCode : ""
 
@@ -2661,8 +2690,9 @@ class HostCompanionBridge {
         return '{"type":"mute_state",' this._BuildStateFieldsJson() '}'
     }
 
-    _BuildSyncResyncJson(reason := "wake") {
-        return '{"type":"sync_resync","reason":"' _HB_JsonEscape(reason) '",' this._BuildStateFieldsJson() '}'
+    _BuildSyncResyncJson(reason := "wake", clientRole := "") {
+        roleField := (clientRole != "") ? ('"role":"' _HB_JsonEscape(clientRole) '",') : ""
+        return '{"type":"sync_resync","reason":"' _HB_JsonEscape(reason) '",' roleField this._BuildStateFieldsJson() '}'
     }
 
     BroadcastSessionReset() {

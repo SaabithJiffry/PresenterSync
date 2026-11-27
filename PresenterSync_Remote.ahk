@@ -3,7 +3,7 @@
 ; Description: Standalone companion client for Smart Boards & secondary devices.
 ;              Provides a single-pill remote mute HUD and transmits clicker
 ;              mute keystrokes back to OBS Studio over the local network.
-; Version: 10.1.0
+; Version: 10.1.1
 ; Author: Saabith Jiffry
 ; License: MIT
 ; ==============================================================================
@@ -14,7 +14,7 @@
 ;@Ahk2Exe-SetMainIcon assets\PresenterSyncRemote.ico
 ;@Ahk2Exe-SetProductName PresenterSync Remote
 ;@Ahk2Exe-SetDescription PresenterSync Remote - Smart Board Companion Client
-;@Ahk2Exe-SetVersion 10.1.0.0
+;@Ahk2Exe-SetVersion 10.1.1.0
 ProcessSetPriority "High"
 
 #Include <WebSocket>
@@ -1292,14 +1292,16 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
         if (!IsObject(ev))
             return
         if (ev.kind = "auth_ok") {
-            if (ev.HasOwnProp("role") && ev.role != "")
+            if (ev.HasOwnProp("role") && ev.role != "") {
                 state.remoteRole := ev.role
+                UpdateRemoteTouchDeckUI(cfg, state)
+            }
             SetTimer state.reconnectTimerFn, 0
             CancelRemoteBridgeHandshakeWatchdog(state)
             state._lanCycleStartTick := 0
             state._didBridgePortSweep := false
             state._pendingFallbackReconcile := ""
-            if (ev.HasOwnProp("hasObsFallback") && ev.hasObsFallback)
+            if ((ev.HasOwnProp("hasObsFallback") && ev.hasObsFallback) || (ev.HasOwnProp("hasDirectObsPolicy") && ev.hasDirectObsPolicy))
                 _ApplyRemoteObsFallbackCreds(cfg, ev)
             if (ev.HasOwnProp("hostBootId") && ev.hostBootId != "" && ev.hostBootId != state.hostBootId) {
                 state.hostBootId := ev.hostBootId
@@ -1375,10 +1377,14 @@ HandleRemoteObsMessage(cfg, state, candidate, ws, rawMsg) {
                 RefreshRemoteMicHudAlpha(cfg, state)
                 state.NotifyTrayStatus()
             }
+            if (ev.HasOwnProp("role") && ev.role != "" && (!state.HasOwnProp("remoteRole") || state.remoteRole != ev.role)) {
+                state.remoteRole := ev.role
+                UpdateRemoteTouchDeckUI(cfg, state)
+            }
             SyncRemoteMuteState(cfg, state, ev.isMuted, false)
             SyncRemoteBridgeTelemetry(cfg, state, ev)
         } else if (ev.kind = "obs_fallback_update") {
-            if (ev.HasOwnProp("hasObsFallback") && ev.hasObsFallback)
+            if ((ev.HasOwnProp("hasObsFallback") && ev.hasObsFallback) || (ev.HasOwnProp("hasDirectObsPolicy") && ev.hasDirectObsPolicy))
                 _ApplyRemoteObsFallbackCreds(cfg, ev)
         } else if (ev.kind = "stage_nudge") {
             if (!state.HasOwnProp("suppressNudgeBanners") || !state.suppressNudgeBanners)
@@ -2920,11 +2926,14 @@ UpdateRemoteTouchDeckUI(cfg, state) {
         return
 
     modeLbl := GetRemoteConnectionModeLabel(state)
+    activeRole := (state.HasOwnProp("remoteRole") && state.remoteRole != "") ? state.remoteRole : ""
+    usingBr := state.HasOwnProp("usingBridge") && !!state.usingBridge
+    roleBadge := (usingBr && activeRole != "") ? ("  [" activeRole "]") : ""
     scName := (state.HasOwnProp("activeScene") && state.activeScene != "") ? state.activeScene : "Scene"
     recBadge := (state.recState == 1) ? ("REC " FormatElapsedShort(state.recSeconds)) : ((state.recState == 2) ? ("PAUSED " FormatElapsedShort(state.recSeconds)) : "REC OFF")
     if (state.HasOwnProp("streamDropWarn") && state.streamDropWarn)
         recBadge .= " | STREAM WARN"
-    ctrls.lblHeader.Value := modeLbl "  |  Scene: " scName "  |  " recBadge
+    ctrls.lblHeader.Value := modeLbl roleBadge "  |  Scene: " scName "  |  " recBadge
 
     ctrls.btnMute.Text := state.isMuted ? "UNMUTE MIC (Currently MUTED)" : "MUTE MIC (Currently LIVE)"
 
@@ -2939,13 +2948,27 @@ UpdateRemoteTouchDeckUI(cfg, state) {
     ctrls.btnTimerPause.Text := (tState = "paused") ? "Resume" : "Pause"
     ctrls.btnStandby.Text := (state.HasOwnProp("isStandby") && state.isStandby) ? "Exit BRB" : "Standby (BRB)"
 
+    isTallyOnly := (usingBr && activeRole = "Tally-Only")
+    canDirector := (!usingBr || activeRole = "" || activeRole = "Director")
+    ctrls.btnMute.Enabled := !isTallyOnly
+    ctrls.btnTimerPause.Enabled := !isTallyOnly
+    ctrls.btnStandby.Enabled := (!isTallyOnly && canDirector)
+    for _, cname in ["btnTrans", "btnPrevSlide", "btnNextSlide", "btnStartSlide", "btnT5", "btnT10", "btnT15", "btnTimerReset", "edNudge", "btnSendNudge"] {
+        if (ctrls.HasOwnProp(cname) && IsObject(ctrls.%cname%))
+            ctrls.%cname%.Enabled := !isTallyOnly
+    }
+    if (ctrls.HasOwnProp("nudgeBtns") && IsObject(ctrls.nudgeBtns)) {
+        for _, nb in ctrls.nudgeBtns
+            nb.Enabled := !isTallyOnly
+    }
+
     Loop 6 {
         btn := ctrls.sceneBtns[A_Index]
         if (IsObject(state.scenes) && A_Index <= state.scenes.Length) {
             sn := String(state.scenes[A_Index])
             btn.Text := (sn == scName) ? ("[*] " sn) : sn
             btn.Visible := true
-            btn.Enabled := true
+            btn.Enabled := !isTallyOnly
         } else {
             btn.Visible := false
             btn.Enabled := false
@@ -3059,10 +3082,12 @@ ShowRemoteTouchDeckGUI(cfg, state, *) {
     btnTimerPause.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, (state.timerState = "paused") ? "timer_start" : "timer_pause", 0))
     btnTimerReset.OnEvent("Click", (*) => SendRemoteTimerCommand(cfg, state, "timer_reset", state.timerPresetSec))
 
+    nudgeBtns := []
     for idx, nudgeTxt in ["2 min left", "Wrap up", "Check Mic"] {
         nx := (idx == 1) ? 14 : ((idx == 2) ? 215 : 416)
         nBtn := AddThemedCtrl(deckGui, "Button", "x" nx " y360 w190 h40", nudgeTxt)
         nBtn.OnEvent("Click", ((t, *) => SendRemoteStageNudge(cfg, state, t)).Bind(nudgeTxt))
+        nudgeBtns.Push(nBtn)
     }
 
     edNudge := AddThemedCtrl(deckGui, "Edit", "x14 y412 w444 h40", "")
@@ -3081,10 +3106,21 @@ ShowRemoteTouchDeckGUI(cfg, state, *) {
         state.quickDeckCtrls := {
             lblHeader: lblHeader,
             btnMute: btnMute,
+            btnTrans: btnTrans,
             lblSlide: lblSlide,
+            btnPrevSlide: btnPrevSlide,
+            btnNextSlide: btnNextSlide,
+            btnStartSlide: btnStartSlide,
             lblTimer: lblTimer,
+            btnT5: btnT5,
+            btnT10: btnT10,
+            btnT15: btnT15,
             btnTimerPause: btnTimerPause,
+            btnTimerReset: btnTimerReset,
             btnStandby: btnStandby,
+            nudgeBtns: nudgeBtns,
+            edNudge: edNudge,
+            btnSendNudge: btnSendNudge,
             sceneBtns: sceneBtns
         }
     }
@@ -3719,7 +3755,8 @@ RunRemoteConnectionTracer(host, port := 4456, state := "") {
     tcpOk := (h = "127.0.0.1" || h = "localhost") ? IsLocalTcpPortListening(port) : (isBridge && isConn)
     steps.Push({ step: "3. Bridge TCP :" port, ok: tcpOk, detail: tcpOk ? "Port reachable" : "Not reachable / check firewall" })
     authOk := isConn && (isBridge || isObs)
-    roleLbl := (IsObject(state) && state.HasOwnProp("activeRole") && state.activeRole != "") ? (" (" state.activeRole ")") : ""
+    roleRaw := (IsObject(state) && state.HasOwnProp("remoteRole") && state.remoteRole != "") ? state.remoteRole : ((IsObject(state) && state.HasOwnProp("activeRole") && state.activeRole != "") ? state.activeRole : "")
+    roleLbl := (roleRaw != "") ? (" (" roleRaw ")") : ""
     steps.Push({ step: "4. Auth & Role", ok: authOk, detail: authOk ? ("Authenticated" roleLbl) : "Pending pairing code" })
     obsOk := isObs
     steps.Push({ step: "5. OBS / Mic", ok: obsOk, detail: obsOk ? "OBS connected" : "OBS offline or bridged" })
@@ -4025,8 +4062,8 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
 
     SaveProfileAction(*) {
         defName := Trim(editHost.Value) != "" ? Trim(editHost.Value) : "Room 1"
-        ib := InputBox("Enter a name for this host profile (e.g. Lecture Hall A):", "Save Host Profile", "w320 h130", defName)
-        if (ib.Result != "OK" || Trim(ib.Value) = "")
+        ib := PromptThemedTextModal("Enter a name for this host profile (e.g. Lecture Hall A):", "Save Host Profile", defName)
+        if (!IsObject(ib) || ib.Result != "OK" || Trim(ib.Value) = "")
             return
         ok := SaveHostProfile(cfg, Trim(ib.Value), {
             host: Trim(editHost.Value),

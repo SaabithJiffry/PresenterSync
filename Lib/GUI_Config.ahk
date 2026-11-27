@@ -15,7 +15,7 @@ global g_IsTestMode := false
 #Include "%A_LineFile%\..\WindowFit.ahk"
 
 class UIConstants {
-    static APP_VERSION := "10.1.0"
+    static APP_VERSION := "10.1.1"
 
     ; --- Base HUD Dimensions & Ratios ---
     static BASE_WIDTH_TEXT := 168
@@ -2722,7 +2722,7 @@ ImportPortableSettingsBundle(cfg, state, sourcePath) {
     }
 }
 
-PromptKioskPinModal(promptText, title := "PresenterSync Kiosk Lock", allowEmpty := false, modalTestFn := "") {
+PromptKioskPinModal(promptText, title := "PresenterSync Kiosk Lock", allowEmpty := false, modalTestFn := "", isPassword := true, defaultVal := "") {
     if (IsObject(modalTestFn))
         return modalTestFn.Call(promptText, title, allowEmpty)
     if (IsSet(Theme) && Theme.HasMethod("AcquireSuspend"))
@@ -2737,7 +2737,8 @@ PromptKioskPinModal(promptText, title := "PresenterSync Kiosk Lock", allowEmpty 
     if (IsSet(Theme) && Theme.HasMethod("RegisterControl"))
         Theme.RegisterControl(g, lbl, "Text")
     g.SetFont("s10 w400", IsSet(Theme) ? Theme.UiFont : "Segoe UI")
-    ed := g.Add("Edit", "xm y+8 w300 Password")
+    edOpts := isPassword ? "xm y+8 w300 Password" : "xm y+8 w300"
+    ed := g.Add("Edit", edOpts, defaultVal)
     if (IsSet(Theme) && Theme.HasMethod("RegisterControl"))
         Theme.RegisterControl(g, ed, "Edit")
     btnOk := g.Add("Button", "xm y+14 w144 h30 Default", "OK")
@@ -2773,6 +2774,10 @@ PromptKioskPinModal(promptText, title := "PresenterSync Kiosk Lock", allowEmpty 
     if (IsSet(Theme) && Theme.HasMethod("ReleaseSuspend"))
         Theme.ReleaseSuspend()
     return res
+}
+
+PromptThemedTextModal(promptText, title := "PresenterSync", defaultVal := "", modalTestFn := "") {
+    return PromptKioskPinModal(promptText, title, false, modalTestFn, false, defaultVal)
 }
 
 OpenSetClearKioskPinDialog(cfg, state := "", modalTestFn := "") {

@@ -59,6 +59,7 @@ class ObsWebSocketClient(
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 if (closed.getAndSet(true)) return
+                cleanupResetScheduler()
                 webSocket.close(code, reason)
                 if (!identified.get() && code == 4009) {
                     callbacks.onAuthFailed()
@@ -69,6 +70,7 @@ class ObsWebSocketClient(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (closed.getAndSet(true)) return
+                cleanupResetScheduler()
                 if (!identified.get() && code == 4009) {
                     callbacks.onAuthFailed()
                 } else {
@@ -78,6 +80,7 @@ class ObsWebSocketClient(
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 if (closed.getAndSet(true)) return
+                cleanupResetScheduler()
                 callbacks.onDisconnected(t.message ?: "failure")
             }
         })
@@ -487,6 +490,12 @@ class ObsWebSocketClient(
         }
     }
 
+    private fun cleanupResetScheduler() {
+        resetWatchdogFuture.getAndSet(null)?.cancel(false)
+        resetInFlight.set(false)
+        runCatching { resetScheduler.shutdownNow() }
+    }
+
     fun closeDead() {
         if (closed.getAndSet(true)) return
         try {
@@ -494,9 +503,7 @@ class ObsWebSocketClient(
         } catch (_: Exception) {
         }
         webSocket = null
-        resetWatchdogFuture.getAndSet(null)?.cancel(false)
-        resetInFlight.set(false)
-        runCatching { resetScheduler.shutdownNow() }
+        cleanupResetScheduler()
     }
 
     fun close() {
@@ -506,8 +513,6 @@ class ObsWebSocketClient(
         } catch (_: Exception) {
         }
         webSocket = null
-        resetWatchdogFuture.getAndSet(null)?.cancel(false)
-        resetInFlight.set(false)
-        runCatching { resetScheduler.shutdownNow() }
+        cleanupResetScheduler()
     }
 }

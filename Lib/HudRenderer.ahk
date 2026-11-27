@@ -1885,7 +1885,7 @@ UpdateSafetyWatchdogTimer(cfg, state) {
     state.deadMicWarn := false
     if (wasDeadMic) {
         _NotifyHostTelemetryChanged(cfg, state)
-        if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+        if (IsObject(cfg) && cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
             try UpdateHudVisibility(cfg, state)
     }
     if (state.HasOwnProp("lowDiskWarnLevel") && state.lowDiskWarnLevel != 0)

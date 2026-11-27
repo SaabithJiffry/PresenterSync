@@ -181,6 +181,13 @@ class HostBridgeClient(
                                 password = obsFb.optString("password", ""),
                                 directObsAllowed = obsFb.optBoolean("directObsAllowed", true)
                             )
+                        } else if (obj.has("allowDirectObsFallback")) {
+                            callbacks.onObsFallbackUpdated(
+                                port = 0,
+                                targetMic = "",
+                                password = "",
+                                directObsAllowed = obj.optBoolean("allowDirectObsFallback", false)
+                            )
                         }
                         callbacks.onBridgeConnected(hostName)
                     }
@@ -192,6 +199,13 @@ class HostBridgeClient(
                                 targetMic = obsFb.optString("targetMic", ""),
                                 password = obsFb.optString("password", ""),
                                 directObsAllowed = obsFb.optBoolean("directObsAllowed", true)
+                            )
+                        } else if (obj.has("allowDirectObsFallback")) {
+                            callbacks.onObsFallbackUpdated(
+                                port = 0,
+                                targetMic = "",
+                                password = "",
+                                directObsAllowed = obj.optBoolean("allowDirectObsFallback", false)
                             )
                         }
                     }
@@ -267,6 +281,10 @@ class HostBridgeClient(
                         )
                         callbacks.onMuteStateChanged(muted, mode, mic)
                         callbacks.onTelemetryChanged(telemetry)
+                        val updatedRole = obj.optString("role", "").trim()
+                        if (updatedRole.isNotEmpty()) {
+                            callbacks.onBridgeRoleAssigned(updatedRole)
+                        }
                         if (msgKind == "sync_resync") {
                             callbacks.onSyncResync(
                                 obj.optString("reason", "resync"),

@@ -1302,6 +1302,8 @@ ParseHostBridgeWsEvent(rawText) {
         accentHex: JsonCodec.GetStr(obj, "accentHex"),
         hostUuid: JsonCodec.GetStr(obj, "hostUuid"),
         hostName: JsonCodec.GetStr(obj, "hostName"),
+        role: JsonCodec.GetStr(obj, "role"),
+        trustTier: JsonCodec.GetStr(obj, "trustTier"),
         sessionToken: JsonCodec.GetStr(obj, "sessionToken"),
         reason: reasonStr,
         action: JsonCodec.GetStr(obj, "action"),

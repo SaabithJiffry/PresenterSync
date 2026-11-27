@@ -329,4 +329,67 @@ class HostBridgeClientTest {
         assertEquals(recObj.getString("cmdId"), nackInfo.get().third)
         client.close()
     }
+
+    @Test
+    fun enforcesTopLevelAllowDirectObsFallbackWhenObsFallbackOmittedAndPropagatesResyncRole() {
+        val connectedLatch = CountDownLatch(1)
+        val fallbackRevokedLatch = CountDownLatch(2)
+        val tallyRoleLatch = CountDownLatch(1)
+        val observedRoles = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val observedFallback = java.util.concurrent.CopyOnWriteArrayList<Pair<String, Boolean>>()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val obj = JSONObject(text)
+                if (obj.optString("type") == "auth") {
+                    webSocket.send(
+                        """{"type":"auth_ok","protocolVersion":2,"hostBootId":"b3","stateSeq":1,"hostName":"HALL-PC","role":"Presenter","allowDirectObsFallback":false}"""
+                    )
+                    webSocket.send(
+                        """{"type":"obs_fallback_update","protocolVersion":2,"allowDirectObsFallback":false}"""
+                    )
+                    webSocket.send(
+                        """{"type":"sync_resync","reason":"role_change","stateSeq":2,"role":"Tally-Only","isMuted":false}"""
+                    )
+                }
+            }
+        }))
+
+        val client = HostBridgeClient(
+            httpClient = httpClient,
+            wsBaseUrl = "ws://127.0.0.1:${server.port}/ws",
+            sessionToken = "tok-v3",
+            sessionCode = "",
+            deviceId = "dev-v3",
+            deviceName = "Board",
+            callbacks = object : HostBridgeCallbacks {
+                override fun onBridgeConnected(hostName: String) {
+                    connectedLatch.countDown()
+                }
+                override fun onBridgeAuthFailed(reason: String) = Unit
+                override fun onBridgeRoleAssigned(role: String) {
+                    observedRoles.add(role)
+                    if (role == "Tally-Only") tallyRoleLatch.countDown()
+                }
+                override fun onObsFallbackUpdated(port: Int, targetMic: String, password: String, directObsAllowed: Boolean) {
+                    observedFallback.add(password to directObsAllowed)
+                    if (password.isEmpty() && !directObsAllowed) {
+                        fallbackRevokedLatch.countDown()
+                    }
+                }
+                override fun onMuteStateChanged(isMuted: Boolean, routingMode: Int, targetMicName: String) = Unit
+                override fun onCloseRemoteSignal() = Unit
+                override fun onBridgeDisconnected(reason: String) = Unit
+            }
+        )
+
+        client.connect()
+        assertTrue(connectedLatch.await(3, TimeUnit.SECONDS))
+        assertTrue(fallbackRevokedLatch.await(3, TimeUnit.SECONDS))
+        assertTrue(tallyRoleLatch.await(3, TimeUnit.SECONDS))
+        assertTrue(observedRoles.contains("Presenter"))
+        assertTrue(observedRoles.contains("Tally-Only"))
+        assertEquals(2, observedFallback.count { it.first == "" && !it.second })
+        client.close()
+    }
 }

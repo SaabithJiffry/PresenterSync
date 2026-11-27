@@ -188,6 +188,9 @@ try {
     remSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
     AssertTrue(InStr(remSrc, "ShowSceneIndicator") > 0 && InStr(remSrc, "ScenePosition") > 0 && InStr(remSrc, "ApplyRemoteSceneAppearance") > 0 && InStr(remSrc, "SendRemoteResetActiveScene") > 0 && InStr(remSrc, "ShowRemoteSceneSwitcherMenu") > 0, "#6: Windows Remote implements standalone toggleable Scene HUD with marquee, hold reset, and scene switcher menu")
     AssertTrue(InStr(remSrc, 'ev.kind = "session_reset"') > 0 && InStr(remSrc, '"no_target_scene"') > 0 && InStr(remSrc, "state.usingBridge") > 0 && InStr(remSrc, "PromptKioskPinModal(") > 0, "P1-2/P1-8/P0-5: Windows Remote handles session_reset, full NACK toasts, real Tracer props, and PromptKioskPinModal")
+    AssertTrue(InStr(remSrc, "PromptThemedTextModal(") > 0 && !InStr(remSrc, 'InputBox("Enter a name') && InStr(remSrc, "state.remoteRole") > 0 && InStr(remSrc, "isTallyOnly") > 0 && InStr(remSrc, "canDirector") > 0, "P1-D/P2-5: Windows Remote uses PromptThemedTextModal, reads state.remoteRole, and role-scopes Touch Deck")
+    ptRes := PromptThemedTextModal("Profile name:", "Save Profile", "Hall A", (p, t, a := false) => { Result: "OK", Value: "Hall A" })
+    AssertTrue(ptRes.Result = "OK" && ptRes.Value = "Hall A", "P2-5: PromptThemedTextModal wraps PromptKioskPinModal cleanly")
 
 } catch as err {
     g_Failed++

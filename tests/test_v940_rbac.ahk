@@ -191,6 +191,29 @@ try {
     AssertEq(sentFrames.Length, 2, "BroadcastObsFallbackUpdate sends to 2 clients")
     AssertTrue(!InStr(sentFrames[1], "SuperSecretObsPass!") && InStr(sentFrames[2], "SuperSecretObsPass!") > 0, "BroadcastObsFallbackUpdate enforces C3 per client")
 
+    ; P1-B: Mid-session revocation / role demotion / EnableWS=false immediately push policy updates
+    hb.pairedDevices["pres-1"] := { deviceId: "pres-1", deviceName: "Pres", platform: "Web", token: "tp1", pairedAt: "x", ip: "1.1.1.2", transport: "ws", role: "Presenter", trustTier: "Ephemeral Guest", allowDirectObsFallback: true, paused: false, expiresAt: 0, connected: true }
+    hb.pairedDevices["dir-1"] := { deviceId: "dir-1", deviceName: "DirectorTab", platform: "Android", token: "td", pairedAt: "x", ip: "1.1.1.3", transport: "ws", role: "Director", trustTier: "Pinned Room", allowDirectObsFallback: true, paused: false, expiresAt: 0, connected: true }
+    hb.clients := Map("k1", presCli, "k2", dirCli)
+    sentFrames := []
+    hb.running := true
+    hb.SetDeviceDirectObsFallback("pres-1", false)
+    AssertEq(sentFrames.Length, 1, "P1-B: SetDeviceDirectObsFallback pushes live frame to connected client")
+    AssertTrue(InStr(sentFrames[1], '"type":"obs_fallback_update"') > 0 && InStr(sentFrames[1], '"directObsAllowed":false') > 0 && !InStr(sentFrames[1], "SuperSecretObsPass!"), "P1-B: Direct OBS revocation pushes directObsAllowed=false without password")
+
+    sentFrames := []
+    hb.SetDeviceRole("dir-1", "Presenter")
+    AssertEq(sentFrames.Length, 2, "P1-B: SetDeviceRole pushes obs_fallback_update and role sync_resync")
+    AssertTrue(InStr(sentFrames[1], '"type":"obs_fallback_update"') > 0 && InStr(sentFrames[2], '"type":"sync_resync"') > 0 && InStr(sentFrames[2], '"role":"Presenter"') > 0, "P1-B: Live role change delivers updated role sync_resync")
+
+    hb.cfg.EnableWS := false
+    sentFrames := []
+    hb.BroadcastObsFallbackUpdate(hb.cfg)
+    AssertEq(sentFrames.Length, 2, "P1-B: BroadcastObsFallbackUpdate still broadcasts revocation when EnableWS=false")
+    AssertTrue(InStr(sentFrames[2], '"directObsAllowed":false') > 0 && InStr(sentFrames[2], '"allowDirectObsFallback":false') > 0 && !InStr(sentFrames[2], "SuperSecretObsPass!"), "P1-B: EnableWS=false scrubs obsPassword and sets directObsAllowed=false")
+    hb.cfg.EnableWS := true
+    hb.running := false
+
     ; 7. M4.3 Modifier-Aware Hotkey Collision Detection
     AssertTrue(_DoHotkeysCollide("^!m", "!^M"), "M4.3: Reordered modifier chord ^!m collides with !^M")
     AssertTrue(!_DoHotkeysCollide("^!m", "m"), "M4.3: ^!m does NOT falsely collide with bare m")

@@ -180,7 +180,7 @@ class OperatorConsole {
             g_HostCompanionBridge.SetDeviceRole(targetId, nxt)
         } else if (kind = "obsfb") {
             curFb := g_HostCompanionBridge.pairedDevices[targetId].HasOwnProp("allowDirectObsFallback") ? !!g_HostCompanionBridge.pairedDevices[targetId].allowDirectObsFallback : false
-            g_HostCompanionBridge.SetDeviceObsFallbackAllowed(targetId, !curFb)
+            g_HostCompanionBridge.SetDeviceDirectObsFallback(targetId, !curFb)
         }
         this._lastRosterFp := ""
         this.Refresh()

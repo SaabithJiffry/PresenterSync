@@ -8,9 +8,10 @@
 
 ---
 
-## Core Capabilities (v10.1.0)
+## Core Capabilities (v10.1.1)
 
-### 0. What's New in v10.1.0
+### 0. What's New in v10.1.1 (Hotfix + v10.1.0 Baseline)
+* **Live Operator Console, Mid-Session Policy Sync & Role-Scoped UI Parity (`v10.1.1`):** Fixed Operator Console `"Toggle OBS Fallback"` (`SetDeviceDirectObsFallback`), added immediate live `obs_fallback_update` / `role` push when Host changes device policy or disables OBS WebSocket (`C3`), respected top-level `allowDirectObsFallback` across Windows Remote, Android, and Web Remote, preserved Web Remote `#brbBtn`/`#micBtn` role classes across state updates, and wired role parsing + Touch Deck scoping + capture-excluded profile modal into Windows Remote (`P0`/`P1`/`P2`).
 * **Active Scene Reset (`700ms` / `1400ms` Hold) & Always-Visible Reconnect:** Long-press the Scene pill (or tap `Reset Scene` in Web/Podium Deck) to safely pulse currently enabled capture/camera sources without exposing hidden sources (`0.25s` non-blocking restore), plus a constant **Reconnect Host** action across Android, Windows Remote, and Web Remote.
 * **Independent Remote Scene HUD & Phone Overlay Precision:** Toggle a standalone scrolling **Active Program Scene** pill (`ShowSceneIndicator` / `[ScenePosition]`) across Windows Remote, Android Smartboards/Phones, and Browser Web Remote, paired with DPI-aware palm rejection, `fitInsetsTypes = 0` cutout-safe coordinates, and `14dp` drag-slop snap-on-release.
 * **Podium Deck & Director Sheet Redesign:** Live Active Scene card with Preview subtitle, 2-row balanced Timer presets, responsive 10-screen phone/Smartboard spacing, real `Got It ✓` nudge ACKs, and accurate `"solo_a"`/`"solo_b"`/`"both"` Audio Handoff.
