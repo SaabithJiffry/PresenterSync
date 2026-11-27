@@ -183,7 +183,7 @@ remSrc := FileRead(A_ScriptDir "\..\PresenterSync_Remote.ahk", "UTF-8")
 hudSrc := FileRead(A_ScriptDir "\..\Lib\HudRenderer.ahk", "UTF-8")
 AssertTrue(InStr(hostSrc, "#MaxThreadsPerHotkey 3") && InStr(remSrc, "#MaxThreadsPerHotkey 3"), "Both Primary & Remote declare #MaxThreadsPerHotkey 3")
 AssertTrue(InStr(hudSrc, 'verdict: "hold_handled"') && InStr(hudSrc, 'UIConstants.MIC_LONG_PRESS_MS, UpdateMicHold'), "MicGui eliminates 350-599ms dead zone with single-toggle hold_handled")
-AssertTrue(InStr(hudSrc, 'sceneMoved := false') && InStr(hudSrc, 'hwnd == state.SceneGui.Hwnd'), "SceneGui uses non-blocking tap fast path before drag loop")
+AssertTrue(InStr(hudSrc, 'UpdateSceneHold') && InStr(hudSrc, 'ExecuteHostResetActiveScene(cfg, state)') && InStr(hudSrc, 'hwnd == state.SceneGui.Hwnd'), "SceneGui uses non-blocking tap/hold fast path before drag loop")
 
 for p in [tmpIni, tmpIni ".bak", tmpJsonl] {
     if FileExist(p)

@@ -60,6 +60,10 @@ if %errorlevel% neq 0 (
 )
 
 echo.
+echo Generating flat dist\SHA256SUMS.txt...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = $env:DIST_DIR; $rows = foreach ($f in @('PresenterSync.exe','PresenterSync_Remote.exe','PresenterSync_Remote.apk')) { $p = Join-Path $d $f; if (Test-Path $p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $f } }; if ($rows) { [System.IO.File]::WriteAllText((Join-Path $d 'SHA256SUMS.txt'), ($rows -join [char]10) + [char]10, (New-Object System.Text.UTF8Encoding($false))) }"
+
+echo.
 echo Refreshing Windows Shell icon cache...
 set "REPO_DIR=%~dp0dist"
 set "HOST_EXE=%DIST_DIR%\PresenterSync.exe"

@@ -8,12 +8,13 @@
 
 ---
 
-## Core Capabilities (v10.0.0)
+## Core Capabilities (v10.1.0)
 
-### 0. What's New in v10.0.0
-* **Zero-Latency Hot Paths & 4–8h Soak Hardening:** `< 16ms` optimistic toggles with `stateSeq` reconciliation, single-instance wall-clock HUD timers, non-blocking `WebSocket.ahk` inbox drain, and async `PlaySoundW` audio cues (zero animation backlog under rapid presses).
-* **Protocol v2, Secret Vaulting & RBAC:** Structural `JsonCodec.ahk`, RFC 6455 WebSocket hardening, `cmdId` deduplication, Windows DPAPI secret storage (`ConfigStore.ahk`), Android Keystore vault + `allowBackup="false"`, `PSGCM2` PBKDF2-HMAC-SHA256 WAN Crypto v2, and 3-tier Role-Based Access Control (`Tally-Only`, `Presenter`, `Director`) with credential withholding.
-* **Emergency Panic Curtain, Operator Console & Back-to-Back Turnover:** 1-action Panic Curtain, non-suspending Live Operator Console (`OperatorConsole.ahk`), Preview Scene & Scene-Item/Mixer control, Kiosk PIN Lock, 1-click Classroom Session Reset, Two-Way Stage Intercom (`Got It ✓` / `Signal Host`), Slide Preview thumbnails, and 5-step Connection Tracer.
+### 0. What's New in v10.1.0
+* **Active Scene Reset (`700ms` / `1400ms` Hold) & Always-Visible Reconnect:** Long-press the Scene pill (or tap `Reset Scene` in Web/Podium Deck) to safely pulse currently enabled capture/camera sources without exposing hidden sources (`0.25s` non-blocking restore), plus a constant **Reconnect Host** action across Android, Windows Remote, and Web Remote.
+* **Independent Remote Scene HUD & Phone Overlay Precision:** Toggle a standalone scrolling **Active Program Scene** pill (`ShowSceneIndicator` / `[ScenePosition]`) across Windows Remote, Android Smartboards/Phones, and Browser Web Remote, paired with DPI-aware palm rejection, `fitInsetsTypes = 0` cutout-safe coordinates, and `14dp` drag-slop snap-on-release.
+* **Podium Deck & Director Sheet Redesign:** Live Active Scene card with Preview subtitle, 2-row balanced Timer presets, responsive 10-screen phone/Smartboard spacing, real `Got It ✓` nudge ACKs, and accurate `"solo_a"`/`"solo_b"`/`"both"` Audio Handoff.
+* **Security, RBAC & Update Fail-Closed Hardening:** Fail-closed `SHA256SUMS.txt` verification (`SelfUpdater` & `ApkSelfInstaller`), chunked LAN APK serving (`>= 16 MB`), capture-excluded Kiosk PIN lock across Windows Primary/Remote & Android, Presenter scene permissions with strict Direct OBS credential gating, `PSGCM` log scrubbing, and full `v10.0.0` core (`Zero-Latency Hot Paths`, `Protocol v2`, `DPAPI`/`Keystore` vaults, `Operator Console`).
 
 ### 1. Adaptive Floating Mic, 4-Tier HUD & Privacy Capture Exclusion
 * **Adaptive 4-Tier Host Stack (`PresenterSync.exe`):**

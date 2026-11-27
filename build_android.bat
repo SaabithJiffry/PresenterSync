@@ -62,6 +62,10 @@ for %%F in ("%SCRIPT_DIR%\dist\PresenterSync_Remote.apk") do (
     echo [OK] dist\PresenterSync_Remote.apk built ^(%%~zF bytes^)
 )
 
+set "DIST_DIR=%SCRIPT_DIR%\dist"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = $env:DIST_DIR; $rows = foreach ($f in @('PresenterSync.exe','PresenterSync_Remote.exe','PresenterSync_Remote.apk')) { $p = Join-Path $d $f; if (Test-Path $p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $f } }; if ($rows) { [System.IO.File]::WriteAllText((Join-Path $d 'SHA256SUMS.txt'), ($rows -join [char]10) + [char]10, (New-Object System.Text.UTF8Encoding($false))) }"
+echo [OK] Updated flat dist\SHA256SUMS.txt
+
 popd
 set "BUILD_EXIT=0"
 
