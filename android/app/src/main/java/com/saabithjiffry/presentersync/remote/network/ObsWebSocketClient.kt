@@ -8,8 +8,11 @@ import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 interface ObsSessionCallbacks {
     fun onIdentified()
@@ -40,6 +43,7 @@ class ObsWebSocketClient(
     private val closed = AtomicBoolean(false)
     private val identified = AtomicBoolean(false)
     private val resetInFlight = AtomicBoolean(false)
+    private val resetWatchdogFuture = AtomicReference<ScheduledFuture<*>?>(null)
     private val resetScheduler = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "ObsResetSceneWorker").apply { isDaemon = true }
     }
@@ -292,6 +296,7 @@ class ObsWebSocketClient(
                     }
                     else -> if (reqId.startsWith("ResetSceneList:")) {
                         if (!resultOk || respData == null) {
+                            resetWatchdogFuture.getAndSet(null)?.cancel(false)
                             resetInFlight.set(false)
                             return
                         }
@@ -317,26 +322,33 @@ class ObsWebSocketClient(
                                     }
                                 )
                             }
-                            resetScheduler.schedule({
-                                try {
-                                    if (!closed.get()) {
-                                        for (id in enabledIds) {
-                                            sendRequest(
-                                                "SetSceneItemEnabled",
-                                                "ResetOn_$id",
-                                                JSONObject().apply {
-                                                    put("sceneName", sceneName)
-                                                    put("sceneItemId", id)
-                                                    put("sceneItemEnabled", true)
-                                                }
-                                            )
+                            try {
+                                resetScheduler.schedule({
+                                    try {
+                                        if (!closed.get()) {
+                                            for (id in enabledIds) {
+                                                sendRequest(
+                                                    "SetSceneItemEnabled",
+                                                    "ResetOn_$id",
+                                                    JSONObject().apply {
+                                                        put("sceneName", sceneName)
+                                                        put("sceneItemId", id)
+                                                        put("sceneItemEnabled", true)
+                                                    }
+                                                )
+                                            }
                                         }
+                                    } finally {
+                                        resetWatchdogFuture.getAndSet(null)?.cancel(false)
+                                        resetInFlight.set(false)
                                     }
-                                } finally {
-                                    resetInFlight.set(false)
-                                }
-                            }, 250L, TimeUnit.MILLISECONDS)
+                                }, 250L, TimeUnit.MILLISECONDS)
+                            } catch (_: RejectedExecutionException) {
+                                resetWatchdogFuture.getAndSet(null)?.cancel(false)
+                                resetInFlight.set(false)
+                            }
                         } else {
+                            resetWatchdogFuture.getAndSet(null)?.cancel(false)
                             resetInFlight.set(false)
                         }
                     }
@@ -433,11 +445,20 @@ class ObsWebSocketClient(
     fun sendResetSceneSources(sceneName: String): Boolean {
         val clean = sceneName.trim()
         if (clean.isEmpty() || !resetInFlight.compareAndSet(false, true)) return false
-        resetScheduler.schedule({ resetInFlight.set(false) }, 3000L, TimeUnit.MILLISECONDS)
+        try {
+            val watchdog = resetScheduler.schedule({ resetInFlight.set(false) }, 3000L, TimeUnit.MILLISECONDS)
+            resetWatchdogFuture.getAndSet(watchdog)?.cancel(false)
+        } catch (_: RejectedExecutionException) {
+            resetInFlight.set(false)
+            return false
+        }
         val ok = sendRequest("GetSceneItemList", "ResetSceneList:$clean", JSONObject().apply {
             put("sceneName", clean)
         })
-        if (!ok) resetInFlight.set(false)
+        if (!ok) {
+            resetWatchdogFuture.getAndSet(null)?.cancel(false)
+            resetInFlight.set(false)
+        }
         return ok
     }
 
@@ -473,6 +494,8 @@ class ObsWebSocketClient(
         } catch (_: Exception) {
         }
         webSocket = null
+        resetWatchdogFuture.getAndSet(null)?.cancel(false)
+        resetInFlight.set(false)
         runCatching { resetScheduler.shutdownNow() }
     }
 
@@ -483,6 +506,8 @@ class ObsWebSocketClient(
         } catch (_: Exception) {
         }
         webSocket = null
+        resetWatchdogFuture.getAndSet(null)?.cancel(false)
+        resetInFlight.set(false)
         runCatching { resetScheduler.shutdownNow() }
     }
 }

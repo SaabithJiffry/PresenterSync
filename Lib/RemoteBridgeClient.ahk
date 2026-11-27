@@ -1247,6 +1247,10 @@ ParseHostBridgeWsEvent(rawText) {
     if (reasonStr = "")
         reasonStr := JsonCodec.GetStr(obj, "error")
     obsFbMap := (obj.Has("obsFallback") && (obj["obsFallback"] is Map)) ? obj["obsFallback"] : ""
+    hasDirectObsPolicy := IsObject(obsFbMap) || JsonCodec.HasKey(obj, "allowDirectObsFallback")
+    obsFallbackDirectObsAllowed := IsObject(obsFbMap)
+        ? JsonCodec.GetBool(obsFbMap, "directObsAllowed", true)
+        : (JsonCodec.HasKey(obj, "allowDirectObsFallback") ? JsonCodec.GetBool(obj, "allowDirectObsFallback", true) : true)
     return {
         kind: t,
         protocolVersion: JsonCodec.GetInt(obj, "protocolVersion", 1),
@@ -1257,10 +1261,11 @@ ParseHostBridgeWsEvent(rawText) {
         code: JsonCodec.GetStr(obj, "code"),
         dedup: JsonCodec.GetBool(obj, "dedup", false),
         hasObsFallback: IsObject(obsFbMap),
+        hasDirectObsPolicy: hasDirectObsPolicy,
         obsFallbackPort: IsObject(obsFbMap) ? JsonCodec.GetInt(obsFbMap, "port", 4455) : 0,
         obsFallbackMic: IsObject(obsFbMap) ? JsonCodec.GetStr(obsFbMap, "targetMic") : "",
         obsFallbackPassword: IsObject(obsFbMap) ? JsonCodec.GetStr(obsFbMap, "password") : "",
-        obsFallbackDirectObsAllowed: IsObject(obsFbMap) ? JsonCodec.GetBool(obsFbMap, "directObsAllowed", true) : true,
+        obsFallbackDirectObsAllowed: obsFallbackDirectObsAllowed,
         hasMuted: JsonCodec.HasKey(obj, "isMuted"),
         isMuted: JsonCodec.GetBool(obj, "isMuted", false),
         routingMode: JsonCodec.GetInt(obj, "routingMode", 1),
@@ -1329,10 +1334,12 @@ ApplyBridgePairResultToConfig(cfg, pairRes) {
 }
 
 _ApplyRemoteObsFallbackCreds(cfg, ev) {
-    if (!IsObject(cfg) || !IsObject(ev) || !ev.HasOwnProp("hasObsFallback") || !ev.hasObsFallback)
+    hasFb := IsObject(ev) && ev.HasOwnProp("hasObsFallback") && ev.hasObsFallback
+    hasPol := IsObject(ev) && ev.HasOwnProp("hasDirectObsPolicy") && ev.hasDirectObsPolicy
+    if (!IsObject(cfg) || (!hasFb && !hasPol))
         return false
     changed := false
-    if (ev.HasOwnProp("obsFallbackPort") && Integer(ev.obsFallbackPort) >= 1 && Integer(ev.obsFallbackPort) <= 65535) {
+    if (hasFb && ev.HasOwnProp("obsFallbackPort") && Integer(ev.obsFallbackPort) >= 1 && Integer(ev.obsFallbackPort) <= 65535) {
         newPort := String(Integer(ev.obsFallbackPort))
         if (cfg.HostPort != newPort) {
             cfg.HostPort := newPort
@@ -1341,7 +1348,7 @@ _ApplyRemoteObsFallbackCreds(cfg, ev) {
             changed := true
         }
     }
-    if (ev.HasOwnProp("obsFallbackMic") && Trim(ev.obsFallbackMic) != "") {
+    if (hasFb && ev.HasOwnProp("obsFallbackMic") && Trim(ev.obsFallbackMic) != "") {
         newMic := Trim(ev.obsFallbackMic)
         if (cfg.TargetMicName != newMic) {
             cfg.TargetMicName := newMic
@@ -1350,7 +1357,7 @@ _ApplyRemoteObsFallbackCreds(cfg, ev) {
             changed := true
         }
     }
-    if (ev.HasOwnProp("obsFallbackPassword") && cfg.ObsPassword != ev.obsFallbackPassword) {
+    if (hasFb && ev.HasOwnProp("obsFallbackPassword") && cfg.ObsPassword != ev.obsFallbackPassword) {
         cfg.ObsPassword := ev.obsFallbackPassword
         if (cfg.HasMethod("Write"))
             try cfg.Write("Connection", "ObsPassword", ev.obsFallbackPassword)

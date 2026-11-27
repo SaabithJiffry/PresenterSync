@@ -1778,8 +1778,11 @@ EvaluateDeadMicWatchdog(cfg, state, peak, isPresenting, nowTick := "") {
     if (!enabled || appMuted || !isPresenting || !silent) {
         state._deadMicSinceTick := 0
         state.deadMicWarn := false
-        if (wasWarn)
+        if (wasWarn) {
             _NotifyHostTelemetryChanged(cfg, state)
+            if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+                try UpdateHudVisibility(cfg, state)
+        }
         return false
     }
 
@@ -1799,7 +1802,7 @@ EvaluateDeadMicWatchdog(cfg, state, peak, isPresenting, nowTick := "") {
     }
     if (!wasWarn || nudgeFired)
         _NotifyHostTelemetryChanged(cfg, state)
-    if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+    if (!wasWarn && cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
         try UpdateHudVisibility(cfg, state)
     return true
 }
@@ -1875,10 +1878,16 @@ UpdateSafetyWatchdogTimer(cfg, state) {
         return true
     }
     SetTimer(state.safetyWatchdogFn, 0)
+    wasDeadMic := state.HasOwnProp("deadMicWarn") && state.deadMicWarn
     state._forgotRecSinceTick := 0
     state._streamDropSinceTick := 0
     state._deadMicSinceTick := 0
     state.deadMicWarn := false
+    if (wasDeadMic) {
+        _NotifyHostTelemetryChanged(cfg, state)
+        if (cfg.HasOwnProp("HudVisibilityMode") && (cfg.HudVisibilityMode = "MutedOrAlert" || cfg.HudVisibilityMode = "CornerTallyDot") && IsSet(UpdateHudVisibility))
+            try UpdateHudVisibility(cfg, state)
+    }
     if (state.HasOwnProp("lowDiskWarnLevel") && state.lowDiskWarnLevel != 0)
         EvaluateLowDiskWatchdog(cfg, state, -1)
     return false

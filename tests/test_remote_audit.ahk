@@ -204,6 +204,11 @@ c3Cfg.DirectObsFallbackAllowed := true
 qAllowed := BuildRemoteLanCandidateQueue(c3Cfg)
 Assert("P1-A: BuildRemoteLanCandidateQueue includes Direct OBS :4455 when DirectObsFallbackAllowed=true",
     qAllowed.Length == 2 && qAllowed[2].isBridge == false, "len=" qAllowed.Length)
+wsEvTopDeny := ParseHostBridgeWsEvent('{"type":"auth_ok","allowDirectObsFallback":false}')
+Assert("P2-3: ParseHostBridgeWsEvent parses top-level allowDirectObsFallback=false when obsFallback omitted",
+    wsEvTopDeny.hasDirectObsPolicy && wsEvTopDeny.obsFallbackDirectObsAllowed == false)
+Assert("P2-3: _ApplyRemoteObsFallbackCreds enforces top-level allowDirectObsFallback=false",
+    _ApplyRemoteObsFallbackCreds(c3Cfg, wsEvTopDeny) && c3Cfg.DirectObsFallbackAllowed == false)
 
 pinMigIni := A_Temp "\ps_v101_pin_mig.ini"
 try FileDelete(pinMigIni)

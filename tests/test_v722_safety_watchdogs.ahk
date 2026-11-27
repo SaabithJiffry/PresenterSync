@@ -116,10 +116,18 @@ st.isMuted := false
 AssertTrue(EvaluateDeadMicWatchdog(cfg, st, 0.001, true, 1000) == false && st.deadMicWarn == false, "Dead-mic starts timer without warning")
 EvaluateDeadMicWatchdog(cfg, st, 0.001, true, 45999)
 AssertTrue(st.deadMicWarn == false, "Dead-mic silent before 45s")
+cfg.HudVisibilityMode := "MutedOrAlert"
+st._deadMicSinceTick := 0
+st.deadMicWarn := false
+EvaluateDeadMicWatchdog(cfg, st, 0.001, true, 1000)
 EvaluateDeadMicWatchdog(cfg, st, 0.001, true, 46000)
 AssertTrue(st.deadMicWarn == true, "Dead-mic warns after 45s continuous silence")
-EvaluateDeadMicWatchdog(cfg, st, 0.2, true, 47000)
-AssertTrue(st.deadMicWarn == false, "Dead-mic clears when audio returns")
+seqAfterAlert := st.animSeq
+EvaluateDeadMicWatchdog(cfg, st, 0.001, true, 47000)
+AssertTrue(st.animSeq == seqAfterAlert, "Dead-mic does NOT re-trigger UpdateHudVisibility every 1s while active")
+EvaluateDeadMicWatchdog(cfg, st, 0.2, true, 48000)
+AssertTrue(st.deadMicWarn == false && st.animSeq == seqAfterAlert + 1, "Dead-mic clears when audio returns and updates HUD visibility once")
+cfg.HudVisibilityMode := "Always"
 EvaluateDeadMicWatchdog(cfg, st, 0.001, true, 50000)
 EvaluateDeadMicWatchdog(cfg, st, 0.001, false, 100000)
 AssertTrue(st.deadMicWarn == false, "Dead-mic not flagged when not presenting")

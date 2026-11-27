@@ -372,8 +372,9 @@ class FloatingSceneOverlayManager(
             },
             onResetActiveScene = {
                 view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                connectionManager.sendResetActiveScene("scene_hud")
-                Toast.makeText(context, "Resetting active scene sources...", Toast.LENGTH_SHORT).show()
+                if (connectionManager.sendResetActiveScene("scene_hud")) {
+                    Toast.makeText(context, "Resetting active scene sources...", Toast.LENGTH_SHORT).show()
+                }
             },
             onHoldStageUpdate = { st, prog -> view.setHoldVisualState(st, prog) }
         )

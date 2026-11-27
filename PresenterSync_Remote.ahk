@@ -3886,6 +3886,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
     dlg._pairedToken := cfg.SessionToken
     dlg._pairedCode := cfg.SessionPairingCode
     dlg._pairedHostUuid := cfg.HasOwnProp("PairedHostUuid") ? cfg.PairedHostUuid : ""
+    dlg._pairedDirectObsAllowed := cfg.HasOwnProp("DirectObsFallbackAllowed") ? !!cfg.DirectObsFallbackAllowed : true
 
     dlg.SetFont("s9 w600", Theme.UiFont)
     lblPair := AddThemedCtrl(dlg, "Text", "xm w360 y+10", "Internet Pairing Code (Optional Fallback / WAN):")
@@ -3931,8 +3932,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         editBridgePort.Value := pairRes.bridgePort
         if (pairRes.obsPort != "")
             editPort.Value := pairRes.obsPort
-        if (pairRes.obsPassword != "")
-            editPw.Value := pairRes.obsPassword
+        editPw.Value := pairRes.HasOwnProp("obsPassword") ? pairRes.obsPassword : ""
         if (pairRes.targetMicName != "")
             editMic.Value := pairRes.targetMicName
         if (pairRes.internetPairingCode != "")
@@ -3940,6 +3940,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         editSession.Value := pairRes.sessionCode
         dlg._pairedToken := pairRes.sessionToken
         dlg._pairedCode := pairRes.sessionCode
+        dlg._pairedDirectObsAllowed := pairRes.HasOwnProp("allowDirectObsFallback") ? !!pairRes.allowDirectObsFallback : false
         if (pairRes.HasOwnProp("hostUuid") && pairRes.hostUuid != "")
             dlg._pairedHostUuid := pairRes.hostUuid
     }
@@ -4164,6 +4165,7 @@ ShowRemoteConnectionUI(cfg, state, isInitialBoot := false) {
         cfg.SessionPairingCode := sessVal
         cfg.BridgePort := String(Integer(bpVal))
         cfg.SessionToken := (sessVal = "") ? "" : ((NormalizePairingCode(sessVal) = NormalizePairingCode(dlg._pairedCode)) ? dlg._pairedToken : "")
+        cfg.DirectObsFallbackAllowed := (sessVal = "") ? true : ((NormalizePairingCode(sessVal) = NormalizePairingCode(dlg._pairedCode)) ? !!dlg._pairedDirectObsAllowed : false)
         cfg.PairedHostUuid := dlg._pairedHostUuid
         cfg.InternetPairingCode := pairVal
         cfg.RelayBaseUrl := NormalizeRelayBaseUrl(editRelayUrl.Value)
