@@ -32,6 +32,8 @@ class OperatorConsole {
         if (IsObject(this._timerFn))
             try SetTimer(this._timerFn, 0)
         if (IsObject(this._gui)) {
+            if (IsSet(Theme))
+                try Theme.UnregisterWindow(this._gui, "PresenterSync - Live Operator Console")
             try this._gui.Destroy()
         }
         this._gui := ""
@@ -50,9 +52,13 @@ class OperatorConsole {
             return true
         }
 
-        g := Gui("+Resize +MinSize540x420", "PresenterSync - Live Operator Console")
+        g := Gui("+Resize +MaximizeBox +MinSize540x420", "PresenterSync - Live Operator Console")
         g.MarginX := 12
         g.MarginY := 10
+        if (IsSet(Theme)) {
+            Theme.ApplyToWindow(g)
+            Theme.NamedWindows["PresenterSync - Live Operator Console"] := g
+        }
         g.SetFont("s9", "Segoe UI")
         this._gui := g
         c := Map()
@@ -65,7 +71,7 @@ class OperatorConsole {
         c["obsStats"] := g.AddText("xm y+4 w640 c666666", "OBS Stats: -- fps | Render -- ms | Skipped 0")
 
         ; 2. Scene & Transition Row
-        g.AddGroupBox("xm y+10 w640 h78", "Scenes & Studio Transition")
+        gbScenes := g.AddGroupBox("xm y+10 w640 h78", "Scenes & Studio Transition")
         g.AddText("xp+12 yp+24 w65", "Program:")
         c["progDrop"] := g.AddDropDownList("x+6 yp-3 w175")
         g.AddText("x+12 yp+3 w55", "Preview:")
@@ -76,7 +82,7 @@ class OperatorConsole {
         c["prevDrop"].OnEvent("Change", (ctrl, *) => (ctrl.Text != "" && IsSet(ExecuteHostSetPreviewScene) ? ExecuteHostSetPreviewScene(this._cfg, this._state, ctrl.Text) : 0, this.Refresh()))
 
         ; 3. Audio, Timer, BRB & Panic Row
-        g.AddGroupBox("xm y+18 w640 h78", "Live Controls, Timer & Safety")
+        gbLive := g.AddGroupBox("xm y+18 w640 h78", "Live Controls, Timer & Safety")
         c["btnMic"] := g.AddButton("xm+12 yp+24 w110 h28", "Toggle Mic")
         c["btnMic"].OnEvent("Click", (*) => (IsSet(ExecuteHostRemoteToggleMute) ? ExecuteHostRemoteToggleMute(this._cfg, this._state) : 0, this.Refresh()))
         c["btnRec"] := g.AddButton("x+8 yp w95 h28", "Rec / Stop")
@@ -90,14 +96,14 @@ class OperatorConsole {
         c["btnTmr"].OnEvent("Click", (*) => (IsSet(PauseHostPresenterTimer) ? PauseHostPresenterTimer(this._cfg, this._state) : 0, this.Refresh()))
 
         ; 4. Stage Intercom & Quick Nudges
-        g.AddGroupBox("xm y+18 w640 h110", "Stage Intercom & Quick Nudges")
+        gbNudge := g.AddGroupBox("xm y+18 w640 h110", "Stage Intercom & Quick Nudges")
         c["nudgeIn"] := g.AddEdit("xm+12 yp+22 w490 h24")
         c["btnNudge"] := g.AddButton("x+8 yp-1 w115 h26", "Send Nudge")
         c["btnNudge"].OnEvent("Click", (*) => this._SendNudge())
         c["inbox"] := g.AddEdit("xm+12 y+8 w615 h44 ReadOnly -WantReturn", "")
 
         ; 5. Device Roster
-        g.AddGroupBox("xm y+16 w640 h145", "Connected Remotes & Role Roster")
+        gbRoster := g.AddGroupBox("xm y+16 w640 h145", "Connected Remotes & Role Roster")
         c["roster"] := g.AddListView("xm+12 yp+20 w615 h82 Grid -Multi", ["Device", "Role", "Trust", "OBS FB", "State"])
         c["btnFlash"] := g.AddButton("xm+12 y+6 w95 h25", "Flash Pill")
         c["btnPauseDev"] := g.AddButton("x+8 yp w105 h25", "Pause Input")
@@ -117,6 +123,40 @@ class OperatorConsole {
         c["btnTurnover"].OnEvent("Click", (*) => (IsSet(ExecuteHostSessionTurnover) ? ExecuteHostSessionTurnover(this._cfg, this._state, true) : 0, this.Refresh()))
         c["btnClose"] := g.AddButton("x+8 yp w100 h28", "Close")
         c["btnClose"].OnEvent("Click", (*) => this.Close())
+
+        if (IsSet(Theme)) {
+            Theme.RegisterControl(g, c["hdrStatus"], "Text")
+            Theme.RegisterControl(g, c["obsStats"], "Text", "muted")
+            Theme.RegisterControl(g, c["progDrop"], "DropDownList")
+            Theme.RegisterControl(g, c["prevDrop"], "DropDownList")
+            Theme.RegisterControl(g, c["nudgeIn"], "Edit")
+            Theme.RegisterControl(g, c["inbox"], "Edit")
+            Theme.RegisterControl(g, c["roster"], "ListView")
+            for _, bk in ["btnTrans", "btnMic", "btnRec", "btnBrb", "btnPanic", "btnTmr", "btnNudge", "btnFlash", "btnPauseDev", "btnRole", "btnObsFb", "btnBookmark", "btnFocusConf", "btnTurnover", "btnClose"]
+                Theme.RegisterControl(g, c[bk], "Button")
+        }
+
+        if (IsSet(WindowFit)) {
+            WindowFit.RegisterAnchor(g, c["hdrStatus"], {W: 1})
+            WindowFit.RegisterAnchor(g, c["obsStats"], {W: 1})
+            WindowFit.RegisterAnchor(g, gbScenes, {W: 1})
+            WindowFit.RegisterAnchor(g, c["btnTrans"], {R: 1})
+            WindowFit.RegisterAnchor(g, gbLive, {W: 1})
+            WindowFit.RegisterAnchor(g, gbNudge, {W: 1})
+            WindowFit.RegisterAnchor(g, c["nudgeIn"], {W: 1})
+            WindowFit.RegisterAnchor(g, c["btnNudge"], {R: 1})
+            WindowFit.RegisterAnchor(g, c["inbox"], {W: 1})
+            WindowFit.RegisterAnchor(g, gbRoster, {W: 1, H: 1})
+            WindowFit.RegisterAnchor(g, c["roster"], {W: 1, H: 1})
+            WindowFit.RegisterAnchor(g, c["btnFlash"], {B: 1})
+            WindowFit.RegisterAnchor(g, c["btnPauseDev"], {B: 1})
+            WindowFit.RegisterAnchor(g, c["btnRole"], {B: 1})
+            WindowFit.RegisterAnchor(g, c["btnObsFb"], {B: 1})
+            WindowFit.RegisterAnchor(g, c["btnBookmark"], {FX: 0.0, FW: 0.25, B: 1})
+            WindowFit.RegisterAnchor(g, c["btnFocusConf"], {FX: 0.25, FW: 0.25, B: 1})
+            WindowFit.RegisterAnchor(g, c["btnTurnover"], {FX: 0.50, FW: 0.30, B: 1})
+            WindowFit.RegisterAnchor(g, c["btnClose"], {FX: 0.80, FW: 0.20, B: 1})
+        }
 
         g.OnEvent("Close", (*) => (this.Close(), 0))
         g.OnEvent("Escape", (*) => this.Close())

@@ -107,7 +107,7 @@ ShowHelpWindow(cfg, state := "", *) {
         return existing
     }
 
-    helpGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync v" UIConstants.APP_VERSION " - Interactive Help Center & HUD Guide")
+    helpGui := Gui("+AlwaysOnTop +MaximizeBox", "PresenterSync v" UIConstants.APP_VERSION " - Interactive Help Center & HUD Guide")
     Theme.ApplyToWindow(helpGui)
     Theme.NamedWindows["HelpWindow"] := helpGui
 
@@ -568,6 +568,14 @@ ShowHelpWindow(cfg, state := "", *) {
     helpGui.OnEvent("Close", CloseHelp)
     helpGui.OnEvent("Escape", CloseHelp)
 
+    WindowFit.RegisterAnchor(helpGui, edGlobalSearch, {W: 1})
+    WindowFit.RegisterAnchor(helpGui, btnClearSearch, {R: 1})
+    WindowFit.RegisterAnchor(helpGui, tabs, {W: 1, H: 1})
+    WindowFit.RegisterAnchor(helpGui, edHudDetail, {W: 1, H: 1})
+    WindowFit.RegisterAnchor(helpGui, btnOpenCC, {FX: 0.0, FW: 0.25, B: 1})
+    WindowFit.RegisterAnchor(helpGui, btnJumpHud, {FX: 0.25, FW: 0.25, B: 1})
+    WindowFit.RegisterAnchor(helpGui, btnJumpTray, {FX: 0.50, FW: 0.25, B: 1})
+    WindowFit.RegisterAnchor(helpGui, btnClose, {FX: 0.75, FW: 0.25, B: 1})
     WindowFit.Show(helpGui, "w840 h612 Center")
     btnClose.Focus()
     return helpGui
@@ -1415,6 +1423,17 @@ ShowProfileManagerUI(cfg, state := "") {
     dlg.OnEvent("Close", CloseProfileMgr)
     dlg.OnEvent("Escape", CloseProfileMgr)
 
+    WindowFit.RegisterAnchor(dlg, lb, {W: 1, H: 1})
+    WindowFit.RegisterAnchor(dlg, btnLoad, {R: 1})
+    WindowFit.RegisterAnchor(dlg, btnSave, {R: 1})
+    WindowFit.RegisterAnchor(dlg, btnDel, {R: 1})
+    WindowFit.RegisterAnchor(dlg, editNew, {W: 1, B: 1})
+    WindowFit.RegisterAnchor(dlg, btnNew, {R: 1, B: 1})
+    WindowFit.RegisterAnchor(dlg, chkAutoProf, {W: 1, B: 1})
+    WindowFit.RegisterAnchor(dlg, editRules, {W: 1, B: 1})
+    WindowFit.RegisterAnchor(dlg, btnSaveRules, {R: 1, B: 1})
+    WindowFit.RegisterAnchor(dlg, lblMsg, {W: 1, B: 1})
+    WindowFit.RegisterAnchor(dlg, btnClose, {R: 1, B: 1})
     WindowFit.Show(dlg)
     return dlg
 }
@@ -2008,7 +2027,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
 
     Theme.AcquireSuspend()
 
-    ccGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync - Control Center")
+    ccGui := Gui("+AlwaysOnTop +MaximizeBox", "PresenterSync - Control Center")
     ccGui._closed := false
     ccGui.MarginX := 16
     ccGui.MarginY := 14
@@ -2786,6 +2805,10 @@ ShowControlCenterWindow(cfg, state := "", *) {
     ccGui.OnEvent("Close", CloseControlCenter)
     ccGui.OnEvent("Escape", CloseControlCenter)
 
+    WindowFit.RegisterAnchor(ccGui, tabs, {W: 1, H: 1})
+    WindowFit.RegisterAnchor(ccGui, lblStatus, {W: 1, B: 1})
+    WindowFit.RegisterAnchor(ccGui, btnApply, {R: 1, B: 1})
+    WindowFit.RegisterAnchor(ccGui, btnClose, {R: 1, B: 1})
     WindowFit.Show(ccGui, "w720 h556")
     return ccGui
 }

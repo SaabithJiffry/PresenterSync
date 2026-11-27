@@ -3143,6 +3143,27 @@ ShowRemoteTouchDeckGUI(cfg, state, *) {
         }
     }
     UpdateRemoteTouchDeckUI(cfg, state)
+    WindowFit.RegisterAnchor(deckGui, lblHeader, {W: 1})
+    WindowFit.RegisterAnchor(deckGui, btnMute, {FX: 0.0, FW: 0.5})
+    WindowFit.RegisterAnchor(deckGui, btnTrans, {FX: 0.5, FW: 0.5})
+    WindowFit.RegisterAnchor(deckGui, lblSlide, {W: 1})
+    WindowFit.RegisterAnchor(deckGui, btnPrevSlide, {FX: 0.0, FW: 0.333})
+    WindowFit.RegisterAnchor(deckGui, btnNextSlide, {FX: 0.333, FW: 0.334})
+    WindowFit.RegisterAnchor(deckGui, btnStartSlide, {FX: 0.667, FW: 0.333})
+    for idx, sb in sceneBtns
+        WindowFit.RegisterAnchor(deckGui, sb, {FX: (idx - 1) / 6.0, FW: 1.0 / 6.0})
+    WindowFit.RegisterAnchor(deckGui, lblTimer, {W: 1})
+    WindowFit.RegisterAnchor(deckGui, btnStandby, {FX: 0.0, FW: 0.20})
+    WindowFit.RegisterAnchor(deckGui, btnT5, {FX: 0.20, FW: 0.14})
+    WindowFit.RegisterAnchor(deckGui, btnT10, {FX: 0.34, FW: 0.14})
+    WindowFit.RegisterAnchor(deckGui, btnT15, {FX: 0.48, FW: 0.14})
+    WindowFit.RegisterAnchor(deckGui, btnTimerPause, {FX: 0.62, FW: 0.20})
+    WindowFit.RegisterAnchor(deckGui, btnTimerReset, {FX: 0.82, FW: 0.18})
+    for idx, nb in nudgeBtns
+        WindowFit.RegisterAnchor(deckGui, nb, {FX: (idx - 1) / 3.0, FW: 1.0 / 3.0})
+    WindowFit.RegisterAnchor(deckGui, edNudge, {W: 1})
+    WindowFit.RegisterAnchor(deckGui, btnSendNudge, {R: 1})
+    WindowFit.RegisterAnchor(deckGui, btnCloseDeck, {R: 1, B: 1})
     if (!IsSet(g_IsTestMode) || !g_IsTestMode)
         WindowFit.Show(deckGui, "w620 h520")
     return deckGui
@@ -3760,6 +3781,13 @@ ShowRemoteHelpUI(cfg, state, *) {
         helpGui._onThemeRefresh := ""
     ), btnClose)
 
+    WindowFit.RegisterAnchor(helpGui, edRemSearch, {W: 1})
+    WindowFit.RegisterAnchor(helpGui, btnRemClear, {R: 1})
+    WindowFit.RegisterAnchor(helpGui, tabs, {W: 1, H: 1})
+    WindowFit.RegisterAnchor(helpGui, btnConn, {FX: 0.0, FW: 0.25, B: 1})
+    WindowFit.RegisterAnchor(helpGui, btnKey, {FX: 0.25, FW: 0.25, B: 1})
+    WindowFit.RegisterAnchor(helpGui, btnSc, {FX: 0.50, FW: 0.25, B: 1})
+    WindowFit.RegisterAnchor(helpGui, btnClose, {FX: 0.75, FW: 0.25, B: 1})
     WindowFit.Show(helpGui, "w740 h540 Center")
     btnClose.Focus()
     return helpGui

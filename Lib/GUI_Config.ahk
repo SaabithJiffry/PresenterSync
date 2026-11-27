@@ -801,22 +801,7 @@ class Theme {
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         } else if (ctrlType = "Tab") {
             try ctrl.Opt("-0x0200") ; strip TCS_MULTILINE to keep a clean single row
-            rc := Buffer(16, 0)
-            DllCall("GetClientRect", "Ptr", ctrl.Hwnd, "Ptr", rc)
-            tw := NumGet(rc, 8, "Int")
-            tabCount := SendMessage(0x1304, 0, 0, ctrl.Hwnd) ; TCM_GETITEMCOUNT
-            if (tabCount > 0 && tw > 0) {
-                dpiScale := A_ScreenDPI / 96.0
-                itemH := Round(36 * dpiScale)
-                itemW := Max(24, Floor((tw - 14) / tabCount))
-                SendMessage(0x1329, 0, (itemH << 16) | (itemW & 0xFFFF), ctrl.Hwnd) ; TCM_SETITEMSIZE
-                Loop 24 {
-                    if (SendMessage(0x132C, 0, 0, ctrl.Hwnd) <= 1 || itemW <= 24) ; TCM_GETROWCOUNT
-                        break
-                    itemW -= 2
-                    SendMessage(0x1329, 0, (itemH << 16) | (itemW & 0xFFFF), ctrl.Hwnd)
-                }
-            }
+            this.RecalcTabHeaderSizes(ctrl)
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.tabSubclassPtr, "Ptr", 2, "Ptr", 0)
             if (!ctrl.HasOwnProp("_fluentChangeHooked")) {
                 ctrl._fluentChangeHooked := true
@@ -839,6 +824,33 @@ class Theme {
             DllCall("comctl32\SetWindowSubclass", "Ptr", ctrl.Hwnd, "Ptr", this.staticSubclassPtr, "Ptr", 3, "Ptr", 0)
             DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
         }
+    }
+
+    static RecalcTabHeaderSizes(ctrl) {
+        if (!IsObject(ctrl) || !ctrl.Hwnd)
+            return false
+        try ctrl.Opt("-0x0200")
+        rc := Buffer(16, 0)
+        if (!DllCall("GetClientRect", "Ptr", ctrl.Hwnd, "Ptr", rc))
+            return false
+        tw := NumGet(rc, 8, "Int")
+        tabCount := SendMessage(0x1304, 0, 0, ctrl.Hwnd) ; TCM_GETITEMCOUNT
+        if (tabCount <= 0 || tw <= 0)
+            return false
+        dpi := 0
+        try dpi := DllCall("user32\GetDpiForWindow", "Ptr", ctrl.Hwnd, "UInt")
+        dpiScale := (dpi > 0 ? dpi : A_ScreenDPI) / 96.0
+        itemH := Round(36 * dpiScale)
+        itemW := Max(24, Floor((tw - 14) / tabCount))
+        SendMessage(0x1329, 0, (itemH << 16) | (itemW & 0xFFFF), ctrl.Hwnd) ; TCM_SETITEMSIZE
+        Loop 24 {
+            if (SendMessage(0x132C, 0, 0, ctrl.Hwnd) <= 1 || itemW <= 24) ; TCM_GETROWCOUNT
+                break
+            itemW -= 2
+            SendMessage(0x1329, 0, (itemH << 16) | (itemW & 0xFFFF), ctrl.Hwnd)
+        }
+        DllCall("InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
+        return true
     }
 
     static RefreshWindow(guiObj, isDark := "") {

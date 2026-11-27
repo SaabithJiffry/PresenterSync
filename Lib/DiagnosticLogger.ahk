@@ -235,7 +235,7 @@ class DiagnosticLogger {
         if (IsObject(existing))
             return {shown: true, testMode: false, logPath: logPath, gui: existing}
 
-        vGui := Gui("+Resize +MinSize640x420", "PresenterSync - Error & Diagnostic Log")
+        vGui := Gui("+Resize +MaximizeBox +MinSize640x420", "PresenterSync - Error & Diagnostic Log")
         vGui.MarginX := 12
         vGui.MarginY := 10
         vGui.SetFont("s9", "Consolas")
@@ -277,21 +277,17 @@ class DiagnosticLogger {
         btnClose.OnEvent("Click", CloseViewer)
         vGui.OnEvent("Close", CloseViewer)
         vGui.OnEvent("Escape", CloseViewer)
-        vGui.OnEvent("Size", (g, minMax, w, h) => (
-            (minMax = -1) ? 0 : (
-                edLog.Move(12, 10, Max(300, w - 24), Max(200, h - 58)),
-                btnRefresh.Move(12, h - 38),
-                btnCopy.Move(115, h - 38),
-                btnOpenDir.Move(218, h - 38),
-                btnClear.Move(351, h - 38),
-                btnClose.Move(454, h - 38)
-            )
-        ))
-
-        if (IsSet(WindowFit))
+        if (IsSet(WindowFit)) {
+            WindowFit.RegisterAnchor(vGui, edLog, {W: 1, H: 1})
+            WindowFit.RegisterAnchor(vGui, btnRefresh, {B: 1})
+            WindowFit.RegisterAnchor(vGui, btnCopy, {B: 1})
+            WindowFit.RegisterAnchor(vGui, btnOpenDir, {B: 1})
+            WindowFit.RegisterAnchor(vGui, btnClear, {B: 1})
+            WindowFit.RegisterAnchor(vGui, btnClose, {R: 1, B: 1})
             WindowFit.Show(vGui, "w804 h518 Center")
-        else
+        } else {
             vGui.Show("w804 h518")
+        }
         return {shown: true, testMode: false, logPath: logPath, gui: vGui}
     }
 

@@ -553,7 +553,7 @@ class SessionTimeline {
             return existing
         Theme.AcquireSuspend()
 
-        tlGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync - Session Timeline & Chapters")
+        tlGui := Gui("+AlwaysOnTop +MaximizeBox", "PresenterSync - Session Timeline & Chapters")
         tlGui._closed := false
         tlGui.MarginX := 16
         tlGui.MarginY := 14
@@ -630,6 +630,13 @@ class SessionTimeline {
         }
         tlGui.OnEvent("Close", CloseTimeline)
         tlGui.OnEvent("Escape", CloseTimeline)
+        WindowFit.RegisterAnchor(tlGui, lblCount, {W: 1})
+        WindowFit.RegisterAnchor(tlGui, lv, {W: 1, H: 1})
+        WindowFit.RegisterAnchor(tlGui, btnCsv, {FX: 0.0, FW: 0.23, B: 1})
+        WindowFit.RegisterAnchor(tlGui, btnMd, {FX: 0.23, FW: 0.23, B: 1})
+        WindowFit.RegisterAnchor(tlGui, btnYt, {FX: 0.46, FW: 0.22, B: 1})
+        WindowFit.RegisterAnchor(tlGui, btnRef, {FX: 0.68, FW: 0.16, B: 1})
+        WindowFit.RegisterAnchor(tlGui, btnClr, {FX: 0.84, FW: 0.16, B: 1})
         WindowFit.Show(tlGui, "AutoSize")
         return tlGui
     }
