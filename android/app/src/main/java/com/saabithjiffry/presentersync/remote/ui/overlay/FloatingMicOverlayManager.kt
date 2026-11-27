@@ -64,6 +64,9 @@ class FloatingMicOverlayManager(
     private var quickMenuParams: WindowManager.LayoutParams? = null
     private var attached = false
     private var hiddenForEasterEgg = false
+    private var suppressedForPodium = false
+    private val isOverlaySuppressed: Boolean
+        get() = hiddenForEasterEgg || suppressedForPodium
     private var easterHoldRunnable: Runnable? = null
     private var easterProgressRunnable: Runnable? = null
     @Volatile
@@ -187,10 +190,22 @@ class FloatingMicOverlayManager(
     fun setHiddenForEasterEgg(hidden: Boolean) {
         if (hiddenForEasterEgg == hidden) return
         hiddenForEasterEgg = hidden
-        if (hidden) {
+        applyOverlaySuppressionState()
+    }
+
+    fun setSuppressedForPodium(suppressed: Boolean) {
+        if (suppressedForPodium == suppressed) return
+        suppressedForPodium = suppressed
+        applyOverlaySuppressionState()
+    }
+
+    private fun applyOverlaySuppressionState() {
+        if (isOverlaySuppressed) {
             dismissQuickMenu()
             stopBreathing()
-            pillView?.visibility = View.INVISIBLE
+            muteTransitionAnimator?.cancel()
+            activeTouchController?.onCancel()
+            pillView?.visibility = if (suppressedForPodium) View.GONE else View.INVISIBLE
         } else {
             pillView?.visibility = View.VISIBLE
             resetIdleDimTimer(wakeNow = true)
@@ -220,11 +235,12 @@ class FloatingMicOverlayManager(
         } else {
             updateDimensionsAndPosition()
         }
-        if (hiddenForEasterEgg) {
-            pillView?.visibility = View.INVISIBLE
+        if (isOverlaySuppressed) {
+            pillView?.visibility = if (suppressedForPodium) View.GONE else View.INVISIBLE
             stopBreathing()
             return
         }
+        pillView?.visibility = View.VISIBLE
 
         val wakeKey = "${conn.connected}|${conn.isMuted}|${conn.connStatus}|${conn.streamDropWarn}|${conn.voiceWhileMuted}|${cfg.idleDimAfterSec}|${cfg.showIndicator}"
         if (cfg.idleDimAfterSec <= 0) {
@@ -885,7 +901,19 @@ class FloatingMicOverlayManager(
             container.addView(telemetryBanner)
         }
 
-        if (currentConn.connected) {
+        if (currentConn.connected && currentConn.isTallyOnly) {
+            val tallyBanner = TextView(context).apply {
+                text = "Read-Only Tally Mode (Controls Locked)"
+                setTextColor(Color.parseColor("#F59E0B"))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                val hp = (10 * density).roundToInt()
+                setPadding(hp, (4 * density).roundToInt(), hp, (6 * density).roundToInt())
+            }
+            container.addView(tallyBanner)
+        }
+
+        if (currentConn.connected && !currentConn.isTallyOnly) {
             val deckDivider = View(context).apply { setBackgroundColor(dividerColor) }
             container.addView(deckDivider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
 

@@ -42,6 +42,26 @@ import com.saabithjiffry.presentersync.remote.ui.screens.MainActivity
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
+internal data class FloatingHudVisibilityState(
+    val micOverlayVisible: Boolean,
+    val sceneOverlayVisible: Boolean
+)
+
+internal object FloatingHudVisibilityResolver {
+    fun resolve(
+        showIndicator: Boolean,
+        showSceneIndicator: Boolean,
+        hiddenForArcade: Boolean,
+        podiumForegroundActive: Boolean
+    ): FloatingHudVisibilityState {
+        val suppressed = hiddenForArcade || podiumForegroundActive
+        return FloatingHudVisibilityState(
+            micOverlayVisible = showIndicator && !suppressed,
+            sceneOverlayVisible = showSceneIndicator && !suppressed
+        )
+    }
+}
+
 internal object HdcpRecoveryPolicy {
     const val EVENT_SCREEN_ON = "screen_on"
     const val EVENT_DISPLAY_CHANGED = "display_changed"
@@ -256,9 +276,15 @@ class FloatingHudForegroundService : LifecycleService() {
         var lastSnakeCfgKey = ""
 
         lifecycleScope.launch {
-            combine(app.configStore.config, app.connectionManager.uiState) { cfg, conn ->
-                cfg to conn
-            }.collect { (cfg, conn) ->
+            combine(
+                app.configStore.config,
+                app.connectionManager.uiState,
+                app.podiumForegroundActive
+            ) { cfg, conn, podiumActive ->
+                Triple(cfg, conn, podiumActive)
+            }.collect { (cfg, conn, podiumActive) ->
+                overlayManager.setSuppressedForPodium(podiumActive)
+                sceneOverlayManager.setSuppressedForPodium(podiumActive)
                 overlayManager.showOrUpdate(cfg, conn)
                 sceneOverlayManager.showOrUpdate(cfg, conn)
 

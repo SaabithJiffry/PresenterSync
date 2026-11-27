@@ -24,12 +24,16 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -37,16 +41,27 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.config.QuickNudgePresetHelper
@@ -75,6 +90,37 @@ private fun Context.findHostActivity(): Activity? {
     return null
 }
 
+internal data class PodiumSceneChipModel(
+    val name: String,
+    val isLive: Boolean,
+    val isPreview: Boolean
+)
+
+internal fun buildPodiumSceneChipModels(
+    scenes: List<String>,
+    activeScene: String,
+    previewScene: String,
+    studioModeActive: Boolean
+): List<PodiumSceneChipModel> {
+    val seen = LinkedHashSet<String>()
+    val result = ArrayList<PodiumSceneChipModel>(scenes.size)
+    for (raw in scenes) {
+        val scene = raw.trim()
+        if (scene.isEmpty() || !seen.add(scene)) continue
+        result.add(
+            PodiumSceneChipModel(
+                name = scene,
+                isLive = scene == activeScene,
+                isPreview = studioModeActive && scene == previewScene
+            )
+        )
+    }
+    return result
+}
+
+internal fun resolvePodiumScenePickerSecurePolicy(hideFromScreenCapture: Boolean): SecureFlagPolicy =
+    if (hideFromScreenCapture) SecureFlagPolicy.SecureOn else SecureFlagPolicy.Inherit
+
 @Composable
 fun PodiumDeckScreen(
     app: PresenterSyncRemoteApp,
@@ -83,17 +129,56 @@ fun PodiumDeckScreen(
     val conn by app.connectionManager.uiState.collectAsStateWithLifecycle()
     val cfg by app.configStore.config.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val haptic = LocalHapticFeedback.current
     val muteTapGate = remember { LongArray(1) }
     val deckTapGate = remember { LongArray(1) }
+    var showScenePickerDialog by rememberSaveable { mutableStateOf(false) }
+
+    val canControl = conn.connected && !conn.isTallyOnly
+    val canDeckControl = canControl && conn.usingBridge
+    val canRelayOrBridge = canControl && (conn.usingBridge || conn.usingRelayFallback)
 
     BackHandler(onBack = onExitPodium)
 
-    DisposableEffect(Unit) {
+    DisposableEffect(lifecycleOwner, cfg.keepScreenOn) {
         val window = context.findHostActivity()?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        onDispose {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        app.setPodiumForegroundActive(
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        )
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> app.setPodiumForegroundActive(true)
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP -> app.setPodiumForegroundActive(false)
+                else -> Unit
+            }
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            app.setPodiumForegroundActive(false)
+            if (!cfg.keepScreenOn) {
+                window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
+
+    if (showScenePickerDialog) {
+        PodiumScenePickerDialog(
+            conn = conn,
+            canControl = canControl,
+            hideFromScreenCapture = cfg.hideFromScreenCapture,
+            onSelectScene = { scene ->
+                podiumRunWithCooldown(deckTapGate, 200L) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    app.connectionManager.sendSwitchScene(scene, "podium")
+                    showScenePickerDialog = false
+                }
+            },
+            onDismiss = { showScenePickerDialog = false }
+        )
     }
 
     Column(
@@ -114,10 +199,25 @@ fun PodiumDeckScreen(
         ) {
             PodiumMuteTouchSurface(
                 conn = conn,
-                onToggleMute = { podiumRunWithCooldown(muteTapGate, 80L) { app.connectionManager.toggleMuteFromHud() } }
+                canControl = !conn.connected || !conn.isTallyOnly,
+                onToggleMute = {
+                    if (!conn.isTallyOnly) {
+                        podiumRunWithCooldown(muteTapGate, 80L) { app.connectionManager.toggleMuteFromHud() }
+                    }
+                }
             )
 
-            PodiumActiveSceneCard(conn = conn)
+            PodiumActiveSceneCard(
+                conn = conn,
+                canControl = canControl,
+                onSwitchScene = { scene ->
+                    podiumRunWithCooldown(deckTapGate, 200L) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        app.connectionManager.sendSwitchScene(scene, "podium")
+                    }
+                },
+                onOpenAllScenes = { showScenePickerDialog = true }
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -125,7 +225,7 @@ fun PodiumDeckScreen(
             ) {
                 Button(
                     onClick = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendTransitionScene("podium") } },
-                    enabled = conn.connected,
+                    enabled = canControl,
                     modifier = Modifier
                         .weight(1f)
                         .height(52.dp),
@@ -144,7 +244,7 @@ fun PodiumDeckScreen(
                 }
                 OutlinedButton(
                     onClick = { podiumRunWithCooldown(deckTapGate, 250L) { app.connectionManager.sendResetActiveScene("podium") } },
-                    enabled = conn.connected,
+                    enabled = canControl,
                     modifier = Modifier.height(52.dp),
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.65f)),
@@ -156,6 +256,7 @@ fun PodiumDeckScreen(
 
             PodiumSlidesAndNotesCard(
                 conn = conn,
+                canControlSlides = canDeckControl,
                 onPrevSlide = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendPptPrev("podium") } },
                 onNextSlide = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendPptNext("podium") } },
                 onStartSlideshow = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendStartSlideshow("podium") } }
@@ -163,6 +264,7 @@ fun PodiumDeckScreen(
 
             PodiumTimerAndStandbyCard(
                 conn = conn,
+                canControl = canControl,
                 onToggleStandby = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendToggleStandby("podium") } },
                 onTogglePanic = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendEmergencyPanic(null, "podium") } },
                 onTimerCommand = { action, sec -> podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendTimerCommand(action, sec, "podium") } }
@@ -170,6 +272,7 @@ fun PodiumDeckScreen(
 
             PodiumQuickNudgeCard(
                 conn = conn,
+                canRelayOrBridge = canRelayOrBridge,
                 quickNudgePresets = cfg.quickNudgePresets,
                 onSendNudge = { nudge -> podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendStageNudge(nudge) } },
                 onSignalHost = { podiumRunWithCooldown(deckTapGate, 200L) { app.connectionManager.sendPresenterSignal("Need Assistance", "sticky") } },
@@ -194,13 +297,33 @@ private fun PodiumTopBar(
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "PODIUM DECK",
-                color = Color(0xFF94A3B8),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.2.sp
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "PODIUM DECK",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp
+                )
+                if (conn.connected && conn.isTallyOnly) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = PodiumAmberAlert.copy(alpha = 0.2f),
+                        border = BorderStroke(1.dp, PodiumAmberAlert.copy(alpha = 0.6f))
+                    ) {
+                        Text(
+                            text = "TALLY-ONLY",
+                            color = PodiumAmberAlert,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+            }
             val statusSummary = buildString {
                 append(if (conn.connected) conn.transportName else "Disconnected")
                 val recPrefix = if (conn.recSourceTag.isNotBlank()) "${conn.recSourceTag.uppercase()} " else ""
@@ -232,6 +355,7 @@ private fun PodiumTopBar(
 @Composable
 private fun PodiumMuteTouchSurface(
     conn: ConnectionUiState,
+    canControl: Boolean,
     onToggleMute: () -> Unit
 ) {
     val muteCardBg = when {
@@ -250,7 +374,7 @@ private fun PodiumMuteTouchSurface(
             .fillMaxWidth()
             .height(148.dp)
             .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onToggleMute),
+            .clickable(enabled = canControl, onClick = onToggleMute),
         shape = RoundedCornerShape(18.dp),
         color = muteCardBg,
         border = BorderStroke(2.dp, muteBorder)
@@ -277,6 +401,7 @@ private fun PodiumMuteTouchSurface(
             Text(
                 text = when {
                     !conn.connected -> "Tap to attempt toggle / reconnect from Dashboard"
+                    conn.isTallyOnly -> "Read-Only Tally mode (controls locked)"
                     conn.isMuted && conn.voiceWhileMuted -> "⚠ MIC SIGNAL DETECTED WHILE MUTED — Tap to UNMUTE"
                     conn.isMuted -> "Tap anywhere here to UNMUTE"
                     else -> "Tap anywhere here to MUTE"
@@ -292,6 +417,7 @@ private fun PodiumMuteTouchSurface(
 @Composable
 private fun PodiumSlidesAndNotesCard(
     conn: ConnectionUiState,
+    canControlSlides: Boolean,
     onPrevSlide: () -> Unit,
     onNextSlide: () -> Unit,
     onStartSlideshow: () -> Unit
@@ -340,14 +466,14 @@ private fun PodiumSlidesAndNotesCard(
             ) {
                 FilledTonalButton(
                     onClick = onPrevSlide,
-                    enabled = conn.connected && conn.usingBridge,
+                    enabled = canControlSlides,
                     modifier = Modifier.weight(1f).height(48.dp)
                 ) {
                     Text("◀ Prev", fontWeight = FontWeight.Bold)
                 }
                 FilledTonalButton(
                     onClick = onNextSlide,
-                    enabled = conn.connected && conn.usingBridge,
+                    enabled = canControlSlides,
                     modifier = Modifier.weight(1f).height(48.dp)
                 ) {
                     Text("Next ▶", fontWeight = FontWeight.Bold)
@@ -356,7 +482,7 @@ private fun PodiumSlidesAndNotesCard(
 
             OutlinedButton(
                 onClick = onStartSlideshow,
-                enabled = conn.connected && conn.usingBridge,
+                enabled = canControlSlides,
                 modifier = Modifier.fillMaxWidth(),
                 border = BorderStroke(1.dp, PodiumOledBorder),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE2E8F0))
@@ -390,6 +516,7 @@ private fun PodiumSlidesAndNotesCard(
 @Composable
 private fun PodiumTimerAndStandbyCard(
     conn: ConnectionUiState,
+    canControl: Boolean,
     onToggleStandby: () -> Unit,
     onTogglePanic: () -> Unit,
     onTimerCommand: (String, Int) -> Unit
@@ -425,7 +552,7 @@ private fun PodiumTimerAndStandbyCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(
                         onClick = onToggleStandby,
-                        enabled = conn.connected,
+                        enabled = canControl,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (conn.isStandby) PodiumAmberAlert else Color(0xFF1E293B),
                             contentColor = Color.White
@@ -435,7 +562,7 @@ private fun PodiumTimerAndStandbyCard(
                     }
                     Button(
                         onClick = onTogglePanic,
-                        enabled = conn.connected,
+                        enabled = canControl,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (conn.isPanic) Color(0xFF991B1B) else Color(0xFF7F1D1D),
                             contentColor = Color.White
@@ -453,7 +580,7 @@ private fun PodiumTimerAndStandbyCard(
                 for ((lbl, sec) in listOf("5m" to 300, "10m" to 600, "15m" to 900, "45m" to 2700)) {
                     OutlinedButton(
                         onClick = { onTimerCommand("timer_start", sec) },
-                        enabled = conn.connected,
+                        enabled = canControl,
                         modifier = Modifier.weight(1f),
                         border = BorderStroke(1.dp, PodiumOledBorder),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
@@ -474,7 +601,7 @@ private fun PodiumTimerAndStandbyCard(
                             onTimerCommand("timer_pause", 0)
                         }
                     },
-                    enabled = conn.connected,
+                    enabled = canControl,
                     modifier = Modifier.weight(1f),
                     border = BorderStroke(1.dp, PodiumOledBorder),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
@@ -492,7 +619,7 @@ private fun PodiumTimerAndStandbyCard(
                 }
                 OutlinedButton(
                     onClick = { onTimerCommand("timer_reset", conn.timerPresetSec) },
-                    enabled = conn.connected,
+                    enabled = canControl,
                     modifier = Modifier.weight(1f),
                     border = BorderStroke(1.dp, PodiumOledBorder),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
@@ -507,6 +634,7 @@ private fun PodiumTimerAndStandbyCard(
 @Composable
 private fun PodiumQuickNudgeCard(
     conn: ConnectionUiState,
+    canRelayOrBridge: Boolean,
     quickNudgePresets: String = "",
     onSendNudge: (String) -> Unit,
     onSignalHost: () -> Unit = {},
@@ -542,7 +670,7 @@ private fun PodiumQuickNudgeCard(
                     }
                     OutlinedButton(
                         onClick = onSignalHost,
-                        enabled = conn.connected && conn.usingBridge,
+                        enabled = canRelayOrBridge && conn.usingBridge,
                         border = BorderStroke(1.dp, PodiumOledBorder),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                     ) {
@@ -575,7 +703,7 @@ private fun PodiumQuickNudgeCard(
                 for (nudge in QuickNudgePresetHelper.resolve(quickNudgePresets, conn.quickNudges, 4)) {
                     FilledTonalButton(
                         onClick = { onSendNudge(nudge) },
-                        enabled = conn.connected && (conn.usingBridge || conn.usingRelayFallback)
+                        enabled = canRelayOrBridge
                     ) {
                         Text(nudge, fontWeight = FontWeight.SemiBold)
                     }
@@ -587,7 +715,16 @@ private fun PodiumQuickNudgeCard(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PodiumActiveSceneCard(conn: ConnectionUiState) {
+private fun PodiumActiveSceneCard(
+    conn: ConnectionUiState,
+    canControl: Boolean,
+    onSwitchScene: (String) -> Unit,
+    onOpenAllScenes: () -> Unit
+) {
+    val chips = remember(conn.scenes, conn.activeScene, conn.previewScene, conn.studioModeActive) {
+        buildPodiumSceneChipModels(conn.scenes, conn.activeScene, conn.previewScene, conn.studioModeActive)
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
@@ -595,20 +732,71 @@ private fun PodiumActiveSceneCard(conn: ConnectionUiState) {
         border = BorderStroke(1.dp, PodiumOledBorder)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "ACTIVE PROGRAM SCENE",
-                color = Color(0xFF94A3B8),
-                fontSize = 10.5.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.1.sp
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "ACTIVE PROGRAM SCENE",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.1.sp
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color(0xFF107C10).copy(alpha = 0.28f),
+                        border = BorderStroke(1.dp, Color(0xFF34D399).copy(alpha = 0.65f))
+                    ) {
+                        Text(
+                            text = "LIVE",
+                            color = Color(0xFF34D399),
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
+                    }
+                    if (conn.studioModeActive && conn.previewScene.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFF0284C7).copy(alpha = 0.24f),
+                            border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.65f))
+                        ) {
+                            Text(
+                                text = "PREVIEW",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+                if (chips.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = onOpenAllScenes,
+                        enabled = canControl,
+                        modifier = Modifier.heightIn(min = 36.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, Color(0xFF334155)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE2E8F0))
+                    ) {
+                        Text("All Scenes (${chips.size})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
             Text(
                 text = conn.activeScene.ifBlank { "Scene" },
                 color = Color(0xFF34D399),
-                fontSize = 17.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 modifier = Modifier
@@ -624,6 +812,168 @@ private fun PodiumActiveSceneCard(conn: ConnectionUiState) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
+            if (chips.isNotEmpty()) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(chips, key = { it.name }) { chip ->
+                        val chipBg = when {
+                            chip.isLive -> Color(0xFF064E3B)
+                            chip.isPreview -> Color(0xFF0C4A6E)
+                            else -> Color(0xFF141820)
+                        }
+                        val chipBorder = when {
+                            chip.isLive -> Color(0xFF34D399)
+                            chip.isPreview -> Color(0xFF38BDF8)
+                            else -> PodiumOledBorder
+                        }
+                        Surface(
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable(enabled = canControl) { onSwitchScene(chip.name) },
+                            shape = RoundedCornerShape(10.dp),
+                            color = chipBg,
+                            border = BorderStroke(1.dp, chipBorder)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (chip.isLive) {
+                                    Text("●", color = Color(0xFF34D399), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                } else if (chip.isPreview) {
+                                    Text("NEXT", color = Color(0xFF38BDF8), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                                }
+                                Text(
+                                    text = chip.name,
+                                    color = if (canControl) Color.White else Color(0xFF64748B),
+                                    fontSize = 13.5.sp,
+                                    fontWeight = if (chip.isLive || chip.isPreview) FontWeight.Bold else FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PodiumScenePickerDialog(
+    conn: ConnectionUiState,
+    canControl: Boolean,
+    hideFromScreenCapture: Boolean,
+    onSelectScene: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val chips = remember(conn.scenes, conn.activeScene, conn.previewScene, conn.studioModeActive) {
+        buildPodiumSceneChipModels(conn.scenes, conn.activeScene, conn.previewScene, conn.studioModeActive)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            securePolicy = resolvePodiumScenePickerSecurePolicy(hideFromScreenCapture)
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .heightIn(max = 520.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = PodiumOledBlack,
+            border = BorderStroke(1.dp, PodiumOledBorder)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Select OBS Scene",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        border = BorderStroke(1.dp, Color(0xFF475569)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    ) {
+                        Text("Close", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                HorizontalDivider(color = PodiumOledBorder)
+                if (chips.isEmpty()) {
+                    Text(
+                        text = "No OBS scenes available.",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(chips, key = { it.name }) { chip ->
+                            val rowBg = when {
+                                chip.isLive -> Color(0xFF064E3B)
+                                chip.isPreview -> Color(0xFF0C4A6E)
+                                else -> PodiumOledCard
+                            }
+                            val rowBorder = when {
+                                chip.isLive -> Color(0xFF34D399)
+                                chip.isPreview -> Color(0xFF38BDF8)
+                                else -> PodiumOledBorder
+                            }
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 52.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable(enabled = canControl) { onSelectScene(chip.name) },
+                                shape = RoundedCornerShape(10.dp),
+                                color = rowBg,
+                                border = BorderStroke(1.dp, rowBorder)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = chip.name,
+                                        color = if (canControl) Color.White else Color(0xFF64748B),
+                                        fontSize = 15.sp,
+                                        fontWeight = if (chip.isLive) FontWeight.Bold else FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (chip.isLive) {
+                                        Text("LIVE", color = Color(0xFF34D399), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                    } else if (chip.isPreview) {
+                                        Text("PREVIEW", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

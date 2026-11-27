@@ -137,6 +137,16 @@ data class ConnectionUiState(
     val isRecordingActive: Boolean
         get() = recState == 1 || recState == 2
 
+    val isTallyOnly: Boolean
+        get() = remoteRole.equals("Tally-Only", ignoreCase = true) ||
+            remoteRole.equals("Tally", ignoreCase = true)
+
+    val isDirector: Boolean
+        get() = remoteRole.equals("Director", ignoreCase = true)
+
+    val canControlObs: Boolean
+        get() = !isTallyOnly
+
     fun formattedRecElapsed(): String {
         val total = recSeconds.coerceAtLeast(0)
         val hrs = total / 3600
@@ -1938,6 +1948,10 @@ class ConnectionManager(
 
     private fun sendBridgeDeckAction(action: (HostBridgeClient) -> Boolean): Boolean {
         val st = _uiState.value
+        if (st.connected && st.isTallyOnly) {
+            _events.tryEmit(RemoteEvent.ToastMessage("Read-only Tally-Only role cannot control host/OBS."))
+            return false
+        }
         val bridge = bridgeClient
         if (!st.connected || bridge == null || !st.usingBridge) {
             _events.tryEmit(RemoteEvent.ToastMessage("Deck controls require Primary Host Bridge connection."))
@@ -1952,6 +1966,10 @@ class ConnectionManager(
         relayAction: (RelayClient) -> Boolean
     ): Boolean {
         val st = _uiState.value
+        if (st.connected && st.isTallyOnly) {
+            _events.tryEmit(RemoteEvent.ToastMessage("Read-only Tally-Only role cannot control host/OBS."))
+            return false
+        }
         val bridge = bridgeClient
         if (st.connected && bridge != null && st.usingBridge) {
             return bridgeAction(bridge)
@@ -1973,6 +1991,10 @@ class ConnectionManager(
     fun toggleMuteFromClicker(): Boolean = toggleMuteInternal("clicker")
 
     private fun toggleMuteInternal(source: String): Boolean {
+        if (_uiState.value.connected && _uiState.value.isTallyOnly) {
+            _events.tryEmit(RemoteEvent.ToastMessage("Read-only Tally-Only role cannot control host/OBS."))
+            return false
+        }
         val targetMuted = !_uiState.value.isMuted
         val sent = dispatchMuteCommand(
             bridgeSend = { it.sendToggleMute(source) },
@@ -1991,6 +2013,10 @@ class ConnectionManager(
     fun setMuteFromClicker(targetMuted: Boolean): Boolean = setMuteInternal(targetMuted)
 
     private fun setMuteInternal(targetMuted: Boolean): Boolean {
+        if (_uiState.value.connected && _uiState.value.isTallyOnly) {
+            _events.tryEmit(RemoteEvent.ToastMessage("Read-only Tally-Only role cannot control host/OBS."))
+            return false
+        }
         val sent = dispatchMuteCommand(
             bridgeSend = { it.sendSetMute(targetMuted) },
             obsSend = { it.sendSetInputMute(targetMuted) },

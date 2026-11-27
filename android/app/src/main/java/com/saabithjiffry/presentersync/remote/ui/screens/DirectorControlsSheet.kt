@@ -175,7 +175,8 @@ internal fun DirectorDeckAndTimerCard(
 ) {
     val isDirectObsFallback = conn.usingDirectObsFallback ||
         conn.channelType == com.saabithjiffry.presentersync.remote.network.ChannelType.DIRECT_OBS
-    val bridgeOnlyEnabled = conn.usingBridge
+    val canControl = !conn.isTallyOnly
+    val bridgeOnlyEnabled = conn.usingBridge && canControl
     if (!conn.connected || (!conn.usingBridge && !conn.usingRelayFallback && !isDirectObsFallback)) return
 
     var nudgeDraft by remember { mutableStateOf("") }
@@ -220,6 +221,21 @@ internal fun DirectorDeckAndTimerCard(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
+                        if (conn.isTallyOnly) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFFF59E0B).copy(alpha = 0.16f),
+                                border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.5f))
+                            ) {
+                                Text(
+                                    text = "TALLY-ONLY (READ-ONLY)",
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFF59E0B)
+                                )
+                            }
+                        }
                         if (isDirectObsFallback) {
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
@@ -248,6 +264,7 @@ internal fun DirectorDeckAndTimerCard(
                 }
                 Button(
                     onClick = { directorRunWithCooldown(deckTapGate) { onToggleStandby() } },
+                    enabled = canControl,
                     contentPadding = CompactExplorerButtonPadding,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (conn.isStandby) Color(0xFFD97706) else MaterialTheme.colorScheme.secondary
@@ -263,6 +280,7 @@ internal fun DirectorDeckAndTimerCard(
             ) {
                 Button(
                     onClick = { directorRunWithCooldown(deckTapGate) { onEmergencyPanic() } },
+                    enabled = canControl,
                     contentPadding = CompactExplorerButtonPadding,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (conn.isPanic) Color(0xFF991B1B) else Color(0xFF7F1D1D)
@@ -272,6 +290,7 @@ internal fun DirectorDeckAndTimerCard(
                 }
                 OutlinedButton(
                     onClick = { directorRunWithCooldown(deckTapGate) { onResetActiveScene() } },
+                    enabled = canControl,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("↺ Reset Scene", maxLines = 1, softWrap = false)
@@ -333,6 +352,7 @@ internal fun DirectorDeckAndTimerCard(
                         onToggleRecord()
                     }
                 },
+                enabled = canControl,
                 contentPadding = CompactExplorerButtonPadding,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = when {
@@ -361,6 +381,7 @@ internal fun DirectorDeckAndTimerCard(
             ) {
                 OutlinedButton(
                     onClick = { directorRunWithCooldown(deckTapGate) { onPauseRecord() } },
+                    enabled = canControl,
                     contentPadding = CompactExplorerButtonPadding,
                     modifier = Modifier.weight(1f)
                 ) {
@@ -373,6 +394,7 @@ internal fun DirectorDeckAndTimerCard(
                 }
                 OutlinedButton(
                     onClick = { directorRunWithCooldown(deckTapGate) { onSplitRecord() } },
+                    enabled = canControl,
                     contentPadding = CompactExplorerButtonPadding,
                     modifier = Modifier.weight(1f)
                 ) {
@@ -395,6 +417,7 @@ internal fun DirectorDeckAndTimerCard(
                             val selected = sceneName == conn.activeScene
                             FilterChip(
                                 selected = selected,
+                                enabled = canControl,
                                 onClick = { directorRunWithCooldown(deckTapGate) { onSwitchScene(sceneName) } },
                                 label = { Text(sceneName, maxLines = 1, softWrap = false) }
                             )
@@ -458,6 +481,7 @@ internal fun DirectorDeckAndTimerCard(
                 listOf(5, 10, 15, 45).forEach { mins ->
                     FilterChip(
                         selected = conn.timerPresetSec == mins * 60 && conn.timerState != "stopped",
+                        enabled = canControl,
                         onClick = { directorRunWithCooldown(deckTapGate) { onTimerCommand("timer_start", mins * 60) } },
                         label = { Text("${mins}m") }
                     )
@@ -473,6 +497,7 @@ internal fun DirectorDeckAndTimerCard(
                             }
                         }
                     },
+                    enabled = canControl,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text(
@@ -485,6 +510,7 @@ internal fun DirectorDeckAndTimerCard(
                 }
                 OutlinedButton(
                     onClick = { directorRunWithCooldown(deckTapGate) { onTimerCommand("timer_reset", conn.timerPresetSec) } },
+                    enabled = canControl,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Reset")
@@ -510,6 +536,7 @@ internal fun DirectorDeckAndTimerCard(
                             onTimerCommand("timer_start", sec)
                         }
                     },
+                    enabled = canControl,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Set & Go")
@@ -545,6 +572,7 @@ internal fun DirectorDeckAndTimerCard(
                 QuickNudgePresetHelper.resolve(quickNudgePresets, conn.quickNudges, 6).forEach { quick ->
                     OutlinedButton(
                         onClick = { directorRunWithCooldown(deckTapGate) { onSendNudge(quick) } },
+                        enabled = canControl,
                         contentPadding = CompactExplorerButtonPadding
                     ) {
                         Text(quick, maxLines = 1, softWrap = false)
@@ -559,6 +587,7 @@ internal fun DirectorDeckAndTimerCard(
                 OutlinedTextField(
                     value = nudgeDraft,
                     onValueChange = { nudgeDraft = it.take(140) },
+                    enabled = canControl,
                     label = { Text("Send whisper toast...") },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
@@ -573,6 +602,7 @@ internal fun DirectorDeckAndTimerCard(
                             }
                         }
                     },
+                    enabled = canControl,
                     contentPadding = CompactExplorerButtonPadding
                 ) {
                     Text("Send")

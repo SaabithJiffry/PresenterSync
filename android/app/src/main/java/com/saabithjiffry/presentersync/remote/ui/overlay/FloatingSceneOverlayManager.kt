@@ -143,6 +143,9 @@ class FloatingSceneOverlayManager(
     private var quickMenuParams: WindowManager.LayoutParams? = null
     private var attached = false
     private var hiddenForEasterEgg = false
+    private var suppressedForPodium = false
+    private val isOverlaySuppressed: Boolean
+        get() = hiddenForEasterEgg || suppressedForPodium
     @Volatile
     private var isTouchActive = false
     private var isDragging = false
@@ -154,9 +157,20 @@ class FloatingSceneOverlayManager(
     fun setHiddenForEasterEgg(hidden: Boolean) {
         if (hiddenForEasterEgg == hidden) return
         hiddenForEasterEgg = hidden
-        if (hidden) {
+        applyOverlaySuppressionState()
+    }
+
+    fun setSuppressedForPodium(suppressed: Boolean) {
+        if (suppressedForPodium == suppressed) return
+        suppressedForPodium = suppressed
+        applyOverlaySuppressionState()
+    }
+
+    private fun applyOverlaySuppressionState() {
+        if (isOverlaySuppressed) {
             dismissQuickMenu()
-            sceneView?.visibility = View.INVISIBLE
+            activeHoldController?.onCancel()
+            sceneView?.visibility = if (suppressedForPodium) View.GONE else View.INVISIBLE
         } else {
             sceneView?.visibility = View.VISIBLE
             if (attached && currentConfig.showSceneIndicator) {
@@ -197,10 +211,11 @@ class FloatingSceneOverlayManager(
             updateDimensionsAndPosition()
         }
 
-        if (hiddenForEasterEgg) {
-            sceneView?.visibility = View.INVISIBLE
+        if (isOverlaySuppressed) {
+            sceneView?.visibility = if (suppressedForPodium) View.GONE else View.INVISIBLE
             return
         }
+        sceneView?.visibility = View.VISIBLE
 
         syncFlags()
         val bounds = ScreenBoundsCalculator.getSafeBoundsPx(context, windowManager)
@@ -573,17 +588,21 @@ class FloatingSceneOverlayManager(
             container.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
 
-        addMenuRow("⇄ Transition Scene (Preview ↔ Program)") {
-            connectionManager.sendTransitionScene("scene_quick_menu")
-        }
-        addMenuRow("↺ Reset Active Scene Sources") {
-            connectionManager.sendResetActiveScene("scene_quick_menu")
-        }
-        for (sceneName in currentConn.scenes) {
-            val prefix = if (sceneName == currentConn.activeScene) "● " else ""
-            addMenuRow("${prefix}Switch to: $sceneName") {
-                connectionManager.sendSwitchScene(sceneName, "scene_quick_menu")
+        if (!currentConn.isTallyOnly) {
+            addMenuRow("⇄ Transition Scene (Preview ↔ Program)") {
+                connectionManager.sendTransitionScene("scene_quick_menu")
             }
+            addMenuRow("↺ Reset Active Scene Sources") {
+                connectionManager.sendResetActiveScene("scene_quick_menu")
+            }
+            for (sceneName in currentConn.scenes) {
+                val prefix = if (sceneName == currentConn.activeScene) "● " else ""
+                addMenuRow("${prefix}Switch to: $sceneName") {
+                    connectionManager.sendSwitchScene(sceneName, "scene_quick_menu")
+                }
+            }
+        } else {
+            addMenuRow("Read-Only Tally Mode (Controls Locked)") { }
         }
         addMenuRow("Flip Opposite Corner") {
             val lp = layoutParams ?: return@addMenuRow

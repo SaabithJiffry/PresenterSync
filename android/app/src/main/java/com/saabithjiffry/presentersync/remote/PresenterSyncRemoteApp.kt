@@ -13,6 +13,9 @@ import com.saabithjiffry.presentersync.remote.network.ApkSelfInstaller
 import com.saabithjiffry.presentersync.remote.network.ConnectionManager
 import com.saabithjiffry.presentersync.remote.util.DiagnosticLogger
 import java.io.File
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class PresenterSyncRemoteApp : Application() {
     lateinit var configStore: RemoteConfigStore
@@ -21,6 +24,13 @@ class PresenterSyncRemoteApp : Application() {
         private set
     lateinit var apkSelfInstaller: ApkSelfInstaller
         private set
+
+    private val _podiumForegroundActive = MutableStateFlow(false)
+    val podiumForegroundActive: StateFlow<Boolean> = _podiumForegroundActive.asStateFlow()
+
+    fun setPodiumForegroundActive(active: Boolean) {
+        _podiumForegroundActive.value = active
+    }
 
     override fun onCreate() {
         super.onCreate()
