@@ -1325,6 +1325,10 @@ FormatRelayStatePayload(cfg, state, cmd := "state", seq := 0, ts := 0, sid := ""
     tRem := (IsObject(state) && state.HasOwnProp("timerRemainingSec") && IsInteger(state.timerRemainingSec)) ? Integer(state.timerRemainingSec) : 600
     tPre := (IsObject(state) && state.HasOwnProp("timerPresetSec") && IsInteger(state.timerPresetSec)) ? Max(60, Integer(state.timerPresetSec)) : 600
     activeScene := (IsObject(state) && state.HasOwnProp("currentSceneName") && state.currentSceneName != "") ? String(state.currentSceneName) : "Scene"
+    obsRecSt := (IsObject(state) && state.HasOwnProp("obsRecState") && IsInteger(state.obsRecState)) ? Integer(state.obsRecState) : 0
+    confRecSt := (IsObject(state) && state.HasOwnProp("confRecState") && IsInteger(state.confRecState)) ? Integer(state.confRecState) : 0
+    recSrcTag := (IsObject(state) && state.HasOwnProp("recSourceTag")) ? String(state.recSourceTag) : ""
+    unreadCnt := (IsObject(state) && state.HasOwnProp("unreadChatCount") && IsInteger(state.unreadChatCount)) ? Max(0, Integer(state.unreadChatCount)) : 0
 
     sceneList := _GetHostSceneListForRelay(state)
     dataStr := (cmd = "state") ? (isMuted ? "1" : "0") : ""
@@ -1341,7 +1345,11 @@ FormatRelayStatePayload(cfg, state, cmd := "state", seq := 0, ts := 0, sid := ""
             . ',"isMuted":' (isMuted ? "true" : "false")
             . ',"isStandby":' (isStandby ? "true" : "false")
             . ',"recState":' recSt
+            . ',"obsRecState":' obsRecSt
+            . ',"confRecState":' confRecSt
+            . ',"recSourceTag":"' EscapeJsonStr(recSrcTag) '"'
             . ',"recSeconds":' recSec
+            . ',"unreadChatCount":' unreadCnt
             . ',"streamDropWarn":' (streamDrop ? "true" : "false")
             . ',"voiceWhileMuted":' (voiceMuted ? "true" : "false")
             . ',"osMicMutedDrift":' (osDrift ? "true" : "false")
@@ -1433,7 +1441,7 @@ ParseRelayEnvelope(rawMsg, pairingCode := "", password := "", replayGuard := "",
             }
         }
 
-        hasTelemetry := (InStr(plain, '"recSeconds"') || InStr(plain, '"streamDropWarn"') || InStr(plain, '"voiceWhileMuted"') || InStr(plain, '"scenes"') || InStr(plain, '"activeScene"') || InStr(plain, '"osMicMutedDrift"') || InStr(plain, '"slideIndex"'))
+        hasTelemetry := (InStr(plain, '"recSeconds"') || InStr(plain, '"streamDropWarn"') || InStr(plain, '"voiceWhileMuted"') || InStr(plain, '"scenes"') || InStr(plain, '"activeScene"') || InStr(plain, '"osMicMutedDrift"') || InStr(plain, '"slideIndex"') || InStr(plain, '"unreadChatCount"') || InStr(plain, '"recSourceTag"'))
         hasMutedField := (InStr(plain, '"isMuted"') != 0)
         return {
             ok: true,
@@ -1453,7 +1461,11 @@ ParseRelayEnvelope(rawMsg, pairingCode := "", password := "", replayGuard := "",
             hasTelemetry: hasTelemetry,
             isStandby: _RelayJsonExtractBool(plain, "isStandby", false),
             recState: _RelayJsonExtractInt(plain, "recState", 0),
+            obsRecState: _RelayJsonExtractInt(plain, "obsRecState", 0),
+            confRecState: _RelayJsonExtractInt(plain, "confRecState", 0),
+            recSourceTag: _RelayJsonExtractStr(plain, "recSourceTag"),
             recSeconds: Max(0, _RelayJsonExtractInt(plain, "recSeconds", 0)),
+            unreadChatCount: Max(0, _RelayJsonExtractInt(plain, "unreadChatCount", 0)),
             streamDropWarn: _RelayJsonExtractBool(plain, "streamDropWarn", false),
             voiceWhileMuted: _RelayJsonExtractBool(plain, "voiceWhileMuted", false),
             osMicMutedDrift: _RelayJsonExtractBool(plain, "osMicMutedDrift", false),
@@ -3235,22 +3247,53 @@ PushObsMuteToZoom(cfg, state, obsIsMuted, mockZoomState := "", sendFn := "") {
     }
 }
 
+_ExtractConfNodeRecord(item) {
+    if !IsObject(item)
+        return { text: String(item), aid: "", ct: 0 }
+    parts := []
+    for _, prop in ["name", "helpText", "fullDescription", "value", "legacyDesc"] {
+        if (item.HasOwnProp(prop)) {
+            v := Trim(String(item.%prop%))
+            if (v != "")
+                parts.Push(v)
+        }
+    }
+    joined := ""
+    for i, p in parts
+        joined .= (i > 1 ? " | " : "") p
+    aid := item.HasOwnProp("automationId") ? Trim(String(item.automationId)) : ""
+    ct := (item.HasOwnProp("controlType") && IsInteger(item.controlType)) ? Integer(item.controlType) : 0
+    return { text: joined, aid: aid, ct: ct }
+}
+
 ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "", cfg := "") {
     if (!IsObject(result))
-        result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0, cameraActive: false, raisedHandCount: 0, screenShareActive: false}
+        result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0, cameraActive: false, raisedHandCount: 0, screenShareActive: false, uipiMismatch: false}
     if (!result.HasOwnProp("cameraActive"))
         result.cameraActive := false
     if (!result.HasOwnProp("raisedHandCount"))
         result.raisedHandCount := 0
     if (!result.HasOwnProp("screenShareActive"))
         result.screenShareActive := false
+    if (!result.HasOwnProp("uipiMismatch"))
+        result.uipiMismatch := false
     normApp := NormalizeConferencingApp(appType)
     kwCfg := GetConfiguredUiaKeywords(cfg)
     hasCustomMute := (IsObject(cfg) && cfg.HasOwnProp("UiaMuteKeywords") && Trim(String(cfg.UiaMuteKeywords)) != "")
     hasCustomUnmute := (IsObject(cfg) && cfg.HasOwnProp("UiaUnmuteKeywords") && Trim(String(cfg.UiaUnmuteKeywords)) != "")
-    for n in names {
+
+    nodeList := []
+    for _, rawItem in names {
+        nodeList.Push(_ExtractConfNodeRecord(rawItem))
+    }
+
+    for idx, node in nodeList {
+        n := node.text
+        aidLow := StrLower(node.aid)
+        if (n = "" && aidLow = "")
+            continue
         if (!result.hasMic && !RegExMatch(n, "i)\b(when joining|on entry|all|participants|everyone|settings)\b")) {
-            nLow := StrLower(Trim(String(n)))
+            nLow := StrLower(Trim(n))
             matchedCustom := false
             if (hasCustomUnmute) {
                 for _, uk in kwCfg.unmute {
@@ -3282,9 +3325,9 @@ ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "",
                         result.hasMic := true, result.muted := false, result.micHwnd := hwnd
                     }
                 } else {
-                    if RegExMatch(n, "i)\bunmute\b.*\baudio\b|^unmute(\b|,|$)") {
+                    if RegExMatch(n, "i)\bunmute\b.*\b(audio|mic|microphone)\b|^unmute(\b|,|$)|audio,?\s*currently\s+muted|microphone\s+(is\s+)?muted") {
                         result.hasMic := true, result.muted := true, result.micHwnd := hwnd
-                    } else if RegExMatch(n, "i)\bmute\b.*\baudio\b|^mute(\b|,|$)") {
+                    } else if RegExMatch(n, "i)\bmute\b.*\b(audio|mic|microphone)\b|^mute(\b|,|$)|audio,?\s*currently\s+unmuted|microphone\s+(is\s+)?unmuted") {
                         result.hasMic := true, result.muted := false, result.micHwnd := hwnd
                     } else if RegExMatch(n, "i)activar (el )?audio|reactivar (el )?mic|réactiver le micro|mikrofon aktivieren|ativar (o )?som|إلغاء كتم|ミュート解除|取消静音") {
                         result.hasMic := true, result.muted := true, result.micHwnd := hwnd
@@ -3301,28 +3344,61 @@ ParseConferencingElementNames(names, appType := "Zoom", hwnd := 0, result := "",
         if (RegExMatch(n, "i)\b(stop shar(ing|e)|you are screen sharing|dejar de compartir|arrêter le partage)\b"))
             result.screenShareActive := true
         if (result.recState == 0) {
-            if RegExMatch(n, "i)\bresume\b.*\brecording\b") {
+            if RegExMatch(n, "i)\bresume\b.*\brecording\b|\brecording paused\b|\bpaused\b.*\brecording\b") {
                 result.hasRec := true, result.recState := 2
-            } else if RegExMatch(n, "i)\b(pause|stop)\b.*\brecording\b") {
+            } else if RegExMatch(n, "i)\b(pause|stop)\b.*\brecording\b|\bthis meeting is being recorded\b|\brecording\.\.\.|\brecording in progress\b|\b(cloud|local) recording\b") {
                 result.hasRec := true, result.recState := 1
             } else if (!result.hasRec && RegExMatch(n, "i)^record(\b|,|$)|^record (on this computer|to the cloud)|^start recording\b")) {
                 result.hasRec := true, result.recState := 0
             }
         }
-        if RegExMatch(n, "i)\bchat\b.*?(\d+)\s*unread|(\d+)\s*unread.*\bchat\b", &mChat) {
+        if RegExMatch(n, "i)(?:\bchat\b.*?(\d+)\+?\s*(?:unread|new\s+messages?|messages?)|(\d+)\+?\s*(?:unread|new)\b.*\bchat|^chat\s*\((\d+)\+?\)|^chat\s+(\d+)\+?$|\bmore\b.*?(\d+)\+?\s*(?:unread|new))", &mChat) {
             result.hasChat := true
-            cnt := Integer(mChat[1] != "" ? mChat[1] : mChat[2])
-            if (cnt > result.unreadChat)
-                result.unreadChat := cnt
-        } else if (!result.hasChat && RegExMatch(n, "i)^chat(\b|,|$)|open chat|show chat|chat panel|chat with everyone")) {
+            cntStr := ""
+            Loop 5 {
+                if (mChat[A_Index] != "") {
+                    cntStr := mChat[A_Index]
+                    break
+                }
+            }
+            if (cntStr != "")
+                result.unreadChat := Max(result.unreadChat, Integer(cntStr))
+        } else if RegExMatch(n, "i)^(\d+)\+?\s*(?:unread|new)\s*(?:chat\s*)?messages?\b|\bnew chat message\b", &mToast) {
             result.hasChat := true
+            cnt := (mToast[1] != "") ? Integer(mToast[1]) : 1
+            result.unreadChat := Max(result.unreadChat, cnt)
+        } else if (RegExMatch(n, "i)^chat(\b|,|$)|open (the )?chat|show chat|chat panel|chat with everyone|in-?meeting chat") || InStr(aidLow, "chat")) {
+            result.hasChat := true
+            ; Look ahead 1..2 sibling nodes for detached unread badge text ("3", "99+")
+            Loop 2 {
+                sibIdx := idx + A_Index
+                if (sibIdx > nodeList.Length)
+                    break
+                sib := nodeList[sibIdx]
+                sibTxt := Trim(sib.text)
+                if ((sib.ct == 0 || sib.ct == 50020 || sib.ct == 50025) && RegExMatch(sibTxt, "^(\d+)\+?$", &mSib)) {
+                    result.unreadChat := Max(result.unreadChat, Integer(mSib[1]))
+                    break
+                }
+            }
         }
     }
     return result
 }
 
+IsModernZoomWindowClass(winClass) {
+    static zoomClasses := Map(
+        "ZPContentViewWndClass", true,
+        "ConfMultiTabContentWndClass", true,
+        "ZPFloatVideoWndClass", true,
+        "ZPChatWndClass", true,
+        "ZPNotifyWndClass", true
+    )
+    return zoomClasses.Has(Trim(String(winClass)))
+}
+
 DetectZoomStates(targetSpec := "ahk_exe Zoom.exe", appType := "Zoom", mockElementNames := "", cfg := "") {
-    result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0, cameraActive: false, raisedHandCount: 0, screenShareActive: false}
+    result := {foundWindow: false, hasMic: false, muted: false, micHwnd: 0, hasRec: false, recState: 0, hasChat: false, unreadChat: 0, cameraActive: false, raisedHandCount: 0, screenShareActive: false, uipiMismatch: false}
     if IsObject(mockElementNames) {
         result.foundWindow := true
         return ParseConferencingElementNames(mockElementNames, appType, 1, result, cfg)
@@ -3333,15 +3409,25 @@ DetectZoomStates(targetSpec := "ahk_exe Zoom.exe", appType := "Zoom", mockElemen
         return result
 
     result.foundWindow := true
+    normApp := NormalizeConferencingApp(appType)
     for hwnd in hwndList {
         if !DllCall("IsWindowVisible", "Ptr", hwnd)
             continue
         ww := 0, wh := 0
+        winCls := ""
+        try winCls := WinGetClass("ahk_id " hwnd)
         try WinGetPos(,, &ww, &wh, hwnd)
-        if (ww < 50 || wh < 50)
+        isModernZoom := (normApp = "Zoom" && IsModernZoomWindowClass(winCls))
+        minW := isModernZoom ? 24 : 50
+        minH := isModernZoom ? 20 : 50
+        if (ww < minW || wh < minH)
             continue
-        names := UIA.GetWindowElementNames(hwnd, true)
-        ParseConferencingElementNames(names, appType, hwnd, result, cfg)
+        nodes := UIA.FindConferencingNodes(hwnd, 12, 160)
+        if (nodes.Length == 0)
+            nodes := UIA.GetWindowElementNames(hwnd, false)
+        ParseConferencingElementNames(nodes, appType, hwnd, result, cfg)
+        if (!result.hasMic && UIA.IsWindowElevatedMismatch(hwnd))
+            result.uipiMismatch := true
         if (result.hasMic && result.hasRec && result.recState > 0 && result.hasChat && result.unreadChat > 0)
             break
     }
@@ -3357,13 +3443,26 @@ ZoomStateMonitor(cfg, state) {
     CheckMeetBackgroundTabWarning(cfg, state)
     confSpec := GetConferencingWindowSpec(appType)
     zoomInfo := DetectZoomStates(confSpec, appType, "", cfg)
-    CheckConfMeetingEndAutoMute(cfg, state, zoomInfo.hasMic)
-    if (zoomInfo.hasChat)
-        SyncChatState(cfg, state, zoomInfo.unreadChat)
-    else
-        SyncChatState(cfg, state, 0)
 
     if (!zoomInfo.hasMic) {
+        if (zoomInfo.HasOwnProp("uipiMismatch") && zoomInfo.uipiMismatch && (!state.HasOwnProp("_uipiPollWarned") || !state._uipiPollWarned)) {
+            state._uipiPollWarned := true
+            if (IsSet(DiagnosticLogger))
+                try DiagnosticLogger.RecordBreadcrumb("UIA", "ElevationMismatch", appType " running elevated; UIA access may be limited")
+        }
+        if (zoomInfo.foundWindow && state.HasOwnProp("zoomConnected") && state.zoomConnected) {
+            emptyPolls := (state.HasOwnProp("_zoomEmptyPolls") ? Integer(state._zoomEmptyPolls) : 0) + 1
+            state._zoomEmptyPolls := emptyPolls
+            if (emptyPolls < 3) {
+                ; Auto-hidden toolbar grace hold while meeting HWND remains active
+                if (zoomInfo.hasChat)
+                    SyncChatState(cfg, state, zoomInfo.unreadChat)
+                return
+            }
+        }
+        state._zoomEmptyPolls := 0
+        CheckConfMeetingEndAutoMute(cfg, state, false)
+        SyncChatState(cfg, state, zoomInfo.hasChat ? zoomInfo.unreadChat : 0)
         wasConn := state.zoomConnected
         state.zoomConnected := false
         state.zoomLastMuted := -1
@@ -3375,6 +3474,13 @@ ZoomStateMonitor(cfg, state) {
             try state.refreshHelpFn.Call()
         return
     }
+
+    state._zoomEmptyPolls := 0
+    CheckConfMeetingEndAutoMute(cfg, state, true)
+    if (zoomInfo.hasChat)
+        SyncChatState(cfg, state, zoomInfo.unreadChat)
+    else
+        SyncChatState(cfg, state, 0)
 
     wasConn := state.zoomConnected
     state.zoomConnected := (cfg.EnableZoom && zoomInfo.hasMic)

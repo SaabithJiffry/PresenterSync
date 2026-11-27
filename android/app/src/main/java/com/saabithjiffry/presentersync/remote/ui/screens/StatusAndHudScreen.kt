@@ -239,9 +239,10 @@ internal fun StatusAndActionsCard(
             }
 
             if (conn.connected) {
+                val recPrefix = if (conn.recSourceTag.isNotBlank()) "${conn.recSourceTag.uppercase()} " else ""
                 val recText = when (conn.recState) {
-                    1 -> "● REC ${conn.formattedRecElapsed()}"
-                    2 -> "❚❚ PAUSED ${conn.formattedRecElapsed()}"
+                    1 -> "● ${recPrefix}REC ${conn.formattedRecElapsed()}"
+                    2 -> "❚❚ ${recPrefix}PAUSED ${conn.formattedRecElapsed()}"
                     else -> "REC: OFF"
                 }
                 val recTint = when (conn.recState) {
@@ -287,6 +288,14 @@ internal fun StatusAndActionsCard(
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = streamTint
+                            )
+                        }
+                        if (conn.unreadChatCount > 0) {
+                            Text(
+                                text = "💬 ${conn.unreadChatCount} unread meeting chat",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFD97706)
                             )
                         }
                         if (conn.osMicMutedDrift) {

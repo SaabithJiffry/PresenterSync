@@ -269,6 +269,7 @@ SyncChatState(cfg, state, newCount) {
         state.unreadChatCount := newCount
         if (!IsHudSuppressed(cfg) && cfg.ShowExtraHuds)
             ApplyChatAppearance(cfg, state)
+        _NotifyHostTelemetryChanged(cfg, state)
     }
 }
 

@@ -483,6 +483,10 @@ class RemoteState {
     isMuted := false
     micHoldProgress := 0.0
     recState := 0
+    obsRecState := 0
+    confRecState := 0
+    recSourceTag := ""
+    unreadChatCount := 0
     recSeconds := 0
     stopRecConfirmUntil := 0
     streamDropWarn := false
@@ -2015,6 +2019,14 @@ SyncRemoteBridgeTelemetry(cfg, state, ev) {
     prevScene := state.HasOwnProp("activeScene") ? state.activeScene : "Scene"
 
     state.recState := ev.HasOwnProp("recState") ? ev.recState : 0
+    state.obsRecState := ev.HasOwnProp("obsRecState") ? Integer(ev.obsRecState) : 0
+    state.confRecState := ev.HasOwnProp("confRecState") ? Integer(ev.confRecState) : 0
+    state.recSourceTag := ev.HasOwnProp("recSourceTag") ? String(ev.recSourceTag) : ""
+    state.unreadChatCount := ev.HasOwnProp("unreadChatCount") ? Max(0, Integer(ev.unreadChatCount)) : 0
+    if (ev.HasOwnProp("studioModeActive"))
+        state.studioModeActive := !!ev.studioModeActive
+    if (ev.HasOwnProp("previewSceneName") && ev.previewSceneName != "")
+        state.previewScene := String(ev.previewSceneName)
     if (ev.HasOwnProp("recSeconds"))
         AnchorRemoteRecClock(state, Max(0, Integer(ev.recSeconds)))
     else
@@ -2932,7 +2944,11 @@ UpdateRemoteTouchDeckUI(cfg, state) {
     usingBr := state.HasOwnProp("usingBridge") && !!state.usingBridge
     roleBadge := (usingBr && activeRole != "") ? ("  [" activeRole "]") : ""
     scName := (state.HasOwnProp("activeScene") && state.activeScene != "") ? state.activeScene : "Scene"
-    recBadge := (state.recState == 1) ? ("REC " FormatElapsedShort(state.recSeconds)) : ((state.recState == 2) ? ("PAUSED " FormatElapsedShort(state.recSeconds)) : "REC OFF")
+    recSrcPrefix := (state.HasOwnProp("recSourceTag") && state.recSourceTag != "" && state.recState != 0) ? (StrUpper(state.recSourceTag) " ") : ""
+    recBadge := (state.recState == 1) ? (recSrcPrefix "REC " FormatElapsedShort(state.recSeconds)) : ((state.recState == 2) ? (recSrcPrefix "PAUSED " FormatElapsedShort(state.recSeconds)) : "REC OFF")
+    chatCnt := (state.HasOwnProp("unreadChatCount") && IsInteger(state.unreadChatCount)) ? Max(0, Integer(state.unreadChatCount)) : 0
+    if (chatCnt > 0)
+        recBadge .= " | CHAT: " chatCnt
     if (state.HasOwnProp("streamDropWarn") && state.streamDropWarn)
         recBadge .= " | STREAM WARN"
     ctrls.lblHeader.Value := modeLbl roleBadge "  |  Scene: " scName "  |  " recBadge
@@ -3146,10 +3162,13 @@ GetRemoteTrayStatusText(state) {
         txt := isDirectObs ? FormatRemoteDirectObsStatus(state.activeHost) : ("● Connected: " state.activeHost)
         if (state.HasOwnProp("isStandby") && state.isStandby)
             txt .= " | STANDBY"
+        recSrcPrefix := (state.HasOwnProp("recSourceTag") && state.recSourceTag != "") ? (StrUpper(state.recSourceTag) " ") : ""
         if (state.recState == 1)
-            txt .= " | REC " FormatElapsedShort(state.recSeconds)
+            txt .= " | " recSrcPrefix "REC " FormatElapsedShort(state.recSeconds)
         else if (state.recState == 2)
-            txt .= " | PAUSED " FormatElapsedShort(state.recSeconds)
+            txt .= " | " recSrcPrefix "PAUSED " FormatElapsedShort(state.recSeconds)
+        if (state.HasOwnProp("unreadChatCount") && Integer(state.unreadChatCount) > 0)
+            txt .= " | CHAT: " Integer(state.unreadChatCount)
         if (state.HasOwnProp("timerState") && state.timerState != "stopped")
             txt .= " | " (state.timerState = "overtime" ? "OT " : "TMR ") FormatCountdownClock(state.timerRemainingSec)
         if (state.streamDropWarn)

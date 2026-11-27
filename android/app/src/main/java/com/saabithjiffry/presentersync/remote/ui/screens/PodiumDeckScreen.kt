@@ -203,8 +203,10 @@ private fun PodiumTopBar(
             )
             val statusSummary = buildString {
                 append(if (conn.connected) conn.transportName else "Disconnected")
-                if (conn.recState == 1) append("  •  ● REC ${conn.formattedRecElapsed()}")
-                else if (conn.recState == 2) append("  •  ❚❚ PAUSED ${conn.formattedRecElapsed()}")
+                val recPrefix = if (conn.recSourceTag.isNotBlank()) "${conn.recSourceTag.uppercase()} " else ""
+                if (conn.recState == 1) append("  •  ● ${recPrefix}REC ${conn.formattedRecElapsed()}")
+                else if (conn.recState == 2) append("  •  ❚❚ ${recPrefix}PAUSED ${conn.formattedRecElapsed()}")
+                if (conn.unreadChatCount > 0) append("  •  💬 ${conn.unreadChatCount}")
                 if (conn.isStandby) append("  •  BRB ON")
             }
             Text(

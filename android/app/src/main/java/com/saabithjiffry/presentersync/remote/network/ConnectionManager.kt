@@ -76,6 +76,7 @@ data class ConnectionUiState(
     val serviceRunning: Boolean = false,
     val recState: Int = 0,
     val recSeconds: Int = 0,
+    val recSourceTag: String = "",
     val streamState: Int = 0,
     val vcamActive: Boolean = false,
     val unreadChatCount: Int = 0,
@@ -443,6 +444,7 @@ class ConnectionManager(
             serviceRunning = if (stopService) false else cur.serviceRunning,
             recState = 0,
             recSeconds = 0,
+            recSourceTag = "",
             streamState = 0,
             vcamActive = false,
             unreadChatCount = 0,
@@ -1212,6 +1214,8 @@ class ConnectionManager(
                         BridgeTelemetryState(
                             recState = telemetry.recState,
                             recSeconds = telemetry.recSeconds,
+                            recSourceTag = telemetry.recSourceTag,
+                            unreadChatCount = telemetry.unreadChatCount,
                             streamDropWarn = telemetry.streamDropWarn,
                             voiceWhileMuted = telemetry.voiceWhileMuted,
                             osMicMutedDrift = telemetry.osMicMutedDrift,
@@ -1426,6 +1430,7 @@ class ConnectionManager(
         _uiState.value = prev.copy(
             recState = telemetry.recState,
             recSeconds = telemetry.recSeconds,
+            recSourceTag = telemetry.recSourceTag,
             streamState = telemetry.streamState,
             vcamActive = telemetry.vcamActive,
             studioModeActive = telemetry.studioModeActive,

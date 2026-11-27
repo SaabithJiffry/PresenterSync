@@ -408,8 +408,10 @@ object MicPillMetricsCalculator {
             parts.add(String.format(java.util.Locale.US, "%s%02d:%02d", prefix, m, s))
         }
         if (connState.isStandby) parts.add("BRB")
-        if (connState.recState == 1) parts.add("REC")
-        else if (connState.recState == 2) parts.add("PAUSE")
+        val recPrefix = if (connState.recSourceTag.isNotBlank()) "${connState.recSourceTag.uppercase()} " else ""
+        if (connState.recState == 1) parts.add("${recPrefix}REC")
+        else if (connState.recState == 2) parts.add("${recPrefix}PAUSE")
+        if (connState.unreadChatCount > 0) parts.add("💬${connState.unreadChatCount}")
         return parts.joinToString(" • ")
     }
 

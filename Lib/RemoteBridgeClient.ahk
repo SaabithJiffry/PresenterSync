@@ -1288,6 +1288,9 @@ ParseHostBridgeWsEvent(rawText) {
         recSourceTag: JsonCodec.GetStr(obj, "recSourceTag"),
         recSeconds: JsonCodec.GetInt(obj, "recSeconds", 0),
         obsConnected: JsonCodec.GetBool(obj, "obsConnected", false),
+        studioModeActive: JsonCodec.GetBool(obj, "studioModeActive", false),
+        previewSceneName: JsonCodec.GetStr(obj, "previewSceneName"),
+        unreadChatCount: JsonCodec.GetInt(obj, "unreadChatCount", 0),
         streamDropWarn: JsonCodec.GetBool(obj, "streamDropWarn", false),
         voiceWhileMuted: JsonCodec.GetBool(obj, "voiceWhileMuted", false),
         osMicMutedDrift: JsonCodec.GetBool(obj, "osMicMutedDrift", false),
@@ -1312,6 +1315,7 @@ ParseHostBridgeWsEvent(rawText) {
         sessionToken: JsonCodec.GetStr(obj, "sessionToken"),
         reason: reasonStr,
         action: JsonCodec.GetStr(obj, "action"),
+        durationMs: JsonCodec.GetInt(obj, "durationMs", 1800),
         ok: JsonCodec.GetBool(obj, "ok", false)
     }
 }

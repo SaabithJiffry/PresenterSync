@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicLong
 data class BridgeTelemetryState(
     val recState: Int = 0,
     val recSeconds: Int = 0,
+    val recSourceTag: String = "",
     val streamState: Int = 0,
     val vcamActive: Boolean = false,
     val studioModeActive: Boolean = false,
@@ -253,6 +254,7 @@ class HostBridgeClient(
                         val telemetry = BridgeTelemetryState(
                             recState = obj.optInt("recState", 0),
                             recSeconds = obj.optInt("recSeconds", 0).coerceAtLeast(0),
+                            recSourceTag = obj.optString("recSourceTag", "").trim(),
                             streamState = obj.optInt("streamState", 0),
                             vcamActive = obj.optBoolean("vcamActive", false),
                             studioModeActive = obj.optBoolean("studioModeActive", false),
