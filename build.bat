@@ -60,8 +60,8 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo Generating flat dist\SHA256SUMS.txt...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = $env:DIST_DIR; $rows = foreach ($f in @('PresenterSync.exe','PresenterSync_Remote.exe','PresenterSync_Remote.apk')) { $p = Join-Path $d $f; if (Test-Path $p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $f } }; if ($rows) { [System.IO.File]::WriteAllText((Join-Path $d 'SHA256SUMS.txt'), ($rows -join [char]10) + [char]10, (New-Object System.Text.UTF8Encoding($false))) }"
+echo Generating flat dist\SHA256SUMS.txt and dist\nightly_meta.json...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = $env:DIST_DIR; $rows = foreach ($f in @('PresenterSync.exe','PresenterSync_Remote.exe','PresenterSync_Remote.apk')) { $p = Join-Path $d $f; if (Test-Path $p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $f } }; if ($rows) { [System.IO.File]::WriteAllText((Join-Path $d 'SHA256SUMS.txt'), ($rows -join [char]10) + [char]10, (New-Object System.Text.UTF8Encoding($false))) }; $vm = Select-String -Path 'Lib\GUI_Config.ahk' -Pattern 'APP_VERSION\s*:=\s*\x22([0-9]+\.[0-9]+\.[0-9]+)\x22' | Select-Object -First 1; $cm = Select-String -Path 'android\app\build.gradle.kts' -Pattern 'versionCode\s*=\s*([0-9]+)' | Select-Object -First 1; $ver = if ($vm) { $vm.Matches[0].Groups[1].Value } else { '0.0.0' }; $vc = if ($cm) { [int]$cm.Matches[0].Groups[1].Value } else { 0 }; $meta = ([ordered]@{ version = $ver; androidVersionCode = $vc; builtAtUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') } | ConvertTo-Json -Compress); [System.IO.File]::WriteAllText((Join-Path $d 'nightly_meta.json'), $meta + [char]10, (New-Object System.Text.UTF8Encoding($false)))"
 
 echo.
 echo Refreshing Windows Shell icon cache...

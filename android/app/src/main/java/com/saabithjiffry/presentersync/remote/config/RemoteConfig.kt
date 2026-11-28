@@ -11,6 +11,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
+enum class UpdateChannel(val rawValue: String, val label: String) {
+    STABLE("Stable", "Stable Release"),
+    NIGHTLY("Nightly", "Nightly Release");
+
+    companion object {
+        fun fromRaw(raw: String?): UpdateChannel =
+            if (raw?.trim().equals("Nightly", ignoreCase = true)) NIGHTLY else STABLE
+    }
+}
+
 enum class NetworkMode(val label: String) {
     LAN("LAN"),
     INTERNET("Internet");
@@ -189,6 +199,7 @@ data class RemoteConfig(
     val isMuted: Boolean = false,
     val startOnBoot: Boolean = false,
     val autoCheckUpdates: Boolean = true,
+    val updateChannel: UpdateChannel = UpdateChannel.STABLE,
     val lastUpdateCheckMs: Long = 0L,
     val skippedUpdateVersion: String = "",
     val customUpdateUrl: String = "",
@@ -370,6 +381,7 @@ class RemoteConfigStore private constructor(
             isMuted = prefs.getBoolean("isMuted", false),
             startOnBoot = prefs.getBoolean("startOnBoot", false),
             autoCheckUpdates = prefs.getBoolean("autoCheckUpdates", true),
+            updateChannel = UpdateChannel.fromRaw(prefs.getString("updateChannel", "Stable")),
             lastUpdateCheckMs = prefs.getLong("lastUpdateCheckMs", 0L).coerceAtLeast(0L),
             skippedUpdateVersion = prefs.getString("skippedUpdateVersion", "").orEmpty().trim(),
             customUpdateUrl = prefs.getString("customUpdateUrl", "").orEmpty().trim(),
@@ -667,6 +679,7 @@ class RemoteConfigStore private constructor(
             .putBoolean("isMuted", c.isMuted)
             .putBoolean("startOnBoot", c.startOnBoot)
             .putBoolean("autoCheckUpdates", c.autoCheckUpdates)
+            .putString("updateChannel", c.updateChannel.rawValue)
             .putLong("lastUpdateCheckMs", c.lastUpdateCheckMs)
             .putString("skippedUpdateVersion", c.skippedUpdateVersion)
             .putString("customUpdateUrl", c.customUpdateUrl)

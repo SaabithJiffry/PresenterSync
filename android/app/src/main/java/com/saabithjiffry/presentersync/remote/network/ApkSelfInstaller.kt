@@ -1,10 +1,13 @@
 package com.saabithjiffry.presentersync.remote.network
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
@@ -17,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -48,6 +52,11 @@ sealed class UpdateInstallState {
         val sha256Verified: Boolean
     ) : UpdateInstallState()
     data class LaunchedInstaller(val version: String, val sha256Verified: Boolean) : UpdateInstallState()
+    data class RollbackReadyToUninstall(
+        val version: String,
+        val savedDisplayPath: String,
+        val sha256Verified: Boolean
+    ) : UpdateInstallState()
     data class Error(val message: String) : UpdateInstallState()
 }
 
@@ -126,9 +135,19 @@ class ApkSelfInstaller(
             _bannerDismissed.value = false
             _installState.value = UpdateInstallState.Checking
         }
-        val customFeed = configStore.config.value.customUpdateUrl.trim()
-        val apiUrl = if (customFeed.isNotBlank()) customFeed else com.saabithjiffry.presentersync.remote.config.AppConstants.GITHUB_RELEASES_API
-        val res = AppUpdater.checkLatestRelease(httpClient, apiUrl = apiUrl)
+        val cfgSnap = configStore.config.value
+        val installedSha = withContext(Dispatchers.IO) {
+            runCatching {
+                appContext.applicationInfo?.sourceDir?.let { AppUpdater.computeFileSha256(it) }
+            }.getOrNull()
+        }
+        val res = AppUpdater.checkUpdates(
+            httpClient = httpClient,
+            channel = cfgSnap.updateChannel,
+            currentVersion = com.saabithjiffry.presentersync.remote.config.AppConstants.APP_VERSION,
+            installedApkSha256 = installedSha,
+            customUpdateUrl = cfgSnap.customUpdateUrl.trim()
+        )
         if (res.errorMessage == null) {
             configStore.update { it.copy(lastUpdateCheckMs = now) }
             _latestCheck.value = res
@@ -202,7 +221,12 @@ class ApkSelfInstaller(
                 }
 
                 val currentVerCode = getInstalledVersionCode(appContext)
-                val archiveErr = verifyDownloadedApkArchive(appContext, finalFile, currentVerCode)
+                val archiveErr = verifyDownloadedApkArchive(
+                    appContext,
+                    finalFile,
+                    currentVerCode,
+                    allowSameVersionCode = result.isSameVersionStableHandoff
+                )
                 if (archiveErr != null) {
                     throw IOException(archiveErr)
                 }
@@ -219,6 +243,133 @@ class ApkSelfInstaller(
                 runCatching { finalFile.delete() }
                 _installState.value = UpdateInstallState.Error(t.message ?: "Update download failed")
             }
+        }
+    }
+
+    fun startGuidedRollbackDownload(result: UpdateCheckResult) {
+        val url = result.rollbackApkUrl
+        val stableVer = result.stableVersion ?: result.latestVersion
+        val shaUrl = result.rollbackSha256SumsUrl
+        if (url.isNullOrBlank() || stableVer.isNullOrBlank() || shaUrl.isNullOrBlank()) {
+            _installState.value = UpdateInstallState.Error("Stable rollback APK or SHA256SUMS.txt URL is missing.")
+            return
+        }
+        if (downloadJob?.isActive == true) return
+
+        cancelRequested = false
+        downloadJob = scope.launch {
+            val dir = updatesDir().apply { mkdirs() }
+            val tmpFile = File(dir, "PresenterSync_Remote_rollback.apk.tmp")
+            val verifiedFile = File(dir, "PresenterSync_Remote_v$stableVer.apk")
+            runCatching { tmpFile.delete() }
+            runCatching { verifiedFile.delete() }
+
+            try {
+                val dlClient = httpClient.newBuilder()
+                    .readTimeout(35, TimeUnit.SECONDS)
+                    .callTimeout(240, TimeUnit.SECONDS)
+                    .build()
+
+                _installState.value = UpdateInstallState.Downloading(stableVer, 0L, result.rollbackSizeBytes, 0)
+                val assetNm = result.rollbackAssetName ?: "PresenterSync_Remote.apk"
+                val expectedSha = fetchExpectedSha256(dlClient, shaUrl, assetNm)
+                    ?: throw IOException("SHA256SUMS.txt does not list $assetNm")
+
+                val shaVerified = downloadAndVerifyPayloadToFile(
+                    client = dlClient,
+                    url = url,
+                    userAgent = "PresenterSync-Remote-Android/${result.currentVersion}",
+                    targetFile = tmpFile,
+                    expectedSizeBytes = result.rollbackSizeBytes,
+                    expectedSha256 = expectedSha,
+                    onVerifying = { _installState.value = UpdateInstallState.Verifying(stableVer) },
+                    onProgress = { downloaded, total, pct ->
+                        _installState.value = UpdateInstallState.Downloading(stableVer, downloaded, total, pct)
+                    },
+                    onCallStarted = { activeCall = it },
+                    isCancelRequested = { cancelRequested }
+                )
+                activeCall = null
+
+                if (!tmpFile.renameTo(verifiedFile)) {
+                    tmpFile.copyTo(verifiedFile, overwrite = true)
+                    tmpFile.delete()
+                }
+
+                val archiveErr = verifyDownloadedApkArchive(
+                    appContext,
+                    verifiedFile,
+                    0L,
+                    allowSameVersionCode = true
+                )
+                if (archiveErr != null) {
+                    throw IOException(archiveErr)
+                }
+
+                val savedPath = exportVerifiedRollbackApkToDownloads(verifiedFile, stableVer)
+                runCatching { verifiedFile.delete() }
+                _installState.value = UpdateInstallState.RollbackReadyToUninstall(
+                    version = stableVer,
+                    savedDisplayPath = savedPath,
+                    sha256Verified = shaVerified
+                )
+            } catch (_: CancellationException) {
+                activeCall = null
+                runCatching { tmpFile.delete() }
+                runCatching { verifiedFile.delete() }
+                _installState.value = UpdateInstallState.Idle
+            } catch (t: Throwable) {
+                activeCall = null
+                runCatching { tmpFile.delete() }
+                runCatching { verifiedFile.delete() }
+                _installState.value = UpdateInstallState.Error(t.message ?: "Rollback download failed")
+            }
+        }
+    }
+
+    fun launchUninstallForRollback() {
+        val intent = Intent(
+            Intent.ACTION_DELETE,
+            Uri.parse("package:${appContext.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching {
+            appContext.startActivity(intent)
+        }.onFailure { err ->
+            _installState.value = UpdateInstallState.Error(err.message ?: "Could not launch uninstall prompt")
+        }
+    }
+
+    private fun exportVerifiedRollbackApkToDownloads(verifiedFile: File, stableVersion: String): String {
+        val fileName = buildRollbackApkFileName(stableVersion)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = appContext.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive")
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IOException("Could not create $fileName in Downloads")
+            try {
+                resolver.openOutputStream(uri)?.use { out ->
+                    verifiedFile.inputStream().use { inp -> inp.copyTo(out) }
+                    out.flush()
+                } ?: throw IOException("Could not write to Downloads/$fileName")
+                val doneVals = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                resolver.update(uri, doneVals, null, null)
+                return "Downloads/$fileName"
+            } catch (t: Throwable) {
+                runCatching { resolver.delete(uri, null, null) }
+                throw t
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val pubDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            pubDir.mkdirs()
+            val outFile = File(pubDir, fileName)
+            verifiedFile.copyTo(outFile, overwrite = true)
+            return outFile.absolutePath
         }
     }
 
@@ -313,7 +464,12 @@ class ApkSelfInstaller(
     }
 
     @Suppress("DEPRECATION")
-    private fun verifyDownloadedApkArchive(ctx: Context, apkFile: File, currentVersionCode: Long): String? {
+    private fun verifyDownloadedApkArchive(
+        ctx: Context,
+        apkFile: File,
+        currentVersionCode: Long,
+        allowSameVersionCode: Boolean = false
+    ): String? {
         val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             ctx.packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.PackageInfoFlags.of(0))
         } else {
@@ -325,7 +481,8 @@ class ApkSelfInstaller(
             archivePackageName = info.packageName,
             archiveVersionCode = archiveVer,
             expectedPackageName = ctx.packageName,
-            currentVersionCode = currentVersionCode
+            currentVersionCode = currentVersionCode,
+            allowSameVersionCode = allowSameVersionCode
         )
     }
 
@@ -416,16 +573,28 @@ class ApkSelfInstaller(
             sha256SumsUrl?.takeIf { it.isNotBlank() }
                 ?: throw IOException("SHA256SUMS.txt URL is missing; refusing unverified APK install")
 
+        fun buildRollbackApkFileName(stableVersion: String): String {
+            val clean = stableVersion.trim().removePrefix("v").removePrefix("V")
+                .replace(Regex("[^0-9A-Za-z._-]"), "_")
+            return "PresenterSync_Remote_v$clean.apk"
+        }
+
         fun validateApkArchiveMetadata(
             archivePackageName: String?,
             archiveVersionCode: Long,
             expectedPackageName: String,
-            currentVersionCode: Long
+            currentVersionCode: Long,
+            allowSameVersionCode: Boolean = false
         ): String? {
             if (archivePackageName != expectedPackageName) {
                 return "Package mismatch ($archivePackageName != $expectedPackageName)."
             }
-            if (archiveVersionCode <= currentVersionCode) {
+            val tooOld = if (allowSameVersionCode) {
+                archiveVersionCode < currentVersionCode
+            } else {
+                archiveVersionCode <= currentVersionCode
+            }
+            if (tooOld) {
                 return "Downloaded APK versionCode ($archiveVersionCode) is not newer than current ($currentVersionCode)."
             }
             return null

@@ -34,6 +34,9 @@ import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -75,6 +78,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.saabithjiffry.presentersync.remote.PresenterSyncRemoteApp
 import com.saabithjiffry.presentersync.remote.config.AppConstants
 import com.saabithjiffry.presentersync.remote.config.DeviceProfileMode
+import com.saabithjiffry.presentersync.remote.config.UpdateChannel
 import com.saabithjiffry.presentersync.remote.config.rememberFormFactor
 import com.saabithjiffry.presentersync.remote.network.UpdateCheckResult
 import com.saabithjiffry.presentersync.remote.network.UpdateInstallState
@@ -250,6 +254,48 @@ fun AboutUpdateDialog(
                             }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
+                            Text(
+                                text = "Update Channel",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                UpdateChannel.entries.forEach { ch ->
+                                    FilterChip(
+                                        selected = cfg.updateChannel == ch,
+                                        onClick = {
+                                            if (cfg.updateChannel != ch) {
+                                                app.configStore.update { it.copy(updateChannel = ch) }
+                                                scope.launch {
+                                                    app.apkSelfInstaller.clearError()
+                                                    app.apkSelfInstaller.checkForUpdates(manual = true)
+                                                }
+                                            }
+                                        },
+                                        label = { Text(ch.label, maxLines = 1, softWrap = false) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                            if (cfg.updateChannel == UpdateChannel.NIGHTLY) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Color(0xFFD97706).copy(alpha = 0.14f),
+                                    border = BorderStroke(1.dp, Color(0xFFD97706).copy(alpha = 0.55f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Nightly Warning: Nightly builds come from the latest main commit (dist/), are not finalized stable releases, and some features may be incomplete or unstable. Upgrading to the same or newer Stable release works in-place, while rolling back to an older Stable version uses Guided Rollback (download to Downloads/ + uninstall).",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFF59E0B),
+                                        modifier = Modifier.padding(10.dp)
+                                    )
+                                }
+                            }
+
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -309,7 +355,9 @@ fun AboutUpdateDialog(
                                             )
                                         } else if (res.updateAvailable) {
                                             Text(
-                                                text = "New Version Available: v${res.latestVersion} (Current: v${res.currentVersion})",
+                                                text = res.statusHeadline.ifBlank {
+                                                    "New Version Available: v${res.latestVersion} (Current: v${res.currentVersion})"
+                                                },
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontWeight = FontWeight.SemiBold,
                                                 color = MaterialTheme.colorScheme.primary
@@ -322,13 +370,18 @@ fun AboutUpdateDialog(
                                                 )
                                             }
                                             if (res.apkDownloadUrl != null) {
+                                                val installBtnText = when {
+                                                    res.isSameVersionStableHandoff -> "Install Stable v${res.latestVersion}"
+                                                    res.nightlyCommitSha != null -> "Install Nightly (${res.nightlyCommitSha})"
+                                                    else -> "Download & Install v${res.latestVersion}"
+                                                }
                                                 Button(
                                                     onClick = { app.apkSelfInstaller.startDownloadAndInstall(res) },
                                                     modifier = Modifier.fillMaxWidth()
                                                 ) {
                                                     Icon(Icons.Default.Download, contentDescription = null)
                                                     Spacer(Modifier.width(8.dp))
-                                                    Text("Download & Install v${res.latestVersion}")
+                                                    Text(installBtnText)
                                                 }
                                             } else {
                                                 Button(
@@ -345,9 +398,31 @@ fun AboutUpdateDialog(
                                                     Text("Open Release Page")
                                                 }
                                             }
+                                        } else if (res.isAheadOfStable) {
+                                            Text(
+                                                text = res.statusHeadline,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFFF59E0B)
+                                            )
+                                            Text(
+                                                text = "You are running a newer Nightly build than Stable v${res.stableVersion ?: ""}. Rolling back to an older version requires downloading the verified Stable APK to Downloads/ and uninstalling this Nightly first.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            if (res.rollbackApkUrl != null && res.stableVersion != null) {
+                                                OutlinedButton(
+                                                    onClick = { app.apkSelfInstaller.startGuidedRollbackDownload(res) },
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Icon(Icons.Default.Download, contentDescription = null)
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text("Download v${res.stableVersion} & Roll Back")
+                                                }
+                                            }
                                         } else {
                                             Text(
-                                                text = "✓ You are on the latest release (v${res.latestVersion ?: res.currentVersion}).",
+                                                text = "✓ ${res.statusHeadline.ifBlank { "You are on the latest release (v${res.latestVersion ?: res.currentVersion})." }}",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = Color(0xFF10B981),
                                                 fontWeight = FontWeight.Medium
@@ -708,6 +783,49 @@ internal fun UpdateInstallProgressBody(
                 color = Color(0xFF10B981),
                 fontWeight = FontWeight.Medium
             )
+        }
+        is UpdateInstallState.RollbackReadyToUninstall -> {
+            var showConfirmDialog by remember(installState.savedDisplayPath) { mutableStateOf(true) }
+            Text(
+                text = "✓ Verified Stable v${installState.version} saved to ${installState.savedDisplayPath}. Uninstall this Nightly build, then tap that APK in Downloads to finish rolling back.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF10B981),
+                fontWeight = FontWeight.Medium
+            )
+            Button(
+                onClick = { showConfirmDialog = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Uninstall Nightly & Open Instructions")
+            }
+            if (showConfirmDialog) {
+                AlertDialog(
+                    onDismissRequest = { showConfirmDialog = false },
+                    properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
+                    title = { Text("Guided Rollback to v${installState.version}") },
+                    text = {
+                        Text(
+                            "Verified Stable APK saved to:\n${installState.savedDisplayPath}\n\n" +
+                                "Android requires uninstalling the newer Nightly before installing an older version. " +
+                                "If needed, save a backup Pairing QR before uninstalling.\n\n" +
+                                "Tap 'Uninstall Now', then open Files -> Downloads and tap PresenterSync_Remote_v${installState.version}.apk."
+                        )
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            showConfirmDialog = false
+                            app.apkSelfInstaller.launchUninstallForRollback()
+                        }) {
+                            Text("Uninstall Now")
+                        }
+                    },
+                    dismissButton = {
+                        OutlinedButton(onClick = { showConfirmDialog = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
         }
         is UpdateInstallState.Error -> {
             Text(

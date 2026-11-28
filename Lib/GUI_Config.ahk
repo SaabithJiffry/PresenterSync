@@ -1574,6 +1574,7 @@ class Config {
     AutoProfileRules := ""
     StartWithWindows := false
     AutoCheckUpdates := true
+    UpdateChannel := "Stable"
     LastUpdateCheckEpoch := 0
     SkippedUpdateVersion := ""
 
@@ -1882,6 +1883,7 @@ class Config {
         this.AutoProfileRules := Trim(this.Read("Settings", "AutoProfileRules", ""))
         this.StartWithWindows := this.ReadBool("Settings", "StartWithWindows", false)
         this.AutoCheckUpdates := this.ReadBool("Settings", "AutoCheckUpdates", true)
+        this.UpdateChannel := (StrLower(Trim(this.Read("Settings", "UpdateChannel", "Stable"))) = "nightly") ? "Nightly" : "Stable"
         lastUpd := Trim(this.Read("Settings", "LastUpdateCheckEpoch", "0"))
         this.LastUpdateCheckEpoch := IsInteger(lastUpd) ? Integer(lastUpd) : 0
         this.SkippedUpdateVersion := Trim(this.Read("Settings", "SkippedUpdateVersion", ""))
@@ -2022,6 +2024,7 @@ class Config {
             { sec: "Settings", key: "ObsWsHost", prop: "ObsWsHost", kind: "str" },
             { sec: "Settings", key: "ObsWsPort", prop: "ObsWsPort", kind: "int" },
             { sec: "Settings", key: "EnableLanSelfUpdate", prop: "EnableLanSelfUpdate", kind: "bool" },
+            { sec: "Settings", key: "UpdateChannel", prop: "UpdateChannel", kind: "str" },
             { sec: "Settings", key: "KioskPin", prop: "KioskPin", kind: "str" },
             { sec: "Settings", key: "ShowText", prop: "ShowText", kind: "bool" },
             { sec: "Settings", key: "MonoIcon", prop: "MonoIcon", kind: "bool" },

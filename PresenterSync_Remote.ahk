@@ -139,6 +139,7 @@ class RemoteConfig {
     IsMuted := false
     StartWithWindows := false
     AutoCheckUpdates := true
+    UpdateChannel := "Stable"
     LastUpdateCheckEpoch := 0
     SkippedUpdateVersion := ""
     RemoteNextSlideKey := ""
@@ -377,6 +378,7 @@ class RemoteConfig {
         this.IsMuted := this.ReadBool("Settings", "IsMuted", 0)
         this.StartWithWindows := this.ReadBool("Settings", "StartWithWindows", 0)
         this.AutoCheckUpdates := this.ReadBool("Settings", "AutoCheckUpdates", 1)
+        this.UpdateChannel := (StrLower(Trim(this.Read("Settings", "UpdateChannel", "Stable"))) = "nightly") ? "Nightly" : "Stable"
         lastUpd := Trim(this.Read("Settings", "LastUpdateCheckEpoch", "0"))
         this.LastUpdateCheckEpoch := IsInteger(lastUpd) ? Integer(lastUpd) : 0
         this.SkippedUpdateVersion := Trim(this.Read("Settings", "SkippedUpdateVersion", ""))
@@ -4121,14 +4123,32 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
     AddHelpGuideEdit(aboutGui, 20, 214, 430, 214, remCapsText)
 
     aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
-    gitBtn := AddThemedCtrl(aboutGui, "Button", "x20 y440 w208 h30", "GitHub Repo")
+    isNightlyChan := (IsObject(cfg) && cfg.HasOwnProp("UpdateChannel") && StrLower(cfg.UpdateChannel) = "nightly")
+    AddThemedCtrl(aboutGui, "Text", "x20 y438 w106 h22", "Update Channel:")
+    ddlUpdChan := aboutGui.Add("DropDownList", "x130 y435 w150 Choose" (isNightlyChan ? 2 : 1), ["Stable Release", "Nightly Release"])
+    Theme.RegisterControl(aboutGui, ddlUpdChan, "DropDownList")
+    lblNightlyWarn := aboutGui.Add("Text", "x20 y464 w430 h28" (isNightlyChan ? "" : " Hidden"), "Warning: Nightly builds come from latest main (dist/), are not finalized stable releases, and features may be unstable.")
+    lblNightlyWarn.SetFont("s8 w600 norm", Theme.UiFont)
+    lblNightlyWarn.Opt("cF59E0B")
+    _OnRemoteChannelChanged(*) {
+        isN := (ddlUpdChan.Value == 2)
+        lblNightlyWarn.Visible := isN
+        if IsObject(cfg) {
+            cfg.UpdateChannel := isN ? "Nightly" : "Stable"
+            try cfg.Write("Settings", "UpdateChannel", cfg.UpdateChannel)
+        }
+    }
+    ddlUpdChan.OnEvent("Change", _OnRemoteChannelChanged)
+
+    aboutGui.SetFont("s9 w400 norm", Theme.UiFont)
+    gitBtn := AddThemedCtrl(aboutGui, "Button", "x20 y496 w208 h30", "GitHub Repo")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    updBtn := AddThemedCtrl(aboutGui, "Button", "x242 y440 w208 h30", "Check for Updates")
+    updBtn := AddThemedCtrl(aboutGui, "Button", "x242 y496 w208 h30", "Check for Updates")
     updBtn.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync_Remote.exe", cfg))
 
-    helpBtn := AddThemedCtrl(aboutGui, "Button", "x20 y478 w208 h30", "Open Help Guide")
-    closeBtn := AddThemedCtrl(aboutGui, "Button", "x242 y478 w208 h30 Default", "Close")
+    helpBtn := AddThemedCtrl(aboutGui, "Button", "x20 y534 w208 h30", "Open Help Guide")
+    closeBtn := AddThemedCtrl(aboutGui, "Button", "x242 y534 w208 h30 Default", "Close")
     CloseAbout := BindRemoteDialogClose(aboutGui, "AboutRemoteWindow", false, "", closeBtn)
     if IsObject(cfg)
         helpBtn.OnEvent("Click", (*) => (CloseAbout(), ShowRemoteHelpUI(cfg, state)))
@@ -4137,9 +4157,9 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
 
     vaultExtraH := 0
     if (IsSet(ArcadeVault) && IsObject(cfg))
-        vaultExtraH := ArcadeVault.AttachAboutVaultSection(aboutGui, cfg, state, 20, 514, 430, true)
+        vaultExtraH := ArcadeVault.AttachAboutVaultSection(aboutGui, cfg, state, 20, 570, 430, true)
 
-    WindowFit.Show(aboutGui, "w470 h" (524 + vaultExtraH) " Center")
+    WindowFit.Show(aboutGui, "w470 h" (580 + vaultExtraH) " Center")
     closeBtn.Focus()
     return aboutGui
 }

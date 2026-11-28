@@ -203,6 +203,17 @@ def main() -> int:
         # Part A: HTTP download, SHA-256 mismatch, non-MZ rejection, cancellation, progress callbacks
         part_a_log = os.path.join(tmp_dir, "part_a.log")
         part_a_ahk = os.path.join(tmp_dir, "test_part_a.ahk")
+        # Dual-channel fixtures: commit-pinned Nightly, caught-up Nightly, same-version Stable handoff, ahead-of-stable rollback
+        nightly_sha = v610_sha
+        other_sha = "1" * 64
+        commit_sha = "deadbeef1234567890abcdef1234567890abcdef"
+        commit_json = json.dumps({"sha": commit_sha, "html_url": f"{base}/commit/{commit_sha}"}).encode("utf-8")
+        meta_610 = json.dumps({"version": "6.1.0", "androidVersionCode": 60100, "builtAtUtc": "2026-11-28T00:00:00Z"}).encode("utf-8")
+        sums_other = f"{other_sha}  PresenterSync.exe\n".encode("utf-8")
+        ReleaseFixtureHandler.routes[f"/raw/{commit_sha}/dist/nightly_meta.json"] = (meta_610, "application/json", False)
+        ReleaseFixtureHandler.routes[f"/raw/{commit_sha}/dist/SHA256SUMS.txt"] = (sums_ok, "text/plain", False)
+        ReleaseFixtureHandler.routes[f"/raw/{commit_sha}/dist/PresenterSync.exe"] = (v610_bytes, "application/octet-stream", False)
+
         with open(part_a_ahk, "w", encoding="utf-8") as f:
             f.write(
                 '#Requires AutoHotkey v2.0\n'
@@ -248,6 +259,34 @@ def main() -> int:
                 f'noShaDest := "{tmp_dir}\\no_sha.exe"\n'
                 'stNoSha := DownloadVerifyAndStageWindowsUpdate(uNoSha, noShaDest)\n'
                 'LogChk("P1-4: Fail-closed when SHA256SUMS.txt URL is missing", !stNoSha.ok && InStr(stNoSha.reason, "SHA256SUMS") && !FileExist(noShaDest))\n'
+                '\n'
+                '; M7B Dual-Channel checks\n'
+                f'cJson := \x27{commit_json.decode("utf-8")}\x27\n'
+                f'mJson := \x27{meta_610.decode("utf-8")}\x27\n'
+                f'sOk := _FetchHttpTextSimple("{base}/dl/SHA256SUMS.txt").text\n'
+                f'sOther := "{other_sha}  PresenterSync.exe`n"\n'
+                f'fixCaughtUp := {{ commitJson: cJson, rawBaseUrl: "{base}/raw/{commit_sha}/dist", nightlyMetaJson: mJson, nightlySumsText: sOk, stableReleaseJson: rOkJson, stableSumsText: sOk, currentBinarySha256: "{other_sha}" }}\n'
+                'uCaught := CheckForUpdates("6.1.0", "", true, "PresenterSync.exe", "", "Nightly", fixCaughtUp)\n'
+                'LogChk("M7B: Nightly caught up to Stable", uCaught.ok && !uCaught.updateAvailable && uCaught.status = "caught_up_to_stable" && InStr(uCaught.statusHeadline, "Nightly has caught up to Stable (v6.1.0)"))\n'
+                '\n'
+                f'fixSameSha := {{ commitJson: cJson, rawBaseUrl: "{base}/raw/{commit_sha}/dist", nightlyMetaJson: mJson, nightlySumsText: sOk, stableReleaseJson: rOkJson, stableSumsText: sOther, currentBinarySha256: "{v610_sha}" }}\n'
+                'uSameSha := CheckForUpdates("6.1.0", "", true, "PresenterSync.exe", "", "Nightly", fixSameSha)\n'
+                'LogChk("M7B: Same-SHA Nightly prevents loop", uSameSha.ok && !uSameSha.updateAvailable && uSameSha.status = "up_to_date_nightly")\n'
+                '\n'
+                f'fixNightlyAvail := {{ commitJson: cJson, rawBaseUrl: "{base}/raw/{commit_sha}/dist", nightlyMetaJson: mJson, nightlySumsText: sOk, stableReleaseJson: rOkJson, stableSumsText: sOther, currentBinarySha256: "{other_sha}" }}\n'
+                'uNightly := CheckForUpdates("6.0.0", "", true, "PresenterSync.exe", "", "Nightly", fixNightlyAvail)\n'
+                f'LogChk("M7B: Nightly available uses immutable commit URL", uNightly.ok && uNightly.updateAvailable && uNightly.status = "nightly_available" && InStr(uNightly.assetUrl, "{commit_sha}"))\n'
+                f'nDest := "{tmp_dir}\\nightly_dl.exe"\n'
+                'stN := DownloadVerifyAndStageWindowsUpdate(uNightly, nDest)\n'
+                'LogChk("M7B: Nightly download verifies SHA-256", stN.ok && stN.shaVerified && FileExist(nDest))\n'
+                '\n'
+                f'fixHandoff := {{ stableReleaseJson: rOkJson, stableSumsText: sOk, currentBinarySha256: "{other_sha}" }}\n'
+                'uHandoff := CheckForUpdates("6.1.0", "", true, "PresenterSync.exe", "", "Stable", fixHandoff)\n'
+                'LogChk("M7B: Same-version Nightly->Stable SHA handoff", uHandoff.ok && uHandoff.updateAvailable && uHandoff.status = "stable_handoff" && InStr(uHandoff.statusHeadline, "Install Stable v6.1.0"))\n'
+                '\n'
+                f'fixAhead := {{ stableReleaseJson: rOkJson, stableSumsText: sOk, currentBinarySha256: "{other_sha}" }}\n'
+                'uAhead := CheckForUpdates("6.2.0", "", true, "PresenterSync.exe", "", "Stable", fixAhead)\n'
+                'LogChk("M7B: Ahead-of-stable offers optional rollback", uAhead.ok && !uAhead.updateAvailable && uAhead.rollbackAvailable && uAhead.status = "ahead_of_stable")\n'
                 '\n'
                 f'FileAppend("PASS=" passes " FAIL=" fails "`n", "{part_a_log}", "UTF-8")\n'
                 'ExitApp(fails > 0 ? 1 : 0)\n'

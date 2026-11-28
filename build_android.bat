@@ -29,7 +29,7 @@ echo JAVA_HOME=%JAVA_HOME%
 
 echo.
 echo [0/2] Verifying cross-platform version parity...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$c = (Select-String -Path 'Lib\GUI_Config.ahk' -Pattern 'APP_VERSION\s*:=\s*\"([^\"]+)\"').Matches[0].Groups[1].Value; $g = (Select-String -Path 'android\app\build.gradle.kts' -Pattern 'versionName\s*=\s*\"([^\"]+)\"').Matches[0].Groups[1].Value; $k = (Select-String -Path 'android\app\src\main\java\com\saabithjiffry\presentersync\remote\config\AppConstants.kt' -Pattern 'APP_VERSION\s*=\s*\"([^\"]+)\"').Matches[0].Groups[1].Value; if ($c -ne $g -or $c -ne $k) { Write-Error \"Version mismatch: GUI_Config='$c' build.gradle='$g' AppConstants='$k'\"; exit 1 }; Write-Host \"[OK] Version parity confirmed: $c\""
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$c = (Select-String -Path 'Lib\GUI_Config.ahk' -Pattern 'APP_VERSION\s*:=\s*\x22([0-9]+\.[0-9]+\.[0-9]+)\x22').Matches[0].Groups[1].Value; $g = (Select-String -Path 'android\app\build.gradle.kts' -Pattern 'versionName\s*=\s*\x22([0-9]+\.[0-9]+\.[0-9]+)\x22').Matches[0].Groups[1].Value; $k = (Select-String -Path 'android\app\src\main\java\com\saabithjiffry\presentersync\remote\config\AppConstants.kt' -Pattern 'APP_VERSION\s*=\s*\x22([0-9]+\.[0-9]+\.[0-9]+)\x22').Matches[0].Groups[1].Value; if ($c -ne $g -or $c -ne $k) { Write-Error \"Version mismatch: GUI_Config='$c' build.gradle='$g' AppConstants='$k'\"; exit 1 }; Write-Host \"[OK] Version parity confirmed: $c\""
 if %errorlevel% neq 0 (
     set "BUILD_EXIT=1"
     goto :done
@@ -71,8 +71,8 @@ for %%F in ("%SCRIPT_DIR%\dist\PresenterSync_Remote.apk") do (
 )
 
 set "DIST_DIR=%SCRIPT_DIR%\dist"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = $env:DIST_DIR; $rows = foreach ($f in @('PresenterSync.exe','PresenterSync_Remote.exe','PresenterSync_Remote.apk')) { $p = Join-Path $d $f; if (Test-Path $p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $f } }; if ($rows) { [System.IO.File]::WriteAllText((Join-Path $d 'SHA256SUMS.txt'), ($rows -join [char]10) + [char]10, (New-Object System.Text.UTF8Encoding($false))) }"
-echo [OK] Updated flat dist\SHA256SUMS.txt
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = $env:DIST_DIR; $rows = foreach ($f in @('PresenterSync.exe','PresenterSync_Remote.exe','PresenterSync_Remote.apk')) { $p = Join-Path $d $f; if (Test-Path $p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $f } }; if ($rows) { [System.IO.File]::WriteAllText((Join-Path $d 'SHA256SUMS.txt'), ($rows -join [char]10) + [char]10, (New-Object System.Text.UTF8Encoding($false))) }; $vm = Select-String -Path (Join-Path $env:SCRIPT_DIR 'Lib\GUI_Config.ahk') -Pattern 'APP_VERSION\s*:=\s*\x22([0-9]+\.[0-9]+\.[0-9]+)\x22' | Select-Object -First 1; $cm = Select-String -Path (Join-Path $env:SCRIPT_DIR 'android\app\build.gradle.kts') -Pattern 'versionCode\s*=\s*([0-9]+)' | Select-Object -First 1; $ver = if ($vm) { $vm.Matches[0].Groups[1].Value } else { '0.0.0' }; $vc = if ($cm) { [int]$cm.Matches[0].Groups[1].Value } else { 0 }; $meta = ([ordered]@{ version = $ver; androidVersionCode = $vc; builtAtUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') } | ConvertTo-Json -Compress); [System.IO.File]::WriteAllText((Join-Path $d 'nightly_meta.json'), $meta + [char]10, (New-Object System.Text.UTF8Encoding($false)))"
+echo [OK] Updated flat dist\SHA256SUMS.txt and dist\nightly_meta.json
 
 popd
 set "BUILD_EXIT=0"

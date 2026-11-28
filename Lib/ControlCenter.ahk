@@ -1995,6 +1995,10 @@ ApplyControlCenterSettings(cfg, state := "", vals := "", writeRegistry := true, 
             cfg.AutoCheckUpdates := !!vals.AutoCheckUpdates
             cfg.WriteBool("Settings", "AutoCheckUpdates", cfg.AutoCheckUpdates)
         }
+        if vals.HasOwnProp("UpdateChannel") {
+            cfg.UpdateChannel := (StrLower(Trim(String(vals.UpdateChannel))) = "nightly") ? "Nightly" : "Stable"
+            cfg.Write("Settings", "UpdateChannel", cfg.UpdateChannel)
+        }
     }
 
     if (IsSet(ApplyHostObsCredentialsChange))
@@ -2553,6 +2557,20 @@ ShowControlCenterWindow(cfg, state := "", *) {
     btnExportBundleCC.OnEvent("Click", (*) => ExportPortableSettingsBundleUI(cfg))
     btnImportBundleCC.OnEvent("Click", (*) => ImportPortableSettingsBundleUI(cfg, state))
 
+    ccGui.SetFont("s9.5 w400 norm", Theme.UiFont)
+    lblUpdChan := ccGui.Add("Text", "x32 y394 w104 h22", "Update Channel:")
+    Theme.RegisterControl(ccGui, lblUpdChan, "Text", "tabText")
+    ddlUpdChannel := ccGui.Add("DropDownList", "x140 y390 w150 Choose" (StrLower(cfg.UpdateChannel) = "nightly" ? 2 : 1), ["Stable Release", "Nightly Release"])
+    Theme.RegisterControl(ccGui, ddlUpdChannel, "DropDownList", "tabEdit")
+    lblUpdNightlyWarn := ccGui.Add("Text", "x32 y424 w648 h32" (StrLower(cfg.UpdateChannel) = "nightly" ? "" : " Hidden"), "Warning: Nightly builds come from the latest main commit (dist/), are not finalized stable releases, and some features may be incomplete or unstable.")
+    lblUpdNightlyWarn.SetFont("s8.5 w600 norm", Theme.UiFont)
+    lblUpdNightlyWarn.Opt("cF59E0B")
+    ddlUpdChannel.OnEvent("Change", (*) => (
+        lblUpdNightlyWarn.Visible := (ddlUpdChannel.Value == 2),
+        cfg.UpdateChannel := (ddlUpdChannel.Value == 2) ? "Nightly" : "Stable",
+        cfg.Write("Settings", "UpdateChannel", cfg.UpdateChannel)
+    ))
+
     tabs.UseTab()
 
     ; ==========================================================================
@@ -2660,6 +2678,9 @@ ShowControlCenterWindow(cfg, state := "", *) {
         edHkRemoteInfo.Value := cfg.RemoteInfoHotkey
         chkStartup.Value := cfg.StartWithWindows ? 1 : 0
         chkAutoUpd.Value := cfg.AutoCheckUpdates ? 1 : 0
+        isNightly := (cfg.HasOwnProp("UpdateChannel") && StrLower(cfg.UpdateChannel) = "nightly")
+        ddlUpdChannel.Choose(isNightly ? 2 : 1)
+        lblUpdNightlyWarn.Visible := isNightly
         profList := cfg.GetProfileNames()
         ddlProfile.Delete()
         ddlProfile.Add(profList)
@@ -2773,7 +2794,8 @@ ShowControlCenterWindow(cfg, state := "", *) {
             ExitHotkey: edHkExit.Value,
             RemoteInfoHotkey: edHkRemoteInfo.Value,
             StartWithWindows: chkStartup.Value,
-            AutoCheckUpdates: chkAutoUpd.Value
+            AutoCheckUpdates: chkAutoUpd.Value,
+            UpdateChannel: (ddlUpdChannel.Value == 2) ? "Nightly" : "Stable"
         }
         invalidKeys := []
         ok := ApplyControlCenterSettings(cfg, state, vals, true, invalidKeys)

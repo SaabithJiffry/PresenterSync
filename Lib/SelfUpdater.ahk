@@ -307,13 +307,15 @@ StreamHttpToFile(url, destFile, expectedSize := -1, onProgress := "", isCancelle
     }
 }
 
-_FetchHttpTextSimple(url, timeoutMs := 12000, userAgent := "") {
+_FetchHttpTextSimple(url, timeoutMs := 12000, userAgent := "", acceptHeader := "") {
     ua := (userAgent != "") ? userAgent : ("PresenterSync/" UIConstants.APP_VERSION)
     try {
         req := ComObject("WinHttp.WinHttpRequest.5.1")
         req.SetTimeouts(4000, 4000, timeoutMs, timeoutMs)
         req.Open("GET", url, false)
         req.SetRequestHeader("User-Agent", ua)
+        if (acceptHeader != "")
+            req.SetRequestHeader("Accept", acceptHeader)
         req.Send()
         if (req.Status == 200)
             return { ok: true, text: req.ResponseText, status: 200 }
@@ -321,6 +323,55 @@ _FetchHttpTextSimple(url, timeoutMs := 12000, userAgent := "") {
     } catch as e {
         return { ok: false, text: "", status: 0, error: e.Message }
     }
+}
+
+NormalizeUpdateChannel(ch) {
+    return (StrLower(Trim(String(ch))) = "nightly") ? "Nightly" : "Stable"
+}
+
+ParseGitHubCommitDetails(jsonStr) {
+    s := String(jsonStr)
+    sha := ""
+    if (RegExMatch(s, '"sha"\s*:\s*"([0-9a-fA-F]{7,64})"', &mSha))
+        sha := StrLower(mSha[1])
+    if (sha = "")
+        return { ok: false, sha: "", shortSha: "", date: "", url: "" }
+    cDate := ""
+    if (RegExMatch(s, '"committer"\s*:\s*\{[^}]*"date"\s*:\s*"([^"]+)"', &mDate))
+        cDate := UnescapeJsonStr(mDate[1])
+    else if (RegExMatch(s, '"date"\s*:\s*"([^"]+)"', &mDate2))
+        cDate := UnescapeJsonStr(mDate2[1])
+    cUrl := ""
+    if (RegExMatch(s, '"html_url"\s*:\s*"([^"]+)"', &mUrl))
+        cUrl := UnescapeJsonStr(mUrl[1])
+    return {
+        ok: true,
+        sha: sha,
+        shortSha: SubStr(sha, 1, 7),
+        date: cDate,
+        url: (cUrl != "" ? cUrl : "https://github.com/SaabithJiffry/PresenterSync/commit/" sha)
+    }
+}
+
+ParseNightlyMetaJson(jsonStr) {
+    s := String(jsonStr)
+    ver := ""
+    if (RegExMatch(s, '"version"\s*:\s*"([^"]+)"', &mV))
+        ver := RegExReplace(Trim(UnescapeJsonStr(mV[1])), "^[vV]")
+    vc := 0
+    if (RegExMatch(s, '"androidVersionCode"\s*:\s*(\d+)', &mVc))
+        vc := Integer(mVc[1])
+    built := ""
+    if (RegExMatch(s, '"builtAtUtc"\s*:\s*"([^"]+)"', &mB))
+        built := UnescapeJsonStr(mB[1])
+    return { ok: (ver != ""), version: ver, androidVersionCode: vc, builtAtUtc: built }
+}
+
+GetCurrentBinarySha256(targetExePath := "") {
+    p := (targetExePath != "") ? targetExePath : (A_IsCompiled ? A_ScriptFullPath : "")
+    if (p = "" || !FileExist(p))
+        return ""
+    return StrLower(HashFileSHA256_Hex(p))
 }
 
 _QuoteCliArg(val) {
@@ -610,7 +661,7 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
         return existing
 
     Theme.AcquireSuspend()
-    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Update Available")
+    dlg := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "PresenterSync Updater")
     dlg.MarginX := 20
     dlg.MarginY := 16
     Theme.ApplyToWindow(dlg)
@@ -621,26 +672,64 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
         try dlg.Destroy()
     }
 
+    chan := (updRes.HasOwnProp("channel") && updRes.channel != "") ? NormalizeUpdateChannel(updRes.channel) : "Stable"
+    isNightly := (chan = "Nightly")
+    isRollback := (updRes.HasOwnProp("rollbackAvailable") && updRes.rollbackAvailable)
+    headline := (updRes.HasOwnProp("statusHeadline") && updRes.statusHeadline != "")
+        ? updRes.statusHeadline
+        : ("Update Available: v" updRes.latest)
+
     dlg.SetFont("s12 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w440", "Update Available: v" updRes.latest), "Text")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w440", headline), "Text")
 
     dlg.SetFont("s9 w400 norm", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w440", "Current Version: v" updRes.current "   ->   Latest Release: v" updRes.latest (updRes.sha256Url != "" ? "  (SHA-256 Protected)" : "")), "Text", "muted")
+    subLine := "Installed: v" updRes.current "   |   Channel: " (isNightly ? "Nightly Release" : "Stable Release")
+        . (updRes.sha256Url != "" ? "   |   SHA-256 Protected" : "")
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w440", subLine), "Text", "muted")
+
+    Theme.RegisterControl(dlg, dlg.Add("Text", "w96 y+10", "Channel:"), "Text")
+    ddlChan := dlg.Add("DropDownList", "x+8 yp-3 w160 Choose" (isNightly ? 2 : 1), ["Stable Release", "Nightly Release"])
+    Theme.RegisterControl(dlg, ddlChan, "DropDownList")
+    btnRecheck := dlg.Add("Button", "x+8 yp-1 w168 h26", "Recheck Channel")
+    Theme.RegisterControl(dlg, btnRecheck, "Button")
+
+    lblNightlyWarn := dlg.Add("Text", "x20 y+8 w440" (isNightly ? "" : " Hidden"), "Warning: Nightly builds come from latest main (dist/), are not finalized stable releases, and some features may be incomplete or unstable.")
+    lblNightlyWarn.SetFont("s8.5 w600 norm", Theme.UiFont)
+    lblNightlyWarn.Opt("cF59E0B")
+    ddlChan.OnEvent("Change", (*) => (
+        lblNightlyWarn.Visible := (ddlChan.Value == 2),
+        IsObject(cfg) ? (cfg.UpdateChannel := (ddlChan.Value == 2 ? "Nightly" : "Stable"), cfg.Write("Settings", "UpdateChannel", cfg.UpdateChannel)) : 0
+    ))
 
     notes := (updRes.HasOwnProp("releaseNotes") && updRes.releaseNotes != "") ? updRes.releaseNotes : "Signed release update from SaabithJiffry/PresenterSync."
-    edNotes := dlg.Add("Edit", "w440 h140 ReadOnly Multi VScroll", StrReplace(notes, "`n", "`r`n"))
+    edNotes := dlg.Add("Edit", "x20 y+8 w440 h128 ReadOnly Multi VScroll", StrReplace(notes, "`n", "`r`n"))
     Theme.RegisterControl(dlg, edNotes, "Edit")
 
-    canSelfInstall := (updRes.HasOwnProp("assetUrl") && updRes.assetUrl != "" && A_IsCompiled)
-    btnPrimary := dlg.Add("Button", "x20 y+14 w214 h34 Default", canSelfInstall ? "Download && Install Now" : "Open Release Page")
+    canSelfInstall := (updRes.HasOwnProp("assetUrl") && updRes.assetUrl != "" && A_IsCompiled && (updRes.updateAvailable || isRollback))
+    primaryLabel := (updRes.HasOwnProp("primaryActionLabel") && updRes.primaryActionLabel != "")
+        ? updRes.primaryActionLabel
+        : (isRollback ? ("Roll back to Stable v" updRes.latest) : "Download && Install Now")
+    btnPrimary := dlg.Add("Button", "x20 y+14 w214 h34 Default", canSelfInstall ? primaryLabel : "Open Release Page")
     Theme.RegisterControl(dlg, btnPrimary, "Button", "accent")
     btnBrowser := dlg.Add("Button", "x246 yp w214 h34", "Open in Browser")
     Theme.RegisterControl(dlg, btnBrowser, "Button")
 
-    btnSkip := dlg.Add("Button", "x20 y+8 w214 h30", "Skip v" updRes.latest)
+    btnSkip := dlg.Add("Button", "x20 y+8 w214 h30" (isRollback ? " Disabled" : ""), "Skip v" updRes.latest)
     Theme.RegisterControl(dlg, btnSkip, "Button")
     btnLater := dlg.Add("Button", "x246 yp w214 h30", "Later")
     Theme.RegisterControl(dlg, btnLater, "Button")
+
+    OnRecheckClick(*) {
+        newChan := (ddlChan.Value == 2) ? "Nightly" : "Stable"
+        if IsObject(cfg) {
+            cfg.UpdateChannel := newChan
+            try cfg.Write("Settings", "UpdateChannel", newChan)
+        }
+        assetNm := (updRes.HasOwnProp("assetName") && updRes.assetName != "") ? updRes.assetName : GetDefaultWindowsAssetName()
+        curVer := updRes.current
+        CloseDlg()
+        CheckForUpdates(curVer, "", false, assetNm, cfg, newChan)
+    }
 
     OnPrimaryClick(*) {
         CloseDlg()
@@ -662,6 +751,7 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
         CloseDlg()
     }
 
+    btnRecheck.OnEvent("Click", OnRecheckClick)
     btnPrimary.OnEvent("Click", OnPrimaryClick)
     btnBrowser.OnEvent("Click", OnBrowserClick)
     btnSkip.OnEvent("Click", OnSkipClick)
@@ -670,48 +760,170 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
     dlg.OnEvent("Escape", CloseDlg)
 
     Theme.NamedWindows["UpdateAvailablePrompt"] := dlg
-    WindowFit.Show(dlg, "w480 Center")
+    WindowFit.Show(dlg, "w480 AutoSize Center")
     btnPrimary.Focus()
     return dlg
 }
 
-CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, targetAssetName := "", cfg := "") {
+CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, targetAssetName := "", cfg := "", overrideChannel := "", mockFixtures := "") {
     cur := (currentVer != "") ? RegExReplace(Trim(String(currentVer)), "^[vV]") : UIConstants.APP_VERSION
+    assetNm := (targetAssetName != "") ? targetAssetName : GetDefaultWindowsAssetName()
     fallbackUrl := "https://github.com/SaabithJiffry/PresenterSync/releases"
+    channel := (overrideChannel != "")
+        ? NormalizeUpdateChannel(overrideChannel)
+        : ((IsObject(cfg) && cfg.HasOwnProp("UpdateChannel")) ? NormalizeUpdateChannel(cfg.UpdateChannel) : "Stable")
+    curExePath := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("currentExePath")) ? mockFixtures.currentExePath : ""
+    curSha := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("currentBinarySha256"))
+        ? StrLower(Trim(String(mockFixtures.currentBinarySha256)))
+        : GetCurrentBinarySha256(curExePath)
+
+    if (channel = "Nightly") {
+        commitJson := ""
+        commitStatus := 0
+        if (IsObject(mockFixtures) && mockFixtures.HasOwnProp("commitJson")) {
+            commitJson := mockFixtures.commitJson
+            commitStatus := 200
+        } else {
+            cResp := _FetchHttpTextSimple("https://api.github.com/repos/SaabithJiffry/PresenterSync/commits/main", 12000, "PresenterSync/" cur, "application/vnd.github+json")
+            commitStatus := cResp.status
+            if (cResp.ok)
+                commitJson := cResp.text
+        }
+        if (commitStatus == 403 || commitStatus == 429) {
+            if (!silent)
+                MsgBox("GitHub API rate limit reached (HTTP " commitStatus "). Please try again later.`n`nReleases: " fallbackUrl, "Nightly Update Check", "Icon! 0x40000")
+            return { ok: false, channel: "Nightly", status: "rate_limited", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", statusHeadline: "GitHub API rate limit reached (HTTP " commitStatus ")" }
+        }
+        commitInfo := (commitJson != "") ? ParseGitHubCommitDetails(commitJson) : { ok: false, sha: "", shortSha: "", date: "", url: "" }
+        if (!commitInfo.ok) {
+            if (!silent)
+                MsgBox("Unable to query latest main commit for Nightly Release.`n`nReleases: " fallbackUrl, "Nightly Update Check", "Icon! 0x40000")
+            return { ok: false, channel: "Nightly", status: "error", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", statusHeadline: "Could not resolve latest main commit" }
+        }
+
+        rawBase := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("rawBaseUrl") && mockFixtures.rawBaseUrl != "")
+            ? RTrim(mockFixtures.rawBaseUrl, "/")
+            : ("https://raw.githubusercontent.com/SaabithJiffry/PresenterSync/" commitInfo.sha "/dist")
+        metaUrl := rawBase "/nightly_meta.json"
+        nightlySumsUrl := rawBase "/SHA256SUMS.txt"
+        nightlyAssetUrl := rawBase "/" assetNm
+
+        metaText := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("nightlyMetaJson")) ? mockFixtures.nightlyMetaJson : ""
+        if (metaText = "") {
+            mResp := _FetchHttpTextSimple(metaUrl, 12000, "PresenterSync/" cur)
+            if (mResp.ok)
+                metaText := mResp.text
+        }
+        sumsText := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("nightlySumsText")) ? mockFixtures.nightlySumsText : ""
+        if (sumsText = "") {
+            sResp := _FetchHttpTextSimple(nightlySumsUrl, 12000, "PresenterSync/" cur)
+            if (sResp.ok)
+                sumsText := sResp.text
+        }
+        meta := ParseNightlyMetaJson(metaText)
+        nightlySha := ParseSha256SumsText(sumsText, assetNm)
+        if (!meta.ok || nightlySha = "") {
+            if (!silent)
+                MsgBox("Nightly artifacts (nightly_meta.json / SHA256SUMS.txt) are not yet published for commit " commitInfo.shortSha ".", "Nightly Update Check", "Iconi 0x40000")
+            return { ok: false, channel: "Nightly", status: "nightly_unavailable", current: cur, latest: "", updateAvailable: false, url: commitInfo.url, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", statusHeadline: "Nightly metadata missing on " commitInfo.shortSha }
+        }
+
+        stJson := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("stableReleaseJson")) ? mockFixtures.stableReleaseJson : ""
+        if (stJson = "") {
+            stResp := _FetchHttpTextSimple("https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest", 12000, "PresenterSync/" cur, "application/vnd.github+json")
+            if (stResp.ok)
+                stJson := stResp.text
+        }
+        stableParsed := (stJson != "") ? ParseGitHubReleaseDetails(stJson, assetNm) : { ok: false, version: "", sha256Url: "", url: fallbackUrl }
+        stableSha := ""
+        if (stableParsed.ok && CompareSemVer(meta.version, stableParsed.version) == 0 && stableParsed.sha256Url != "") {
+            stSums := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("stableSumsText")) ? mockFixtures.stableSumsText : _FetchHttpTextSimple(stableParsed.sha256Url, 12000, "PresenterSync/" cur).text
+            stableSha := ParseSha256SumsText(stSums, assetNm)
+        }
+
+        if (IsObject(cfg)) {
+            cfg.LastUpdateCheckEpoch := GetCurrentUnixEpoch()
+            try cfg.Write("Settings", "LastUpdateCheckEpoch", cfg.LastUpdateCheckEpoch)
+        }
+
+        if (stableParsed.ok && CompareSemVer(meta.version, stableParsed.version) == 0 && stableSha != "" && nightlySha = stableSha) {
+            hl := "Nightly has caught up to Stable (v" stableParsed.version ")"
+            if (!silent)
+                MsgBox(hl "`n`nNo newer Nightly changes since Stable v" stableParsed.version ".", "Nightly Up to Date", "Iconi 0x40000")
+            return { ok: true, channel: "Nightly", status: "caught_up_to_stable", current: cur, latest: meta.version, stableVersion: stableParsed.version, shortSha: commitInfo.shortSha, updateAvailable: false, url: commitInfo.url, releaseNotes: "", assetName: assetNm, assetUrl: nightlyAssetUrl, assetSize: -1, sha256Url: nightlySumsUrl, statusHeadline: hl }
+        }
+
+        if (curSha != "" && curSha = nightlySha) {
+            hl := "Up to date on latest Nightly (v" meta.version " @ " commitInfo.shortSha ")"
+            if (!silent)
+                MsgBox(hl, "Nightly Up to Date", "Iconi 0x40000")
+            return { ok: true, channel: "Nightly", status: "up_to_date_nightly", current: cur, latest: meta.version, stableVersion: stableParsed.version, shortSha: commitInfo.shortSha, updateAvailable: false, url: commitInfo.url, releaseNotes: "", assetName: assetNm, assetUrl: nightlyAssetUrl, assetSize: -1, sha256Url: nightlySumsUrl, statusHeadline: hl }
+        }
+
+        hl := "Nightly available: v" meta.version " @ " commitInfo.shortSha (stableParsed.ok ? " (Stable: v" stableParsed.version ")" : "")
+        notesN := "Immutable Nightly build pinned to commit " commitInfo.sha "`r`nBuilt UTC: " meta.builtAtUtc "`r`n`r`nWarning: Nightly builds come from latest main (dist/) and are not finalized stable releases."
+        resN := {
+            ok: true,
+            channel: "Nightly",
+            status: "nightly_available",
+            current: cur,
+            latest: meta.version,
+            stableVersion: stableParsed.version,
+            shortSha: commitInfo.shortSha,
+            updateAvailable: true,
+            rollbackAvailable: false,
+            url: commitInfo.url,
+            releaseNotes: notesN,
+            assetName: assetNm,
+            assetUrl: nightlyAssetUrl,
+            assetSize: -1,
+            sha256Url: nightlySumsUrl,
+            statusHeadline: hl,
+            primaryActionLabel: "Install Nightly (" commitInfo.shortSha ")"
+        }
+        if (!silent)
+            ShowWindowsUpdateAvailableDialog(resN, cfg)
+        return resN
+    }
+
     rawJson := ""
     httpOk := false
+    lastHttpStatus := 0
 
     if (mockResponseJson != "") {
         rawJson := mockResponseJson
+        httpOk := true
+    } else if (IsObject(mockFixtures) && mockFixtures.HasOwnProp("stableReleaseJson") && mockFixtures.stableReleaseJson != "") {
+        rawJson := mockFixtures.stableReleaseJson
         httpOk := true
     } else {
         for apiUrl in [
             "https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest",
             "https://api.github.com/repos/SaabithJiffry/PresenterSync/tags"
         ] {
-            try {
-                req := ComObject("WinHttp.WinHttpRequest.5.1")
-                req.SetTimeouts(3000, 3000, 4000, 4000)
-                req.Open("GET", apiUrl, false)
-                req.SetRequestHeader("User-Agent", "PresenterSync/" cur)
-                req.SetRequestHeader("Accept", "application/vnd.github+json")
-                req.Send()
-                if (req.Status == 200) {
-                    rawJson := req.ResponseText
-                    httpOk := true
-                    break
-                }
-            } catch {
-                httpOk := false
+            r := _FetchHttpTextSimple(apiUrl, 12000, "PresenterSync/" cur, "application/vnd.github+json")
+            lastHttpStatus := r.status
+            if (r.ok) {
+                rawJson := r.text
+                httpOk := true
+                break
             }
+            if (r.status == 403 || r.status == 429)
+                break
         }
     }
 
-    parsed := httpOk ? ParseGitHubReleaseDetails(rawJson, targetAssetName) : { ok: false, tag: "", version: "", url: "", releaseNotes: "", assetName: "", assetUrl: "", assetSize: -1, sha256Url: "" }
+    if (lastHttpStatus == 403 || lastHttpStatus == 429) {
+        if (!silent)
+            MsgBox("GitHub API rate limit reached (HTTP " lastHttpStatus "). Please try again later.`n`nReleases page: " fallbackUrl, "Update Check", "Icon! 0x40000")
+        return { ok: false, channel: "Stable", status: "rate_limited", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", statusHeadline: "GitHub API rate limit reached (HTTP " lastHttpStatus ")" }
+    }
+
+    parsed := httpOk ? ParseGitHubReleaseDetails(rawJson, assetNm) : { ok: false, tag: "", version: "", url: "", releaseNotes: "", assetName: "", assetUrl: "", assetSize: -1, sha256Url: "" }
     if (!parsed.ok) {
         if (!silent)
             MsgBox("Unable to check GitHub for updates right now (offline or rate-limited).`n`nReleases page: " fallbackUrl, "Update Check", "Icon! 0x40000")
-        return { ok: false, status: "error", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: "", assetUrl: "", assetSize: -1, sha256Url: "" }
+        return { ok: false, channel: "Stable", status: "error", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: "", assetUrl: "", assetSize: -1, sha256Url: "", statusHeadline: "Unable to check GitHub for updates" }
     }
 
     if (IsObject(cfg)) {
@@ -720,39 +932,101 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, target
     }
 
     relUrl := (parsed.url != "") ? parsed.url : fallbackUrl
-    if (CompareSemVer(parsed.version, cur) > 0) {
+    cmp := CompareSemVer(parsed.version, cur)
+    if (cmp > 0) {
         resObj := {
             ok: true,
+            channel: "Stable",
             status: "update_available",
             current: cur,
             latest: parsed.version,
             updateAvailable: true,
+            rollbackAvailable: false,
             url: relUrl,
             releaseNotes: parsed.releaseNotes,
             assetName: parsed.assetName,
             assetUrl: parsed.assetUrl,
             assetSize: parsed.assetSize,
-            sha256Url: parsed.sha256Url
+            sha256Url: parsed.sha256Url,
+            statusHeadline: "Stable update available: v" parsed.version,
+            primaryActionLabel: "Download && Install Now"
         }
         if (!silent)
             ShowWindowsUpdateAvailableDialog(resObj, cfg)
         return resObj
     }
 
+    if (cmp == 0 && curSha != "" && parsed.sha256Url != "") {
+        stSums := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("stableSumsText"))
+            ? mockFixtures.stableSumsText
+            : _FetchHttpTextSimple(parsed.sha256Url, 12000, "PresenterSync/" cur).text
+        stableSha := ParseSha256SumsText(stSums, parsed.assetName != "" ? parsed.assetName : assetNm)
+        if (stableSha != "" && stableSha != curSha) {
+            resHandoff := {
+                ok: true,
+                channel: "Stable",
+                status: "stable_handoff",
+                current: cur,
+                latest: parsed.version,
+                updateAvailable: true,
+                rollbackAvailable: false,
+                url: relUrl,
+                releaseNotes: parsed.releaseNotes,
+                assetName: parsed.assetName,
+                assetUrl: parsed.assetUrl,
+                assetSize: parsed.assetSize,
+                sha256Url: parsed.sha256Url,
+                statusHeadline: "Install Stable v" parsed.version " (replaces Nightly build)",
+                primaryActionLabel: "Install Stable v" parsed.version
+            }
+            if (!silent)
+                ShowWindowsUpdateAvailableDialog(resHandoff, cfg)
+            return resHandoff
+        }
+    }
+
+    if (cmp < 0) {
+        canRb := (parsed.assetUrl != "" && parsed.sha256Url != "")
+        hl := "Running Nightly v" cur " (ahead of Stable v" parsed.version ")"
+        resAhead := {
+            ok: true,
+            channel: "Stable",
+            status: "ahead_of_stable",
+            current: cur,
+            latest: parsed.version,
+            updateAvailable: false,
+            rollbackAvailable: canRb,
+            url: relUrl,
+            releaseNotes: "You are currently running v" cur ", which is newer than the latest Stable Release (v" parsed.version ").`r`n`r`nYou can continue running this build or optionally roll back to Stable v" parsed.version ".",
+            assetName: parsed.assetName,
+            assetUrl: parsed.assetUrl,
+            assetSize: parsed.assetSize,
+            sha256Url: parsed.sha256Url,
+            statusHeadline: hl,
+            primaryActionLabel: "Roll back to Stable v" parsed.version
+        }
+        if (!silent)
+            ShowWindowsUpdateAvailableDialog(resAhead, cfg)
+        return resAhead
+    }
+
     if (!silent)
-        MsgBox("You are running the latest version of PresenterSync (v" cur ").", "Up to Date", "Iconi 0x40000")
+        MsgBox("You are running the latest Stable release of PresenterSync (v" cur ").", "Up to Date", "Iconi 0x40000")
     return {
         ok: true,
+        channel: "Stable",
         status: "up_to_date",
         current: cur,
         latest: parsed.version,
         updateAvailable: false,
+        rollbackAvailable: false,
         url: relUrl,
         releaseNotes: parsed.releaseNotes,
         assetName: parsed.assetName,
         assetUrl: parsed.assetUrl,
         assetSize: parsed.assetSize,
-        sha256Url: parsed.sha256Url
+        sha256Url: parsed.sha256Url,
+        statusHeadline: "Up to date on Stable (v" cur ")"
     }
 }
 

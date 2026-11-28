@@ -74,10 +74,10 @@ fun UpdateReadyInlineBanner(app: PresenterSyncRemoteApp) {
                         modifier = Modifier.size(18.dp)
                     )
                     Text(
-                        text = if (ver != null && res.updateAvailable) {
-                            "Update Ready: v$ver"
-                        } else {
-                            "App Self-Updater"
+                        text = when {
+                            ver != null && res?.isSameVersionStableHandoff == true -> "Stable Build Ready: v$ver"
+                            ver != null && res?.updateAvailable == true -> if (res.nightlyCommitSha != null) "Nightly Ready: v$ver @ ${res.nightlyCommitSha}" else "Update Ready: v$ver"
+                            else -> "App Self-Updater"
                         },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
@@ -102,7 +102,9 @@ fun UpdateReadyInlineBanner(app: PresenterSyncRemoteApp) {
                 )
             } else if (res != null && ver != null) {
                 Text(
-                    text = "PresenterSync Remote v$ver is available (installed: v${AppConstants.APP_VERSION}). Download, SHA-256 verify, and upgrade in-place.",
+                    text = res.statusHeadline.ifBlank {
+                        "PresenterSync Remote v$ver is available (installed: v${AppConstants.APP_VERSION}). Download, SHA-256 verify, and upgrade in-place."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
