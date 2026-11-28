@@ -38,7 +38,10 @@ data class UpdateCheckResult(
     val rollbackSizeBytes: Long = -1L,
     val nightlyBuilds: List<NightlyBuildEntry> = emptyList(),
     val selectedNightlySha: String? = null,
-    val isNightlySelectorMode: Boolean = false
+    val isNightlySelectorMode: Boolean = false,
+    val fullTitle: String = "",
+    val description: String = "",
+    val statusBadge: String = ""
 )
 
 data class NightlyMetaInfo(
@@ -60,7 +63,9 @@ data class CommitListEntry(
     val dateIso: String,
     val dateShort: String,
     val subject: String,
-    val htmlUrl: String
+    val htmlUrl: String,
+    val fullTitle: String = subject,
+    val description: String = ""
 )
 
 data class NightlyBuildEntry(
@@ -74,7 +79,9 @@ data class NightlyBuildEntry(
     val apkUrl: String,
     val sha256SumsUrl: String,
     val metaUrl: String,
-    val isLatest: Boolean
+    val isLatest: Boolean,
+    val fullTitle: String = subject,
+    val description: String = ""
 )
 
 object AppUpdater {
@@ -304,7 +311,10 @@ object AppUpdater {
                 stableVersion = stableVer,
                 nightlyBuilds = allBuilds,
                 selectedNightlySha = build.sha,
-                isNightlySelectorMode = true
+                isNightlySelectorMode = true,
+                fullTitle = build.fullTitle,
+                description = build.description,
+                statusBadge = "Caught Up"
             )
         }
 
@@ -328,7 +338,10 @@ object AppUpdater {
                 stableVersion = stableVer,
                 nightlyBuilds = allBuilds,
                 selectedNightlySha = build.sha,
-                isNightlySelectorMode = true
+                isNightlySelectorMode = true,
+                fullTitle = build.fullTitle,
+                description = build.description,
+                statusBadge = "Already Installed"
             )
         }
 
@@ -339,11 +352,12 @@ object AppUpdater {
             "Selected Nightly: $displayVer @ ${build.shortSha}$stableSuffix"
         }
         val notesLines = buildList {
-            if (build.subject.isNotBlank()) add(build.subject)
+            if (build.fullTitle.isNotBlank()) add(build.fullTitle)
+            if (build.description.isNotBlank()) add(build.description)
             add("Commit: ${build.sha}")
             if (build.dateIso.isNotBlank()) add("Committed: ${build.dateIso}")
             if (meta?.builtAtUtc?.isNotBlank() == true) add("Built UTC: ${meta.builtAtUtc}")
-        }.joinToString("\n")
+        }.joinToString("\n\n")
 
         return UpdateCheckResult(
             currentVersion = currentVersion,
@@ -360,7 +374,10 @@ object AppUpdater {
             stableVersion = stableVer,
             nightlyBuilds = allBuilds,
             selectedNightlySha = build.sha,
-            isNightlySelectorMode = true
+            isNightlySelectorMode = true,
+            fullTitle = build.fullTitle,
+            description = build.description,
+            statusBadge = "Available"
         )
     }
 
@@ -487,7 +504,8 @@ object AppUpdater {
         val json = JSONObject(jsonText)
         val rawTag = json.optString("tag_name", "").trim()
         val latest = rawTag.removePrefix("v").removePrefix("V").ifBlank { null }
-        val notes = json.optString("body", "").trim()
+        val releaseTitle = json.optString("name", "").trim().ifBlank { rawTag }
+        val notes = json.optString("body", "").replace("\r\n", "\n").trim()
         val htmlUrl = json.optString("html_url", AppConstants.GITHUB_RELEASES_URL).ifBlank {
             AppConstants.GITHUB_RELEASES_URL
         }
@@ -527,7 +545,10 @@ object AppUpdater {
             apkAssetName = apkName,
             apkSizeBytes = apkSize,
             sha256SumsUrl = shaUrl,
-            errorMessage = null
+            errorMessage = null,
+            fullTitle = releaseTitle,
+            description = notes,
+            statusBadge = if (isNewer) "Available" else "Up to Date"
         )
     }
 
@@ -555,16 +576,20 @@ object AppUpdater {
             val dateIso = commitObj?.optJSONObject("committer")?.optString("date", "")?.trim().orEmpty()
                 .ifBlank { commitObj?.optJSONObject("author")?.optString("date", "")?.trim().orEmpty() }
             val dateShort = if (dateIso.length >= 10) dateIso.substring(0, 10) else ""
-            val rawMsg = commitObj?.optString("message", "")?.trim().orEmpty()
-            val firstLine = rawMsg.lineSequence().firstOrNull()?.trim().orEmpty()
-            val subject = if (firstLine.length > 60) firstLine.take(57) + "..." else firstLine
+            val rawMsg = commitObj?.optString("message", "")?.trim().orEmpty().replace("\r\n", "\n")
+            val nlIdx = rawMsg.indexOf('\n')
+            val fullTitle = (if (nlIdx >= 0) rawMsg.substring(0, nlIdx) else rawMsg).trim()
+            val descBody = if (nlIdx >= 0) rawMsg.substring(nlIdx + 1).trim() else ""
+            val subject = if (fullTitle.length > 60) fullTitle.take(57) + "..." else fullTitle
             out += CommitListEntry(
                 sha = sha,
                 shortSha = shortSha,
                 dateIso = dateIso,
                 dateShort = dateShort,
                 subject = subject,
-                htmlUrl = htmlUrl
+                htmlUrl = htmlUrl,
+                fullTitle = fullTitle,
+                description = descBody
             )
         }
         return out
@@ -607,7 +632,9 @@ object AppUpdater {
                 apkUrl = "$base/$DEFAULT_APK_NAME",
                 sha256SumsUrl = "$base/SHA256SUMS.txt",
                 metaUrl = "$base/nightly_meta.json",
-                isLatest = isLatest
+                isLatest = isLatest,
+                fullTitle = c.fullTitle,
+                description = c.description
             )
         }
     }

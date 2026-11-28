@@ -396,94 +396,141 @@ fun AboutUpdateDialog(
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = Color(0xFFD97706)
                                             )
-                                        } else if (res.updateAvailable) {
-                                            Text(
-                                                text = res.statusHeadline.ifBlank {
-                                                    "New Version Available: v${res.latestVersion} (Current: v${res.currentVersion})"
-                                                },
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            if (res.releaseNotes.isNotBlank()) {
+                                        } else {
+                                            val displayTitle = res.fullTitle.ifBlank {
+                                                res.statusHeadline.ifBlank { "v${res.latestVersion ?: res.currentVersion}" }
+                                            }
+                                            val displayDesc = res.description.ifBlank {
+                                                if (res.channel == UpdateChannel.NIGHTLY) "No additional commit description." else res.releaseNotes
+                                            }.ifBlank { "No additional commit description." }
+                                            val badgeText = buildString {
+                                                append(res.channel.label)
+                                                append(" · v")
+                                                append(res.latestVersion ?: res.currentVersion)
+                                                if (!res.nightlyCommitSha.isNullOrBlank()) {
+                                                    append(" · ")
+                                                    append(res.nightlyCommitSha)
+                                                }
+                                                if (res.statusBadge.isNotBlank()) {
+                                                    append(" · ")
+                                                    append(res.statusBadge)
+                                                }
+                                            }
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .heightIn(min = 72.dp, max = 210.dp)
+                                                        .verticalScroll(rememberScrollState())
+                                                        .padding(10.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Text(
+                                                        text = badgeText,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                    Text(
+                                                        text = displayTitle,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = displayDesc,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                            if (res.updateAvailable) {
                                                 Text(
-                                                    text = res.releaseNotes.take(500),
+                                                    text = res.statusHeadline.ifBlank {
+                                                        "New Version Available: v${res.latestVersion} (Current: v${res.currentVersion})"
+                                                    },
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                                if (res.apkDownloadUrl != null) {
+                                                    val installBtnText = when {
+                                                        res.isSameVersionStableHandoff -> "Install Stable v${res.latestVersion}"
+                                                        res.nightlyCommitSha != null -> "Install Selected Nightly (${res.nightlyCommitSha})"
+                                                        else -> "Download & Install v${res.latestVersion}"
+                                                    }
+                                                    Button(
+                                                        onClick = { app.apkSelfInstaller.startDownloadAndInstall(res) },
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        Icon(Icons.Default.Download, contentDescription = null)
+                                                        Spacer(Modifier.width(8.dp))
+                                                        Text(installBtnText)
+                                                    }
+                                                } else {
+                                                    Button(
+                                                        onClick = {
+                                                            runCatching {
+                                                                context.startActivity(
+                                                                    Intent(Intent.ACTION_VIEW, Uri.parse(res.releaseHtmlUrl))
+                                                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                                )
+                                                            }
+                                                        },
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        Text("Open Release Page")
+                                                    }
+                                                }
+                                            } else if (res.isNightlyUpToDate) {
+                                                Text(
+                                                    text = "✓ ${res.statusHeadline}",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = Color(0xFF10B981),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Button(
+                                                    onClick = {},
+                                                    enabled = false,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Text("Already Installed")
+                                                }
+                                            } else if (res.isAheadOfStable) {
+                                                Text(
+                                                    text = res.statusHeadline,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = Color(0xFFF59E0B)
+                                                )
+                                                Text(
+                                                    text = "You are running a newer Nightly build than Stable v${res.stableVersion ?: ""}. Rolling back to an older version requires downloading the verified Stable APK to Downloads/ and uninstalling this Nightly first.",
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
-                                            }
-                                            if (res.apkDownloadUrl != null) {
-                                                val installBtnText = when {
-                                                    res.isSameVersionStableHandoff -> "Install Stable v${res.latestVersion}"
-                                                    res.nightlyCommitSha != null -> "Install Selected Nightly (${res.nightlyCommitSha})"
-                                                    else -> "Download & Install v${res.latestVersion}"
-                                                }
-                                                Button(
-                                                    onClick = { app.apkSelfInstaller.startDownloadAndInstall(res) },
-                                                    modifier = Modifier.fillMaxWidth()
-                                                ) {
-                                                    Icon(Icons.Default.Download, contentDescription = null)
-                                                    Spacer(Modifier.width(8.dp))
-                                                    Text(installBtnText)
+                                                if (res.rollbackApkUrl != null && res.stableVersion != null) {
+                                                    OutlinedButton(
+                                                        onClick = { app.apkSelfInstaller.startGuidedRollbackDownload(res) },
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        Icon(Icons.Default.Download, contentDescription = null)
+                                                        Spacer(Modifier.width(8.dp))
+                                                        Text("Download v${res.stableVersion} & Roll Back")
+                                                    }
                                                 }
                                             } else {
-                                                Button(
-                                                    onClick = {
-                                                        runCatching {
-                                                            context.startActivity(
-                                                                Intent(Intent.ACTION_VIEW, Uri.parse(res.releaseHtmlUrl))
-                                                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                                            )
-                                                        }
-                                                    },
-                                                    modifier = Modifier.fillMaxWidth()
-                                                ) {
-                                                    Text("Open Release Page")
-                                                }
+                                                Text(
+                                                    text = "✓ ${res.statusHeadline.ifBlank { "You are on the latest release (v${res.latestVersion ?: res.currentVersion})." }}",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = Color(0xFF10B981),
+                                                    fontWeight = FontWeight.Medium
+                                                )
                                             }
-                                        } else if (res.isNightlyUpToDate) {
-                                            Text(
-                                                text = "✓ ${res.statusHeadline}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = Color(0xFF10B981),
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                            Button(
-                                                onClick = {},
-                                                enabled = false,
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Text("Already Installed")
-                                            }
-                                        } else if (res.isAheadOfStable) {
-                                            Text(
-                                                text = res.statusHeadline,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = Color(0xFFF59E0B)
-                                            )
-                                            Text(
-                                                text = "You are running a newer Nightly build than Stable v${res.stableVersion ?: ""}. Rolling back to an older version requires downloading the verified Stable APK to Downloads/ and uninstalling this Nightly first.",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            if (res.rollbackApkUrl != null && res.stableVersion != null) {
-                                                OutlinedButton(
-                                                    onClick = { app.apkSelfInstaller.startGuidedRollbackDownload(res) },
-                                                    modifier = Modifier.fillMaxWidth()
-                                                ) {
-                                                    Icon(Icons.Default.Download, contentDescription = null)
-                                                    Spacer(Modifier.width(8.dp))
-                                                    Text("Download v${res.stableVersion} & Roll Back")
-                                                }
-                                            }
-                                        } else {
-                                            Text(
-                                                text = "✓ ${res.statusHeadline.ifBlank { "You are on the latest release (v${res.latestVersion ?: res.currentVersion})." }}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = Color(0xFF10B981),
-                                                fontWeight = FontWeight.Medium
-                                            )
                                         }
                                     } else {
                                         Text(

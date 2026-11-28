@@ -173,7 +173,7 @@ class DualChannelUpdaterTest {
     fun postStableCommitFilterAndNightlySelectorResolveCleanly() {
         val rawCommitsJson = """
             [
-              {"sha":"aaa1111000000000","html_url":"https://github.com/c/1","commit":{"message":"feat: latest nightly\n\ndetails","committer":{"date":"2026-11-28T05:00:00Z"}}},
+              {"sha":"aaa1111000000000","html_url":"https://github.com/c/1","commit":{"message":"feat: latest nightly with an extra long untruncated commit title for info box\n\n- First bullet\n- Second bullet \u2014 unicode","committer":{"date":"2026-11-28T05:00:00Z"}}},
               {"sha":"bbb2222000000000","html_url":"https://github.com/c/2","commit":{"message":"fix: older post-stable","committer":{"date":"2026-11-27T12:00:00Z"}}},
               {"sha":"ccc3333000000000","html_url":"https://github.com/c/3","commit":{"message":"chore: stable release","committer":{"date":"2026-11-26T10:00:00Z"}}},
               {"sha":"ddd4444000000000","html_url":"https://github.com/c/4","commit":{"message":"old pre-stable","committer":{"date":"2026-11-25T10:00:00Z"}}}
@@ -181,6 +181,12 @@ class DualChannelUpdaterTest {
         """.trimIndent()
         val parsed = AppUpdater.parseCommitListJson(rawCommitsJson)
         assertEquals(4, parsed.size)
+        assertEquals(
+            "feat: latest nightly with an extra long untruncated commit title for info box",
+            parsed[0].fullTitle
+        )
+        assertTrue(parsed[0].description.contains("- First bullet"))
+        assertTrue(parsed[0].description.contains("- Second bullet — unicode"))
 
         val builds = AppUpdater.filterPostStableNightlyCommits(
             commits = parsed,
@@ -245,5 +251,14 @@ class DualChannelUpdaterTest {
         assertFalse(ApkSelfInstaller.shouldAutoRouteNightlyDowngradeToGuidedRollback(UpdateChannel.NIGHTLY, 100200L, 100200L))
         assertFalse(ApkSelfInstaller.shouldAutoRouteNightlyDowngradeToGuidedRollback(UpdateChannel.STABLE, 100101L, 100200L))
         assertEquals("PresenterSync_Remote_nightly_bbb2222.apk", ApkSelfInstaller.buildNightlyRollbackApkFileName("bbb2222"))
+
+        // Stable release title + multi-line body preservation
+        val stableJson = """
+            {"tag_name":"v10.2.0","name":"PresenterSync v10.2.0 — Production Release","body":"## Highlights\n- Feature A\n- Feature B","html_url":"https://github.com/r/10.2.0","assets":[]}
+        """.trimIndent()
+        val stableParsed = AppUpdater.parseLatestReleaseJson(stableJson, "10.1.1")
+        assertEquals("PresenterSync v10.2.0 — Production Release", stableParsed.fullTitle)
+        assertTrue(stableParsed.description.contains("- Feature A"))
+        assertTrue(stableParsed.description.contains("- Feature B"))
     }
 }

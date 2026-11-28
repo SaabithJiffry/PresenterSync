@@ -33,13 +33,18 @@ ParseGitHubReleaseDetails(jsonStr, targetAssetName := "") {
         return { ok: false, tag: "", version: "", url: "", releaseNotes: "", assetName: "", assetUrl: "", assetSize: -1, sha256Url: "" }
     }
     ver := RegExReplace(Trim(tag), "^[vV]")
+    releaseTitle := ""
+    if (RegExMatch(s, '"name"\s*:\s*"((?:\\.|[^"\\])*)"', &mRelTitle))
+        releaseTitle := Trim(UnescapeJsonStr(mRelTitle[1]))
+    if (releaseTitle = "")
+        releaseTitle := tag
     url := ""
     if (RegExMatch(s, '"html_url"\s*:\s*"([^"]+)"', &mUrl))
         url := UnescapeJsonStr(mUrl[1])
 
     notes := ""
     if (RegExMatch(s, '"body"\s*:\s*"((?:\\.|[^"\\])*)"', &mBody))
-        notes := Trim(UnescapeJsonStr(mBody[1]))
+        notes := Trim(StrReplace(UnescapeJsonStr(mBody[1]), "`r`n", "`n"), " `t`r`n")
 
     wantedAsset := (targetAssetName != "") ? targetAssetName : GetDefaultWindowsAssetName()
     assetName := ""
@@ -61,6 +66,7 @@ ParseGitHubReleaseDetails(jsonStr, targetAssetName := "") {
         ok: (ver != ""),
         tag: tag,
         version: ver,
+        releaseTitle: releaseTitle,
         url: url,
         releaseNotes: notes,
         assetName: assetName,
@@ -68,6 +74,20 @@ ParseGitHubReleaseDetails(jsonStr, targetAssetName := "") {
         assetSize: assetSize,
         sha256Url: shaUrl
     }
+}
+
+FormatUpdaterInfoBoxText(headerLine, fullTitle, description) {
+    parts := []
+    if (Trim(String(headerLine)) != "")
+        parts.Push(Trim(String(headerLine)))
+    if (Trim(String(fullTitle)) != "")
+        parts.Push(Trim(String(fullTitle)))
+    descNorm := Trim(StrReplace(String(description), "`r`n", "`n"), " `t`r`n")
+    parts.Push(descNorm != "" ? descNorm : "No additional commit description.")
+    out := ""
+    for i, p in parts
+        out .= (i > 1 ? "`n`n" : "") p
+    return out
 }
 
 ParseGitHubReleaseTag(jsonStr) {
@@ -420,7 +440,11 @@ ParseGitHubCommitListJson(jsonStr) {
                     else if (RegExMatch(objStr, '"date"\s*:\s*"([^"]+)"', &mD2))
                         cDate := UnescapeJsonStr(mD2[1])
                     rawMsg := RegExMatch(objStr, '"message"\s*:\s*"((?:\\.|[^"\\])*)"', &mM) ? Trim(UnescapeJsonStr(mM[1])) : ""
-                    subj := Trim(StrSplit(rawMsg, "`n", "`r")[1])
+                    normMsg := StrReplace(rawMsg, "`r`n", "`n")
+                    nlPos := InStr(normMsg, "`n")
+                    fullTitle := Trim(nlPos > 0 ? SubStr(normMsg, 1, nlPos - 1) : normMsg, " `t`r`n")
+                    descBody := nlPos > 0 ? Trim(SubStr(normMsg, nlPos + 1), " `t`r`n") : ""
+                    subj := fullTitle
                     if (StrLen(subj) > 42)
                         subj := SubStr(subj, 1, 39) "..."
                     cUrl := RegExMatch(objStr, '"html_url"\s*:\s*"([^"]+)"', &mU) ? UnescapeJsonStr(mU[1]) : ""
@@ -431,6 +455,8 @@ ParseGitHubCommitListJson(jsonStr) {
                             dateIso: cDate,
                             dateShort: (StrLen(cDate) >= 10) ? SubStr(cDate, 1, 10) : "unknown",
                             subject: subj,
+                            fullTitle: fullTitle,
+                            description: descBody,
                             url: (cUrl != "" ? cUrl : "https://github.com/SaabithJiffry/PresenterSync/commit/" sha)
                         })
                     }
@@ -467,6 +493,8 @@ FilterPostStableNightlyCommits(commits, stableCommitSha := "", stableCommitDate 
             dateIso: c.dateIso,
             dateShort: c.dateShort,
             subject: c.subject,
+            fullTitle: (c.HasOwnProp("fullTitle") ? c.fullTitle : c.subject),
+            description: (c.HasOwnProp("description") ? c.description : ""),
             url: c.url,
             label: lbl,
             isLatest: isFirst,
@@ -515,6 +543,9 @@ ResolveNightlyBuildSelection(buildObj, curVer, curSha, assetNm, stableParsed := 
     meta := (metaText != "") ? ParseNightlyMetaJson(metaText) : { ok: false, version: "", androidVersionCode: 0, builtAtUtc: "" }
     displayVer := meta.ok ? meta.version : (buildObj.shortSha " (" buildObj.dateShort ")")
     verLabel := meta.ok ? ("v" meta.version " @ " buildObj.shortSha) : (buildObj.shortSha " (" buildObj.dateShort ")")
+    metaVerBadge := meta.ok ? ("v" meta.version) : "Nightly"
+    fullTitle := (buildObj.HasOwnProp("fullTitle") && buildObj.fullTitle != "") ? buildObj.fullTitle : (buildObj.HasOwnProp("subject") ? buildObj.subject : "")
+    descText := buildObj.HasOwnProp("description") ? buildObj.description : ""
 
     if (buildObj.isLatest && IsObject(stableParsed) && stableParsed.ok && meta.ok && CompareSemVer(meta.version, stableParsed.version) == 0 && stableParsed.sha256Url != "") {
         stSums := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("stableSumsText"))
@@ -523,11 +554,14 @@ ResolveNightlyBuildSelection(buildObj, curVer, curSha, assetNm, stableParsed := 
         stableSha := ParseSha256SumsText(stSums, assetNm)
         if (stableSha != "" && nightlySha = stableSha) {
             hl := "Nightly has caught up to Stable (v" stableParsed.version ")"
+            hdr := "Nightly · " metaVerBadge " · Commit " buildObj.shortSha " · " buildObj.dateShort " · Caught Up"
+            infoTxt := FormatUpdaterInfoBoxText(hdr, fullTitle, descText)
             return {
                 ok: true, channel: "Nightly", status: "caught_up_to_stable", current: curVer,
                 latest: meta.version, stableVersion: stableParsed.version, shortSha: buildObj.shortSha,
                 selectedSha: buildObj.sha, updateAvailable: false, isAlreadyInstalled: true, rollbackAvailable: false,
-                url: buildObj.url, releaseNotes: hl, assetName: assetNm, assetUrl: buildObj.assetUrl,
+                url: buildObj.url, releaseNotes: infoTxt, fullTitle: fullTitle, description: descText, infoBoxText: infoTxt,
+                assetName: assetNm, assetUrl: buildObj.assetUrl,
                 assetSize: -1, sha256Url: buildObj.sha256Url, statusHeadline: hl
             }
         }
@@ -535,12 +569,14 @@ ResolveNightlyBuildSelection(buildObj, curVer, curSha, assetNm, stableParsed := 
 
     if (curSha != "" && curSha = nightlySha) {
         hl := "Already Installed (" verLabel ")"
+        hdr := "Nightly · " metaVerBadge " · Commit " buildObj.shortSha " · " buildObj.dateShort " · Already Installed"
+        infoTxt := FormatUpdaterInfoBoxText(hdr, fullTitle, descText)
         return {
             ok: true, channel: "Nightly", status: "up_to_date_nightly", current: curVer,
             latest: displayVer, stableVersion: (IsObject(stableParsed) && stableParsed.ok ? stableParsed.version : ""),
             shortSha: buildObj.shortSha, selectedSha: buildObj.sha, updateAvailable: false,
             isAlreadyInstalled: true, rollbackAvailable: false, url: buildObj.url,
-            releaseNotes: "Installed executable already matches commit " buildObj.sha " (SHA-256 verified).",
+            releaseNotes: infoTxt, fullTitle: fullTitle, description: descText, infoBoxText: infoTxt,
             assetName: assetNm, assetUrl: buildObj.assetUrl, assetSize: -1, sha256Url: buildObj.sha256Url,
             statusHeadline: hl, primaryActionLabel: "Already Installed"
         }
@@ -548,16 +584,15 @@ ResolveNightlyBuildSelection(buildObj, curVer, curSha, assetNm, stableParsed := 
 
     stSuffix := (IsObject(stableParsed) && stableParsed.ok && stableParsed.version != "") ? (" (Stable: v" stableParsed.version ")") : ""
     hl := (buildObj.isLatest ? "Nightly available: " : "Selected Nightly: ") verLabel stSuffix
-    notesN := "Immutable Nightly build pinned to commit " buildObj.sha
-        . (buildObj.subject != "" ? "`r`nCommit: " buildObj.subject : "")
-        . (meta.ok && meta.builtAtUtc != "" ? "`r`nBuilt UTC: " meta.builtAtUtc : "`r`nDate: " buildObj.dateShort)
-        . "`r`n`r`nWarning: Nightly builds come from main (dist/) and are not finalized stable releases."
+    hdr := "Nightly · " metaVerBadge " · Commit " buildObj.shortSha " · " buildObj.dateShort " · Available"
+    infoTxt := FormatUpdaterInfoBoxText(hdr, fullTitle, descText)
     return {
         ok: true, channel: "Nightly", status: "nightly_available", current: curVer,
         latest: displayVer, stableVersion: (IsObject(stableParsed) && stableParsed.ok ? stableParsed.version : ""),
         shortSha: buildObj.shortSha, selectedSha: buildObj.sha, updateAvailable: true,
         isAlreadyInstalled: false, rollbackAvailable: false, url: buildObj.url,
-        releaseNotes: notesN, assetName: assetNm, assetUrl: buildObj.assetUrl, assetSize: -1,
+        releaseNotes: infoTxt, fullTitle: fullTitle, description: descText, infoBoxText: infoTxt,
+        assetName: assetNm, assetUrl: buildObj.assetUrl, assetSize: -1,
         sha256Url: buildObj.sha256Url, statusHeadline: hl,
         primaryActionLabel: "Install Selected Nightly (" buildObj.shortSha ")"
     }
@@ -907,7 +942,9 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
         IsObject(cfg) ? (cfg.UpdateChannel := (ddlChan.Value == 2 ? "Nightly" : "Stable"), cfg.Write("Settings", "UpdateChannel", cfg.UpdateChannel)) : 0
     ))
 
-    notes := (activeRes.HasOwnProp("releaseNotes") && activeRes.releaseNotes != "") ? activeRes.releaseNotes : "Signed release update from SaabithJiffry/PresenterSync."
+    notes := (activeRes.HasOwnProp("infoBoxText") && activeRes.infoBoxText != "")
+        ? activeRes.infoBoxText
+        : ((activeRes.HasOwnProp("releaseNotes") && activeRes.releaseNotes != "") ? activeRes.releaseNotes : "Signed release update from SaabithJiffry/PresenterSync.")
     edNotes := dlg.Add("Edit", "x20 y+8 w440 h122 ReadOnly Multi VScroll", StrReplace(notes, "`n", "`r`n"))
     Theme.RegisterControl(dlg, edNotes, "Edit")
 
@@ -938,7 +975,8 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
             resolved.nightlyBuilds := builds
             activeRes := resolved
             lblHeadline.Value := resolved.statusHeadline
-            edNotes.Value := StrReplace(resolved.releaseNotes, "`n", "`r`n")
+            nextNotes := (resolved.HasOwnProp("infoBoxText") && resolved.infoBoxText != "") ? resolved.infoBoxText : resolved.releaseNotes
+            edNotes.Value := StrReplace(nextNotes, "`n", "`r`n")
             canNow := (resolved.assetUrl != "" && A_IsCompiled && resolved.updateAvailable)
             btnPrimary.Enabled := !(resolved.HasOwnProp("isAlreadyInstalled") && resolved.isAlreadyInstalled)
             btnPrimary.Text := canNow ? resolved.primaryActionLabel : ((resolved.HasOwnProp("isAlreadyInstalled") && resolved.isAlreadyInstalled) ? "Already Installed" : "Open Commit Page")
@@ -1143,11 +1181,15 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, target
 
     relUrl := (parsed.url != "") ? parsed.url : fallbackUrl
     cmp := CompareSemVer(parsed.version, cur)
+    relTitle := (parsed.HasOwnProp("releaseTitle") && parsed.releaseTitle != "") ? parsed.releaseTitle : ("PresenterSync v" parsed.version)
     if (cmp > 0) {
+        hdr := "Stable · v" parsed.version " · Available"
+        infoTxt := FormatUpdaterInfoBoxText(hdr, relTitle, parsed.releaseNotes)
         resObj := {
             ok: true, channel: "Stable", status: "update_available", current: cur,
             latest: parsed.version, updateAvailable: true, rollbackAvailable: false,
-            url: relUrl, releaseNotes: parsed.releaseNotes, assetName: parsed.assetName,
+            url: relUrl, releaseNotes: parsed.releaseNotes, fullTitle: relTitle, description: parsed.releaseNotes, infoBoxText: infoTxt,
+            assetName: parsed.assetName,
             assetUrl: parsed.assetUrl, assetSize: parsed.assetSize, sha256Url: parsed.sha256Url,
             statusHeadline: "Stable update available: v" parsed.version,
             primaryActionLabel: "Download && Install Now"
@@ -1163,10 +1205,13 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, target
             : _FetchHttpTextSimple(parsed.sha256Url, 12000, "PresenterSync/" cur).text
         stableSha := ParseSha256SumsText(stSums, parsed.assetName != "" ? parsed.assetName : assetNm)
         if (stableSha != "" && stableSha != curSha) {
+            hdr := "Stable · v" parsed.version " · Handoff Available"
+            infoTxt := FormatUpdaterInfoBoxText(hdr, relTitle, parsed.releaseNotes)
             resHandoff := {
                 ok: true, channel: "Stable", status: "stable_handoff", current: cur,
                 latest: parsed.version, updateAvailable: true, rollbackAvailable: false,
-                url: relUrl, releaseNotes: parsed.releaseNotes, assetName: parsed.assetName,
+                url: relUrl, releaseNotes: parsed.releaseNotes, fullTitle: relTitle, description: parsed.releaseNotes, infoBoxText: infoTxt,
+                assetName: parsed.assetName,
                 assetUrl: parsed.assetUrl, assetSize: parsed.assetSize, sha256Url: parsed.sha256Url,
                 statusHeadline: "Install Stable v" parsed.version " (replaces Nightly build)",
                 primaryActionLabel: "Install Stable v" parsed.version
@@ -1180,11 +1225,14 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, target
     if (cmp < 0) {
         canRb := (parsed.assetUrl != "" && parsed.sha256Url != "")
         hl := "Running Nightly v" cur " (ahead of Stable v" parsed.version ")"
+        hdr := "Stable · v" parsed.version " · Ahead of Stable"
+        infoTxt := FormatUpdaterInfoBoxText(hdr, relTitle, parsed.releaseNotes)
         resAhead := {
             ok: true, channel: "Stable", status: "ahead_of_stable", current: cur,
             latest: parsed.version, updateAvailable: false, rollbackAvailable: canRb,
             url: relUrl,
             releaseNotes: "You are currently running v" cur ", which is newer than the latest Stable Release (v" parsed.version ").`r`n`r`nYou can continue running this build or optionally roll back to Stable v" parsed.version ".",
+            fullTitle: relTitle, description: parsed.releaseNotes, infoBoxText: infoTxt,
             assetName: parsed.assetName, assetUrl: parsed.assetUrl, assetSize: parsed.assetSize,
             sha256Url: parsed.sha256Url, statusHeadline: hl,
             primaryActionLabel: "Roll back to Stable v" parsed.version
