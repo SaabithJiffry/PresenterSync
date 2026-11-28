@@ -3,6 +3,7 @@ package com.saabithjiffry.presentersync.remote.network
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -12,6 +13,7 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
 import com.saabithjiffry.presentersync.remote.config.RemoteConfigStore
+import com.saabithjiffry.presentersync.remote.config.UpdateChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -160,6 +162,47 @@ class ApkSelfInstaller(
         return res
     }
 
+    fun selectNightlyBuild(entry: NightlyBuildEntry) {
+        val prev = _latestCheck.value ?: return
+        if (prev.channel != UpdateChannel.NIGHTLY) return
+        scope.launch {
+            _installState.value = UpdateInstallState.Checking
+            val resolved = withContext(Dispatchers.IO) {
+                val installedSha = runCatching {
+                    appContext.applicationInfo?.sourceDir?.let { AppUpdater.computeFileSha256(it) }
+                }.getOrNull()
+                val metaResp = AppUpdater.fetchText(httpClient, entry.metaUrl, prev.currentVersion, acceptGithubJson = false)
+                val sumsResp = AppUpdater.fetchText(httpClient, entry.sha256SumsUrl, prev.currentVersion, acceptGithubJson = false)
+                val meta = if (metaResp.ok) AppUpdater.parseNightlyMetaJson(metaResp.body) else null
+                val nightlySha = if (sumsResp.ok) AppUpdater.parseSha256Sums(sumsResp.body, "PresenterSync_Remote.apk") else null
+                val stableStub = prev.stableVersion?.let { sv ->
+                    UpdateCheckResult(
+                        currentVersion = prev.currentVersion,
+                        latestVersion = sv,
+                        updateAvailable = false,
+                        releaseNotes = "",
+                        releaseHtmlUrl = prev.releaseHtmlUrl,
+                        apkDownloadUrl = null
+                    )
+                }
+                AppUpdater.resolveNightlyBuild(
+                    build = entry,
+                    allBuilds = prev.nightlyBuilds.ifEmpty { listOf(entry) },
+                    currentVersion = prev.currentVersion,
+                    installedApkSha256 = installedSha,
+                    meta = meta,
+                    nightlySha256 = nightlySha,
+                    stableParsed = stableStub,
+                    stableSha256 = null
+                )
+            }
+            _latestCheck.value = resolved
+            if (_installState.value is UpdateInstallState.Checking) {
+                _installState.value = UpdateInstallState.Idle
+            }
+        }
+    }
+
     fun startThrottledStartupCheck() {
         scope.launch {
             checkForUpdates(manual = false)
@@ -221,11 +264,31 @@ class ApkSelfInstaller(
                 }
 
                 val currentVerCode = getInstalledVersionCode(appContext)
-                val archiveErr = verifyDownloadedApkArchive(
-                    appContext,
-                    finalFile,
-                    currentVerCode,
-                    allowSameVersionCode = result.isSameVersionStableHandoff
+                val archiveInfo = getArchivePackageInfo(appContext, finalFile)
+                    ?: throw IOException("Downloaded file is not a valid Android APK package.")
+                val archiveVerCode = PackageInfoCompat.getLongVersionCode(archiveInfo)
+                if (archiveInfo.packageName != appContext.packageName) {
+                    throw IOException("Package mismatch (${archiveInfo.packageName} != ${appContext.packageName}).")
+                }
+
+                if (shouldAutoRouteNightlyDowngradeToGuidedRollback(result.channel, archiveVerCode, currentVerCode)) {
+                    val rollbackFileName = buildNightlyRollbackApkFileName(result.nightlyCommitSha ?: "rollback")
+                    val savedPath = exportVerifiedApkFileToDownloads(finalFile, rollbackFileName)
+                    runCatching { finalFile.delete() }
+                    _installState.value = UpdateInstallState.RollbackReadyToUninstall(
+                        version = result.latestVersion ?: (result.nightlyCommitSha ?: "Nightly"),
+                        savedDisplayPath = savedPath,
+                        sha256Verified = shaVerified
+                    )
+                    return@launch
+                }
+
+                val archiveErr = validateApkArchiveMetadata(
+                    archivePackageName = archiveInfo.packageName,
+                    archiveVersionCode = archiveVerCode,
+                    expectedPackageName = appContext.packageName,
+                    currentVersionCode = currentVerCode,
+                    allowSameVersionCode = result.isSameVersionStableHandoff || result.channel == UpdateChannel.NIGHTLY
                 )
                 if (archiveErr != null) {
                     throw IOException(archiveErr)
@@ -339,8 +402,10 @@ class ApkSelfInstaller(
         }
     }
 
-    private fun exportVerifiedRollbackApkToDownloads(verifiedFile: File, stableVersion: String): String {
-        val fileName = buildRollbackApkFileName(stableVersion)
+    private fun exportVerifiedRollbackApkToDownloads(verifiedFile: File, stableVersion: String): String =
+        exportVerifiedApkFileToDownloads(verifiedFile, buildRollbackApkFileName(stableVersion))
+
+    private fun exportVerifiedApkFileToDownloads(verifiedFile: File, fileName: String): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = appContext.contentResolver
             val values = ContentValues().apply {
@@ -464,17 +529,22 @@ class ApkSelfInstaller(
     }
 
     @Suppress("DEPRECATION")
+    private fun getArchivePackageInfo(ctx: Context, apkFile: File): PackageInfo? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ctx.packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            ctx.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
+        }
+    }
+
     private fun verifyDownloadedApkArchive(
         ctx: Context,
         apkFile: File,
         currentVersionCode: Long,
         allowSameVersionCode: Boolean = false
     ): String? {
-        val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ctx.packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.PackageInfoFlags.of(0))
-        } else {
-            ctx.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
-        } ?: return "Downloaded file is not a valid Android APK package."
+        val info = getArchivePackageInfo(ctx, apkFile)
+            ?: return "Downloaded file is not a valid Android APK package."
 
         val archiveVer = PackageInfoCompat.getLongVersionCode(info)
         return validateApkArchiveMetadata(
@@ -578,6 +648,20 @@ class ApkSelfInstaller(
                 .replace(Regex("[^0-9A-Za-z._-]"), "_")
             return "PresenterSync_Remote_v$clean.apk"
         }
+
+        fun buildNightlyRollbackApkFileName(shortSha: String): String {
+            val clean = shortSha.trim().ifBlank { "rollback" }
+                .replace(Regex("[^0-9A-Za-z._-]"), "_")
+            return "PresenterSync_Remote_nightly_$clean.apk"
+        }
+
+        fun shouldAutoRouteNightlyDowngradeToGuidedRollback(
+            channel: UpdateChannel,
+            downloadedVersionCode: Long,
+            currentVersionCode: Long
+        ): Boolean = channel == UpdateChannel.NIGHTLY &&
+            downloadedVersionCode > 0L &&
+            downloadedVersionCode < currentVersionCode
 
         fun validateApkArchiveMetadata(
             archivePackageName: String?,

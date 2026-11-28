@@ -26,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
@@ -34,6 +35,8 @@ import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.AlertDialog
@@ -346,6 +349,46 @@ fun AboutUpdateDialog(
                                 )
                             } else {
                                     val res = result
+                                    if (cfg.updateChannel == UpdateChannel.NIGHTLY && res != null && res.isNightlySelectorMode) {
+                                        var buildMenuExpanded by remember { mutableStateOf(false) }
+                                        val selectedEntry = res.nightlyBuilds.firstOrNull { it.sha == res.selectedNightlySha }
+                                            ?: res.nightlyBuilds.firstOrNull()
+                                        Text(
+                                            text = "Nightly Build",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxWidth()) {
+                                            OutlinedButton(
+                                                onClick = { if (res.nightlyBuilds.isNotEmpty()) buildMenuExpanded = true },
+                                                enabled = res.nightlyBuilds.isNotEmpty(),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text(
+                                                    text = selectedEntry?.label ?: "Nightly has caught up to Stable",
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                            }
+                                            DropdownMenu(
+                                                expanded = buildMenuExpanded,
+                                                onDismissRequest = { buildMenuExpanded = false }
+                                            ) {
+                                                res.nightlyBuilds.forEach { entry ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(entry.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                        onClick = {
+                                                            buildMenuExpanded = false
+                                                            app.apkSelfInstaller.selectNightlyBuild(entry)
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                     if (res != null) {
                                         if (res.errorMessage != null) {
                                             Text(
@@ -372,7 +415,7 @@ fun AboutUpdateDialog(
                                             if (res.apkDownloadUrl != null) {
                                                 val installBtnText = when {
                                                     res.isSameVersionStableHandoff -> "Install Stable v${res.latestVersion}"
-                                                    res.nightlyCommitSha != null -> "Install Nightly (${res.nightlyCommitSha})"
+                                                    res.nightlyCommitSha != null -> "Install Selected Nightly (${res.nightlyCommitSha})"
                                                     else -> "Download & Install v${res.latestVersion}"
                                                 }
                                                 Button(
@@ -397,6 +440,20 @@ fun AboutUpdateDialog(
                                                 ) {
                                                     Text("Open Release Page")
                                                 }
+                                            }
+                                        } else if (res.isNightlyUpToDate) {
+                                            Text(
+                                                text = "✓ ${res.statusHeadline}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFF10B981),
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Button(
+                                                onClick = {},
+                                                enabled = false,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("Already Installed")
                                             }
                                         } else if (res.isAheadOfStable) {
                                             Text(
@@ -459,7 +516,11 @@ fun AboutUpdateDialog(
                                     Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
                                     Text(
-                                        if (formFactor.isTightWidth) "Updates" else "Check for Updates",
+                                        when {
+                                            formFactor.isTightWidth -> "Refresh"
+                                            cfg.updateChannel == UpdateChannel.NIGHTLY -> "Refresh Builds"
+                                            else -> "Check for Updates"
+                                        },
                                         maxLines = 1,
                                         softWrap = false,
                                         overflow = TextOverflow.Ellipsis

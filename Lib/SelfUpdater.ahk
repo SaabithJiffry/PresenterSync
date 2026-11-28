@@ -373,6 +373,196 @@ GetCurrentBinarySha256(targetExePath := "") {
         return ""
     return StrLower(HashFileSHA256_Hex(p))
 }
+ParseGitHubCommitListJson(jsonStr) {
+    out := []
+    str := Trim(String(jsonStr))
+    if (SubStr(str, 1, 1) != "[")
+        return out
+    pos := 2
+    totalLen := StrLen(str)
+    insideStr := false
+    escaped := false
+    objStart := 0
+    braceDepth := 0
+
+    while (pos <= totalLen) {
+        ch := SubStr(str, pos, 1)
+        if (escaped) {
+            escaped := false
+            pos += 1
+            continue
+        }
+        if (insideStr) {
+            if (ch = "\")
+                escaped := true
+            else if (ch = '"')
+                insideStr := false
+            pos += 1
+            continue
+        }
+        if (ch = '"') {
+            insideStr := true
+        } else if (ch = "]" && braceDepth == 0) {
+            break
+        } else if (ch = "{") {
+            if (braceDepth == 0)
+                objStart := pos
+            braceDepth += 1
+        } else if (ch = "}") {
+            if (braceDepth > 0) {
+                braceDepth -= 1
+                if (braceDepth == 0 && objStart > 0) {
+                    objStr := SubStr(str, objStart, pos - objStart + 1)
+                    sha := RegExMatch(objStr, '"sha"\s*:\s*"([0-9a-fA-F]{7,64})"', &mS) ? StrLower(mS[1]) : ""
+                    cDate := ""
+                    if (RegExMatch(objStr, '"committer"\s*:\s*\{[^}]*"date"\s*:\s*"([^"]+)"', &mD))
+                        cDate := UnescapeJsonStr(mD[1])
+                    else if (RegExMatch(objStr, '"date"\s*:\s*"([^"]+)"', &mD2))
+                        cDate := UnescapeJsonStr(mD2[1])
+                    rawMsg := RegExMatch(objStr, '"message"\s*:\s*"((?:\\.|[^"\\])*)"', &mM) ? Trim(UnescapeJsonStr(mM[1])) : ""
+                    subj := Trim(StrSplit(rawMsg, "`n", "`r")[1])
+                    if (StrLen(subj) > 42)
+                        subj := SubStr(subj, 1, 39) "..."
+                    cUrl := RegExMatch(objStr, '"html_url"\s*:\s*"([^"]+)"', &mU) ? UnescapeJsonStr(mU[1]) : ""
+                    if (sha != "") {
+                        out.Push({
+                            sha: sha,
+                            shortSha: SubStr(sha, 1, 7),
+                            dateIso: cDate,
+                            dateShort: (StrLen(cDate) >= 10) ? SubStr(cDate, 1, 10) : "unknown",
+                            subject: subj,
+                            url: (cUrl != "" ? cUrl : "https://github.com/SaabithJiffry/PresenterSync/commit/" sha)
+                        })
+                    }
+                    objStart := 0
+                }
+            }
+        }
+        pos += 1
+    }
+    return out
+}
+
+FilterPostStableNightlyCommits(commits, stableCommitSha := "", stableCommitDate := "", rawBaseOverride := "", targetAssetName := "") {
+    out := []
+    stSha := StrLower(Trim(String(stableCommitSha)))
+    stDate := Trim(String(stableCommitDate))
+    assetNm := (targetAssetName != "") ? targetAssetName : GetDefaultWindowsAssetName()
+
+    for _, c in commits {
+        if (stSha != "" && StrLower(c.sha) = stSha)
+            break
+        if (stDate != "" && c.dateIso != "" && StrCompare(c.dateIso, stDate) <= 0)
+            break
+        isFirst := (out.Length == 0)
+        prefix := isFirst ? "Nightly (Latest)" : "Nightly"
+        subjPart := (c.subject != "") ? (" " Chr(0x00B7) " " c.subject) : ""
+        lbl := prefix " " Chr(0x2014) " " c.shortSha " (" c.dateShort ")" subjPart
+        rawBase := (rawBaseOverride != "")
+            ? RTrim(rawBaseOverride, "/")
+            : ("https://raw.githubusercontent.com/SaabithJiffry/PresenterSync/" c.sha "/dist")
+        out.Push({
+            sha: c.sha,
+            shortSha: c.shortSha,
+            dateIso: c.dateIso,
+            dateShort: c.dateShort,
+            subject: c.subject,
+            url: c.url,
+            label: lbl,
+            isLatest: isFirst,
+            rawBase: rawBase,
+            metaUrl: rawBase "/nightly_meta.json",
+            sha256Url: rawBase "/SHA256SUMS.txt",
+            assetUrl: rawBase "/" assetNm
+        })
+    }
+    return out
+}
+
+ResolveNightlyBuildSelection(buildObj, curVer, curSha, assetNm, stableParsed := "", mockFixtures := "") {
+    sumsText := ""
+    if (IsObject(mockFixtures) && mockFixtures.HasOwnProp("sumsBySha") && mockFixtures.sumsBySha.Has(buildObj.sha)) {
+        sumsText := mockFixtures.sumsBySha[buildObj.sha]
+    } else if (IsObject(mockFixtures) && mockFixtures.HasOwnProp("nightlySumsText") && mockFixtures.nightlySumsText != "") {
+        sumsText := mockFixtures.nightlySumsText
+    } else {
+        sResp := _FetchHttpTextSimple(buildObj.sha256Url, 12000, "PresenterSync/" curVer)
+        if (sResp.ok)
+            sumsText := sResp.text
+    }
+    nightlySha := ParseSha256SumsText(sumsText, assetNm)
+    if (nightlySha = "") {
+        return {
+            ok: false, channel: "Nightly", status: "nightly_unavailable", current: curVer, latest: "",
+            updateAvailable: false, isAlreadyInstalled: false, rollbackAvailable: false,
+            url: buildObj.url, releaseNotes: "SHA256SUMS.txt missing or does not list " assetNm " on commit " buildObj.shortSha ".",
+            assetName: assetNm, assetUrl: buildObj.assetUrl, assetSize: -1, sha256Url: "",
+            shortSha: buildObj.shortSha, selectedSha: buildObj.sha,
+            statusHeadline: "Nightly SHA256SUMS.txt unavailable on " buildObj.shortSha
+        }
+    }
+
+    metaText := ""
+    if (IsObject(mockFixtures) && mockFixtures.HasOwnProp("metaBySha") && mockFixtures.metaBySha.Has(buildObj.sha)) {
+        metaText := mockFixtures.metaBySha[buildObj.sha]
+    } else if (IsObject(mockFixtures) && mockFixtures.HasOwnProp("nightlyMetaJson")) {
+        metaText := mockFixtures.nightlyMetaJson
+    } else {
+        mResp := _FetchHttpTextSimple(buildObj.metaUrl, 12000, "PresenterSync/" curVer)
+        if (mResp.ok)
+            metaText := mResp.text
+    }
+    meta := (metaText != "") ? ParseNightlyMetaJson(metaText) : { ok: false, version: "", androidVersionCode: 0, builtAtUtc: "" }
+    displayVer := meta.ok ? meta.version : (buildObj.shortSha " (" buildObj.dateShort ")")
+    verLabel := meta.ok ? ("v" meta.version " @ " buildObj.shortSha) : (buildObj.shortSha " (" buildObj.dateShort ")")
+
+    if (buildObj.isLatest && IsObject(stableParsed) && stableParsed.ok && meta.ok && CompareSemVer(meta.version, stableParsed.version) == 0 && stableParsed.sha256Url != "") {
+        stSums := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("stableSumsText"))
+            ? mockFixtures.stableSumsText
+            : _FetchHttpTextSimple(stableParsed.sha256Url, 12000, "PresenterSync/" curVer).text
+        stableSha := ParseSha256SumsText(stSums, assetNm)
+        if (stableSha != "" && nightlySha = stableSha) {
+            hl := "Nightly has caught up to Stable (v" stableParsed.version ")"
+            return {
+                ok: true, channel: "Nightly", status: "caught_up_to_stable", current: curVer,
+                latest: meta.version, stableVersion: stableParsed.version, shortSha: buildObj.shortSha,
+                selectedSha: buildObj.sha, updateAvailable: false, isAlreadyInstalled: true, rollbackAvailable: false,
+                url: buildObj.url, releaseNotes: hl, assetName: assetNm, assetUrl: buildObj.assetUrl,
+                assetSize: -1, sha256Url: buildObj.sha256Url, statusHeadline: hl
+            }
+        }
+    }
+
+    if (curSha != "" && curSha = nightlySha) {
+        hl := "Already Installed (" verLabel ")"
+        return {
+            ok: true, channel: "Nightly", status: "up_to_date_nightly", current: curVer,
+            latest: displayVer, stableVersion: (IsObject(stableParsed) && stableParsed.ok ? stableParsed.version : ""),
+            shortSha: buildObj.shortSha, selectedSha: buildObj.sha, updateAvailable: false,
+            isAlreadyInstalled: true, rollbackAvailable: false, url: buildObj.url,
+            releaseNotes: "Installed executable already matches commit " buildObj.sha " (SHA-256 verified).",
+            assetName: assetNm, assetUrl: buildObj.assetUrl, assetSize: -1, sha256Url: buildObj.sha256Url,
+            statusHeadline: hl, primaryActionLabel: "Already Installed"
+        }
+    }
+
+    stSuffix := (IsObject(stableParsed) && stableParsed.ok && stableParsed.version != "") ? (" (Stable: v" stableParsed.version ")") : ""
+    hl := (buildObj.isLatest ? "Nightly available: " : "Selected Nightly: ") verLabel stSuffix
+    notesN := "Immutable Nightly build pinned to commit " buildObj.sha
+        . (buildObj.subject != "" ? "`r`nCommit: " buildObj.subject : "")
+        . (meta.ok && meta.builtAtUtc != "" ? "`r`nBuilt UTC: " meta.builtAtUtc : "`r`nDate: " buildObj.dateShort)
+        . "`r`n`r`nWarning: Nightly builds come from main (dist/) and are not finalized stable releases."
+    return {
+        ok: true, channel: "Nightly", status: "nightly_available", current: curVer,
+        latest: displayVer, stableVersion: (IsObject(stableParsed) && stableParsed.ok ? stableParsed.version : ""),
+        shortSha: buildObj.shortSha, selectedSha: buildObj.sha, updateAvailable: true,
+        isAlreadyInstalled: false, rollbackAvailable: false, url: buildObj.url,
+        releaseNotes: notesN, assetName: assetNm, assetUrl: buildObj.assetUrl, assetSize: -1,
+        sha256Url: buildObj.sha256Url, statusHeadline: hl,
+        primaryActionLabel: "Install Selected Nightly (" buildObj.shortSha ")"
+    }
+}
+
 
 _QuoteCliArg(val) {
     s := String(val)
@@ -672,28 +862,44 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
         try dlg.Destroy()
     }
 
-    chan := (updRes.HasOwnProp("channel") && updRes.channel != "") ? NormalizeUpdateChannel(updRes.channel) : "Stable"
+    activeRes := updRes
+    chan := (activeRes.HasOwnProp("channel") && activeRes.channel != "") ? NormalizeUpdateChannel(activeRes.channel) : "Stable"
     isNightly := (chan = "Nightly")
-    isRollback := (updRes.HasOwnProp("rollbackAvailable") && updRes.rollbackAvailable)
-    headline := (updRes.HasOwnProp("statusHeadline") && updRes.statusHeadline != "")
-        ? updRes.statusHeadline
-        : ("Update Available: v" updRes.latest)
+    isRollback := (activeRes.HasOwnProp("rollbackAvailable") && activeRes.rollbackAvailable)
+    headline := (activeRes.HasOwnProp("statusHeadline") && activeRes.statusHeadline != "")
+        ? activeRes.statusHeadline
+        : ("Update Available: v" activeRes.latest)
 
     dlg.SetFont("s12 w700 norm", Theme.UiFont)
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w440", headline), "Text")
+    lblHeadline := dlg.Add("Text", "w440", headline)
+    Theme.RegisterControl(dlg, lblHeadline, "Text")
 
     dlg.SetFont("s9 w400 norm", Theme.UiFont)
-    subLine := "Installed: v" updRes.current "   |   Channel: " (isNightly ? "Nightly Release" : "Stable Release")
-        . (updRes.sha256Url != "" ? "   |   SHA-256 Protected" : "")
-    Theme.RegisterControl(dlg, dlg.Add("Text", "w440", subLine), "Text", "muted")
+    subLine := "Installed: v" activeRes.current "   |   Channel: " (isNightly ? "Nightly Release" : "Stable Release")
+        . (activeRes.sha256Url != "" ? "   |   SHA-256 Protected" : "")
+    lblSub := dlg.Add("Text", "w440", subLine)
+    Theme.RegisterControl(dlg, lblSub, "Text", "muted")
 
     Theme.RegisterControl(dlg, dlg.Add("Text", "w96 y+10", "Channel:"), "Text")
     ddlChan := dlg.Add("DropDownList", "x+8 yp-3 w160 Choose" (isNightly ? 2 : 1), ["Stable Release", "Nightly Release"])
     Theme.RegisterControl(dlg, ddlChan, "DropDownList")
-    btnRecheck := dlg.Add("Button", "x+8 yp-1 w168 h26", "Recheck Channel")
+    btnRecheck := dlg.Add("Button", "x+8 yp-1 w168 h26", "Refresh Builds")
     Theme.RegisterControl(dlg, btnRecheck, "Button")
 
-    lblNightlyWarn := dlg.Add("Text", "x20 y+8 w440" (isNightly ? "" : " Hidden"), "Warning: Nightly builds come from latest main (dist/), are not finalized stable releases, and some features may be incomplete or unstable.")
+    builds := (activeRes.HasOwnProp("nightlyBuilds") && IsObject(activeRes.nightlyBuilds)) ? activeRes.nightlyBuilds : []
+    ddlBuilds := ""
+    if (isNightly) {
+        Theme.RegisterControl(dlg, dlg.Add("Text", "x20 y+10 w96", "Nightly Build:"), "Text")
+        buildItems := []
+        for _, b in builds
+            buildItems.Push(b.label)
+        if (buildItems.Length == 0)
+            buildItems.Push("Nightly has caught up to Stable")
+        ddlBuilds := dlg.Add("DropDownList", "x+8 yp-3 w336 Choose1" (builds.Length == 0 ? " Disabled" : ""), buildItems)
+        Theme.RegisterControl(dlg, ddlBuilds, "DropDownList")
+    }
+
+    lblNightlyWarn := dlg.Add("Text", "x20 y+8 w440" (isNightly ? "" : " Hidden"), "Warning: Nightly builds come from main commits (dist/), are not finalized stable releases, and some features may be incomplete or unstable.")
     lblNightlyWarn.SetFont("s8.5 w600 norm", Theme.UiFont)
     lblNightlyWarn.Opt("cF59E0B")
     ddlChan.OnEvent("Change", (*) => (
@@ -701,23 +907,44 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
         IsObject(cfg) ? (cfg.UpdateChannel := (ddlChan.Value == 2 ? "Nightly" : "Stable"), cfg.Write("Settings", "UpdateChannel", cfg.UpdateChannel)) : 0
     ))
 
-    notes := (updRes.HasOwnProp("releaseNotes") && updRes.releaseNotes != "") ? updRes.releaseNotes : "Signed release update from SaabithJiffry/PresenterSync."
-    edNotes := dlg.Add("Edit", "x20 y+8 w440 h128 ReadOnly Multi VScroll", StrReplace(notes, "`n", "`r`n"))
+    notes := (activeRes.HasOwnProp("releaseNotes") && activeRes.releaseNotes != "") ? activeRes.releaseNotes : "Signed release update from SaabithJiffry/PresenterSync."
+    edNotes := dlg.Add("Edit", "x20 y+8 w440 h122 ReadOnly Multi VScroll", StrReplace(notes, "`n", "`r`n"))
     Theme.RegisterControl(dlg, edNotes, "Edit")
 
-    canSelfInstall := (updRes.HasOwnProp("assetUrl") && updRes.assetUrl != "" && A_IsCompiled && (updRes.updateAvailable || isRollback))
-    primaryLabel := (updRes.HasOwnProp("primaryActionLabel") && updRes.primaryActionLabel != "")
-        ? updRes.primaryActionLabel
-        : (isRollback ? ("Roll back to Stable v" updRes.latest) : "Download && Install Now")
-    btnPrimary := dlg.Add("Button", "x20 y+14 w214 h34 Default", canSelfInstall ? primaryLabel : "Open Release Page")
+    canSelfInstall := (activeRes.HasOwnProp("assetUrl") && activeRes.assetUrl != "" && A_IsCompiled && (activeRes.updateAvailable || isRollback))
+    alreadyInst := (activeRes.HasOwnProp("isAlreadyInstalled") && activeRes.isAlreadyInstalled)
+    primaryLabel := (activeRes.HasOwnProp("primaryActionLabel") && activeRes.primaryActionLabel != "")
+        ? activeRes.primaryActionLabel
+        : (isRollback ? ("Roll back to Stable v" activeRes.latest) : "Download && Install Now")
+    btnPrimary := dlg.Add("Button", "x20 y+14 w214 h34 Default" (alreadyInst ? " Disabled" : ""), canSelfInstall ? primaryLabel : (alreadyInst ? "Already Installed" : "Open Release Page"))
     Theme.RegisterControl(dlg, btnPrimary, "Button", "accent")
     btnBrowser := dlg.Add("Button", "x246 yp w214 h34", "Open in Browser")
     Theme.RegisterControl(dlg, btnBrowser, "Button")
 
-    btnSkip := dlg.Add("Button", "x20 y+8 w214 h30" (isRollback ? " Disabled" : ""), "Skip v" updRes.latest)
+    btnSkip := dlg.Add("Button", "x20 y+8 w214 h30" ((isRollback || isNightly) ? " Disabled" : ""), "Skip v" activeRes.latest)
     Theme.RegisterControl(dlg, btnSkip, "Button")
     btnLater := dlg.Add("Button", "x246 yp w214 h30", "Later")
     Theme.RegisterControl(dlg, btnLater, "Button")
+
+    if (IsObject(ddlBuilds) && builds.Length > 0) {
+        _OnNightlyBuildPicked(*) {
+            idx := ddlBuilds.Value
+            if (idx < 1 || idx > builds.Length)
+                return
+            selB := builds[idx]
+            curSha := GetCurrentBinarySha256()
+            assetNm := (activeRes.HasOwnProp("assetName") && activeRes.assetName != "") ? activeRes.assetName : GetDefaultWindowsAssetName()
+            resolved := ResolveNightlyBuildSelection(selB, activeRes.current, curSha, assetNm)
+            resolved.nightlyBuilds := builds
+            activeRes := resolved
+            lblHeadline.Value := resolved.statusHeadline
+            edNotes.Value := StrReplace(resolved.releaseNotes, "`n", "`r`n")
+            canNow := (resolved.assetUrl != "" && A_IsCompiled && resolved.updateAvailable)
+            btnPrimary.Enabled := !(resolved.HasOwnProp("isAlreadyInstalled") && resolved.isAlreadyInstalled)
+            btnPrimary.Text := canNow ? resolved.primaryActionLabel : ((resolved.HasOwnProp("isAlreadyInstalled") && resolved.isAlreadyInstalled) ? "Already Installed" : "Open Commit Page")
+        }
+        ddlBuilds.OnEvent("Change", _OnNightlyBuildPicked)
+    }
 
     OnRecheckClick(*) {
         newChan := (ddlChan.Value == 2) ? "Nightly" : "Stable"
@@ -725,28 +952,30 @@ ShowWindowsUpdateAvailableDialog(updRes, cfg := "") {
             cfg.UpdateChannel := newChan
             try cfg.Write("Settings", "UpdateChannel", newChan)
         }
-        assetNm := (updRes.HasOwnProp("assetName") && updRes.assetName != "") ? updRes.assetName : GetDefaultWindowsAssetName()
-        curVer := updRes.current
+        assetNm := (activeRes.HasOwnProp("assetName") && activeRes.assetName != "") ? activeRes.assetName : GetDefaultWindowsAssetName()
+        curVer := activeRes.current
         CloseDlg()
         CheckForUpdates(curVer, "", false, assetNm, cfg, newChan)
     }
 
     OnPrimaryClick(*) {
+        resSnap := activeRes
+        canInstNow := (resSnap.HasOwnProp("assetUrl") && resSnap.assetUrl != "" && A_IsCompiled && (resSnap.updateAvailable || (resSnap.HasOwnProp("rollbackAvailable") && resSnap.rollbackAvailable)))
         CloseDlg()
-        if (canSelfInstall) {
-            StartWindowsSelfUpdateDownloadUI(updRes)
+        if (canInstNow) {
+            StartWindowsSelfUpdateDownloadUI(resSnap)
         } else {
-            try Run(updRes.url)
+            try Run(resSnap.url)
         }
     }
     OnBrowserClick(*) {
-        try Run(updRes.url)
+        try Run(activeRes.url)
         CloseDlg()
     }
     OnSkipClick(*) {
         if IsObject(cfg) {
-            cfg.SkippedUpdateVersion := updRes.latest
-            try cfg.Write("Settings", "SkippedUpdateVersion", updRes.latest)
+            cfg.SkippedUpdateVersion := activeRes.latest
+            try cfg.Write("Settings", "SkippedUpdateVersion", activeRes.latest)
         }
         CloseDlg()
     }
@@ -778,112 +1007,93 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, target
         : GetCurrentBinarySha256(curExePath)
 
     if (channel = "Nightly") {
-        commitJson := ""
-        commitStatus := 0
-        if (IsObject(mockFixtures) && mockFixtures.HasOwnProp("commitJson")) {
-            commitJson := mockFixtures.commitJson
-            commitStatus := 200
-        } else {
-            cResp := _FetchHttpTextSimple("https://api.github.com/repos/SaabithJiffry/PresenterSync/commits/main", 12000, "PresenterSync/" cur, "application/vnd.github+json")
-            commitStatus := cResp.status
-            if (cResp.ok)
-                commitJson := cResp.text
-        }
-        if (commitStatus == 403 || commitStatus == 429) {
-            if (!silent)
-                MsgBox("GitHub API rate limit reached (HTTP " commitStatus "). Please try again later.`n`nReleases: " fallbackUrl, "Nightly Update Check", "Icon! 0x40000")
-            return { ok: false, channel: "Nightly", status: "rate_limited", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", statusHeadline: "GitHub API rate limit reached (HTTP " commitStatus ")" }
-        }
-        commitInfo := (commitJson != "") ? ParseGitHubCommitDetails(commitJson) : { ok: false, sha: "", shortSha: "", date: "", url: "" }
-        if (!commitInfo.ok) {
-            if (!silent)
-                MsgBox("Unable to query latest main commit for Nightly Release.`n`nReleases: " fallbackUrl, "Nightly Update Check", "Icon! 0x40000")
-            return { ok: false, channel: "Nightly", status: "error", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", statusHeadline: "Could not resolve latest main commit" }
-        }
-
-        rawBase := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("rawBaseUrl") && mockFixtures.rawBaseUrl != "")
-            ? RTrim(mockFixtures.rawBaseUrl, "/")
-            : ("https://raw.githubusercontent.com/SaabithJiffry/PresenterSync/" commitInfo.sha "/dist")
-        metaUrl := rawBase "/nightly_meta.json"
-        nightlySumsUrl := rawBase "/SHA256SUMS.txt"
-        nightlyAssetUrl := rawBase "/" assetNm
-
-        metaText := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("nightlyMetaJson")) ? mockFixtures.nightlyMetaJson : ""
-        if (metaText = "") {
-            mResp := _FetchHttpTextSimple(metaUrl, 12000, "PresenterSync/" cur)
-            if (mResp.ok)
-                metaText := mResp.text
-        }
-        sumsText := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("nightlySumsText")) ? mockFixtures.nightlySumsText : ""
-        if (sumsText = "") {
-            sResp := _FetchHttpTextSimple(nightlySumsUrl, 12000, "PresenterSync/" cur)
-            if (sResp.ok)
-                sumsText := sResp.text
-        }
-        meta := ParseNightlyMetaJson(metaText)
-        nightlySha := ParseSha256SumsText(sumsText, assetNm)
-        if (!meta.ok || nightlySha = "") {
-            if (!silent)
-                MsgBox("Nightly artifacts (nightly_meta.json / SHA256SUMS.txt) are not yet published for commit " commitInfo.shortSha ".", "Nightly Update Check", "Iconi 0x40000")
-            return { ok: false, channel: "Nightly", status: "nightly_unavailable", current: cur, latest: "", updateAvailable: false, url: commitInfo.url, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", statusHeadline: "Nightly metadata missing on " commitInfo.shortSha }
-        }
-
+        ; 1. Resolve latest Stable tag + its commit SHA/date
         stJson := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("stableReleaseJson")) ? mockFixtures.stableReleaseJson : ""
         if (stJson = "") {
             stResp := _FetchHttpTextSimple("https://api.github.com/repos/SaabithJiffry/PresenterSync/releases/latest", 12000, "PresenterSync/" cur, "application/vnd.github+json")
+            if (stResp.status == 403 || stResp.status == 429) {
+                if (!silent)
+                    MsgBox("GitHub API rate limit reached (HTTP " stResp.status "). Please try again later.", "Nightly Update Check", "Icon! 0x40000")
+                return { ok: false, channel: "Nightly", status: "rate_limited", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", nightlyBuilds: [], statusHeadline: "GitHub API rate limit reached (HTTP " stResp.status ")" }
+            }
             if (stResp.ok)
                 stJson := stResp.text
         }
-        stableParsed := (stJson != "") ? ParseGitHubReleaseDetails(stJson, assetNm) : { ok: false, version: "", sha256Url: "", url: fallbackUrl }
-        stableSha := ""
-        if (stableParsed.ok && CompareSemVer(meta.version, stableParsed.version) == 0 && stableParsed.sha256Url != "") {
-            stSums := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("stableSumsText")) ? mockFixtures.stableSumsText : _FetchHttpTextSimple(stableParsed.sha256Url, 12000, "PresenterSync/" cur).text
-            stableSha := ParseSha256SumsText(stSums, assetNm)
+        stableParsed := (stJson != "") ? ParseGitHubReleaseDetails(stJson, assetNm) : { ok: false, tag: "", version: "", sha256Url: "", url: fallbackUrl }
+
+        stableCommitSha := ""
+        stableCommitDate := ""
+        if (stableParsed.ok && stableParsed.tag != "") {
+            scJson := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("stableCommitJson")) ? mockFixtures.stableCommitJson : ""
+            if (scJson = "") {
+                scResp := _FetchHttpTextSimple("https://api.github.com/repos/SaabithJiffry/PresenterSync/commits/" stableParsed.tag, 12000, "PresenterSync/" cur, "application/vnd.github+json")
+                if (scResp.ok)
+                    scJson := scResp.text
+            }
+            if (scJson != "") {
+                scInfo := ParseGitHubCommitDetails(scJson)
+                if (scInfo.ok) {
+                    stableCommitSha := scInfo.sha
+                    stableCommitDate := scInfo.date
+                }
+            }
         }
+
+        ; 2. Fetch commits touching dist/<TargetBinary> in a single API call
+        listJson := ""
+        listStatus := 200
+        if (IsObject(mockFixtures) && mockFixtures.HasOwnProp("commitListJson")) {
+            listJson := mockFixtures.commitListJson
+        } else {
+            lUrl := "https://api.github.com/repos/SaabithJiffry/PresenterSync/commits?sha=main&path=dist/" assetNm "&per_page=20"
+            lResp := _FetchHttpTextSimple(lUrl, 12000, "PresenterSync/" cur, "application/vnd.github+json")
+            listStatus := lResp.status
+            if (lResp.ok)
+                listJson := lResp.text
+        }
+        if (listStatus == 403 || listStatus == 429) {
+            if (!silent)
+                MsgBox("GitHub API rate limit reached (HTTP " listStatus "). Please try again later.", "Nightly Update Check", "Icon! 0x40000")
+            return { ok: false, channel: "Nightly", status: "rate_limited", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", nightlyBuilds: [], statusHeadline: "GitHub API rate limit reached (HTTP " listStatus ")" }
+        }
+        if (listJson = "") {
+            if (!silent)
+                MsgBox("Unable to query Nightly builds from GitHub.`n`nReleases: " fallbackUrl, "Nightly Update Check", "Icon! 0x40000")
+            return { ok: false, channel: "Nightly", status: "error", current: cur, latest: "", updateAvailable: false, url: fallbackUrl, releaseNotes: "", assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "", nightlyBuilds: [], statusHeadline: "Could not query Nightly commits" }
+        }
+
+        rawBaseOv := (IsObject(mockFixtures) && mockFixtures.HasOwnProp("rawBaseUrl")) ? mockFixtures.rawBaseUrl : ""
+        allCommits := ParseGitHubCommitListJson(listJson)
+        builds := FilterPostStableNightlyCommits(allCommits, stableCommitSha, stableCommitDate, rawBaseOv, assetNm)
 
         if (IsObject(cfg)) {
             cfg.LastUpdateCheckEpoch := GetCurrentUnixEpoch()
             try cfg.Write("Settings", "LastUpdateCheckEpoch", cfg.LastUpdateCheckEpoch)
         }
 
-        if (stableParsed.ok && CompareSemVer(meta.version, stableParsed.version) == 0 && stableSha != "" && nightlySha = stableSha) {
-            hl := "Nightly has caught up to Stable (v" stableParsed.version ")"
+        if (builds.Length == 0) {
+            stVer := (stableParsed.ok && stableParsed.version != "") ? stableParsed.version : cur
+            hl := "Nightly has caught up to Stable (v" stVer ")"
+            resCaught := {
+                ok: true, channel: "Nightly", status: "caught_up_to_stable", current: cur,
+                latest: stVer, stableVersion: stVer, updateAvailable: false, isAlreadyInstalled: true,
+                rollbackAvailable: false, url: stableParsed.url, releaseNotes: hl "`r`n`r`nNo commits touch dist/" assetNm " after Stable v" stVer ".",
+                assetName: assetNm, assetUrl: "", assetSize: -1, sha256Url: "",
+                nightlyBuilds: [], statusHeadline: hl, primaryActionLabel: "Already Installed"
+            }
             if (!silent)
-                MsgBox(hl "`n`nNo newer Nightly changes since Stable v" stableParsed.version ".", "Nightly Up to Date", "Iconi 0x40000")
-            return { ok: true, channel: "Nightly", status: "caught_up_to_stable", current: cur, latest: meta.version, stableVersion: stableParsed.version, shortSha: commitInfo.shortSha, updateAvailable: false, url: commitInfo.url, releaseNotes: "", assetName: assetNm, assetUrl: nightlyAssetUrl, assetSize: -1, sha256Url: nightlySumsUrl, statusHeadline: hl }
+                ShowWindowsUpdateAvailableDialog(resCaught, cfg)
+            return resCaught
         }
 
-        if (curSha != "" && curSha = nightlySha) {
-            hl := "Up to date on latest Nightly (v" meta.version " @ " commitInfo.shortSha ")"
-            if (!silent)
-                MsgBox(hl, "Nightly Up to Date", "Iconi 0x40000")
-            return { ok: true, channel: "Nightly", status: "up_to_date_nightly", current: cur, latest: meta.version, stableVersion: stableParsed.version, shortSha: commitInfo.shortSha, updateAvailable: false, url: commitInfo.url, releaseNotes: "", assetName: assetNm, assetUrl: nightlyAssetUrl, assetSize: -1, sha256Url: nightlySumsUrl, statusHeadline: hl }
-        }
-
-        hl := "Nightly available: v" meta.version " @ " commitInfo.shortSha (stableParsed.ok ? " (Stable: v" stableParsed.version ")" : "")
-        notesN := "Immutable Nightly build pinned to commit " commitInfo.sha "`r`nBuilt UTC: " meta.builtAtUtc "`r`n`r`nWarning: Nightly builds come from latest main (dist/) and are not finalized stable releases."
-        resN := {
-            ok: true,
-            channel: "Nightly",
-            status: "nightly_available",
-            current: cur,
-            latest: meta.version,
-            stableVersion: stableParsed.version,
-            shortSha: commitInfo.shortSha,
-            updateAvailable: true,
-            rollbackAvailable: false,
-            url: commitInfo.url,
-            releaseNotes: notesN,
-            assetName: assetNm,
-            assetUrl: nightlyAssetUrl,
-            assetSize: -1,
-            sha256Url: nightlySumsUrl,
-            statusHeadline: hl,
-            primaryActionLabel: "Install Nightly (" commitInfo.shortSha ")"
-        }
+        selIdx := 1
+        if (IsObject(mockFixtures) && mockFixtures.HasOwnProp("selectedBuildIndex") && Integer(mockFixtures.selectedBuildIndex) >= 1 && Integer(mockFixtures.selectedBuildIndex) <= builds.Length)
+            selIdx := Integer(mockFixtures.selectedBuildIndex)
+        resolved := ResolveNightlyBuildSelection(builds[selIdx], cur, curSha, assetNm, stableParsed, mockFixtures)
+        resolved.nightlyBuilds := builds
         if (!silent)
-            ShowWindowsUpdateAvailableDialog(resN, cfg)
-        return resN
+            ShowWindowsUpdateAvailableDialog(resolved, cfg)
+        return resolved
     }
 
     rawJson := ""
@@ -935,19 +1145,10 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, target
     cmp := CompareSemVer(parsed.version, cur)
     if (cmp > 0) {
         resObj := {
-            ok: true,
-            channel: "Stable",
-            status: "update_available",
-            current: cur,
-            latest: parsed.version,
-            updateAvailable: true,
-            rollbackAvailable: false,
-            url: relUrl,
-            releaseNotes: parsed.releaseNotes,
-            assetName: parsed.assetName,
-            assetUrl: parsed.assetUrl,
-            assetSize: parsed.assetSize,
-            sha256Url: parsed.sha256Url,
+            ok: true, channel: "Stable", status: "update_available", current: cur,
+            latest: parsed.version, updateAvailable: true, rollbackAvailable: false,
+            url: relUrl, releaseNotes: parsed.releaseNotes, assetName: parsed.assetName,
+            assetUrl: parsed.assetUrl, assetSize: parsed.assetSize, sha256Url: parsed.sha256Url,
             statusHeadline: "Stable update available: v" parsed.version,
             primaryActionLabel: "Download && Install Now"
         }
@@ -963,19 +1164,10 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, target
         stableSha := ParseSha256SumsText(stSums, parsed.assetName != "" ? parsed.assetName : assetNm)
         if (stableSha != "" && stableSha != curSha) {
             resHandoff := {
-                ok: true,
-                channel: "Stable",
-                status: "stable_handoff",
-                current: cur,
-                latest: parsed.version,
-                updateAvailable: true,
-                rollbackAvailable: false,
-                url: relUrl,
-                releaseNotes: parsed.releaseNotes,
-                assetName: parsed.assetName,
-                assetUrl: parsed.assetUrl,
-                assetSize: parsed.assetSize,
-                sha256Url: parsed.sha256Url,
+                ok: true, channel: "Stable", status: "stable_handoff", current: cur,
+                latest: parsed.version, updateAvailable: true, rollbackAvailable: false,
+                url: relUrl, releaseNotes: parsed.releaseNotes, assetName: parsed.assetName,
+                assetUrl: parsed.assetUrl, assetSize: parsed.assetSize, sha256Url: parsed.sha256Url,
                 statusHeadline: "Install Stable v" parsed.version " (replaces Nightly build)",
                 primaryActionLabel: "Install Stable v" parsed.version
             }
@@ -989,20 +1181,12 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, target
         canRb := (parsed.assetUrl != "" && parsed.sha256Url != "")
         hl := "Running Nightly v" cur " (ahead of Stable v" parsed.version ")"
         resAhead := {
-            ok: true,
-            channel: "Stable",
-            status: "ahead_of_stable",
-            current: cur,
-            latest: parsed.version,
-            updateAvailable: false,
-            rollbackAvailable: canRb,
+            ok: true, channel: "Stable", status: "ahead_of_stable", current: cur,
+            latest: parsed.version, updateAvailable: false, rollbackAvailable: canRb,
             url: relUrl,
             releaseNotes: "You are currently running v" cur ", which is newer than the latest Stable Release (v" parsed.version ").`r`n`r`nYou can continue running this build or optionally roll back to Stable v" parsed.version ".",
-            assetName: parsed.assetName,
-            assetUrl: parsed.assetUrl,
-            assetSize: parsed.assetSize,
-            sha256Url: parsed.sha256Url,
-            statusHeadline: hl,
+            assetName: parsed.assetName, assetUrl: parsed.assetUrl, assetSize: parsed.assetSize,
+            sha256Url: parsed.sha256Url, statusHeadline: hl,
             primaryActionLabel: "Roll back to Stable v" parsed.version
         }
         if (!silent)
@@ -1013,19 +1197,10 @@ CheckForUpdates(currentVer := "", mockResponseJson := "", silent := true, target
     if (!silent)
         MsgBox("You are running the latest Stable release of PresenterSync (v" cur ").", "Up to Date", "Iconi 0x40000")
     return {
-        ok: true,
-        channel: "Stable",
-        status: "up_to_date",
-        current: cur,
-        latest: parsed.version,
-        updateAvailable: false,
-        rollbackAvailable: false,
-        url: relUrl,
-        releaseNotes: parsed.releaseNotes,
-        assetName: parsed.assetName,
-        assetUrl: parsed.assetUrl,
-        assetSize: parsed.assetSize,
-        sha256Url: parsed.sha256Url,
+        ok: true, channel: "Stable", status: "up_to_date", current: cur,
+        latest: parsed.version, updateAvailable: false, rollbackAvailable: false,
+        url: relUrl, releaseNotes: parsed.releaseNotes, assetName: parsed.assetName,
+        assetUrl: parsed.assetUrl, assetSize: parsed.assetSize, sha256Url: parsed.sha256Url,
         statusHeadline: "Up to date on Stable (v" cur ")"
     }
 }

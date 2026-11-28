@@ -2534,7 +2534,7 @@ ShowControlCenterWindow(cfg, state := "", *) {
     chkAutoUpd := ccGui.Add("Checkbox", "x32 y318 w380 h24" (cfg.AutoCheckUpdates ? " Checked" : ""), "Auto-check GitHub updates daily on startup")
     Theme.RegisterControl(ccGui, chkAutoUpd, "Checkbox", "tabText")
 
-    btnCheckUpd := ccGui.Add("Button", "x430 y282 w250 h30", "Check for GitHub Updates...")
+    btnCheckUpd := ccGui.Add("Button", "x430 y282 w250 h30", "Check / Refresh Updates...")
     Theme.RegisterControl(ccGui, btnCheckUpd, "Button", "tabButton")
     btnCheckUpd.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync.exe", cfg))
 

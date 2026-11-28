@@ -4144,7 +4144,7 @@ ShowRemoteAboutUI(cfg := "", state := "", *) {
     gitBtn := AddThemedCtrl(aboutGui, "Button", "x20 y496 w208 h30", "GitHub Repo")
     gitBtn.OnEvent("Click", (*) => Run("https://github.com/SaabithJiffry/PresenterSync/"))
 
-    updBtn := AddThemedCtrl(aboutGui, "Button", "x242 y496 w208 h30", "Check for Updates")
+    updBtn := AddThemedCtrl(aboutGui, "Button", "x242 y496 w208 h30", "Check / Refresh Updates")
     updBtn.OnEvent("Click", (*) => CheckForUpdates(UIConstants.APP_VERSION, "", false, "PresenterSync_Remote.exe", cfg))
 
     helpBtn := AddThemedCtrl(aboutGui, "Button", "x20 y534 w208 h30", "Open Help Guide")

@@ -168,4 +168,82 @@ class DualChannelUpdaterTest {
         assertNull(AppUpdater.parseNightlyMetaJson("{}"))
         assertNull(AppUpdater.parseCommitDetailsJson("{}"))
     }
+
+    @Test
+    fun postStableCommitFilterAndNightlySelectorResolveCleanly() {
+        val rawCommitsJson = """
+            [
+              {"sha":"aaa1111000000000","html_url":"https://github.com/c/1","commit":{"message":"feat: latest nightly\n\ndetails","committer":{"date":"2026-11-28T05:00:00Z"}}},
+              {"sha":"bbb2222000000000","html_url":"https://github.com/c/2","commit":{"message":"fix: older post-stable","committer":{"date":"2026-11-27T12:00:00Z"}}},
+              {"sha":"ccc3333000000000","html_url":"https://github.com/c/3","commit":{"message":"chore: stable release","committer":{"date":"2026-11-26T10:00:00Z"}}},
+              {"sha":"ddd4444000000000","html_url":"https://github.com/c/4","commit":{"message":"old pre-stable","committer":{"date":"2026-11-25T10:00:00Z"}}}
+            ]
+        """.trimIndent()
+        val parsed = AppUpdater.parseCommitListJson(rawCommitsJson)
+        assertEquals(4, parsed.size)
+
+        val builds = AppUpdater.filterPostStableNightlyCommits(
+            commits = parsed,
+            stableCommitSha = "ccc3333000000000",
+            stableCommitDate = "2026-11-26T10:00:00Z"
+        )
+        assertEquals(2, builds.size)
+        assertTrue(builds[0].isLatest)
+        assertTrue(builds[0].label.startsWith("Nightly (Latest)"))
+        assertFalse(builds[1].isLatest)
+        assertTrue(builds[1].label.contains("bbb2222"))
+
+        // Empty when HEAD == stable
+        val caughtUpBuilds = AppUpdater.filterPostStableNightlyCommits(
+            commits = parsed,
+            stableCommitSha = "aaa1111000000000",
+            stableCommitDate = "2026-11-28T05:00:00Z"
+        )
+        assertTrue(caughtUpBuilds.isEmpty())
+
+        // Older post-stable Nightly without nightly_meta.json still resolves when SHA256SUMS.txt exists
+        val stableStub = UpdateCheckResult(
+            currentVersion = "10.2.0",
+            latestVersion = "10.1.1",
+            updateAvailable = false,
+            releaseNotes = "",
+            releaseHtmlUrl = "https://github.com/r",
+            apkDownloadUrl = null
+        )
+        val olderRes = AppUpdater.resolveNightlyBuild(
+            build = builds[1],
+            allBuilds = builds,
+            currentVersion = "10.2.0",
+            installedApkSha256 = "f".repeat(64),
+            meta = null,
+            nightlySha256 = "9".repeat(64),
+            stableParsed = stableStub,
+            stableSha256 = null
+        )
+        assertTrue(olderRes.updateAvailable)
+        assertEquals("Nightly-bbb2222", olderRes.latestVersion)
+        assertEquals("bbb2222", olderRes.nightlyCommitSha)
+        assertTrue(olderRes.statusHeadline.startsWith("Selected Nightly:"))
+
+        // Same SHA -> Already Installed
+        val sameRes = AppUpdater.resolveNightlyBuild(
+            build = builds[1],
+            allBuilds = builds,
+            currentVersion = "10.2.0",
+            installedApkSha256 = "9".repeat(64),
+            meta = null,
+            nightlySha256 = "9".repeat(64),
+            stableParsed = stableStub,
+            stableSha256 = null
+        )
+        assertFalse(sameRes.updateAvailable)
+        assertTrue(sameRes.isNightlyUpToDate)
+        assertEquals("Already Installed (bbb2222)", sameRes.statusHeadline)
+
+        // Downgrade auto-route helper + nightly rollback filename
+        assertTrue(ApkSelfInstaller.shouldAutoRouteNightlyDowngradeToGuidedRollback(UpdateChannel.NIGHTLY, 100101L, 100200L))
+        assertFalse(ApkSelfInstaller.shouldAutoRouteNightlyDowngradeToGuidedRollback(UpdateChannel.NIGHTLY, 100200L, 100200L))
+        assertFalse(ApkSelfInstaller.shouldAutoRouteNightlyDowngradeToGuidedRollback(UpdateChannel.STABLE, 100101L, 100200L))
+        assertEquals("PresenterSync_Remote_nightly_bbb2222.apk", ApkSelfInstaller.buildNightlyRollbackApkFileName("bbb2222"))
+    }
 }
